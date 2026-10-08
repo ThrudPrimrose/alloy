@@ -67,7 +67,9 @@ fuzzed draws from the bench manifest. The reference runs three times per draw: a
 Each region candidate runs on fuzzed inputs from HPCAgent-Bench (`hpcagent_bench.fuzz` plus the input
 distributions) and is compared against the region's own `strict` build. Each FP level names its test:
 
-- `exact`: bit-identical to the reference (the `strict` level itself).
+- `exact`: bit-identical to the reference (the `strict` level itself), across compilers too. A compiler with its own
+  math library (nvc's `libnvcpumath`) therefore fails `strict` on regions that call libm; that is reported, not
+  excused (owner decision, 2026-10-08).
 - `band`: HPCAgent-Bench's `compare_arrays` with its per-precision band (fp64 rtol 1e-9, atol 1e-11) and the
   accumulation floor `eps_acc(p) * sqrt(l) * ||ref||_inf`. `sqrt(l)` is the random-walk growth of the difference
   between two summation orders (Higham, Sec. 4.5); the bench measured `log2(l)` rejecting correct dynamic-schedule
