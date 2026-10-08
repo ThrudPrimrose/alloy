@@ -21,6 +21,9 @@ Imports of `hpcagent_bench` stay function-local.
 
 ## Sweep axes (CPU)
 
+All axes live in `configuration_matrix.toml` at the repo top (checked by `alloy/configuration_matrix.py`;
+`alloy build --matrix` swaps it; every output folder keeps a copy). Code holds only the gating rules.
+
 - Rendering: CPF-C (C23) and CPF-C++ (C++20).
 - Compiler: gcc and clang. Always `-O3 -march=native`.
   - clang 22 needs `libomp-22-dev`, which this box lacks, so local runs use clang 21.

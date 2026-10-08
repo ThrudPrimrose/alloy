@@ -11,11 +11,10 @@ from dataclasses import dataclass
 from dace.codegen import cpf
 from dace.config import set_temporary
 
-from alloy.candidates import COMPILERS, Candidate
+from alloy.candidates import Candidate
+from alloy.configuration_matrix import Matrix
 from alloy.regions import Region
 
-GCC_REMARKS = ("-fopt-info-vec-optimized", "-fopt-info-vec-missed")
-CLANG_REMARKS = ("-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize")
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 
 
@@ -32,6 +31,8 @@ class Build:
     """One compiled candidate. ``duplicate_of`` names an earlier candidate with a byte-identical object."""
 
     candidate: Candidate
+    name: str
+    codegen_params: dict[str, str]
     source: pathlib.Path
     archive: pathlib.Path | None
     flags: tuple[str, ...]
@@ -41,10 +42,10 @@ class Build:
     duplicate_of: str = ""
 
 
-def render(region: Region, candidate: Candidate) -> str:
+def render(region: Region, candidate: Candidate, matrix: Matrix) -> str:
     """The region's CPF translation unit under ``candidate``'s language and codegen knobs."""
     with ExitStack() as stack:
-        for knob, value in candidate.codegen_params().items():
+        for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
         rendering = cpf.render(
             region.sdfg, language=candidate.language, order=list(region.abi_order), check_compiles=False
@@ -79,37 +80,42 @@ def code_hash(obj: pathlib.Path) -> str:
     return digest
 
 
-def compile_candidate(source: pathlib.Path, candidate: Candidate) -> tuple[subprocess.CompletedProcess, tuple]:
+def compile_candidate(
+    source: pathlib.Path, candidate: Candidate, matrix: Matrix
+) -> tuple[subprocess.CompletedProcess, tuple]:
     """Compile ``source`` to ``<stem>.o`` next to it; returns the process and the flags used."""
-    compiler = COMPILERS[candidate.compiler][candidate.language]
-    remarks = GCC_REMARKS if candidate.compiler == "gcc" else CLANG_REMARKS
-    flags = candidate.flags()
-    command = [compiler, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
+    compiler = matrix.compilers[candidate.compiler]
+    executable, remarks = compiler.executables[candidate.language], compiler.remark_flags
+    flags = candidate.flags(matrix)
+    command = [executable, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
     return subprocess.run(command, capture_output=True, text=True), flags
 
 
-def build(region: Region, candidate: Candidate, folder: pathlib.Path, seen: dict[str, str]) -> Build:
+def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
     """Render, compile and archive ``candidate``. ``seen`` maps object hashes to the first candidate that
     produced them, so a duplicate keeps its record but points at the original."""
     folder.mkdir(parents=True, exist_ok=True)
-    source = folder / f"{candidate.name}.{'c' if candidate.language == 'c' else 'cpp'}"
-    source.write_text(render(region, candidate))
-    proc, flags = compile_candidate(source, candidate)
-    (folder / f"{candidate.name}.log").write_text(proc.stderr)
+    name, params = candidate.name(matrix), candidate.codegen_params(matrix)
+    source = folder / f"{name}.{matrix.languages[candidate.language].suffix}"
+    source.write_text(render(region, candidate, matrix))
+    proc, flags = compile_candidate(source, candidate, matrix)
+    (folder / f"{name}.log").write_text(proc.stderr)
     remarks = parse_remarks(proc.stderr, source)
     if proc.returncode != 0:
-        return Build(candidate, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
+        return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
     obj = source.with_suffix(".o")
     digest = code_hash(obj)
-    archive = folder / f"lib{candidate.name}.a"
+    archive = folder / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
-    duplicate = seen.setdefault(digest, candidate.name)
+    duplicate = seen.setdefault(digest, name)
     return Build(
         candidate,
+        name,
+        params,
         source,
         archive,
         flags,
         digest,
         remarks,
-        duplicate_of="" if duplicate == candidate.name else duplicate,
+        duplicate_of="" if duplicate == name else duplicate,
     )

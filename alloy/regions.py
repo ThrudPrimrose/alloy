@@ -9,11 +9,6 @@ from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
 from dace.transformation import passes
 
-#: libm calls a vector math library can replace. sqrt/fabs/fma are single instructions and need none.
-LIBM_CALLS = frozenset(
-    "sin cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh exp exp2 expm1 log log2 log10 log1p "
-    "pow cbrt erf erfc".split()
-)
 CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
@@ -74,8 +69,9 @@ def standalone(call: external_call.ExternalCall) -> dace.SDFG:
     return sdfg
 
 
-def outline(program: dace.frontend.python.parser.DaceProgram) -> Program:
-    """Parse ``program`` and outline each top-level nest into a region."""
+def outline(program: dace.frontend.python.parser.DaceProgram, libm_calls: frozenset[str]) -> Program:
+    """Parse ``program`` and outline each top-level nest into a region; ``libm_calls`` marks the regions a vector
+    math library could serve."""
     sdfg = program.to_sdfg(simplify=True)
     # A top-level library node (np.sum -> Reduce) is no nest until expanded; expand so it becomes a region.
     sdfg.expand_library_nodes(recursive=True)
@@ -90,7 +86,7 @@ def outline(program: dace.frontend.python.parser.DaceProgram) -> Program:
                 abi_order=tuple(call.abi_order),
                 signature=call.signature,
                 sdfg=region_sdfg,
-                calls_libm=bool(called_names(region_sdfg) & LIBM_CALLS),
+                calls_libm=bool(called_names(region_sdfg) & libm_calls),
                 has_reduction=has_reduction(region_sdfg),
             )
         )

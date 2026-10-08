@@ -3,10 +3,12 @@
 
 import json
 import pathlib
+import shutil
 from dataclasses import dataclass
 
 from alloy.build import Build, build
 from alloy.candidates import one_factor_at_a_time
+from alloy.configuration_matrix import Matrix
 from alloy.regions import Program, Region
 
 
@@ -16,13 +18,14 @@ class RegionReport:
     builds: tuple[Build, ...]
 
 
-def sweep(program: Program, out: pathlib.Path) -> list[RegionReport]:
+def sweep(program: Program, matrix: Matrix, out: pathlib.Path) -> list[RegionReport]:
     """Build every candidate of every region under ``out/regions/<symbol>``."""
     reports = []
     for region in program.regions:
         seen: dict[str, str] = {}
         folder = out / "regions" / region.symbol
-        builds = tuple(build(region, cand, folder, seen) for cand in one_factor_at_a_time(region))
+        candidates = one_factor_at_a_time(matrix, region)
+        builds = tuple(build(region, cand, matrix, folder, seen) for cand in candidates)
         reports.append(RegionReport(region, builds))
     return reports
 
@@ -67,10 +70,10 @@ def as_json(reports: list[RegionReport]) -> list[dict]:
             "has_reduction": rep.region.has_reduction,
             "candidates": [
                 {
-                    "name": b.candidate.name,
+                    "name": b.name,
                     "change": b.candidate.note,
                     "flags": list(b.flags),
-                    "codegen_params": b.candidate.codegen_params(),
+                    "codegen_params": b.codegen_params,
                     "source": str(b.source),
                     "archive": str(b.archive) if b.archive else None,
                     "object_hash": b.object_hash,
@@ -86,6 +89,8 @@ def as_json(reports: list[RegionReport]) -> list[dict]:
     ]
 
 
-def write(reports: list[RegionReport], out: pathlib.Path) -> None:
+def write(reports: list[RegionReport], matrix: Matrix, out: pathlib.Path) -> None:
+    """Write ``report.md`` and ``report.json``, with a copy of the matrix that produced them."""
+    shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
     (out / "report.md").write_text(markdown(reports))
     (out / "report.json").write_text(json.dumps(as_json(reports), indent=2))

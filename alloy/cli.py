@@ -7,7 +7,7 @@ import pathlib
 
 from dace.frontend.python.parser import DaceProgram
 
-from alloy import regions, report
+from alloy import configuration_matrix, regions, report
 
 
 def load_program(spec: str) -> DaceProgram:
@@ -28,11 +28,18 @@ def main() -> None:
     build_cmd = sub.add_parser("build", help="outline a program and build every region candidate")
     build_cmd.add_argument("program", help="file.py:function")
     build_cmd.add_argument("--out", type=pathlib.Path, required=True)
+    build_cmd.add_argument(
+        "--matrix",
+        type=pathlib.Path,
+        default=configuration_matrix.DEFAULT_PATH,
+        help="configuration matrix TOML (default: configuration_matrix.toml at the repo top)",
+    )
     args = parser.parse_args()
-    program = regions.outline(load_program(args.program))
+    matrix = configuration_matrix.load(args.matrix)
+    program = regions.outline(load_program(args.program), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
-    reports = report.sweep(program, args.out)
-    report.write(reports, args.out)
+    reports = report.sweep(program, matrix, args.out)
+    report.write(reports, matrix, args.out)
     print(f"{len(reports)} regions -> {args.out / 'report.md'}")
 
 

@@ -5,17 +5,18 @@ import subprocess
 
 import pytest
 
-from alloy import regions, report
+from alloy import configuration_matrix, regions, report
 from alloy.build import build, parse_remarks
 from alloy.candidates import Candidate, one_factor_at_a_time
 
 EXAMPLE = pathlib.Path(__file__).parent.parent / "examples" / "two_regions.py"
+MATRIX = configuration_matrix.load()
 
 
 def outlined() -> regions.Program:
     from alloy.cli import load_program
 
-    return regions.outline(load_program(f"{EXAMPLE}:two_regions"))
+    return regions.outline(load_program(f"{EXAMPLE}:two_regions"), MATRIX.libm_calls)
 
 
 def region_with(program: regions.Program, *, libm: bool, reduction: bool) -> regions.Region:
@@ -36,8 +37,8 @@ def test_a_vector_math_library_is_tried_only_where_libm_is_called():
     libm_region = region_with(program, libm=True, reduction=False)
     reduction_region = region_with(program, libm=False, reduction=True)
 
-    assert any(c.veclib != "none" for c in one_factor_at_a_time(libm_region))
-    assert all(c.veclib == "none" for c in one_factor_at_a_time(reduction_region))
+    assert any(c.veclib != "none" for c in one_factor_at_a_time(MATRIX, libm_region))
+    assert all(c.veclib == "none" for c in one_factor_at_a_time(MATRIX, reduction_region))
 
 
 def test_reassociation_is_tried_only_where_something_reduces():
@@ -45,14 +46,14 @@ def test_reassociation_is_tried_only_where_something_reduces():
     libm_region = region_with(program, libm=True, reduction=False)
     reduction_region = region_with(program, libm=False, reduction=True)
 
-    assert any(c.fp_level == "reassoc" for c in one_factor_at_a_time(reduction_region))
-    assert all(c.fp_level != "reassoc" for c in one_factor_at_a_time(libm_region))
+    assert any(c.fp_level == "reassoc" for c in one_factor_at_a_time(MATRIX, reduction_region))
+    assert all(c.fp_level != "reassoc" for c in one_factor_at_a_time(MATRIX, libm_region))
 
 
 def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
     region = region_with(outlined(), libm=True, reduction=False)
 
-    sut = build(region, Candidate("c", "gcc"), tmp_path, {})
+    sut = build(region, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
     assert sut.error == "" and sut.archive is not None and sut.archive.is_file()
     assert f"void {region.symbol}(" in sut.source.read_text()
@@ -63,13 +64,13 @@ def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
 def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate(tmp_path):
     region = region_with(outlined(), libm=True, reduction=False)
     seen: dict[str, str] = {}
-    first = build(region, Candidate("c", "gcc"), tmp_path / "a", seen)
+    first = build(region, Candidate("c", "gcc"), MATRIX, tmp_path / "a", seen)
 
-    sut = build(region, Candidate("c++", "gcc"), tmp_path / "b", seen)
+    sut = build(region, Candidate("c++", "gcc"), MATRIX, tmp_path / "b", seen)
 
     assert first.duplicate_of == ""
     assert sut.object_hash == first.object_hash
-    assert sut.duplicate_of == first.candidate.name
+    assert sut.duplicate_of == first.name
 
 
 @pytest.mark.parametrize(
@@ -94,12 +95,44 @@ def test_compiler_remarks_about_the_source_are_counted_and_their_tags_dropped(li
 def test_the_report_lists_every_candidate_of_every_region(tmp_path):
     program = outlined()
     reports = [
-        report.RegionReport(r, (build(r, Candidate("c", "gcc"), tmp_path / r.symbol, {}),)) for r in program.regions
+        report.RegionReport(r, (build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}),))
+        for r in program.regions
     ]
 
-    report.write(reports, tmp_path)
+    report.write(reports, MATRIX, tmp_path)
 
     data = json.loads((tmp_path / "report.json").read_text())
     assert [r["symbol"] for r in data] == [r.symbol for r in program.regions]
     assert all(len(r["candidates"]) == 1 and r["candidates"][0]["archive"] for r in data)
     assert (tmp_path / "report.md").read_text().count("## ") == len(program.regions)
+    assert (tmp_path / "configuration_matrix.toml").read_bytes() == MATRIX.path.read_bytes()
+
+
+def restricted_matrix(tmp_path: pathlib.Path) -> pathlib.Path:
+    """The shipped matrix with clang and every FP level but the first two removed."""
+    text = MATRIX.path.read_text()
+    text = text[: text.index("# clang 22")] + text[text.index("# Library name") :]
+    text = text[: text.index("[fp_levels.noerrno]")] + text[text.index("# Readable-codegen knobs") :]
+    text = text.replace('veclib_fp_level = "noerrno"', 'veclib_fp_level = "contract"')
+    path = tmp_path / "matrix.toml"
+    path.write_text(text)
+    return path
+
+
+def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
+    matrix = configuration_matrix.load(restricted_matrix(tmp_path))
+    region = region_with(outlined(), libm=False, reduction=True)
+
+    sut = one_factor_at_a_time(matrix, region)
+
+    assert {c.compiler for c in sut} == {"gcc"}
+    assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract"}
+    assert len(sut) == len(matrix.languages) * (1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + 1)
+
+
+def test_a_matrix_with_an_unknown_key_is_refused(tmp_path):
+    path = tmp_path / "matrix.toml"
+    path.write_text(MATRIX.path.read_text().replace("[knobs]", "typo_key = 1\n\n[knobs]", 1))
+
+    with pytest.raises(ValueError, match="unknown"):
+        configuration_matrix.load(path)
