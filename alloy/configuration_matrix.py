@@ -11,8 +11,9 @@ from typing import Any
 #: The matrix shipped with the package.
 DEFAULT_PATH = pathlib.Path(__file__).resolve().parent / "configuration_matrix.toml"
 SCHEMA = 1
-#: Region properties an FP level may require.
+#: Region properties an FP level may require, and the comparisons a level can be verified with.
 NEEDS = frozenset({"reduction", "finite_inputs"})
+TOLERANCES = frozenset({"exact", "band"})
 
 
 @dataclass(slots=True, frozen=True)
@@ -32,7 +33,7 @@ class Language:
 
 @dataclass(slots=True, frozen=True)
 class FPLevel:
-    rtol: float
+    tolerance: str
     needs: str = ""
 
 
@@ -67,7 +68,6 @@ class Matrix:
     languages: dict[str, Language]
     openmp_runtimes: dict[str, str]  # runtime -> soname
     fp_levels: dict[str, FPLevel]
-    dtype_rtol: dict[str, float]
     veclibs: dict[str, Veclib]
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
@@ -134,6 +134,8 @@ def check_consistency(m: Matrix) -> None:
     for name, level in m.fp_levels.items():
         if level.needs and level.needs not in NEEDS:
             raise ValueError(f"{m.path}: fp_levels.{name}.needs must be one of {sorted(NEEDS)}")
+        if level.tolerance not in TOLERANCES:
+            raise ValueError(f"{m.path}: fp_levels.{name}.tolerance must be one of {sorted(TOLERANCES)}")
     for name, lib in m.veclibs.items():
         if lib.fp_level not in m.fp_levels:
             raise ValueError(f"{m.path}: veclibs.{name}.fp_level {lib.fp_level!r} is not declared")
@@ -151,7 +153,6 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         "languages",
         "openmp_runtimes",
         "fp_levels",
-        "dtype_rtol",
         "veclibs",
         "compilers",
         "codegen",
@@ -174,10 +175,9 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
             n: table(t, f"openmp_runtimes.{n}", {"soname"})["soname"] for n, t in raw["openmp_runtimes"].items()
         },
         fp_levels={
-            n: FPLevel(**table(t, f"fp_levels.{n}", {"rtol"}, frozenset({"needs"})))
+            n: FPLevel(**table(t, f"fp_levels.{n}", {"tolerance"}, frozenset({"needs"})))
             for n, t in raw["fp_levels"].items()
         },
-        dtype_rtol={dtype: float(v) for dtype, v in raw["dtype_rtol"].items()},
         veclibs={n: Veclib(**table(t, f"veclibs.{n}", {"probe", "fp_level"})) for n, t in raw["veclibs"].items()},
         compilers={n: compiler(t, n, names) for n, t in raw["compilers"].items()},
         knobs={knob: tuple(values) for knob, values in codegen["knobs"].items()},

@@ -52,7 +52,7 @@ def markdown(reports: list[RegionReport], matrix: Matrix) -> str:
             "",
             f"`{r.signature}`",
             "",
-            f"libm calls: {r.calls_libm}; reduction: {r.has_reduction}; "
+            f"libm calls: {r.calls_libm}; reduction: {r.has_reduction}; accumulation length: {r.accumulation_length}; "
             f"{len(rep.builds)} candidates, {unique} distinct objects.",
             "",
             "| lang | compiler | change | object | vectorized | missed | first missed reason |",
@@ -71,6 +71,7 @@ def as_json(reports: list[RegionReport]) -> list[dict]:
             "abi_order": list(rep.region.abi_order),
             "calls_libm": rep.region.calls_libm,
             "has_reduction": rep.region.has_reduction,
+            "accumulation_length": str(rep.region.accumulation_length),
             "candidates": [
                 {
                     "name": b.name,

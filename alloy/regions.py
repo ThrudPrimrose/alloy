@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 import dace
+import sympy
 from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
 from dace.transformation import passes
@@ -22,6 +23,8 @@ class Region:
     sdfg: dace.SDFG
     calls_libm: bool
     has_reduction: bool
+    #: Terms summed into one output element (symbolic; 1 when nothing reduces): the ``l`` of the reassociation floor.
+    accumulation_length: sympy.Expr
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,6 +53,42 @@ def has_reduction(sdfg: dace.SDFG) -> bool:
     return any(
         edge.data.wcr is not None for edge, _ in sdfg.all_edges_recursive() if isinstance(edge.data, dace.Memlet)
     )
+
+
+def reduced_extent(edge, scope: dict) -> sympy.Expr:
+    """Product of the extents of the enclosing map parameters the WCR ``edge`` does NOT index its destination by:
+    every iteration over those writes the same element."""
+    indexed = {str(s) for s in edge.data.subset.free_symbols}
+    extent: sympy.Expr = sympy.Integer(1)
+    entry = scope[edge.src]
+    while entry is not None:
+        for param, rng in zip(entry.map.params, entry.map.range, strict=True):
+            if param not in indexed:
+                extent = extent * sympy.sympify(dace.subsets.Range([rng]).num_elements())
+        entry = scope[entry]
+    return extent
+
+
+def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
+    """The longest accumulation chain of ``sdfg``: over every write-conflict-resolution (reduction) edge leaving a
+    tasklet or a nested SDFG, the reduced map extent around it, times the nested SDFG's own length. Exact on the SDFG,
+    so a square matmul's ``K`` is told apart from its kept ``N``; only WCR reductions count, not a sequential loop
+    that accumulates into a scalar."""
+    lengths: list[sympy.Expr] = []
+    for state in sdfg.states():
+        scope = state.scope_dict()
+        for edge in state.edges():
+            if edge.data.is_empty() or edge.data.wcr is None:
+                continue
+            if isinstance(edge.src, nodes.Tasklet):
+                lengths.append(reduced_extent(edge, scope))
+            elif isinstance(edge.src, nodes.NestedSDFG):
+                lengths.append(reduced_extent(edge, scope) * accumulation_length(edge.src.sdfg))
+        lengths += [accumulation_length(n.sdfg) for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    known = [length for length in lengths if length != 1]
+    if not known:
+        return sympy.Integer(1)
+    return known[0] if len(known) == 1 else sympy.Max(*known)
 
 
 def standalone(call: external_call.ExternalCall) -> dace.SDFG:
@@ -89,6 +128,7 @@ def outline(program: dace.frontend.python.parser.DaceProgram, libm_calls: frozen
                 sdfg=region_sdfg,
                 calls_libm=bool(called_names(region_sdfg) & libm_calls),
                 has_reduction=has_reduction(region_sdfg),
+                accumulation_length=accumulation_length(region_sdfg),
             )
         )
     return Program(sdfg=sdfg, regions=tuple(regions), calls=calls)

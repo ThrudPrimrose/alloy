@@ -56,7 +56,15 @@ All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configurat
 ## Verification
 
 Each region candidate runs on fuzzed inputs from HPCAgent-Bench (`hpcagent_bench.fuzz` plus the input
-distributions) and is compared against the region's own `strict` build, using the bench's tolerance.
+distributions) and is compared against the region's own `strict` build. Each FP level names its test:
+
+- `exact`: bit-identical to the reference (the `strict` level itself).
+- `band`: HPCAgent-Bench's `compare_arrays` with its per-precision band (fp64 rtol 1e-9, atol 1e-11) and the
+  accumulation floor `eps_acc(p) * sqrt(l) * ||ref||_inf`. `sqrt(l)` is the random-walk growth of the difference
+  between two summation orders (Higham, Sec. 4.5); the bench measured `log2(l)` rejecting correct dynamic-schedule
+  reductions and `l` admitting a single lost update. `l` is `Region.accumulation_length`, derived exactly from the
+  SDFG's WCR edges (matmul: K; square matmul: the contracted N; row sum: N; elementwise: 1). When
+  `eps_acc * sqrt(l) >= rtol` the bench raises `UngradeableTolerance`; the report shows "ungradeable", never a pass.
 
 ## Timing
 

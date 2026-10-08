@@ -172,3 +172,21 @@ def test_a_compiler_not_on_path_is_skipped_with_its_reason(tmp_path):
 
     assert "gcc" not in usable
     assert skipped["gcc"] == "not on PATH: no-such-cc, no-such-cxx"
+
+
+REDUCTIONS = pathlib.Path(__file__).parent.parent / "examples" / "reductions.py"
+
+
+@pytest.mark.parametrize(
+    ("kernel", "lengths"),
+    [
+        ("square_free_matmul", ["K"]),
+        ("square_matmul", ["N"]),  # the contracted k, though N also names both kept axes
+        ("row_sum", ["1", "N"]),  # zero-initialization, then the sum over each row
+        ("scale", ["1"]),
+    ],
+)
+def test_the_accumulation_length_is_the_reduced_extent_of_each_region(kernel, lengths):
+    sut = regions.outline(load_program(f"{REDUCTIONS}:{kernel}"), MATRIX.libm_calls)
+
+    assert [str(r.accumulation_length) for r in sut.regions] == lengths

@@ -42,29 +42,26 @@ soname = "gomp"
 [openmp_runtimes.libnvomp]  # NVHPC's runtime
 soname = "nvomp"
 
-# rtol: relative tolerance against the reference level; the gate is max(rtol, dtype_rtol of the output).
+# tolerance: "exact" = bit-identical to the reference build (the strict level IS that reference); "band" = HPCAgent-Bench's
+# per-precision band (hpcagent_bench.precision.TOLERANCE_MATRIX) with its accumulation floor
+# eps_acc(p) * sqrt(l) * ||ref||_inf, l = the region's accumulation length (Region.accumulation_length).
 # needs: the region property a level requires ("reduction", or "finite_inputs" = declared with --finite-inputs).
 [fp_levels.strict]
-rtol = 0.0
+tolerance = "exact"
 
 [fp_levels.contract]
-rtol = 1e-13
+tolerance = "band"
 
 [fp_levels.noerrno]
-rtol = 1e-13
+tolerance = "band"
 
 [fp_levels.reassoc]
-rtol = 1e-13
+tolerance = "band"
 needs = "reduction"
 
 [fp_levels.fast]
-rtol = 1e-5
+tolerance = "band"
 needs = "finite_inputs"
-
-[dtype_rtol]  # about one ULP per output dtype
-float64 = 2.3e-16
-float32 = 1.2e-7
-float16 = 9.8e-4
 
 # probe: library name the linker must find. fp_level: the level a vector-library candidate builds at.
 [veclibs.libmvec]
