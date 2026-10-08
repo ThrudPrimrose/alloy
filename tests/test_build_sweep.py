@@ -8,14 +8,13 @@ import pytest
 from alloy import configuration_matrix, regions, report
 from alloy.build import build, parse_remarks
 from alloy.candidates import Candidate, one_factor_at_a_time
+from alloy.cli import load_program
 
 EXAMPLE = pathlib.Path(__file__).parent.parent / "examples" / "two_regions.py"
 MATRIX = configuration_matrix.load()
 
 
 def outlined() -> regions.Program:
-    from alloy.cli import load_program
-
     return regions.outline(load_program(f"{EXAMPLE}:two_regions"), MATRIX.libm_calls)
 
 
@@ -55,10 +54,12 @@ def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
 
     sut = build(region, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
-    assert sut.error == "" and sut.archive is not None and sut.archive.is_file()
+    assert sut.error == ""
+    assert sut.archive is not None
+    assert sut.archive.is_file()
     assert f"void {region.symbol}(" in sut.source.read_text()
-    symbols = subprocess.run(["nm", "--defined-only", str(sut.archive)], capture_output=True, text=True).stdout
-    assert f" T {region.symbol}" in symbols
+    symbols = subprocess.run(["nm", "--defined-only", str(sut.archive)], capture_output=True, text=True, check=True)
+    assert f" T {region.symbol}" in symbols.stdout
 
 
 def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate(tmp_path):
@@ -74,12 +75,13 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
 
 
 @pytest.mark.parametrize(
-    "line, vectorized, missed",
+    ("line", "vectorized", "missed"),
     [
         ("k.c:29:21: optimized: loop vectorized using 64 byte vectors", 1, ()),
         ("k.c:29:21: missed: couldn't vectorize loop", 0, ("couldn't vectorize loop",)),
         (
-            "k.c:30:23: remark: loop not vectorized: library call cannot be vectorized [-Rpass-analysis=loop-vectorize]",
+            "k.c:30:23: remark: loop not vectorized: library call cannot be vectorized"
+            " [-Rpass-analysis=loop-vectorize]",
             0,
             ("loop not vectorized: library call cannot be vectorized",),
         ),

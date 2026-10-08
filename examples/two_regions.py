@@ -1,9 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Two regions: a libm-bound elementwise map, then a sum reduction."""
 
-import numpy as np
-
 import dace
+import numpy as np
 
 N = dace.symbol("N", dace.int64)
 

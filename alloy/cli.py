@@ -14,11 +14,13 @@ def load_program(spec: str) -> DaceProgram:
     """The ``@dace.program`` named by ``file.py:function``."""
     path, _, name = spec.partition(":")
     module_spec = importlib.util.spec_from_file_location(pathlib.Path(path).stem, path)
-    assert module_spec is not None and module_spec.loader is not None, f"cannot import {path}"
+    if module_spec is None or module_spec.loader is None:
+        raise ImportError(f"cannot import {path}")
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
     program = vars(module)[name]
-    assert isinstance(program, DaceProgram), f"{spec} is not a @dace.program"
+    if not isinstance(program, DaceProgram):
+        raise TypeError(f"{spec} is not a @dace.program")
     return program
 
 

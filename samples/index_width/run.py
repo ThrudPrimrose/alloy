@@ -15,10 +15,9 @@ import time
 from collections.abc import Callable
 
 import dace
+import kernels
 import numpy as np
 from dace.config import set_temporary
-
-import kernels
 
 HERE = pathlib.Path(__file__).parent
 COMPILERS = {"gcc": "g++", "clang": "clang++-21"}

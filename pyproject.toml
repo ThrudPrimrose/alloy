@@ -30,7 +30,21 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "UP", "C901"]
+select = ["ALL"]
+ignore = [
+    "F821", "F841",  # dace python frontend syntax
+    "ANN", "D",  # annotations / docstrings: too big for now
+    "EM101", "EM102", "TRY003",  # messages built inline in raise
+    "ARG", "C408", "PLR2004",
+    "COM812",  # conflicts with ruff format
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "INP001", "S603", "S607"]  # pytest asserts; no package; nm by name
+"examples/**" = ["INP001"]
+"samples/**" = ["INP001", "T201", "S101", "S603", "S607"]  # standalone A/B harnesses: print, assert, run compilers
+"alloy/cli.py" = ["T201"]  # CLI output
+"alloy/build.py" = ["S603", "S607"]  # running gcc/clang/ar by name is the job
 
 [project.scripts]
 alloy = "alloy.cli:main"

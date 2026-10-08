@@ -55,7 +55,8 @@ def has_reduction(sdfg: dace.SDFG) -> bool:
 def standalone(call: external_call.ExternalCall) -> dace.SDFG:
     """The call's reference nest with containers renamed from connector names (``_in_a``/``_out_a``) back to the
     names ``abi_order`` uses; a container both read and written becomes one pointer."""
-    assert call.standalone_sdfg is not None, f"{call.symbol} has no reference nest"
+    if call.standalone_sdfg is None:
+        raise ValueError(f"{call.symbol} has no reference nest")
     sdfg = call.standalone_sdfg
     sdfg.name = call.symbol  # pyright: ignore[reportAttributeAccessIssue] -- DaCe Property descriptor
     for name in call.abi_order:

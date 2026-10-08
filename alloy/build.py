@@ -88,7 +88,7 @@ def compile_candidate(
     executable, remarks = compiler.executables[candidate.language], compiler.remark_flags
     flags = candidate.flags(matrix)
     command = [executable, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
-    return subprocess.run(command, capture_output=True, text=True), flags
+    return subprocess.run(command, capture_output=True, text=True, check=False), flags
 
 
 def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:

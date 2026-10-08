@@ -76,7 +76,7 @@ def compiler(table: dict[str, Any], name: str) -> Compiler:
 
 def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
     """Parse and check the matrix at ``path``."""
-    with open(path, "rb") as fh:
+    with path.open("rb") as fh:
         raw = tomllib.load(fh)
     top = {
         "base_flags",
