@@ -1,0 +1,40 @@
+# Copyright 2026 ETH Zurich and the Alloy authors.
+"""``alloy build path/to/kernel.py:function --out dir``: outline, sweep, and write the build report."""
+
+import argparse
+import importlib.util
+import pathlib
+
+from dace.frontend.python.parser import DaceProgram
+
+from alloy import regions, report
+
+
+def load_program(spec: str) -> DaceProgram:
+    """The ``@dace.program`` named by ``file.py:function``."""
+    path, _, name = spec.partition(":")
+    module_spec = importlib.util.spec_from_file_location(pathlib.Path(path).stem, path)
+    assert module_spec is not None and module_spec.loader is not None, f"cannot import {path}"
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    program = vars(module)[name]
+    assert isinstance(program, DaceProgram), f"{spec} is not a @dace.program"
+    return program
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="alloy")
+    sub = parser.add_subparsers(dest="command", required=True)
+    build_cmd = sub.add_parser("build", help="outline a program and build every region candidate")
+    build_cmd.add_argument("program", help="file.py:function")
+    build_cmd.add_argument("--out", type=pathlib.Path, required=True)
+    args = parser.parse_args()
+    program = regions.outline(load_program(args.program))
+    args.out.mkdir(parents=True, exist_ok=True)
+    reports = report.sweep(program, args.out)
+    report.write(reports, args.out)
+    print(f"{len(reports)} regions -> {args.out / 'report.md'}")
+
+
+if __name__ == "__main__":
+    main()

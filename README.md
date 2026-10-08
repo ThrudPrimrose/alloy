@@ -5,6 +5,7 @@ Alloy splits it into regions, renders each region under many codegen knobs, comp
 verifies every candidate, times the survivors, and links the best into one program plus a per-region report.
 
     uv sync --extra dev
+    alloy build examples/two_regions.py:two_regions --out out/   # regions, candidates, report.md
 
 `samples/` holds A/B pairs: a slow and a fast rendering of one kernel, with the setup that measured the gap.
 
