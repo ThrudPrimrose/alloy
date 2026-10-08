@@ -34,13 +34,18 @@ def main() -> None:
         "--matrix",
         type=pathlib.Path,
         default=configuration_matrix.DEFAULT_PATH,
-        help="configuration matrix TOML (default: configuration_matrix.toml at the repo top)",
+        help="configuration matrix TOML (default: the one shipped in the alloy package)",
+    )
+    build_cmd.add_argument(
+        "--finite-inputs",
+        action="store_true",
+        help="declare that no input is NaN or Inf, which opens FP levels that need it (fast)",
     )
     args = parser.parse_args()
     matrix = configuration_matrix.load(args.matrix)
     program = regions.outline(load_program(args.program), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
-    reports = report.sweep(program, matrix, args.out)
+    reports = report.sweep(program, matrix, args.out, finite_inputs=args.finite_inputs)
     report.write(reports, matrix, args.out)
     print(f"{len(reports)} regions -> {args.out / 'report.md'}")
 

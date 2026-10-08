@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright alloy
+
+  # Every compiler of configuration_matrix.toml on one runner, so the OpenMP interop test links objects from all of
+  # them into one binary against each runtime (libomp, libgomp, libnvomp).
+  toolchains:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      NVHPC_VERSION: "26.3"
+      LLVM_VERSION: "21"
+      GCC_VERSION: "14"  # first gcc that takes -std=c23
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk for the HPC SDK
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
+
+      - name: clang + LLVM libomp
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh $LLVM_VERSION
+          sudo apt-get install -y libomp-$LLVM_VERSION-dev
+
+      - name: Intel oneAPI (icx)
+        run: |
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp
+          source /opt/intel/oneapi/setvars.sh
+          echo "$(dirname "$(command -v icx)")" >> "$GITHUB_PATH"
+
+      - name: NVIDIA HPC SDK (nvc)
+        run: |
+          curl -fsSL https://developer.download.nvidia.com/hpc-sdk/ubuntu/DEB-GPG-KEY-NVIDIA-HPC-SDK \
+            | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-hpcsdk-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/nvidia-hpcsdk-archive-keyring.gpg] https://developer.download.nvidia.com/hpc-sdk/ubuntu/amd64 /" \
+            | sudo tee /etc/apt/sources.list.d/nvhpc.list
+          sudo apt-get update
+          sudo apt-get install -y nvhpc-${NVHPC_VERSION//./-}
+          echo "/opt/nvidia/hpc_sdk/Linux_x86_64/$NVHPC_VERSION/compilers/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain versions
+        run: |
+          gcc --version | head -1
+          clang-$LLVM_VERSION --version | head -1
+          icx --version | head -1
+          nvc --version | sed -n 2p
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra dev
+
+      # Every compiler is on PATH here, so nothing is deselected by mark.
+      - name: Tests
+        run: PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests

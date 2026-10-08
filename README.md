@@ -9,4 +9,7 @@ verifies every candidate, times the survivors, and links the best into one progr
 
 `samples/` holds A/B pairs: a slow and a fast rendering of one kernel, with the setup that measured the gap.
 
+Tests: `pytest -m "not icx"` on a box without Intel oneAPI (each compiler is a pytest mark); CI installs gcc,
+clang, oneAPI and the NVIDIA HPC SDK and runs everything, including the cross-compiler OpenMP link test.
+
 Notes: `docs/design.md` (decisions), `docs/measurement.md` (A/B rules), `docs/related_work.md` (citations).

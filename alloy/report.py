@@ -18,13 +18,13 @@ class RegionReport:
     builds: tuple[Build, ...]
 
 
-def sweep(program: Program, matrix: Matrix, out: pathlib.Path) -> list[RegionReport]:
+def sweep(program: Program, matrix: Matrix, out: pathlib.Path, *, finite_inputs: bool = False) -> list[RegionReport]:
     """Build every candidate of every region under ``out/regions/<symbol>``."""
     reports = []
     for region in program.regions:
         seen: dict[str, str] = {}
         folder = out / "regions" / region.symbol
-        candidates = one_factor_at_a_time(matrix, region)
+        candidates = one_factor_at_a_time(matrix, region, finite_inputs=finite_inputs)
         builds = tuple(build(region, cand, matrix, folder, seen) for cand in candidates)
         reports.append(RegionReport(region, builds))
     return reports
@@ -39,8 +39,11 @@ def row(b: Build) -> str:
     )
 
 
-def markdown(reports: list[RegionReport]) -> str:
-    lines = ["# Alloy build report", ""]
+def markdown(reports: list[RegionReport], matrix: Matrix) -> str:
+    lines = ["# Alloy build report", "", f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
+    _, skipped = matrix.usable_compilers()
+    lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
+    lines += [""] if skipped else []
     for rep in reports:
         r = rep.region
         unique = sum(1 for b in rep.builds if not b.error and not b.duplicate_of)
@@ -92,5 +95,5 @@ def as_json(reports: list[RegionReport]) -> list[dict]:
 def write(reports: list[RegionReport], matrix: Matrix, out: pathlib.Path) -> None:
     """Write ``report.md`` and ``report.json``, with a copy of the matrix that produced them."""
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    (out / "report.md").write_text(markdown(reports))
+    (out / "report.md").write_text(markdown(reports, matrix))
     (out / "report.json").write_text(json.dumps(as_json(reports), indent=2))

@@ -21,7 +21,7 @@ Imports of `hpcagent_bench` stay function-local.
 
 ## Sweep axes (CPU)
 
-All axes live in `configuration_matrix.toml` at the repo top (checked by `alloy/configuration_matrix.py`;
+All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configuration_matrix.py`;
 `alloy build --matrix` swaps it; every output folder keeps a copy). Code holds only the gating rules.
 
 - Rendering: CPF-C (C23) and CPF-C++ (C++20).

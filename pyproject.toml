@@ -25,6 +25,9 @@ dev = ["pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
 [tool.setuptools.packages.find]
 include = ["alloy*"]
 
+[tool.setuptools.package-data]
+alloy = ["configuration_matrix.toml"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
@@ -44,7 +47,7 @@ ignore = [
 "examples/**" = ["INP001"]
 "samples/**" = ["INP001", "T201", "S101", "S603", "S607"]  # standalone A/B harnesses: print, assert, run compilers
 "alloy/cli.py" = ["T201"]  # CLI output
-"alloy/build.py" = ["S603", "S607"]  # running gcc/clang/ar by name is the job
+"alloy/{build,runtime}.py" = ["S603", "S607"]  # running compilers, ar and nm by name is the job
 
 [project.scripts]
 alloy = "alloy.cli:main"
@@ -52,3 +55,12 @@ alloy = "alloy.cli:main"
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+
+[tool.pytest.ini_options]
+# One mark per compiler in the matrix; deselect the ones a box lacks, e.g. -m "not icx".
+markers = [
+    "gcc: needs gcc on PATH",
+    "clang: needs clang-21 on PATH",
+    "nvhpc: needs the NVIDIA HPC SDK (nvc) on PATH",
+    "icx: needs Intel oneAPI (icx) on PATH",
+]

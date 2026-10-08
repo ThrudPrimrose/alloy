@@ -1,77 +1,142 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Typed view of ``configuration_matrix.toml``: :func:`load` parses the file and refuses unknown or missing keys."""
+"""Typed view of ``configuration_matrix.toml``: :func:`load` parses the file and refuses unknown, missing or
+inconsistent entries."""
 
 import pathlib
+import shutil
 import tomllib
 from dataclasses import dataclass
 from typing import Any
 
-#: The matrix at the repository top.
-DEFAULT_PATH = pathlib.Path(__file__).resolve().parent.parent / "configuration_matrix.toml"
+#: The matrix shipped with the package.
+DEFAULT_PATH = pathlib.Path(__file__).resolve().parent / "configuration_matrix.toml"
+SCHEMA = 1
+#: Region properties an FP level may require.
+NEEDS = frozenset({"reduction", "finite_inputs"})
+
+
+@dataclass(slots=True, frozen=True)
+class Defaults:
+    fp_level: str
+    index_width: str
+    cost_model: str
+    openmp_runtime: str
 
 
 @dataclass(slots=True, frozen=True)
 class Language:
-    std_flag: str
+    render: str
+    std: str
     suffix: str
 
 
 @dataclass(slots=True, frozen=True)
-class Compiler:
-    """Executables per language, the flags that make the vectorizer report, and the flags selecting each vector
-    math library this compiler can use."""
-
-    executables: dict[str, str]
-    remark_flags: tuple[str, ...]
-    veclib_flags: dict[str, tuple[str, ...]]
+class FPLevel:
+    rtol: float
+    needs: str = ""
 
 
 @dataclass(slots=True, frozen=True)
-class FPLevel:
-    flags: tuple[str, ...]
-    need_reduction: bool = False
+class Veclib:
+    probe: str
+    fp_level: str
+
+
+@dataclass(slots=True, frozen=True)
+class Compiler:
+    """How one compiler spells every option; a runtime, cost model or vector library it does not list is
+    unsupported."""
+
+    executables: dict[str, str]
+    remarks: tuple[str, ...]
+    openmp: dict[str, tuple[str, ...]]
+    fp: dict[str, tuple[str, ...]]
+    cost_model: dict[str, tuple[str, ...]]
+    veclib: dict[str, tuple[str, ...]]
+
+    def missing_executables(self) -> list[str]:
+        return [exe for exe in self.executables.values() if shutil.which(exe) is None]
 
 
 @dataclass(slots=True, frozen=True)
 class Matrix:
-    """Everything the sweep enumerates. Dict order is the file's order; the first FP level, knob value and index
-    width are the defaults."""
-
     path: pathlib.Path
-    base_flags: tuple[str, ...]
+    defaults: Defaults
+    build_flags: tuple[str, ...]
     libm_calls: frozenset[str]
-    veclib_fp_level: str
     languages: dict[str, Language]
-    compilers: dict[str, Compiler]
-    veclib_probes: dict[str, str]
+    openmp_runtimes: dict[str, str]  # runtime -> soname
     fp_levels: dict[str, FPLevel]
+    dtype_rtol: dict[str, float]
+    veclibs: dict[str, Veclib]
+    compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     index_widths: dict[str, dict[str, str]]
 
-    @property
-    def reference_fp_level(self) -> str:
-        return next(iter(self.fp_levels))
+    def usable_compilers(self) -> tuple[dict[str, Compiler], dict[str, str]]:
+        """``(usable, skipped)``: compilers whose executables are on PATH and that spell the default runtime, and
+        the reason each other compiler is skipped."""
+        usable, skipped = {}, {}
+        runtime = self.defaults.openmp_runtime
+        for name, comp in self.compilers.items():
+            if missing := comp.missing_executables():
+                skipped[name] = f"not on PATH: {', '.join(missing)}"
+            elif runtime not in comp.openmp:
+                skipped[name] = f"no flags for the {runtime} OpenMP runtime"
+            else:
+                usable[name] = comp
+        return usable, skipped
 
-    @property
-    def default_index_width(self) -> str:
-        return next(iter(self.index_widths))
 
-
-def checked(table: dict[str, Any], keys: set[str], optional: set[str], where: str) -> dict[str, Any]:
-    """``table`` after checking it names every key in ``keys``, and nothing beyond ``keys | optional``."""
-    missing, unknown = keys - table.keys(), table.keys() - keys - optional
+def table(raw: dict[str, Any], where: str, required: set[str], optional: frozenset[str] = frozenset()) -> dict:
+    """``raw`` after checking it names every key in ``required`` and nothing beyond ``required | optional``."""
+    missing, unknown = required - raw.keys(), raw.keys() - required - optional
     if missing or unknown:
         raise ValueError(f"{where}: missing {sorted(missing)}, unknown {sorted(unknown)}")
-    return table
+    return raw
 
 
-def compiler(table: dict[str, Any], name: str) -> Compiler:
-    t = checked(table, {"executables", "remark_flags", "veclib_flags"}, set(), f"compilers.{name}")
+def flag_table(raw: dict[str, Any], where: str, allowed: set[str], *, complete: bool = False) -> dict:
+    """``{option: flags}`` whose options are all in ``allowed`` (all of them when ``complete``)."""
+    table(raw, where, allowed if complete else set(), frozenset(allowed))
+    return {option: tuple(flags) for option, flags in raw.items()}
+
+
+def compiler(raw: dict[str, Any], name: str, m: dict[str, Any]) -> Compiler:
+    where = f"compilers.{name}"
+    t = table(raw, where, {"remarks", "openmp", "fp"}, frozenset({*m["languages"], "cost_model", "veclib"}))
+    executables = {lang: t[lang] for lang in m["languages"] if lang in t}
+    if not executables:
+        raise ValueError(f"{where}: names no executable for any language")
     return Compiler(
-        dict(t["executables"]),
-        tuple(t["remark_flags"]),
-        {lib: tuple(flags) for lib, flags in t["veclib_flags"].items()},
+        executables=executables,
+        remarks=tuple(t["remarks"]),
+        openmp=flag_table(t["openmp"], f"{where}.openmp", set(m["openmp_runtimes"])),
+        fp=flag_table(t["fp"], f"{where}.fp", set(m["fp_levels"]), complete=True),
+        cost_model=flag_table(t.get("cost_model", {}), f"{where}.cost_model", set(m["cost_models"])),
+        veclib=flag_table(t.get("veclib", {}), f"{where}.veclib", set(m["veclibs"])),
     )
+
+
+def check_consistency(m: Matrix) -> None:
+    """Defaults, gating names and vector-library levels must refer to declared entries."""
+    d = m.defaults
+    for kind, value, known in (
+        ("fp_level", d.fp_level, m.fp_levels),
+        ("index_width", d.index_width, m.index_widths),
+        ("openmp_runtime", d.openmp_runtime, m.openmp_runtimes),
+    ):
+        if value not in known:
+            raise ValueError(f"{m.path}: defaults.{kind} {value!r} is not declared")
+    for name, comp in m.compilers.items():
+        if d.cost_model not in comp.cost_model:
+            raise ValueError(f"{m.path}: compilers.{name} does not spell the default cost model {d.cost_model!r}")
+    for name, level in m.fp_levels.items():
+        if level.needs and level.needs not in NEEDS:
+            raise ValueError(f"{m.path}: fp_levels.{name}.needs must be one of {sorted(NEEDS)}")
+    for name, lib in m.veclibs.items():
+        if lib.fp_level not in m.fp_levels:
+            raise ValueError(f"{m.path}: veclibs.{name}.fp_level {lib.fp_level!r} is not declared")
 
 
 def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
@@ -79,43 +144,44 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
     with path.open("rb") as fh:
         raw = tomllib.load(fh)
     top = {
-        "base_flags",
-        "libm_calls",
-        "veclib_fp_level",
+        "schema",
+        "defaults",
+        "build",
+        "gating",
         "languages",
-        "compilers",
-        "veclib_probes",
+        "openmp_runtimes",
         "fp_levels",
-        "knobs",
-        "index_widths",
+        "dtype_rtol",
+        "veclibs",
+        "compilers",
+        "codegen",
     }
-    checked(raw, top, set(), str(path))
+    table(raw, str(path), top)
+    if raw["schema"] != SCHEMA:
+        raise ValueError(f"{path}: schema {raw['schema']} is not {SCHEMA}")
+    cost_models = {model for comp in raw["compilers"].values() for model in comp.get("cost_model", {})}
+    names = {**raw, "cost_models": cost_models}
+    codegen = table(raw["codegen"], "codegen", {"knobs", "index_widths"})
     matrix = Matrix(
         path=path,
-        base_flags=tuple(raw["base_flags"]),
-        libm_calls=frozenset(raw["libm_calls"]),
-        veclib_fp_level=raw["veclib_fp_level"],
+        defaults=Defaults(**table(raw["defaults"], "defaults", set(Defaults.__slots__))),
+        build_flags=tuple(table(raw["build"], "build", {"flags"})["flags"]),
+        libm_calls=frozenset(table(raw["gating"], "gating", {"libm_calls"})["libm_calls"]),
         languages={
-            name: Language(**checked(t, {"std_flag", "suffix"}, set(), f"languages.{name}"))
-            for name, t in raw["languages"].items()
+            n: Language(**table(t, f"languages.{n}", {"render", "std", "suffix"})) for n, t in raw["languages"].items()
         },
-        compilers={name: compiler(t, name) for name, t in raw["compilers"].items()},
-        veclib_probes=dict(raw["veclib_probes"]),
+        openmp_runtimes={
+            n: table(t, f"openmp_runtimes.{n}", {"soname"})["soname"] for n, t in raw["openmp_runtimes"].items()
+        },
         fp_levels={
-            name: FPLevel(
-                tuple(checked(t, {"flags"}, {"need_reduction"}, f"fp_levels.{name}")["flags"]),
-                bool(t.get("need_reduction", False)),
-            )
-            for name, t in raw["fp_levels"].items()
+            n: FPLevel(**table(t, f"fp_levels.{n}", {"rtol"}, frozenset({"needs"})))
+            for n, t in raw["fp_levels"].items()
         },
-        knobs={knob: tuple(values) for knob, values in raw["knobs"].items()},
-        index_widths={name: dict(t) for name, t in raw["index_widths"].items()},
+        dtype_rtol={dtype: float(v) for dtype, v in raw["dtype_rtol"].items()},
+        veclibs={n: Veclib(**table(t, f"veclibs.{n}", {"probe", "fp_level"})) for n, t in raw["veclibs"].items()},
+        compilers={n: compiler(t, n, names) for n, t in raw["compilers"].items()},
+        knobs={knob: tuple(values) for knob, values in codegen["knobs"].items()},
+        index_widths={n: dict(t) for n, t in codegen["index_widths"].items()},
     )
-    if matrix.veclib_fp_level not in matrix.fp_levels:
-        raise ValueError(f"{path}: veclib_fp_level {matrix.veclib_fp_level!r} is not an fp level")
-    for name, comp in matrix.compilers.items():
-        if unprobed := comp.veclib_flags.keys() - matrix.veclib_probes.keys():
-            raise ValueError(f"{path}: compilers.{name} names vector libraries without a probe: {sorted(unprobed)}")
-        if unknown := comp.executables.keys() - matrix.languages.keys():
-            raise ValueError(f"{path}: compilers.{name} has executables for unknown languages {sorted(unknown)}")
+    check_consistency(matrix)
     return matrix

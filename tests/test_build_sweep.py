@@ -67,7 +67,7 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
     seen: dict[str, str] = {}
     first = build(region, Candidate("c", "gcc"), MATRIX, tmp_path / "a", seen)
 
-    sut = build(region, Candidate("c++", "gcc"), MATRIX, tmp_path / "b", seen)
+    sut = build(region, Candidate("cpp", "gcc"), MATRIX, tmp_path / "b", seen)
 
     assert first.duplicate_of == ""
     assert sut.object_hash == first.object_hash
@@ -110,31 +110,65 @@ def test_the_report_lists_every_candidate_of_every_region(tmp_path):
     assert (tmp_path / "configuration_matrix.toml").read_bytes() == MATRIX.path.read_bytes()
 
 
-def restricted_matrix(tmp_path: pathlib.Path) -> pathlib.Path:
-    """The shipped matrix with clang and every FP level but the first two removed."""
+def variant(tmp_path: pathlib.Path, old: str, new: str) -> pathlib.Path:
+    """The shipped matrix with ``old`` replaced by ``new`` once."""
     text = MATRIX.path.read_text()
-    text = text[: text.index("# clang 22")] + text[text.index("# Library name") :]
-    text = text[: text.index("[fp_levels.noerrno]")] + text[text.index("# Readable-codegen knobs") :]
-    text = text.replace('veclib_fp_level = "noerrno"', 'veclib_fp_level = "contract"')
+    assert old in text
     path = tmp_path / "matrix.toml"
-    path.write_text(text)
+    path.write_text(text.replace(old, new, 1))
     return path
 
 
+def gcc_only(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
+    text = MATRIX.path.read_text()
+    first, last = text.index("# clang 22"), text.index("# Readable-codegen knobs")
+    return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
+
+
 def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
-    matrix = configuration_matrix.load(restricted_matrix(tmp_path))
+    matrix = gcc_only(tmp_path)
     region = region_with(outlined(), libm=False, reduction=True)
 
     sut = one_factor_at_a_time(matrix, region)
 
+    gcc = matrix.compilers["gcc"]
+    per_language = (
+        1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
+    )
     assert {c.compiler for c in sut} == {"gcc"}
-    assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract"}
-    assert len(sut) == len(matrix.languages) * (1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + 1)
+    assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
+    assert len(sut) == len(matrix.languages) * per_language
+
+
+def test_fast_math_is_tried_only_when_inputs_are_declared_finite(tmp_path):
+    matrix = gcc_only(tmp_path)
+    region = region_with(outlined(), libm=False, reduction=True)
+
+    sut = one_factor_at_a_time(matrix, region, finite_inputs=True)
+
+    assert "fast" in {c.resolved(matrix)[1] for c in sut}
 
 
 def test_a_matrix_with_an_unknown_key_is_refused(tmp_path):
-    path = tmp_path / "matrix.toml"
-    path.write_text(MATRIX.path.read_text().replace("[knobs]", "typo_key = 1\n\n[knobs]", 1))
+    path = variant(tmp_path, "schema = 1\n", "schema = 1\ntypo_key = 1\n")
 
     with pytest.raises(ValueError, match="unknown"):
         configuration_matrix.load(path)
+
+
+def test_a_compiler_that_does_not_spell_every_fp_level_is_refused(tmp_path):
+    path = variant(tmp_path, 'fast = ["-ffast-math"]\n', "")
+
+    with pytest.raises(ValueError, match=r"compilers\.gcc\.fp: missing \['fast'\]"):
+        configuration_matrix.load(path)
+
+
+def test_a_compiler_not_on_path_is_skipped_with_its_reason(tmp_path):
+    matrix = configuration_matrix.load(
+        variant(tmp_path, 'c = "gcc"\ncpp = "g++"', 'c = "no-such-cc"\ncpp = "no-such-cxx"')
+    )
+
+    usable, skipped = matrix.usable_compilers()
+
+    assert "gcc" not in usable
+    assert skipped["gcc"] == "not on PATH: no-such-cc, no-such-cxx"

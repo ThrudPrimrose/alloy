@@ -11,11 +11,14 @@ from dataclasses import dataclass
 from dace.codegen import cpf
 from dace.config import set_temporary
 
+from alloy import runtime
 from alloy.candidates import Candidate
 from alloy.configuration_matrix import Matrix
 from alloy.regions import Region
 
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
+#: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
+NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
 
 
 @dataclass(slots=True, frozen=True)
@@ -48,7 +51,10 @@ def render(region: Region, candidate: Candidate, matrix: Matrix) -> str:
         for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
         rendering = cpf.render(
-            region.sdfg, language=candidate.language, order=list(region.abi_order), check_compiles=False
+            region.sdfg,
+            language=matrix.languages[candidate.language].render,
+            order=list(region.abi_order),
+            check_compiles=False,
         )
     return rendering.code
 
@@ -57,13 +63,11 @@ def parse_remarks(log: str, source: pathlib.Path) -> Remarks:
     """Count vectorized loops and collect missed reasons from a compiler's diagnostics about ``source``."""
     vectorized, missed = 0, []
     for line in log.splitlines():
-        if source.name not in line:
-            continue
-        match = REMARK_LINE.search(line)
+        match = REMARK_LINE.search(line) if source.name in line else NVHPC_REMARK.match(line)
         if match is None:
             continue
         text = match.group(1)
-        if "loop vectorized" in text or "vectorized loop" in text:
+        if "loop vectorized" in text or "vectorized loop" in text or "Generated vector" in text:
             vectorized += 1
         elif "not vectorized" in text or "couldn't vectorize" in text or "loop not vectorized" in text:
             missed.append(text.strip())
@@ -85,10 +89,16 @@ def compile_candidate(
 ) -> tuple[subprocess.CompletedProcess, tuple]:
     """Compile ``source`` to ``<stem>.o`` next to it; returns the process and the flags used."""
     compiler = matrix.compilers[candidate.compiler]
-    executable, remarks = compiler.executables[candidate.language], compiler.remark_flags
+    executable, remarks = compiler.executables[candidate.language], compiler.remarks
     flags = candidate.flags(matrix)
     command = [executable, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
     return subprocess.run(command, capture_output=True, text=True, check=False), flags
+
+
+def runtime_library(matrix: Matrix) -> pathlib.Path:
+    """The shared object of the matrix's default OpenMP runtime, as its compilers resolve it."""
+    soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
+    return runtime.resolve(soname, [exe for comp in matrix.compilers.values() for exe in comp.executables.values()])
 
 
 def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
@@ -104,6 +114,9 @@ def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.
     if proc.returncode != 0:
         return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
     obj = source.with_suffix(".o")
+    if missing := runtime.unresolved(obj, runtime_library(matrix)):
+        error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
+        return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
     digest = code_hash(obj)
     archive = folder / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
