@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alloy"
+version = "0.0.1"
+description = "Speculative per-region code generation backend for DaCe: sweep, verify, and report rendering candidates."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Yakup Budanaz", email = "budanaz.yakup@gmail.com" }]
+keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
+dependencies = [
+    "numpy",
+    # Same pins as NestForge, which imports Alloy as its codegen backend.
+    "dace @ git+https://github.com/spcl/dace.git@1c1cdc14d4ebe0c2ceec75a03020c1485b964c01",
+    "hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@26a4f0cfc1540cead109dfc8d736f1c45263e390",
+]
+
+[project.optional-dependencies]
+dev = ["pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+
+[tool.setuptools.packages.find]
+include = ["alloy*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "UP", "C901"]

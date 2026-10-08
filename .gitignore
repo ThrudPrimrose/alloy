@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.dacecache/
+*.egg-info/
+/build/
+dist/
+*.so
+*.o
+*.a
+_dacegraphs/
+
+# Never commit key / secret material anywhere in this repo.
+*.pem
+*.key
+*_key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+.ssh/
+*.p12
+*.pfx
+.cache/
+
+# coverage (CI writes these)
+.coverage
+coverage.txt
+coverage.xml
+htmlcov/
+
+# Claude Code local state (agent worktrees)
+.claude/
