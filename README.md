@@ -7,3 +7,5 @@ verifies every candidate, times the survivors, and links the best into one progr
     uv sync --extra dev
 
 `samples/` holds A/B pairs: a slow and a fast rendering of one kernel, with the setup that measured the gap.
+
+Notes: `docs/design.md` (decisions), `docs/measurement.md` (A/B rules), `docs/related_work.md` (citations).
