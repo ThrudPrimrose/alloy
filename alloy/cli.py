@@ -7,7 +7,7 @@ import pathlib
 
 from dace.frontend.python.parser import DaceProgram
 
-from alloy import configuration_matrix, regions, report
+from alloy import configuration_matrix, regions, report, sweep
 
 
 def load_program(spec: str) -> DaceProgram:
@@ -45,7 +45,7 @@ def main() -> None:
     matrix = configuration_matrix.load(args.matrix)
     program = regions.outline(load_program(args.program), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
-    reports = report.sweep(program, matrix, args.out, finite_inputs=args.finite_inputs)
+    reports = sweep.run(program, matrix, args.out, finite_inputs=args.finite_inputs)
     report.write(reports, matrix, args.out)
     print(f"{len(reports)} regions -> {args.out / 'report.md'}")
 

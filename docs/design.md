@@ -21,6 +21,8 @@ Imports of `hpcagent_bench` stay function-local.
 
 ## Sweep axes (CPU)
 
+Status: built (one factor at a time; combining winners is open).
+
 All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configuration_matrix.py`;
 `alloy build --matrix` swaps it; every output folder keeps a copy). Code holds only the gating rules.
 
@@ -49,11 +51,15 @@ All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configurat
 
 ## Sweep axes (GPU)
 
+Status: not built.
+
 - Thread-block dimensions, `__launch_bounds__`, codegen knobs, `-use_fast_math` as a GPU FP level.
 - NVIDIA: nvcc and clang-cuda (local GPU).
 - AMD: hipcc and raw clang with the AMDGPU target. Runs on a remote box; ask before every ssh.
 
 ## Verification
+
+Status: tolerance model and accumulation length built; running candidates is not.
 
 Each region candidate runs on fuzzed inputs from HPCAgent-Bench (`hpcagent_bench.fuzz` plus the input
 distributions) and is compared against the region's own `strict` build. Each FP level names its test:
@@ -68,12 +74,16 @@ distributions) and is compared against the region's own `strict` build. Each FP 
 
 ## Timing
 
+Status: not built.
+
 - Screen on 4 cores at a working set of 2-4x the LLC.
 - Re-time the top 3 per region on the full machine at full size.
 - Only the re-timed numbers are reported.
 - Baselines: DaCe's default CPU codegen, then alloy-full.
 
 ## Report format
+
+Status: build report built (candidates, objects, remarks); good-vs-bad with times is not.
 
 One table per region: the best candidate, the worst candidate, and the cause, taken from the compiler remark. Every
 interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).
