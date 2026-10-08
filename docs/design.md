@@ -81,10 +81,21 @@ distributions) and is compared against the region's own `strict` build. Each FP 
 
 Status: not built.
 
-- Screen on 4 cores at a working set of 2-4x the LLC.
-- Re-time the top 3 per region on the full machine at full size.
+- Cache: the largest cache level in `/sys/devices/system/cpu/cpu*/cache`, summed over its distinct instances
+  (`shared_cpu_list`). Every timed working set is 2-4x that, so no run fits in cache.
+- Cores: the usable CPUs (`os.sched_getaffinity`, what `nproc` counts), one hardware thread per physical core
+  (`thread_siblings_list`); SMT siblings are never used. `OMP_PLACES=cores`, `OMP_PROC_BIND=close`,
+  `OMP_NUM_THREADS` = the physical cores used.
+- Screen on 4 physical cores at the 2-4x working set.
+- Re-time the top 3 per region on every physical core at full size.
 - Only the re-timed numbers are reported.
-- Baselines: DaCe's default CPU codegen, then alloy-full.
+- Before timing, one draw at the timing size is compared to the reference: the fuzz draws are capped small, and a
+  candidate can break only at large sizes (int32 index overflow).
+- Every arm of a region is loaded into one process and called alternately on one set of buffers (`measurement.md`).
+- A shim archive times each region's entry with `clock_gettime`; the region is an external call, so inlining is
+  unchanged.
+- A win needs non-overlapping 95% CIs and survives a reversed arm order; otherwise it is a tie and the default stays.
+- Baselines: DaCe's default CPU codegen, then alloy-full, both timed as whole programs.
 
 ## Report format
 

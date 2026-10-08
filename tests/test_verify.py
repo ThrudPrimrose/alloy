@@ -55,7 +55,8 @@ def handwritten_archive(tmp: pathlib.Path, region: regions.Region, body: str) ->
     """``lib<symbol>.a`` defining the region's entry with ``body``, outside every candidate."""
     source, obj, archive = tmp / "hand.c", tmp / "hand.o", tmp / "libhand.a"
     signature = region.signature.replace("__restrict__", "restrict")
-    source.write_text(f"#include <stdint.h>\n#include <stdlib.h>\nvoid {region.symbol}({signature}) {{ {body} }}\n")
+    headers = "#include <omp.h>\n#include <stdint.h>\n#include <stdlib.h>\n"
+    source.write_text(f"{headers}void {region.symbol}({signature}) {{ {body} }}\n")
     subprocess.run(["gcc", "-O2", "-fPIC", "-c", str(source), "-o", str(obj)], check=True)
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
     return archive
@@ -111,6 +112,20 @@ def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path):
     sut = verify.judge("band", refs, [verify.run(compiled, d, cases.outputs) for d in cases.draws], [1, 1])
 
     assert sut.status == "crashed"
+
+
+def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_server_started(tmp_path, monkeypatch):
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    region, _, linker, _ = reference_run(tmp_path, program, cases)  # the fork server is running from here on
+    probe = "out[0] = omp_get_max_threads(); out[1] = omp_get_num_places();"
+    compiled = linker.compile({region.symbol: handwritten_archive(tmp_path, region, probe)}, "probe")
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+
+    sut = verify.run(compiled, cases.draws[0], cases.outputs)
+
+    assert not isinstance(sut, str)
+    threads, places = sut["out"][:2]
+    assert threads == places >= 2
 
 
 def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):

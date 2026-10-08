@@ -6,11 +6,14 @@ keeps its reference archive, and the outputs are compared against the all-refere
 import copy
 import hashlib
 import multiprocessing
+import os
 import pathlib
+import queue
 import shutil
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import numpy as np
 import sympy
@@ -18,7 +21,7 @@ from dace.codegen.exceptions import CompilationError
 from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
 
-from alloy import runtime
+from alloy import machine, runtime
 from alloy.build import Build, runtime_library
 from alloy.configuration_matrix import Matrix
 from alloy.inputs import Draw
@@ -106,9 +109,21 @@ class Linker:
 #: Seconds one program call may take before its child is killed and the candidate reported as crashed.
 CALL_TIMEOUT_S = 600
 
+#: One program call's outputs by name, or a string describing how its child died.
+Outcome = dict[str, np.ndarray] | str
 
-def run_child(folder: str, args: dict[str, Any], outputs: tuple[str, ...], conn: Any) -> None:
+
+def openmp_env(threads: int) -> dict[str, str]:
+    return {"OMP_NUM_THREADS": str(threads), "OMP_PROC_BIND": "close", "OMP_PLACES": "cores"}
+
+
+def run_child(folder: str, args: dict[str, Any], outputs: tuple[str, ...], cpus: tuple[int, ...], conn: Any) -> None:
     from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
+
+    # The fork server froze the environment it started with and loads no OpenMP runtime, so the runtime the program
+    # library brings in reads this child's settings.
+    os.sched_setaffinity(0, cpus)
+    os.environ.update(openmp_env(len(cpus)))
 
     # an array that crossed the process boundary may arrive as a view on the pickle buffer, which dace refuses
     args = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
@@ -124,13 +139,14 @@ def child_context() -> Any:
     return ctx
 
 
-def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...]) -> dict[str, np.ndarray] | str:
-    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child process so a
-    crash is a verdict; a string describes the crash."""
+def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[int, ...] | None = None) -> Outcome:
+    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child process bound
+    to ``cpus`` (default: the first core slot) so a crash is a verdict; a string describes the crash."""
+    cpus = machine.core_slots()[0] if cpus is None else cpus
     args = {**{k: copy.deepcopy(v) for k, v in draw.values.items()}, **draw.sizes}
     ctx = child_context()
     receive, send = ctx.Pipe(duplex=False)
-    child = ctx.Process(target=run_child, args=(str(folder), args, outputs, send))
+    child = ctx.Process(target=run_child, args=(str(folder), args, outputs, cpus, send))
     child.start()
     send.close()
     result = None
@@ -147,6 +163,36 @@ def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...]) -> dict[str,
     if child.exitcode != 0 or result is None:
         return f"exit code {child.exitcode}"
     return result
+
+
+class Children:
+    """Program calls in parallel: one child per core slot at a time, each bound to its slot's cores, so no two
+    children share a core."""
+
+    __slots__ = ("free", "pool")
+
+    def __init__(self) -> None:
+        slots = machine.core_slots()
+        self.free: queue.SimpleQueue[tuple[int, ...]] = queue.SimpleQueue()
+        for slot in slots:
+            self.free.put(slot)
+        self.pool = ThreadPoolExecutor(max_workers=len(slots))
+
+    def call(self, folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...]) -> Outcome:
+        cpus = self.free.get()
+        try:
+            return run(folder, draw, outputs, cpus)
+        finally:
+            self.free.put(cpus)
+
+    def submit(self, folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...]) -> Future[Outcome]:
+        return self.pool.submit(self.call, folder, draw, outputs)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.pool.shutdown(wait=True)
 
 
 def accumulation_length(program: Program, sizes: dict[str, int]) -> int:
@@ -201,9 +247,19 @@ class Verification:
 
 def reference_outputs(compiled: pathlib.Path, cases: Cases) -> Reference:
     """The reference's outputs per draw, and which outputs change between repeated runs of the same draw."""
+    with Children() as children:
+        return reference_from(
+            cases, [[f.result() for f in runs] for runs in submit_reference(children, compiled, cases)]
+        )
+
+
+def submit_reference(children: Children, compiled: pathlib.Path, cases: Cases) -> list[list[Future[Outcome]]]:
+    return [[children.submit(compiled, d, cases.outputs) for _ in range(REFERENCE_RUNS)] for d in cases.draws]
+
+
+def reference_from(cases: Cases, per_draw: list[list[Outcome]]) -> Reference:
     outputs, unstable = [], set()
-    for draw in cases.draws:
-        runs = [run(compiled, draw, cases.outputs) for _ in range(REFERENCE_RUNS)]
+    for runs in per_draw:
         failed = [r for r in runs if isinstance(r, str)]
         if failed:
             raise RuntimeError(f"the reference program crashed: {failed[0]}")
@@ -213,7 +269,7 @@ def reference_outputs(compiled: pathlib.Path, cases: Cases) -> Reference:
     return Reference(outputs, frozenset(unstable))
 
 
-def judge(tolerance: str, ref: Reference, vals: list[dict[str, np.ndarray] | str], lengths: list[int]) -> Verdict:
+def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int]) -> Verdict:
     """The worst verdict over every iteration and output; nondeterministic outputs always use ``band``."""
     worst = Verdict("exact")
     for expected_outputs, val, length in zip(ref.outputs, vals, lengths, strict=True):
@@ -232,37 +288,51 @@ def judge(tolerance: str, ref: Reference, vals: list[dict[str, np.ndarray] | str
 def verify(
     program: Program, matrix: Matrix, reports: list[RegionReport], cases: Cases, out: pathlib.Path
 ) -> Verification:
-    """A verdict for every built candidate. A duplicate object inherits its original's verdict."""
+    """A verdict for every built candidate. Program calls run in parallel children while the next candidate
+    compiles; a duplicate object is judged on its original's outputs at its own FP level."""
     linker = Linker(program, matrix, out)
     reference = {rep.region.symbol: reference_archive(rep) for rep in reports}
     ref_compilers = frozenset(rep.builds[0].candidate.compiler for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_compilers)
-    draws, outputs = cases.draws, cases.outputs
-    refs = reference_outputs(ref_program, cases)
-    lengths = [accumulation_length(program, d.sizes) for d in draws]
-    verdicts: dict[str, dict[str, Verdict]] = {}
-    for rep in reports:
-        mine = verdicts.setdefault(rep.region.symbol, {})
-        ran: dict[str, list[dict[str, np.ndarray] | str]] = {}
-        for b in rep.builds:
-            if b.error or b.archive is None:
-                continue
-            tolerance = matrix.fp_levels[b.candidate.resolved(matrix)[1]].tolerance
-            if b.duplicate_of:  # same object, but possibly a looser FP level: judge its outputs under its own test
-                original = ran.get(b.duplicate_of)
-                mine[b.name] = mine[b.duplicate_of] if original is None else judge(tolerance, refs, original, lengths)
-                continue
-            selection = {**reference, rep.region.symbol: b.archive}
-            try:
-                compiled = linker.compile(
-                    selection, f"{rep.region.symbol}_{b.name}", ref_compilers | {b.candidate.compiler}
-                )
-            except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that does not load
-                mine[b.name] = Verdict("link_error", detail=str(exc)[-2000:])
-                continue
-            ran[b.name] = [run(compiled, d, outputs) for d in draws]
-            mine[b.name] = judge(tolerance, refs, ran[b.name], lengths)
+    lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
+    with Children() as children:
+        ref_runs = submit_reference(children, ref_program, cases)
+        pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
+        for rep in reports:
+            for b in rep.builds:
+                if b.error or b.archive is None or b.duplicate_of:
+                    continue
+                selection = {**reference, rep.region.symbol: b.archive}
+                try:
+                    compiled = linker.compile(
+                        selection, f"{rep.region.symbol}_{b.name}", ref_compilers | {b.candidate.compiler}
+                    )
+                except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
+                    pending[rep.region.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
+                    continue
+                pending[rep.region.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
+        refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
+        ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
+    verdicts = {rep.region.symbol: judge_region(rep, matrix, refs, ran, lengths) for rep in reports}
     return Verification(verdicts, refs.nondeterministic)
+
+
+def judge_region(
+    rep: RegionReport,
+    matrix: Matrix,
+    refs: Reference,
+    ran: dict[tuple[str, str], list[Outcome] | Verdict],
+    lengths: list[int],
+) -> dict[str, Verdict]:
+    """A verdict for every built candidate of ``rep``; a duplicate is judged on its original's outputs."""
+    mine: dict[str, Verdict] = {}
+    for b in rep.builds:
+        if b.error or b.archive is None:
+            continue
+        tolerance = matrix.fp_levels[b.candidate.resolved(matrix)[1]].tolerance
+        outputs = ran[rep.region.symbol, b.duplicate_of or b.name]
+        mine[b.name] = outputs if isinstance(outputs, Verdict) else judge(tolerance, refs, outputs, lengths)
+    return mine
 
 
 def reference_archive(rep: RegionReport) -> pathlib.Path:
