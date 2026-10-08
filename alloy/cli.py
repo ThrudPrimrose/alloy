@@ -7,7 +7,7 @@ import pathlib
 
 from dace.frontend.python.parser import DaceProgram
 
-from alloy import configuration_matrix, regions, report, sweep
+from alloy import configuration_matrix, inputs, regions, report, sweep, verify
 
 
 def load_program(spec: str) -> DaceProgram:
@@ -41,12 +41,28 @@ def main() -> None:
         action="store_true",
         help="declare that no input is NaN or Inf, which opens FP levels that need it (fast)",
     )
+    build_cmd.add_argument(
+        "--manifest",
+        type=pathlib.Path,
+        help="HPCAgent-Bench style manifest (sizes, fuzzed ranges, inputs); default: kernel.yaml next to kernel.py. "
+        "Without one, candidates are built but not verified.",
+    )
+    build_cmd.add_argument("--iterations", type=int, default=2, help="fuzz draws every candidate is verified on")
     args = parser.parse_args()
     matrix = configuration_matrix.load(args.matrix)
     program = regions.outline(load_program(args.program), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
     reports = sweep.run(program, matrix, args.out, finite_inputs=args.finite_inputs)
-    report.write(reports, matrix, args.out)
+    path, _, function = args.program.partition(":")
+    manifest_path = args.manifest or inputs.manifest_for(pathlib.Path(path))
+    verification = None
+    if manifest_path.is_file():
+        manifest = inputs.load(manifest_path, function)
+        cases = verify.Cases([inputs.draw(manifest, i) for i in range(args.iterations)], manifest.outputs)
+        verification = verify.verify(program, matrix, reports, cases, args.out)
+    else:
+        print(f"no manifest at {manifest_path}: candidates are built, not verified")
+    report.write(reports, matrix, args.out, verification)
     print(f"{len(reports)} regions -> {args.out / 'report.md'}")
 
 

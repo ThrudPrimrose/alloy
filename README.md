@@ -5,7 +5,10 @@ Alloy splits it into regions, renders each region under many codegen knobs, comp
 verifies every candidate, times the survivors, and links the best into one program plus a per-region report.
 
     uv sync --extra dev
-    alloy build examples/two_regions.py:two_regions --out out/   # regions, candidates, report.md
+    alloy build examples/two_regions.py:two_regions --out out/   # regions, candidates, verdicts, report.md
+
+Inputs come from an HPCAgent-Bench style manifest next to the program (`two_regions.yaml`: sizes, a `fuzzed` range,
+init arrays, input and output args); without one, candidates are built but not verified.
 
 Layout:
 

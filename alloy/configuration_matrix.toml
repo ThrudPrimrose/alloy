@@ -72,7 +72,8 @@ fp_level = "noerrno"
 probe = "sleefgnuabi"
 fp_level = "noerrno"
 
-# Each compiler: executables per language, remark flags, and its spelling of every runtime, FP level, cost model
+# Each compiler: executables per language, remark flags, support libraries its objects need at link time (resolved
+# like the OpenMP runtime), and its spelling of every runtime, FP level, cost model
 # and vector library it supports. Every FP level must be spelled; a missing runtime or vector library means
 # "unsupported". A compiler whose executable is not on PATH is reported as skipped.
 [compilers.gcc]
@@ -150,6 +151,7 @@ no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
 c = "nvc"
 cpp = "nvc++"
 remarks = ["-Minfo=vect"]
+support_libraries = ["nvc", "nvcpumath"]  # nvc objects call its runtime helpers (e.g. __c_mset8)
 
 [compilers.nvhpc.openmp]
 libnvomp = ["-mp"]

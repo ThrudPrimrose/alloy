@@ -54,6 +54,7 @@ class Compiler:
     fp: dict[str, tuple[str, ...]]
     cost_model: dict[str, tuple[str, ...]]
     veclib: dict[str, tuple[str, ...]]
+    support_libraries: tuple[str, ...] = ()
 
     def missing_executables(self) -> list[str]:
         return [exe for exe in self.executables.values() if shutil.which(exe) is None]
@@ -104,7 +105,12 @@ def flag_table(raw: dict[str, Any], where: str, allowed: set[str], *, complete: 
 
 def compiler(raw: dict[str, Any], name: str, m: dict[str, Any]) -> Compiler:
     where = f"compilers.{name}"
-    t = table(raw, where, {"remarks", "openmp", "fp"}, frozenset({*m["languages"], "cost_model", "veclib"}))
+    t = table(
+        raw,
+        where,
+        {"remarks", "openmp", "fp"},
+        frozenset({*m["languages"], "cost_model", "veclib", "support_libraries"}),
+    )
     executables = {lang: t[lang] for lang in m["languages"] if lang in t}
     if not executables:
         raise ValueError(f"{where}: names no executable for any language")
@@ -115,6 +121,7 @@ def compiler(raw: dict[str, Any], name: str, m: dict[str, Any]) -> Compiler:
         fp=flag_table(t["fp"], f"{where}.fp", set(m["fp_levels"]), complete=True),
         cost_model=flag_table(t.get("cost_model", {}), f"{where}.cost_model", set(m["cost_models"])),
         veclib=flag_table(t.get("veclib", {}), f"{where}.veclib", set(m["veclibs"])),
+        support_libraries=tuple(t.get("support_libraries", ())),
     )
 
 

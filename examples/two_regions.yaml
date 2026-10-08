@@ -1,0 +1,22 @@
+# HPCAgent-Bench manifest schema: sizes, a fuzzed range for speculative compiling, and the inputs to draw.
+name: Two regions
+level: 1
+parameters:
+  S:
+    N: 4096
+  L:
+    N: 1048576
+  fuzzed:
+    N: [1024, 65536]
+init:
+  arrays:
+    a: (N,)
+    b: (N,)
+    total: (1,)
+input_args:
+- a
+- b
+- total
+output_args:
+- b
+- total

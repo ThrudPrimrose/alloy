@@ -59,7 +59,10 @@ Status: not built.
 
 ## Verification
 
-Status: tolerance model and accumulation length built; running candidates is not.
+Status: built. Each candidate is linked into the whole program (its region's archive at a fixed path, every other
+region at its reference archive), rebuilt by DaCe's command-cache replay (about 1 s), and run in a fork-server child on
+fuzzed draws from the bench manifest. The reference runs three times per draw: an output that changes between those runs
+(a parallel reduction combining partial sums in thread order) is compared under `band` at every level.
 
 Each region candidate runs on fuzzed inputs from HPCAgent-Bench (`hpcagent_bench.fuzz` plus the input
 distributions) and is compared against the region's own `strict` build. Each FP level names its test:
