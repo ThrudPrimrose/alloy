@@ -12,9 +12,13 @@ init arrays, input and output args); without one, candidates are built but not v
 
 Layout:
 
-- `alloy/`: the package. `regions` outlines a program, `candidates` enumerates the sweep, `build` renders, compiles and
-  checks one candidate, `runtime` resolves and checks the OpenMP runtime, `sweep` runs it all, `report` writes the
-  result, `cli` is `alloy build`. Every compiler, flag and option is in `alloy/configuration_matrix.toml`.
+- `alloy/frontend/`: `regions` outlines a program, `inputs` draws its inputs from a bench manifest.
+- `alloy/backend/`: `candidates` enumerates the sweep, `build` renders, compiles and checks one candidate, `runtime`
+  resolves and checks the OpenMP runtime, `sweep` builds every candidate.
+- `alloy/evaluate/`: `link` builds whole programs from region archives, `verify` checks candidates on fuzzed inputs,
+  `timing` times them and links alloy-full.
+- `alloy/`: `machine` (cores, cache), `report`, `cli` (`alloy build`). Every compiler, flag and option is in
+  `alloy/configuration_matrix.toml`.
 - `examples/`: input programs for Alloy (dace numpy with symbolic sizes).
 - `samples/`: A/B studies. Each holds a slow and a fast rendering of one kernel, the harness, and the setup that
   measured the gap.

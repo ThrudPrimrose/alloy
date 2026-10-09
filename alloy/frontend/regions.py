@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Split a dace program into regions: one per top-level nest, each a standalone SDFG with a fixed C ABI."""
 
+import copy
 import re
 from dataclasses import dataclass
 
@@ -29,9 +30,11 @@ class Region:
 
 @dataclass(slots=True, frozen=True)
 class Program:
-    """The outlined program: ``sdfg`` calls every region through an ``ExternalCall`` node."""
+    """The outlined program: ``sdfg`` calls every region through an ``ExternalCall`` node; ``original`` is the
+    program before outlining."""
 
     sdfg: dace.SDFG
+    original: dace.SDFG
     regions: tuple[Region, ...]
     calls: tuple[external_call.ExternalCall, ...]
 
@@ -113,6 +116,7 @@ def outline(program: dace.frontend.python.parser.DaceProgram, libm_calls: frozen
     """Parse ``program`` and outline each top-level nest into a region; ``libm_calls`` marks the regions a vector
     math library could serve."""
     sdfg = program.to_sdfg(simplify=True)
+    original = copy.deepcopy(sdfg)
     # A top-level library node (np.sum -> Reduce) is no nest until expanded; expand so it becomes a region.
     sdfg.expand_library_nodes(recursive=True)
     sdfg.simplify()
@@ -131,4 +135,4 @@ def outline(program: dace.frontend.python.parser.DaceProgram, libm_calls: frozen
                 accumulation_length=accumulation_length(region_sdfg),
             )
         )
-    return Program(sdfg=sdfg, regions=tuple(regions), calls=calls)
+    return Program(sdfg=sdfg, original=original, regions=tuple(regions), calls=calls)

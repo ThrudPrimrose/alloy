@@ -79,7 +79,9 @@ distributions) and is compared against the region's own `strict` build. Each FP 
 
 ## Timing
 
-Status: not built.
+Status: built (`alloy/evaluate/timing.py`). Every whole program verification builds wraps each region's entry in a
+timer (`-Wl,--wrap`, `alloy_seconds_<symbol>()`), so a region is timed inside the program, after the regions before
+it, without recompiling. Sizes, cores and repetitions come from `[timing]` in the matrix.
 
 - Cache: the largest cache level in `/sys/devices/system/cpu/cpu*/cache`, summed over its distinct instances
   (`shared_cpu_list`). Every timed working set is 2-4x that, so no run fits in cache.
@@ -92,14 +94,16 @@ Status: not built.
 - Before timing, one draw at the timing size is compared to the reference: the fuzz draws are capped small, and a
   candidate can break only at large sizes (int32 index overflow).
 - Every arm of a region is loaded into one process and called alternately on one set of buffers (`measurement.md`).
-- A shim archive times each region's entry with `clock_gettime`; the region is an external call, so inlining is
+- The timer wraps each region's entry with `clock_gettime`; the region is an external call, so inlining is
   unchanged.
-- A win needs non-overlapping 95% CIs and survives a reversed arm order; otherwise it is a tie and the default stays.
+- Arms alternate forward and reversed order every round. A win needs a CI entirely below the reference's; otherwise
+  it is a tie and the reference stays.
 - Baselines: DaCe's default CPU codegen, then alloy-full, both timed as whole programs.
 
 ## Report format
 
-Status: build report built (candidates, objects, remarks); good-vs-bad with times is not.
+Status: built. Per region: the candidate table, then the re-timed arms with screening median, final median and CI,
+speedup over the reference, and the winner. On top: alloy-full against DaCe default with its speedup.
 
 One table per region: the best candidate, the worst candidate, and the cause, taken from the compiler remark. Every
 interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).

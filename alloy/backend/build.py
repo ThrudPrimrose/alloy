@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from dace.codegen import cpf
 from dace.config import set_temporary
 
-from alloy import runtime
-from alloy.candidates import Candidate
+from alloy.backend import runtime
+from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
-from alloy.regions import Region
+from alloy.frontend.regions import Region
 
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.

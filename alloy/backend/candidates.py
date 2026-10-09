@@ -5,7 +5,7 @@ import ctypes.util
 from dataclasses import dataclass, field
 
 from alloy.configuration_matrix import Compiler, Matrix
-from alloy.regions import Region
+from alloy.frontend.regions import Region
 
 
 @dataclass(slots=True, frozen=True)

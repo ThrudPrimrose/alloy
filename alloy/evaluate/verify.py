@@ -4,29 +4,25 @@ candidate is one archive copy plus a replayed DaCe build (command cache + precom
 keeps its reference archive, and the outputs are compared against the all-reference program on the same inputs."""
 
 import copy
-import hashlib
 import multiprocessing
 import os
 import pathlib
 import queue
-import shutil
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, Self
 
 import numpy as np
 import sympy
 from dace.codegen.exceptions import CompilationError
-from dace.config import set_temporary
-from dace.libraries.standard.nodes import external_call
 
-from alloy import machine, runtime
-from alloy.build import Build, runtime_library
+from alloy import machine
+from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
-from alloy.inputs import Draw
-from alloy.regions import Program
-from alloy.sweep import RegionReport
+from alloy.evaluate.link import Linker
+from alloy.frontend.inputs import Draw
+from alloy.frontend.regions import Program
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,62 +46,6 @@ class Verdict:
         return self.status in ("exact", "pass")
 
 
-@dataclass(slots=True)
-class Linker:
-    """Builds the program with a chosen archive per region, every region's archive at ``link/lib<symbol>.a``."""
-
-    program: Program
-    matrix: Matrix
-    out: pathlib.Path
-
-    def link_flags(self) -> list[str]:
-        library = runtime_library(self.matrix)
-        return runtime.link_flags(library, self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime])
-
-    def cmake_args(self) -> str:
-        """Make DaCe's own OpenMP the matrix runtime: its CMake would otherwise find the compiler's default one and
-        load a second runtime next to the regions'."""
-        soname = self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime]
-        extra = [f"-DOpenMP_CXX_LIB_NAMES={soname}", f"-DOpenMP_{soname}_LIBRARY={runtime_library(self.matrix)}"]
-        return " ".join(extra)
-
-    def support_flags(self, compilers: frozenset[str]) -> list[str]:
-        """Link flags for the support libraries of every compiler that built one of the linked archives."""
-        flags: list[str] = []
-        for name in sorted(compilers):
-            comp = self.matrix.compilers[name]
-            executables = list(comp.executables.values())
-            for soname in comp.support_libraries:
-                flags += runtime.link_flags(runtime.resolve(soname, executables), soname)
-        return flags
-
-    def compile(
-        self, archives: dict[str, pathlib.Path], tag: str, compilers: frozenset[str] = frozenset()
-    ) -> pathlib.Path:
-        """The program with ``archives[symbol]`` linked for each region, built under a name of its own so no cache
-        or loaded library of another candidate can stand in for it."""
-        link = self.out / "link"
-        link.mkdir(parents=True, exist_ok=True)
-        sdfg = copy.deepcopy(self.program.sdfg)
-        safe = f"p{hashlib.sha256(tag.encode()).hexdigest()[:12]}"  # candidate names carry '-', SDFG names may not
-        sdfg.name = f"{self.program.sdfg.name}_{safe}"  # pyright: ignore[reportAttributeAccessIssue]
-        sdfg.build_folder = str(self.out / "programs" / safe)
-        flags = self.link_flags() + self.support_flags(compilers)
-        for call in external_call.external_calls(sdfg):
-            fixed = link / f"lib{call.symbol}.a"
-            shutil.copyfile(archives[call.symbol], fixed)
-            call.implementation, call.lib_path, call.link_flags = "ExternCall", str(fixed), flags
-        with ExitStack() as stack:
-            for path, value in (
-                (("compiler", "command_cache"), True),
-                (("compiler", "precompiled_header"), True),
-                (("compiler", "extra_cmake_args"), self.cmake_args()),
-            ):
-                stack.enter_context(set_temporary(*path, value=value))
-            sdfg.compile()
-        return pathlib.Path(sdfg.build_folder)
-
-
 #: Seconds one program call may take before its child is killed and the candidate reported as crashed.
 CALL_TIMEOUT_S = 600
 
@@ -113,22 +53,28 @@ CALL_TIMEOUT_S = 600
 Outcome = dict[str, np.ndarray] | str
 
 
-def openmp_env(threads: int) -> dict[str, str]:
-    return {"OMP_NUM_THREADS": str(threads), "OMP_PROC_BIND": "close", "OMP_PLACES": "cores"}
+def openmp_env(cpus: tuple[int, ...]) -> dict[str, str]:
+    # Places name the slot's CPUs: in a VM the runtime's own topology can merge two of them into one "core".
+    places = ",".join(f"{{{cpu}}}" for cpu in cpus)
+    return {"OMP_NUM_THREADS": str(len(cpus)), "OMP_PROC_BIND": "close", "OMP_PLACES": places}
 
 
-def run_child(folder: str, args: dict[str, Any], outputs: tuple[str, ...], cpus: tuple[int, ...], conn: Any) -> None:
-    from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
-
+def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], conn: Any) -> None:
     # The fork server froze the environment it started with and loads no OpenMP runtime, so the runtime the program
     # library brings in reads this child's settings.
     os.sched_setaffinity(0, cpus)
-    os.environ.update(openmp_env(len(cpus)))
+    os.environ.update(openmp_env(cpus))
+    machine.limit_memory(1 / len(machine.core_slots()))  # up to one child per slot runs at once
+    conn.send(target(*args))
+
+
+def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) -> dict[str, np.ndarray]:
+    from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
 
     # an array that crossed the process boundary may arrive as a view on the pickle buffer, which dace refuses
     args = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
     compiler.load_precompiled_sdfg(folder)(**args)
-    conn.send({name: np.asarray(args[name]).copy() for name in outputs})
+    return {name: np.asarray(args[name]).copy() for name in outputs}
 
 
 def child_context() -> Any:
@@ -139,14 +85,11 @@ def child_context() -> Any:
     return ctx
 
 
-def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[int, ...] | None = None) -> Outcome:
-    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child process bound
-    to ``cpus`` (default: the first core slot) so a crash is a verdict; a string describes the crash."""
-    cpus = machine.core_slots()[0] if cpus is None else cpus
-    args = {**{k: copy.deepcopy(v) for k, v in draw.values.items()}, **draw.sizes}
+def in_child(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...]) -> Any:
+    """``target(*args)`` in a fork-server child bound to ``cpus``, so a crash is a value: a string describing it."""
     ctx = child_context()
     receive, send = ctx.Pipe(duplex=False)
-    child = ctx.Process(target=run_child, args=(str(folder), args, outputs, cpus, send))
+    child = ctx.Process(target=child_main, args=(target, args, cpus, send))
     child.start()
     send.close()
     result = None
@@ -163,6 +106,13 @@ def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[
     if child.exitcode != 0 or result is None:
         return f"exit code {child.exitcode}"
     return result
+
+
+def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[int, ...] | None = None) -> Outcome:
+    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child bound to
+    ``cpus`` (default: the first core slot)."""
+    args = {**{k: copy.deepcopy(v) for k, v in draw.values.items()}, **draw.sizes}
+    return in_child(call_program, (str(folder), args, outputs), machine.core_slots()[0] if cpus is None else cpus)
 
 
 class Children:
@@ -239,10 +189,13 @@ class Reference:
 
 @dataclass(slots=True, frozen=True)
 class Verification:
-    """``verdicts[region symbol][candidate name]``, and the outputs the reference does not reproduce."""
+    """``verdicts[region symbol][candidate name]``, the outputs the reference does not reproduce, and the program
+    built for every candidate (``programs[region symbol, candidate name]``) and for the reference."""
 
     verdicts: dict[str, dict[str, "Verdict"]]
     nondeterministic: frozenset[str]
+    programs: dict[tuple[str, str], pathlib.Path]
+    reference: pathlib.Path
 
 
 def reference_outputs(compiled: pathlib.Path, cases: Cases) -> Reference:
@@ -298,6 +251,7 @@ def verify(
     with Children() as children:
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
+        programs: dict[tuple[str, str], pathlib.Path] = {}
         for rep in reports:
             for b in rep.builds:
                 if b.error or b.archive is None or b.duplicate_of:
@@ -310,11 +264,12 @@ def verify(
                 except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
                     pending[rep.region.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
                     continue
+                programs[rep.region.symbol, b.name] = compiled
                 pending[rep.region.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
     verdicts = {rep.region.symbol: judge_region(rep, matrix, refs, ran, lengths) for rep in reports}
-    return Verification(verdicts, refs.nondeterministic)
+    return Verification(verdicts, refs.nondeterministic, programs, ref_program)
 
 
 def judge_region(
@@ -337,7 +292,7 @@ def judge_region(
 
 def reference_archive(rep: RegionReport) -> pathlib.Path:
     """The region's first built candidate: the matrix default (first language, first compiler, every default)."""
-    first: Build = rep.builds[0]
+    first = rep.builds[0]
     if first.error or first.archive is None:
         raise RuntimeError(f"{rep.region.symbol}: the reference candidate {first.name} did not build: {first.error}")
     return first.archive

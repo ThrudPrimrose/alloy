@@ -61,6 +61,17 @@ class Compiler:
 
 
 @dataclass(slots=True, frozen=True)
+class Timing:
+    screen_cores: int
+    screen_cache_factor: float
+    final_cache_factor: float
+    max_program_cache_factor: float
+    screen_reps: int
+    final_reps: int
+    top: int
+
+
+@dataclass(slots=True, frozen=True)
 class Matrix:
     path: pathlib.Path
     defaults: Defaults
@@ -73,6 +84,7 @@ class Matrix:
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     index_widths: dict[str, dict[str, str]]
+    timing: Timing
 
     def usable_compilers(self) -> tuple[dict[str, Compiler], dict[str, str]]:
         """``(usable, skipped)``: compilers whose executables are on PATH and that spell the default runtime, and
@@ -163,6 +175,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         "veclibs",
         "compilers",
         "codegen",
+        "timing",
     }
     table(raw, str(path), top)
     if raw["schema"] != SCHEMA:
@@ -189,6 +202,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         compilers={n: compiler(t, n, names) for n, t in raw["compilers"].items()},
         knobs={knob: tuple(values) for knob, values in codegen["knobs"].items()},
         index_widths={n: dict(t) for n, t in codegen["index_widths"].items()},
+        timing=Timing(**table(raw["timing"], "timing", set(Timing.__slots__))),
     )
     check_consistency(matrix)
     return matrix

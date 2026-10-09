@@ -1,72 +1,22 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pathlib
-import subprocess
 
 import numpy as np
-from helpers import MATRIX, REDUCTIONS
+from helpers import MATRIX, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
 
-from alloy import inputs, regions, verify
-from alloy.build import build
-from alloy.candidates import Candidate
-from alloy.cli import load_program
-from alloy.sweep import RegionReport
-
-SCALE_MANIFEST = """name: scale
-level: 1
-parameters:
-  S:
-    N: 512
-  fuzzed:
-    N: [64, 512]
-init:
-  arrays:
-    a: (N,)
-    out: (N,)
-input_args: [a, out]
-output_args: [out]
-"""
-ROW_SUM_MANIFEST = """name: row sum
-level: 1
-parameters:
-  S:
-    M: 64
-    N: 512
-  fuzzed:
-    M: [16, 64]
-    N: [256, 1024]
-init:
-  arrays:
-    a: (M, N)
-    out: (M,)
-input_args: [a, out]
-output_args: [out]
-"""
-
-
-def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[regions.Program, verify.Cases]:
-    path = tmp / f"{kernel}.yaml"
-    path.write_text(manifest_text)
-    manifest = inputs.load(path, kernel)
-    program = regions.outline(load_program(f"{REDUCTIONS}:{kernel}"), MATRIX.libm_calls)
-    return program, verify.Cases([inputs.draw(manifest, i) for i in range(2)], manifest.outputs)
-
-
-def handwritten_archive(tmp: pathlib.Path, region: regions.Region, body: str) -> pathlib.Path:
-    """``lib<symbol>.a`` defining the region's entry with ``body``, outside every candidate."""
-    source, obj, archive = tmp / "hand.c", tmp / "hand.o", tmp / "libhand.a"
-    signature = region.signature.replace("__restrict__", "restrict")
-    headers = "#include <omp.h>\n#include <stdint.h>\n#include <stdlib.h>\n"
-    source.write_text(f"{headers}void {region.symbol}({signature}) {{ {body} }}\n")
-    subprocess.run(["gcc", "-O2", "-fPIC", "-c", str(source), "-o", str(obj)], check=True)
-    subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
-    return archive
+from alloy import machine
+from alloy.backend.build import build
+from alloy.backend.candidates import Candidate
+from alloy.backend.sweep import RegionReport
+from alloy.evaluate import link, verify
+from alloy.frontend import inputs, regions
 
 
 def reference_run(tmp: pathlib.Path, program: regions.Program, cases: verify.Cases) -> tuple:
     (region,) = program.regions
     ref = build(region, Candidate("c", "gcc"), MATRIX, tmp / "ref", {})
     assert ref.archive is not None
-    linker = verify.Linker(program, MATRIX, tmp / "out")
+    linker = link.Linker(program, MATRIX, tmp / "out")
     compiled = linker.compile({region.symbol: ref.archive}, "reference")
     return region, ref, linker, verify.reference_outputs(compiled, cases)
 
@@ -154,3 +104,13 @@ def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
     sut = verify.compare("band", ref, ref.copy(), 10**20, "float64")
 
     assert sut.status == "ungradeable"
+
+
+def reserve(count: int) -> int:
+    return np.empty(count).nbytes  # reserves without touching, so even an uncapped child stays harmless
+
+
+def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine():
+    sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0])
+
+    assert sut == "exit code 1"

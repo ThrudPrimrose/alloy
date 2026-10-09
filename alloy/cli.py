@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""``alloy build path/to/kernel.py:function --out dir``: outline, sweep, and write the build report."""
+"""``alloy build path/to/kernel.py:function --out dir``: outline, sweep, verify, time, and write the report."""
 
 import argparse
 import importlib.util
@@ -7,7 +7,11 @@ import pathlib
 
 from dace.frontend.python.parser import DaceProgram
 
-from alloy import configuration_matrix, inputs, regions, report, sweep, verify
+from alloy import configuration_matrix, machine, report
+from alloy.backend import sweep
+from alloy.evaluate import timing, verify
+from alloy.evaluate.link import Linker
+from alloy.frontend import inputs, regions
 
 
 def load_program(spec: str) -> DaceProgram:
@@ -49,20 +53,22 @@ def main() -> None:
     )
     build_cmd.add_argument("--iterations", type=int, default=2, help="fuzz draws every candidate is verified on")
     args = parser.parse_args()
+    machine.limit_memory(0.75)
     matrix = configuration_matrix.load(args.matrix)
     program = regions.outline(load_program(args.program), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
     reports = sweep.run(program, matrix, args.out, finite_inputs=args.finite_inputs)
     path, _, function = args.program.partition(":")
     manifest_path = args.manifest or inputs.manifest_for(pathlib.Path(path))
-    verification = None
+    verification, timings = None, None
     if manifest_path.is_file():
         manifest = inputs.load(manifest_path, function)
         cases = verify.Cases([inputs.draw(manifest, i) for i in range(args.iterations)], manifest.outputs)
         verification = verify.verify(program, matrix, reports, cases, args.out)
+        timings = timing.time_program(Linker(program, matrix, args.out), reports, verification, manifest)
     else:
-        print(f"no manifest at {manifest_path}: candidates are built, not verified")
-    report.write(reports, matrix, args.out, verification)
+        print(f"no manifest at {manifest_path}: candidates are built, not verified or timed")
+    report.write(reports, matrix, args.out, verification, timings)
     print(f"{len(reports)} regions -> {args.out / 'report.md'}")
 
 

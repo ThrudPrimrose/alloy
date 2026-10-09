@@ -3,9 +3,10 @@ import json
 
 from helpers import MATRIX, outlined
 
-from alloy import report, sweep
-from alloy.build import build
-from alloy.candidates import Candidate
+from alloy import report
+from alloy.backend import sweep
+from alloy.backend.build import build
+from alloy.backend.candidates import Candidate
 
 
 def test_the_report_lists_every_candidate_of_every_region(tmp_path):

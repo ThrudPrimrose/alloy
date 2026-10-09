@@ -2,8 +2,8 @@
 import pytest
 from helpers import MATRIX, REDUCTIONS, outlined
 
-from alloy import regions
 from alloy.cli import load_program
+from alloy.frontend import regions
 
 
 def test_the_libm_map_and_the_sum_become_separate_regions():

@@ -5,8 +5,8 @@ import subprocess
 import pytest
 from helpers import MATRIX, outlined, region_with
 
-from alloy.build import build, parse_remarks
-from alloy.candidates import Candidate
+from alloy.backend.build import build, parse_remarks
+from alloy.backend.candidates import Candidate
 
 
 def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):

@@ -43,8 +43,6 @@ def draw(manifest: Manifest, iteration: int, datatype: str = "float64") -> Draw:
     """Sizes from the ``fuzzed`` ranges (capped for correctness), then inputs from the bench initializer, both seeded
     by ``iteration``."""
     from hpcagent_bench import fuzz  # noqa: PLC0415
-    from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
-    from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
     from hpcagent_bench.spec import BenchSpec  # noqa: PLC0415
 
     spec = BenchSpec.from_dict(manifest.raw, source=str(manifest.path))
@@ -61,9 +59,25 @@ def draw(manifest: Manifest, iteration: int, datatype: str = "float64") -> Draw:
         if not isinstance(value, int | float):
             raise TypeError(f"{manifest.path}: parameter {name} drew {value!r}, not a size")
         ints[name] = int(value)
+    return at(manifest, ints, iteration, datatype)
+
+
+def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0, datatype: str = "float64") -> Draw:
+    """Inputs from the bench initializer at fixed ``sizes``."""
+    from hpcagent_bench import fuzz  # noqa: PLC0415
+    from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
+    from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
+    from hpcagent_bench.spec import BenchSpec  # noqa: PLC0415
+
+    spec = BenchSpec.from_dict(manifest.raw, source=str(manifest.path))
     if spec.init is None:
         raise ValueError(f"{manifest.path}: no init block, so there are no inputs to draw")
     values = auto_initialize(
-        spec, fuzz.FUZZED_PRESET, precision_from_datatype(datatype), seed=iteration, params_override=ints
+        spec, fuzz.FUZZED_PRESET, precision_from_datatype(datatype), seed=seed, params_override=sizes
     )
-    return Draw(sizes=ints, values=dict(zip(spec.init.output_args, values, strict=True)))
+    return Draw(sizes=sizes, values=dict(zip(spec.init.output_args, values, strict=True)))
+
+
+def presets(manifest: Manifest) -> list[dict[str, int]]:
+    """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges."""
+    return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != "fuzzed"]

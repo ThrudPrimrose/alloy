@@ -4,10 +4,10 @@
 import pathlib
 from dataclasses import dataclass
 
-from alloy.build import Build, build
-from alloy.candidates import one_factor_at_a_time
+from alloy.backend.build import Build, build
+from alloy.backend.candidates import one_factor_at_a_time
 from alloy.configuration_matrix import Matrix
-from alloy.regions import Program, Region
+from alloy.frontend.regions import Program, Region
 
 
 @dataclass(slots=True, frozen=True)

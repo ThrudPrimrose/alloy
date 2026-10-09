@@ -1,7 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Objects from several compilers, archived and linked into ONE binary against ONE OpenMP runtime. The runtime check
-(``alloy.runtime.unresolved``) must predict exactly which combinations link, and every one that links must run on the
-requested threads with one runtime loaded. Each compiler is a mark: a box without it deselects (``-m 'not icx'``)."""
+"""Objects from several compilers, archived and linked into ONE binary against ONE OpenMP runtime. The runtime
+check (``alloy.backend.runtime.unresolved``) must predict exactly which combinations link, and every one that links
+must run on the requested threads with one runtime loaded. Each compiler is a mark: a box without it deselects
+(``-m 'not icx'``)."""
 
 import itertools
 import os
@@ -10,7 +11,8 @@ import subprocess
 
 import pytest
 
-from alloy import configuration_matrix, runtime
+from alloy import configuration_matrix
+from alloy.backend import runtime
 
 MATRIX = configuration_matrix.load()
 THREADS = 4

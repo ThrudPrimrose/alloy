@@ -10,6 +10,18 @@ index_width = "int64"
 cost_model = "default"
 openmp_runtime = "libomp"  # the process's one OpenMP runtime; every candidate must link against it
 
+[timing]
+# Screen every verified candidate on screen_cores physical cores at screen_cache_factor x the largest cache, then
+# re-time the top ones on every physical core at the largest preset, grown to at least final_cache_factor x it.
+screen_cores = 4
+screen_cache_factor = 3.0
+final_cache_factor = 2.0
+# Region sizes share symbols with the rest of the program: never let the program touch more than this x the cache.
+max_program_cache_factor = 16.0
+screen_reps = 11
+final_reps = 31
+top = 3
+
 [build]
 flags = ["-O3", "-march=native", "-fPIC"]
 

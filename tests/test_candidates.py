@@ -1,7 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 from helpers import MATRIX, gcc_only, outlined, region_with
 
-from alloy.candidates import one_factor_at_a_time
+from alloy.backend.candidates import one_factor_at_a_time
 
 
 def test_a_vector_math_library_is_tried_only_where_libm_is_called():
