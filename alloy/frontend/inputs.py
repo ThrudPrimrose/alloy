@@ -4,6 +4,7 @@ speculative compiling), ``init.arrays`` / ``init.scalars``, ``input_args`` and `
 the bench's fuzzer under its correctness cap and the arrays by its auto-initializer, so a corpus kernel's manifest
 works unchanged."""
 
+import importlib.util
 import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,12 @@ class Manifest:
     datatype: str
 
 
+def require_bench() -> None:
+    """Manifest inputs and the tolerance band live in HPCAgent-Bench, an optional extra of Alloy."""
+    if importlib.util.find_spec("hpcagent_bench") is None:
+        raise ImportError("manifest inputs and the tolerance band need HPCAgent-Bench: install alloy[bench]")
+
+
 def manifest_for(program_file: pathlib.Path) -> pathlib.Path:
     """The manifest next to ``program_file``: ``kernel.py`` -> ``kernel.yaml``."""
     return program_file.with_suffix(".yaml")
@@ -38,6 +45,7 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     """Parse the manifest with the bench's own reader (``args`` block, derived identity); inputs are drawn at
     ``datatype``. A manifest outside the bench corpus names its kernel by ``program`` (``file.py:function``), whose
     signature orders the inputs."""
+    require_bench()
     from hpcagent_bench import paths  # noqa: PLC0415 -- alloy never loads the bench at import time
     from hpcagent_bench.spec import BenchSpec, expand_args, load_yaml  # noqa: PLC0415
 

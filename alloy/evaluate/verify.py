@@ -21,7 +21,7 @@ from alloy import machine
 from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker
-from alloy.frontend.inputs import Draw
+from alloy.frontend.inputs import Draw, require_bench
 from alloy.frontend.regions import Program
 
 
@@ -157,6 +157,7 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
     if tolerance == "exact":
         same = np.array_equal(ref, val, equal_nan=np.issubdtype(ref.dtype, np.inexact))
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
+    require_bench()
     from hpcagent_bench.frameworks.utilities import compare_arrays  # noqa: PLC0415
     from hpcagent_bench.precision import (  # noqa: PLC0415
         UngradeableTolerance,

@@ -16,11 +16,20 @@ dependencies = [
     "numpy",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
     "dace @ git+https://github.com/spcl/dace.git@dbcb1e8a6adb659e4f6d702efa2c9831ce69afc0",
-    "hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@454e88445d84dd90726e18d0eb79830c004e2ea1",
+    # DaCe imports it (codegen/targets/experimental_cpu.py) without declaring it before extended 40ecebe; drop it
+    # once the bench pins that or later.
+    "pygments",
 ]
 
 [project.optional-dependencies]
-dev = ["pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+# Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@454e88445d84dd90726e18d0eb79830c004e2ea1"]
+# Device buffers for GPU verification; the two cupy builds never share an environment.
+nvgpu = ["alloy[bench]", "cupy-cuda13x"]
+amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
+dev = ["alloy[bench]", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+dev-nvidia = ["alloy[dev,nvgpu]"]
+dev-amd = ["alloy[dev,amdgpu]"]
 
 [tool.setuptools.packages.find]
 include = ["alloy*"]
@@ -30,6 +39,12 @@ alloy = ["configuration_matrix.toml"]
 
 [project.scripts]
 alloy = "alloy.cli:main"
+
+[tool.uv]
+conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],
+    [{ extra = "nvgpu" }, { extra = "dev-amd" }], [{ extra = "amdgpu" }, { extra = "dev-nvidia" }]]
+# No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
+no-binary-package = ["cupy"]
 
 [tool.pyright]
 venvPath = "."

@@ -7,8 +7,12 @@ verifies every candidate, times the survivors, and links the best into one progr
     uv sync --extra dev
     alloy build examples/two_regions.py:two_regions --out out/   # regions, candidates, verdicts, report.md
 
+Extras: the core (outline, sweep, build) needs only DaCe. `bench` adds HPCAgent-Bench, which verification and
+timing use for manifest inputs and the tolerance band. `nvgpu` / `amdgpu` add the matching cupy build. `dev` is
+`bench` plus the test tools (CPU, what CI installs); `dev-nvidia` and `dev-amd` add the GPU extra.
+
 Inputs come from an HPCAgent-Bench style manifest next to the program (`two_regions.yaml`: sizes, a `fuzzed` range,
-init arrays, input and output args); without one, candidates are built but not verified.
+an `args` block); without one, candidates are built but not verified.
 
 Layout:
 
