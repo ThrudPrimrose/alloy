@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@e7229fc4444fba2be1a5d7bed30200740cdd0cdd"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@f51364d5911d99b55e34a32fb788d884922d7a34"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
