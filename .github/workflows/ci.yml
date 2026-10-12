@@ -17,6 +17,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pyright alloy
+      - run: uv run mypy alloy tests
 
   # Every compiler of configuration_matrix.toml on one runner, so the OpenMP interop test links objects from all of
   # them into one binary against each runtime (libomp, libgomp, libnvomp).

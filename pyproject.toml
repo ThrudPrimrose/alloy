@@ -24,7 +24,7 @@ bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@219ea0
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["alloy[bench]", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+dev = ["alloy[bench]", "mypy", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
 dev-nvidia = ["alloy[dev,nvgpu]"]
 dev-amd = ["alloy[dev,amdgpu]"]
 
@@ -39,6 +39,11 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
     [{ extra = "nvgpu" }, { extra = "dev-amd" }], [{ extra = "amdgpu" }, { extra = "dev-nvidia" }]]
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
+
+[tool.mypy]
+python_version = "3.12"
+follow_imports = "silent"
+ignore_missing_imports = true
 
 [tool.pyright]
 venvPath = "."
