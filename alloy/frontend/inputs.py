@@ -6,7 +6,10 @@ works unchanged."""
 
 import pathlib
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hpcagent_bench.spec import BenchSpec
 
 
 @dataclass(slots=True, frozen=True)
@@ -21,7 +24,9 @@ class Draw:
 class Manifest:
     path: pathlib.Path
     raw: dict[str, Any]
+    spec: "BenchSpec"
     outputs: tuple[str, ...]
+    datatype: str
 
 
 def manifest_for(program_file: pathlib.Path) -> pathlib.Path:
@@ -29,23 +34,34 @@ def manifest_for(program_file: pathlib.Path) -> pathlib.Path:
     return program_file.with_suffix(".yaml")
 
 
-def load(path: pathlib.Path, function: str) -> Manifest:
-    """Read the manifest and fill the bench's bookkeeping fields from the program it describes."""
-    from hpcagent_bench.spec import load_yaml  # noqa: PLC0415 -- alloy never loads the bench at import time
+def load(path: pathlib.Path, program: str | None = None, datatype: str = "float64") -> Manifest:
+    """Parse the manifest with the bench's own reader (``args`` block, derived identity); inputs are drawn at
+    ``datatype``. A manifest outside the bench corpus names its kernel by ``program`` (``file.py:function``), whose
+    signature orders the inputs."""
+    from hpcagent_bench import paths  # noqa: PLC0415 -- alloy never loads the bench at import time
+    from hpcagent_bench.spec import BenchSpec, expand_args, load_yaml  # noqa: PLC0415
 
     raw = load_yaml(path.read_text())
-    identity = {"short_name": path.stem, "relative_path": str(path.parent), "module_name": path.stem}
-    raw = {**identity, "func_name": function, **raw}
-    return Manifest(path=path, raw=raw, outputs=tuple(raw["output_args"]))
+    if path.resolve().is_relative_to(paths.BENCHMARKS.resolve()):
+        spec = BenchSpec.from_yaml(raw, source=str(path))
+    elif program is None:
+        raise ValueError(f"{path} is outside the bench corpus: name its kernel as file.py:function")
+    else:
+        file, _, function = program.partition(":")
+        reference = pathlib.Path(file).resolve()
+        identity = {"short_name": path.stem, "name": path.stem, "module_name": reference.stem, "func_name": function}
+        expanded = {**identity, "relative_path": str(reference.parent), **raw}
+        expand_args(expanded, None, str(path))
+        spec = BenchSpec.from_dict(expanded, str(path))
+    return Manifest(path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
 
 
-def draw(manifest: Manifest, iteration: int, datatype: str = "float64") -> Draw:
+def draw(manifest: Manifest, iteration: int) -> Draw:
     """Sizes from the ``fuzzed`` ranges (capped for correctness), then inputs from the bench initializer, both seeded
     by ``iteration``."""
     from hpcagent_bench import fuzz  # noqa: PLC0415
-    from hpcagent_bench.spec import BenchSpec  # noqa: PLC0415
 
-    spec = BenchSpec.from_dict(manifest.raw, source=str(manifest.path))
+    spec = manifest.spec
     sizes = fuzz.sample_params(
         manifest.raw["parameters"],
         iteration,
@@ -59,21 +75,20 @@ def draw(manifest: Manifest, iteration: int, datatype: str = "float64") -> Draw:
         if not isinstance(value, int | float):
             raise TypeError(f"{manifest.path}: parameter {name} drew {value!r}, not a size")
         ints[name] = int(value)
-    return at(manifest, ints, iteration, datatype)
+    return at(manifest, ints, iteration)
 
 
-def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0, datatype: str = "float64") -> Draw:
+def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
     """Inputs from the bench initializer at fixed ``sizes``."""
     from hpcagent_bench import fuzz  # noqa: PLC0415
     from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
     from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
-    from hpcagent_bench.spec import BenchSpec  # noqa: PLC0415
 
-    spec = BenchSpec.from_dict(manifest.raw, source=str(manifest.path))
+    spec = manifest.spec
     if spec.init is None:
         raise ValueError(f"{manifest.path}: no init block, so there are no inputs to draw")
     values = auto_initialize(
-        spec, fuzz.FUZZED_PRESET, precision_from_datatype(datatype), seed=seed, params_override=sizes
+        spec, fuzz.FUZZED_PRESET, precision_from_datatype(manifest.datatype), seed=seed, params_override=sizes
     )
     return Draw(sizes=sizes, values=dict(zip(spec.init.output_args, values, strict=True)))
 

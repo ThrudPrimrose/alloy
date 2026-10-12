@@ -112,10 +112,11 @@ def standalone(call: external_call.ExternalCall) -> dace.SDFG:
     return sdfg
 
 
-def outline(program: dace.frontend.python.parser.DaceProgram, libm_calls: frozenset[str]) -> Program:
-    """Parse ``program`` and outline each top-level nest into a region; ``libm_calls`` marks the regions a vector
+def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
+    """Outline each top-level nest of a copy of ``sdfg`` into a region; ``libm_calls`` marks the regions a vector
     math library could serve."""
-    sdfg = program.to_sdfg(simplify=True)
+    sdfg = copy.deepcopy(sdfg)
+    sdfg.simplify()
     original = copy.deepcopy(sdfg)
     # A top-level library node (np.sum -> Reduce) is no nest until expanded; expand so it becomes a region.
     sdfg.expand_library_nodes(recursive=True)

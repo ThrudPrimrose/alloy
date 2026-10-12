@@ -24,6 +24,6 @@ def test_the_libm_map_and_the_sum_become_separate_regions():
     ],
 )
 def test_the_accumulation_length_is_the_reduced_extent_of_each_region(kernel, lengths):
-    sut = regions.outline(load_program(f"{REDUCTIONS}:{kernel}"), MATRIX.libm_calls)
+    sut = regions.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
 
     assert [str(r.accumulation_length) for r in sut.regions] == lengths

@@ -8,15 +8,7 @@ parameters:
     N: 1048576
   fuzzed:
     N: [1024, 65536]
-init:
-  arrays:
-    a: (N,)
-    b: (N,)
-    total: (1,)
-input_args:
-- a
-- b
-- total
-output_args:
-- b
-- total
+args:
+  a: (N,)
+  b: {shape: "(N,)", out: true}
+  total: {shape: "(1,)", out: true}

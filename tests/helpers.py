@@ -16,7 +16,7 @@ MATRIX = configuration_matrix.load()
 
 
 def outlined() -> regions.Program:
-    return regions.outline(load_program(f"{EXAMPLE}:two_regions"), MATRIX.libm_calls)
+    return regions.outline(load_program(f"{EXAMPLE}:two_regions").to_sdfg(), MATRIX.libm_calls)
 
 
 def region_with(program: regions.Program, *, libm: bool, reduction: bool) -> regions.Region:
@@ -47,12 +47,9 @@ parameters:
     N: 512
   fuzzed:
     N: [64, 512]
-init:
-  arrays:
-    a: (N,)
-    out: (N,)
-input_args: [a, out]
-output_args: [out]
+args:
+  a: (N,)
+  out: {shape: "(N,)", out: true}
 """
 ROW_SUM_MANIFEST = """name: row sum
 level: 1
@@ -63,25 +60,22 @@ parameters:
   fuzzed:
     M: [16, 64]
     N: [256, 1024]
-init:
-  arrays:
-    a: (M, N)
-    out: (M,)
-input_args: [a, out]
-output_args: [out]
+args:
+  a: (M, N)
+  out: {shape: "(M,)", out: true}
 """
 
 
 def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[regions.Program, verify.Cases]:
     manifest = write_manifest(tmp, kernel, manifest_text)
-    program = regions.outline(load_program(f"{REDUCTIONS}:{kernel}"), MATRIX.libm_calls)
+    program = regions.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
     return program, verify.Cases([inputs.draw(manifest, i) for i in range(2)], manifest.outputs)
 
 
 def write_manifest(tmp: pathlib.Path, kernel: str, manifest_text: str) -> inputs.Manifest:
     path = tmp / f"{kernel}.yaml"
     path.write_text(manifest_text)
-    return inputs.load(path, kernel)
+    return inputs.load(path, f"{REDUCTIONS}:{kernel}")
 
 
 def handwritten_archive(tmp: pathlib.Path, region: regions.Region, body: str) -> pathlib.Path:

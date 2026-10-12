@@ -53,7 +53,7 @@ def render(region: Region, candidate: Candidate, matrix: Matrix) -> str:
         rendering = cpf.render(
             region.sdfg,
             language=matrix.languages[candidate.language].render,
-            order=list(region.abi_order),
+            signature=cpf.EntrySignature(order=list(region.abi_order)),
             check_compiles=False,
         )
     return rendering.code

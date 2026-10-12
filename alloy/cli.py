@@ -55,14 +55,14 @@ def main() -> None:
     args = parser.parse_args()
     machine.limit_memory(0.75)
     matrix = configuration_matrix.load(args.matrix)
-    program = regions.outline(load_program(args.program), matrix.libm_calls)
+    program = regions.outline(load_program(args.program).to_sdfg(), matrix.libm_calls)
     args.out.mkdir(parents=True, exist_ok=True)
     reports = sweep.run(program, matrix, args.out, finite_inputs=args.finite_inputs)
-    path, _, function = args.program.partition(":")
+    path = args.program.partition(":")[0]
     manifest_path = args.manifest or inputs.manifest_for(pathlib.Path(path))
     verification, timings = None, None
     if manifest_path.is_file():
-        manifest = inputs.load(manifest_path, function)
+        manifest = inputs.load(manifest_path, args.program)
         cases = verify.Cases([inputs.draw(manifest, i) for i in range(args.iterations)], manifest.outputs)
         verification = verify.verify(program, matrix, reports, cases, args.out)
         timings = timing.time_program(Linker(program, matrix, args.out), reports, verification, manifest)

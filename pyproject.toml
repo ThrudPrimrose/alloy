@@ -15,8 +15,8 @@ keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
 dependencies = [
     "numpy",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
-    "dace @ git+https://github.com/spcl/dace.git@1c1cdc14d4ebe0c2ceec75a03020c1485b964c01",
-    "hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@26a4f0cfc1540cead109dfc8d736f1c45263e390",
+    "dace @ git+https://github.com/spcl/dace.git@dbcb1e8a6adb659e4f6d702efa2c9831ce69afc0",
+    "hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@454e88445d84dd90726e18d0eb79830c004e2ea1",
 ]
 
 [project.optional-dependencies]
@@ -42,4 +42,5 @@ markers = [
     "clang: needs clang-21 on PATH",
     "nvhpc: needs the NVIDIA HPC SDK (nvc) on PATH",
     "icx: needs Intel oneAPI (icx) on PATH",
+    "e2e: an LLR kernel of the bench through the whole pipeline",
 ]

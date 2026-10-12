@@ -2,7 +2,7 @@
 import pathlib
 
 import numpy as np
-from helpers import MATRIX, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
+from helpers import MATRIX, REDUCTIONS, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
 
 from alloy import machine
 from alloy.backend.build import build
@@ -25,7 +25,7 @@ def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_p
     path = tmp_path / "scale.yaml"
     path.write_text(SCALE_MANIFEST)
 
-    sut = [inputs.draw(inputs.load(path, "scale"), i) for i in range(3)]
+    sut = [inputs.draw(inputs.load(path, f"{REDUCTIONS}:scale"), i) for i in range(3)]
 
     assert all(64 <= d.sizes["N"] <= 512 for d in sut)
     assert all(d.values["a"].shape == (d.sizes["N"],) for d in sut)
