@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Split a dace program into regions: one per top-level nest, each a standalone SDFG with a fixed C ABI."""
+"""Split a dace program into regions: one per top-level nest or library node, each a standalone SDFG with a fixed C
+ABI."""
 
 import copy
 import re
@@ -76,9 +77,24 @@ def reduced_extent(
     return extent
 
 
+def volume(edge: MultiConnectorEdge[dace.Memlet]) -> sympy.Expr:
+    subset = edge.data.subset
+    assert subset is not None, "a library node's data edge names a subset"
+    return sympy.Integer(1) * sympy.sympify(subset.num_elements())
+
+
+def library_length(state: dace.SDFGState, node: Reduce | ArgReduce | Scan) -> sympy.Expr:
+    """A reduce's input elements per output element; a scan's whole input (its longest prefix bounds the chain)."""
+    total = volume(next(e for e in state.in_edges(node) if not e.data.is_empty()))
+    if isinstance(node, Scan):
+        return total
+    return total / volume(next(e for e in state.out_edges(node) if not e.data.is_empty()))
+
+
 def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
     """The longest accumulation chain of ``sdfg``: over every write-conflict-resolution (reduction) edge leaving a
-    tasklet or a nested SDFG, the reduced map extent around it, times the nested SDFG's own length. Exact on the SDFG,
+    tasklet or a nested SDFG, the reduced map extent around it, times the nested SDFG's own length; a reduce or scan
+    library node counts by :func:`library_length`. Exact on the SDFG,
     so a square matmul's ``K`` is told apart from its kept ``N``; only WCR reductions count, not a sequential loop
     that accumulates into a scalar."""
     lengths: list[sympy.Expr] = []
@@ -92,6 +108,7 @@ def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
             elif isinstance(edge.src, nodes.NestedSDFG):
                 lengths.append(reduced_extent(edge, scope) * accumulation_length(edge.src.sdfg))
         lengths += [accumulation_length(n.sdfg) for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+        lengths += [library_length(state, n) for n in state.nodes() if isinstance(n, Reduce | ArgReduce | Scan)]
     known = [length for length in lengths if length != 1]
     if not known:
         return sympy.Integer(1)
@@ -116,17 +133,24 @@ def standalone(call: external_call.ExternalCall) -> dace.SDFG:
     return sdfg
 
 
+def unchosen(node: nodes.LibraryNode) -> bool:
+    """Whether no pipeline chose ``node``'s implementation (unset, or ``pure``): Alloy expands it and generates the
+    nest. An explicit choice (canonicalize's ``CPU`` C++ reduction) is kept."""
+    return node.implementation in (None, "pure")
+
+
 def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
-    """Outline each top-level nest of a copy of ``sdfg`` into a region; ``libm_calls`` marks the regions a vector
-    math library could serve."""
+    """Outline each top-level nest and library node of a copy of ``sdfg`` into a region; ``libm_calls`` marks the
+    regions a vector math library could serve."""
     sdfg = copy.deepcopy(sdfg)
     sdfg.simplify()
     original = copy.deepcopy(sdfg)
-    # A top-level library node (np.sum -> Reduce) is no nest until expanded; expand so it becomes a region.
-    sdfg.expand_library_nodes(recursive=True)
+    # An unchosen library node expands into a nest Alloy generates; one whose implementation a pipeline chose is
+    # outlined whole and rendered in its region with that implementation.
+    sdfg.expand_library_nodes(recursive=True, predicate=unchosen)
     sdfg.simplify()
     regions = []
-    for call in passes.outline_to_external_calls(sdfg):
+    for call in passes.outline_to_external_calls(sdfg, library_nodes=True):
         region_sdfg = standalone(call)
         regions.append(
             Region(

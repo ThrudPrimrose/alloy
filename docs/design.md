@@ -129,6 +129,10 @@ Status: not built. Picks one candidate per region from the builds alone, without
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose region needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record
   `unsupported`.
+- 10-13: both fixed in DaCe extended. Regions never take a reserved `__dace*` symbol as an argument (e086e38); a
+  library node whose implementation a pipeline chose stays whole as its own region, rendered with that implementation
+  (`outline_to_external_calls(library_nodes=True)`, 83a95d2), while an unchosen one still expands into a nest Alloy
+  generates. Its accumulation length: input elements per output element (reduce), the whole input (scan).
 - Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
   compilers in parallel; start from each region's local winner; `/score` the top 5 per region on the judge while the
   kernel's budget (`resolve_kernel_timeout`) still holds one more score and the harness's own grade; `/submit` the
