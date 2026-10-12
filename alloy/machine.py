@@ -45,11 +45,22 @@ def available_memory() -> int:
     raise RuntimeError("/proc/meminfo has no MemAvailable")
 
 
-def limit_memory(share: float) -> None:
+def openmp_stack_bytes() -> int:
+    """The stack one OpenMP worker reserves: ``OMP_STACKSIZE`` (a bare number is KiB), else the runtimes' 4 MiB
+    default on x86-64 Linux."""
+    text = os.environ.get("OMP_STACKSIZE", "").strip().upper()
+    units = {"B": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
+    if not text:
+        return 4 << 20
+    return int(text[:-1]) * units[text[-1]] if text[-1] in units else int(text) << 10
+
+
+def limit_memory(share: float, threads: int) -> None:
     """Cap this process and its children at ``share`` of the memory available now, so an oversized run fails with
-    a MemoryError (or a crashed child) instead of exhausting the machine. Never raises an existing cap."""
+    a MemoryError (or a crashed child) instead of exhausting the machine. The cap (``RLIMIT_DATA``) also counts the
+    stacks ``threads`` OpenMP workers reserve, so those come on top. Never raises an existing cap."""
     _, hard = resource.getrlimit(resource.RLIMIT_DATA)
-    limit = int(share * available_memory())
+    limit = int(share * available_memory()) + threads * openmp_stack_bytes()
     limit = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
     resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
 

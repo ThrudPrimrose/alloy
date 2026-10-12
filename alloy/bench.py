@@ -1,8 +1,9 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy as an HPCAgent-Bench optimizer (needs ``alloy[bench]``; the core never imports this module). A bench DaCe
-pipeline gives the SDFG; Alloy builds, verifies and times every region candidate and starts from each region's local
-winner; while the kernel's time budget allows, the judge's ``/score`` ranks the :data:`TOP` screened candidates of
-each region, one region at a time with the others at their best so far; the best library is submitted."""
+"""Alloy on HPCAgent-Bench (needs ``alloy[bench]``; the core never imports this module). A bench DaCe pipeline gives
+the SDFG; Alloy builds, verifies and times every region candidate. The framework columns compile the program linking
+each region's local winner (:func:`compiled_winners`). The optimizers start from those winners and, while the
+kernel's time budget allows, let the judge's ``/score`` rank the :data:`TOP` screened candidates of each region, one
+region at a time with the others at their best so far; the best library is submitted (:func:`optimize`)."""
 
 import pathlib
 import tempfile
@@ -10,6 +11,8 @@ import time
 from collections.abc import Callable, Sequence
 
 import dace
+from dace.codegen.compiled_sdfg import CompiledSDFG
+from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from hpcagent_bench import paths
 from hpcagent_bench.cpf_bridge import render_canonical
@@ -27,7 +30,8 @@ from hpcagent_bench.spec import BenchSpec
 from alloy import api, configuration_matrix
 from alloy.backend.build import Build
 from alloy.backend.sweep import RegionReport
-from alloy.evaluate.link import Linker
+from alloy.configuration_matrix import Matrix
+from alloy.evaluate.link import Linker, cmake_args
 from alloy.evaluate.timing import Measured, winning_build
 from alloy.frontend import inputs
 
@@ -62,11 +66,50 @@ def screened(rep: RegionReport, screen: dict[str, Measured], top: int) -> list[B
     return [by_name[n] for n in ranked[:top]]
 
 
+def generated(sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Matrix, out: pathlib.Path) -> api.Result:
+    """Alloy on ``sdfg`` under ``out``, verified and timed on the kernel's bench manifest at ``precision``."""
+    manifest = inputs.load(
+        paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml", datatype=numpy_dtype(precision).__name__
+    )
+    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix)
+    if result.timings is None:
+        raise RuntimeError(f"Alloy timed nothing for {spec.short_name}")
+    return result
+
+
+def local_winners(result: api.Result) -> dict[str, Build]:
+    """Every region's locally timed winner, by region symbol."""
+    if result.timings is None:
+        raise ValueError("local winners need a timed result")
+    winners = result.timings.regions
+    return {rep.region.symbol: winning_build(rep, winners[rep.region.symbol].winner) for rep in result.regions}
+
+
+def linked(linker: Linker, selection: dict[str, Build]) -> dace.SDFG:
+    """The outlined program calling ``selection[symbol]``'s archive for every region."""
+    archives = {symbol: build.archive for symbol, build in selection.items() if build.archive is not None}
+    return linker.library_sdfg(archives, frozenset(build.candidate.compiler for build in selection.values()))
+
+
+def compiled_winners(
+    sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Matrix | None = None
+) -> tuple[dace.SDFG, CompiledSDFG]:
+    """The framework columns' program: ``sdfg`` (a bench pipeline's output) outlined, each region linking its local
+    winner, built by DaCe on the matrix's OpenMP runtime. The archives link statically, so Alloy's folder goes once
+    the program is built."""
+    matrix = matrix or configuration_matrix.load()
+    with tempfile.TemporaryDirectory(prefix=f"alloy_{spec.short_name}_") as tmp:
+        out = pathlib.Path(tmp)
+        result = generated(sdfg, spec, precision, matrix, out)
+        program = linked(Linker(result.program, matrix, out), local_winners(result))
+        program.name = f"{sdfg.name}_alloy"  # pyright: ignore[reportAttributeAccessIssue]
+        with set_temporary("compiler", "extra_cmake_args", value=cmake_args(matrix)):
+            return program, program.compile()
+
+
 def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Build], deliver: Deliver) -> Submission:
     """The library calling ``selection[symbol]``'s archive for every region, rendered by CPF in the bench C ABI."""
-    archives = {symbol: build.archive for symbol, build in selection.items() if build.archive is not None}
-    compilers = frozenset(build.candidate.compiler for build in selection.values())
-    sdfg = linker.library_sdfg(archives, compilers)
+    sdfg = linked(linker, selection)
     form = render_canonical(spec, spec.short_name, sdfg, DIALECT[task.language], task.precision.value, "cpu")
     return deliver(form.code, form.link)
 
@@ -81,11 +124,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     deadline = started + resolve_kernel_timeout(spec)
     out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
     matrix = configuration_matrix.load()
-    manifest = inputs.load(
-        paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml",
-        datatype=numpy_dtype(task.precision).__name__,
-    )
-    result = api.generate(pipeline_sdfg(spec, pipeline, task.precision), out, manifest=manifest, matrix=matrix)
+    result = generated(pipeline_sdfg(spec, pipeline, task.precision), spec, task.precision, matrix, out)
     timings = result.timings
     if timings is None:
         raise RuntimeError(f"Alloy timed nothing for {spec.short_name}")
@@ -106,9 +145,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
             return -1.0, submission
         return float(speedup), submission
 
-    chosen = {
-        rep.region.symbol: winning_build(rep, timings.regions[rep.region.symbol].winner) for rep in result.regions
-    }
+    chosen = local_winners(result)
     if not affordable():
         return library(task, spec, linker, chosen, deliver)
     best, submission = scored(chosen)

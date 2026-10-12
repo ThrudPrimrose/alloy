@@ -64,7 +64,7 @@ def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], c
     # library brings in reads this child's settings.
     os.sched_setaffinity(0, cpus)
     os.environ.update(openmp_env(cpus))
-    machine.limit_memory(1 / len(machine.core_slots()))  # up to one child per slot runs at once
+    machine.limit_memory(1 / len(machine.core_slots()), len(cpus))  # up to one child per slot runs at once
     conn.send(target(*args))
 
 

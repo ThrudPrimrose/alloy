@@ -34,6 +34,13 @@ void __wrap_{symbol}({signature}) {{
 """
 
 
+def cmake_args(matrix: Matrix) -> str:
+    """Make DaCe's own OpenMP the matrix runtime: its CMake would otherwise find the compiler's default one and load
+    a second runtime next to the regions'."""
+    soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
+    return f"-DOpenMP_CXX_LIB_NAMES={soname} -DOpenMP_{soname}_LIBRARY={runtime.default_library(matrix)}"
+
+
 @dataclass(slots=True)
 class Linker:
     """Builds the program with a chosen archive per region, every region's archive at ``link/lib<symbol>.a``."""
@@ -45,16 +52,6 @@ class Linker:
     def link_flags(self) -> list[str]:
         library = runtime.default_library(self.matrix)
         return runtime.link_flags(library, self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime])
-
-    def cmake_args(self) -> str:
-        """Make DaCe's own OpenMP the matrix runtime: its CMake would otherwise find the compiler's default one and
-        load a second runtime next to the regions'."""
-        soname = self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime]
-        extra = [
-            f"-DOpenMP_CXX_LIB_NAMES={soname}",
-            f"-DOpenMP_{soname}_LIBRARY={runtime.default_library(self.matrix)}",
-        ]
-        return " ".join(extra)
 
     def support_flags(self, compilers: frozenset[str]) -> list[str]:
         """Link flags for the support libraries of every compiler that built one of the linked archives."""
@@ -98,7 +95,7 @@ class Linker:
             for path, value in (
                 (("compiler", "command_cache"), True),
                 (("compiler", "precompiled_header"), True),
-                (("compiler", "extra_cmake_args"), self.cmake_args()),
+                (("compiler", "extra_cmake_args"), cmake_args(self.matrix)),
             ):
                 stack.enter_context(set_temporary(*path, value=value))
             sdfg.compile()
@@ -120,6 +117,6 @@ class Linker:
         sdfg = copy.deepcopy(self.program.original)
         sdfg.name = f"{self.program.original.name}_dace_default"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / "dace_default")
-        with set_temporary("compiler", "extra_cmake_args", value=self.cmake_args()):
+        with set_temporary("compiler", "extra_cmake_args", value=cmake_args(self.matrix)):
             sdfg.compile()
         return pathlib.Path(sdfg.build_folder)

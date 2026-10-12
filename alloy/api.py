@@ -45,6 +45,8 @@ def generate(
     ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it."""
     matrix = matrix or configuration_matrix.load()
     program = regions.outline(sdfg, matrix.libm_calls)
+    if not program.regions:
+        raise ValueError(f"{sdfg.name}: no top-level loop nest to outline, so Alloy has nothing to generate")
     out.mkdir(parents=True, exist_ok=True)
     reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs)
     verification, timings = None, None
