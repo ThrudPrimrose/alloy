@@ -5,12 +5,12 @@ import subprocess
 
 import numpy as np
 from dace.codegen import cpf
-from helpers import MATRIX, REDUCTIONS, load_program
 
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Linker
 from alloy.frontend import regions
+from helpers import MATRIX, REDUCTIONS, load_program
 
 
 def test_a_library_of_region_archives_renders_standalone_and_computes_the_program(tmp_path):
