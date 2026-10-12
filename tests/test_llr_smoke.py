@@ -64,7 +64,7 @@ def test_the_framework_program_calls_each_region_winner_and_agrees_with_dace(tmp
     program, sut = bench.compiled_winners(sdfg, spec, Precision.FP64, matrix=SMALL)
     sut(**actual)
 
-    assert program.name == "parallel_cpu_alloy"
+    assert program.name == f"{sdfg.name}_alloy"
     calls = list(external_call.external_calls(program))
     assert calls and all(call.implementation == "ExternCall" for call in calls)
     for name in manifest.outputs:
