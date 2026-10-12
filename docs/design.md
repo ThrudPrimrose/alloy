@@ -100,6 +100,19 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
   it is a tie and the reference stays.
 - Baselines: DaCe's default CPU codegen, then alloy-full, both timed as whole programs.
 
+## Heuristic mode
+
+Status: not built. Picks one candidate per region from the builds alone, without timing; the pick is still verified.
+
+- FP level: a region with a reduction or scan gets `reassoc`; without one, `fast` unless the inputs can be NaN or Inf
+  (then `noerrno` + `contract`). A failed verification falls back one level (`fast` to `noerrno`, `reassoc` to
+  `contract`).
+- `-ffast-math` stays on the region's compile, never on the link line: gcc then links `crtfastmath.o`, which sets
+  FTZ/DAZ for the whole process, `strict` regions included.
+- Rendering and knobs: chosen from build signals (vectorized loops from remarks, packed vector instruction share,
+  spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
+  the timed winner.
+
 ## Report format
 
 Status: built. Per region: the candidate table, then the re-timed arms with screening median, final median and CI,
