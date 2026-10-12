@@ -2,8 +2,6 @@
 import dataclasses
 import math
 
-from helpers import MATRIX, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases, write_manifest
-
 from alloy import machine
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
@@ -11,6 +9,7 @@ from alloy.backend.sweep import RegionReport
 from alloy.evaluate import timing, verify
 from alloy.evaluate.link import Linker
 from alloy.frontend import inputs
+from helpers import MATRIX, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases, write_manifest
 
 FEW_REPS = dataclasses.replace(MATRIX, timing=dataclasses.replace(MATRIX.timing, screen_reps=3, final_reps=5))
 

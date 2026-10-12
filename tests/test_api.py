@@ -1,7 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-from helpers import EXAMPLE, gcc_only, load_program
-
 from alloy import api
+from helpers import EXAMPLE, gcc_only, load_program
 
 
 def test_without_a_manifest_every_region_is_built_and_reported_but_not_verified(tmp_path):

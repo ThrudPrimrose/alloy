@@ -1,9 +1,9 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pytest
 from dace.libraries.standard.nodes import external_call
-from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
 from alloy.frontend import regions
+from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
 
 def test_the_libm_map_and_the_sum_become_separate_regions():

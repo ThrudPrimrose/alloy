@@ -1,8 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pytest
-from helpers import variant
 
 from alloy import configuration_matrix
+from helpers import variant
 
 
 def test_a_matrix_with_an_unknown_key_is_refused(tmp_path):

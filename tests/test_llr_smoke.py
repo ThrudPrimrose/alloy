@@ -3,13 +3,13 @@ import dataclasses
 import math
 
 import pytest
-from helpers import MATRIX
 from hpcagent_bench import autogen, paths
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.framework import framework_class
 
 from alloy import api
 from alloy.frontend import inputs
+from helpers import MATRIX
 
 SMALL = dataclasses.replace(
     MATRIX,

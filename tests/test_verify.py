@@ -2,7 +2,6 @@
 import pathlib
 
 import numpy as np
-from helpers import MATRIX, REDUCTIONS, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
 
 from alloy import machine
 from alloy.backend.build import build
@@ -10,6 +9,7 @@ from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import RegionReport
 from alloy.evaluate import link, verify
 from alloy.frontend import inputs, regions
+from helpers import MATRIX, REDUCTIONS, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
 
 
 def reference_run(tmp: pathlib.Path, program: regions.Program, cases: verify.Cases) -> tuple:

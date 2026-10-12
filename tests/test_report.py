@@ -1,12 +1,11 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import json
 
-from helpers import MATRIX, outlined
-
 from alloy import report
 from alloy.backend import sweep
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
+from helpers import MATRIX, outlined
 
 
 def test_the_report_lists_every_candidate_of_every_region(tmp_path):
