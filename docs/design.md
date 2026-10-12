@@ -121,8 +121,8 @@ Status: not built. Picks one candidate per region from the builds alone, without
 
 - Columns: `dace-par + alloy` and `dace-canon + alloy`: the bench's `parallel_cpu` / `canon_cpu` pipeline output is
   Alloy's input SDFG. Profile (timed) and speculative (heuristic, verify only) flavors of each.
-- Framework columns (no judge): bench `dace_cpu_alloy` / `dace_cpu_canonicalize_alloy` (`AlloyFramework`, bench branch
-  `alloy-experiments`) call `compiled_winners`: each region's local winner, linked and built by DaCe; the bench times
+- Framework columns (no judge): bench `dace_cpu_alloy` / `dace_cpu_canonicalize_alloy` (`AlloyFramework`, bench main
+  4c14f18) call `compiled_winners`: each region's local winner, linked and built by DaCe; the bench times
   that program like any DaCe flavor (`hpcagent-bench job baseline`). Optimizers (`alloy-par` / `alloy-canon`) are the
   judged path below.
 - Region coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
