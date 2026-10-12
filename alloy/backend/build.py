@@ -6,7 +6,7 @@ import pathlib
 import re
 import subprocess
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dace.codegen import cpf
 from dace.config import set_temporary
@@ -19,6 +19,10 @@ from alloy.frontend.regions import Region
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
 NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
+
+
+#: A rendering's identity: the language and every codegen knob it was rendered with.
+RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 
 
 @dataclass(slots=True, frozen=True)
@@ -94,16 +98,26 @@ def compile_candidate(
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
-def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
-    """Render, compile and archive ``candidate``. ``seen`` maps object hashes to the first candidate that
-    produced them, so a duplicate keeps its record but points at the original."""
+def write_source(
+    region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, str]
+) -> pathlib.Path:
+    """Write ``candidate``'s translation unit into ``folder``. ``renders`` memoizes the text by language and codegen
+    knobs, which most candidates share (they differ only in compile flags)."""
     folder.mkdir(parents=True, exist_ok=True)
+    key = (candidate.language, tuple(sorted(candidate.codegen_params(matrix).items())))
+    if key not in renders:
+        renders[key] = render(region, candidate, matrix)
+    source = folder / f"{candidate.name(matrix)}.{matrix.languages[candidate.language].suffix}"
+    source.write_text(renders[key])
+    return source
+
+
+def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -> Build:
+    """Compile and archive the unit :func:`write_source` wrote; safe to run concurrently for distinct candidates."""
     name, params = candidate.name(matrix), candidate.codegen_params(matrix)
-    source = folder / f"{name}.{matrix.languages[candidate.language].suffix}"
-    source.write_text(render(region, candidate, matrix))
     flags = candidate.flags(matrix)
     proc = compile_candidate(source, candidate, matrix, flags)
-    (folder / f"{name}.log").write_text(proc.stderr)
+    source.with_suffix(".log").write_text(proc.stderr)
     remarks = parse_remarks(proc.stderr, source)
     if proc.returncode != 0:
         return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
@@ -111,18 +125,20 @@ def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.
     if missing := runtime.unresolved(obj, runtime.default_library(matrix)):
         error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
-    digest = code_hash(obj)
-    archive = folder / f"lib{name}.a"
+    archive = source.parent / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
-    duplicate = seen.setdefault(digest, name)
-    return Build(
-        candidate,
-        name,
-        params,
-        source,
-        archive,
-        flags,
-        digest,
-        remarks,
-        duplicate_of="" if duplicate == name else duplicate,
-    )
+    return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks)
+
+
+def deduplicated(built: Build, seen: dict[str, str]) -> Build:
+    """``built`` pointing at the first candidate in ``seen`` (object hash -> name) with the same object."""
+    if built.archive is None:
+        return built
+    first = seen.setdefault(built.object_hash, built.name)
+    return built if first == built.name else replace(built, duplicate_of=first)
+
+
+def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
+    """Render, compile and archive ``candidate``. ``seen`` maps object hashes to the first candidate that
+    produced them, so a duplicate keeps its record but points at the original."""
+    return deduplicated(compile_source(write_source(region, candidate, matrix, folder, {}), candidate, matrix), seen)

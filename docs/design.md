@@ -117,12 +117,16 @@ Status: not built. Picks one candidate per region from the builds alone, without
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
 
-## Bench experiments: dace+alloy (decided 10-12, not built)
+## Bench experiments: dace+alloy (decided 10-12; `alloy/bench.py`, adapters `alloy-par` / `alloy-canon`)
 
 - Columns: `dace-par + alloy` and `dace-canon + alloy`: the bench's `parallel_cpu` / `canon_cpu` pipeline output is
   Alloy's input SDFG. Profile (timed) and speculative (heuristic, verify only) flavors of each.
 - Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
-  compilers in parallel; `/score` the top ~5 per region on the judge; `/submit` the winner once.
+  compilers in parallel; start from each region's local winner; `/score` the top 5 per region on the judge while the
+  kernel's budget (`resolve_kernel_timeout`) still holds one more score and the harness's own grade; `/submit` the
+  best. Measured on argmax_value (16 cores): Alloy 23 s (candidates compile one per core), one judge `/score`
+  200-240 s, the harness grade 144 s (noop). So L2 (300 s) submits the local winner unscored (judge: correct, 1.74x
+  vs auto) and only L3 (600 s) scores; at L1 (180 s) Alloy plus the harness grade still times out on this box.
 - Submission: CPF renders the outlined program in the bench C ABI (the bench's `cpf_bridge` preparation and
   `EntrySignature`), the region archives come from `Rendering.link` (DaCe extended 844ebca; the bench must pin it).
   No DaCe build, no libdace.
