@@ -14,7 +14,6 @@ from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
 
 from alloy.backend import runtime
-from alloy.backend.build import runtime_library
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.regions import Program, Region
 
@@ -43,14 +42,17 @@ class Linker:
     out: pathlib.Path
 
     def link_flags(self) -> list[str]:
-        library = runtime_library(self.matrix)
+        library = runtime.default_library(self.matrix)
         return runtime.link_flags(library, self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime])
 
     def cmake_args(self) -> str:
         """Make DaCe's own OpenMP the matrix runtime: its CMake would otherwise find the compiler's default one and
         load a second runtime next to the regions'."""
         soname = self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime]
-        extra = [f"-DOpenMP_CXX_LIB_NAMES={soname}", f"-DOpenMP_{soname}_LIBRARY={runtime_library(self.matrix)}"]
+        extra = [
+            f"-DOpenMP_CXX_LIB_NAMES={soname}",
+            f"-DOpenMP_{soname}_LIBRARY={runtime.default_library(self.matrix)}",
+        ]
         return " ".join(extra)
 
     def support_flags(self, compilers: frozenset[str]) -> list[str]:

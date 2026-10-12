@@ -12,10 +12,10 @@ from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate import timing, verify
 from alloy.evaluate.link import Linker
+from alloy.evaluate.timing import Timings
 from alloy.evaluate.verify import Verification
 from alloy.frontend import inputs, regions
 from alloy.frontend.inputs import Manifest
-from alloy.report import Timings
 
 
 @dataclass(slots=True, frozen=True)

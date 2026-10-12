@@ -7,8 +7,9 @@ from dataclasses import dataclass
 
 import dace
 import sympy
-from dace.libraries.standard.nodes import external_call
+from dace.libraries.standard.nodes import ArgReduce, Reduce, Scan, external_call
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import passes
 
 CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -36,7 +37,6 @@ class Program:
     sdfg: dace.SDFG
     original: dace.SDFG
     regions: tuple[Region, ...]
-    calls: tuple[external_call.ExternalCall, ...]
 
 
 def called_names(sdfg: dace.SDFG) -> set[str]:
@@ -51,20 +51,24 @@ def called_names(sdfg: dace.SDFG) -> set[str]:
 def has_reduction(sdfg: dace.SDFG) -> bool:
     """Whether ``sdfg`` reduces: a write-conflict-resolution memlet or a reduce/scan library node."""
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode) and type(node).__name__ in ("Reduce", "Scan", "ArgReduce"):
+        if isinstance(node, Reduce | Scan | ArgReduce):
             return True
     return any(
         edge.data.wcr is not None for edge, _ in sdfg.all_edges_recursive() if isinstance(edge.data, dace.Memlet)
     )
 
 
-def reduced_extent(edge, scope: dict) -> sympy.Expr:
+def reduced_extent(
+    edge: MultiConnectorEdge[dace.Memlet], scope: dict[nodes.Node, nodes.EntryNode | None]
+) -> sympy.Expr:
     """Product of the extents of the enclosing map parameters the WCR ``edge`` does NOT index its destination by:
     every iteration over those writes the same element."""
-    indexed = {str(s) for s in edge.data.subset.free_symbols}
+    subset = edge.data.subset
+    assert subset is not None, "only non-empty WCR edges are measured"
+    indexed = {str(s) for s in subset.free_symbols}
     extent: sympy.Expr = sympy.Integer(1)
     entry = scope[edge.src]
-    while entry is not None:
+    while isinstance(entry, nodes.MapEntry):
         for param, rng in zip(entry.map.params, entry.map.range, strict=True):
             if param not in indexed:
                 extent = extent * sympy.sympify(dace.subsets.Range([rng]).num_elements())
@@ -121,9 +125,8 @@ def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
     # A top-level library node (np.sum -> Reduce) is no nest until expanded; expand so it becomes a region.
     sdfg.expand_library_nodes(recursive=True)
     sdfg.simplify()
-    calls = tuple(passes.outline_to_external_calls(sdfg))
     regions = []
-    for call in calls:
+    for call in passes.outline_to_external_calls(sdfg):
         region_sdfg = standalone(call)
         regions.append(
             Region(
@@ -136,4 +139,4 @@ def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
                 accumulation_length=accumulation_length(region_sdfg),
             )
         )
-    return Program(sdfg=sdfg, original=original, regions=tuple(regions), calls=calls)
+    return Program(sdfg=sdfg, original=original, regions=tuple(regions))

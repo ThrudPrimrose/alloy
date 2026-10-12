@@ -69,7 +69,7 @@ def parse_remarks(log: str, source: pathlib.Path) -> Remarks:
         text = match.group(1)
         if "loop vectorized" in text or "vectorized loop" in text or "Generated vector" in text:
             vectorized += 1
-        elif "not vectorized" in text or "couldn't vectorize" in text or "loop not vectorized" in text:
+        elif "not vectorized" in text or "couldn't vectorize" in text:
             missed.append(text.strip())
     return Remarks(vectorized=vectorized, missed=tuple(dict.fromkeys(missed)))
 
@@ -85,20 +85,13 @@ def code_hash(obj: pathlib.Path) -> str:
 
 
 def compile_candidate(
-    source: pathlib.Path, candidate: Candidate, matrix: Matrix
-) -> tuple[subprocess.CompletedProcess, tuple]:
-    """Compile ``source`` to ``<stem>.o`` next to it; returns the process and the flags used."""
+    source: pathlib.Path, candidate: Candidate, matrix: Matrix, flags: tuple[str, ...]
+) -> subprocess.CompletedProcess[str]:
+    """Compile ``source`` with ``flags`` and the compiler's remark flags to ``<stem>.o`` next to it."""
     compiler = matrix.compilers[candidate.compiler]
     executable, remarks = compiler.executables[candidate.language], compiler.remarks
-    flags = candidate.flags(matrix)
     command = [executable, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
-    return subprocess.run(command, capture_output=True, text=True, check=False), flags
-
-
-def runtime_library(matrix: Matrix) -> pathlib.Path:
-    """The shared object of the matrix's default OpenMP runtime, as its compilers resolve it."""
-    soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
-    return runtime.resolve(soname, [exe for comp in matrix.compilers.values() for exe in comp.executables.values()])
+    return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
 def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
@@ -108,13 +101,14 @@ def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.
     name, params = candidate.name(matrix), candidate.codegen_params(matrix)
     source = folder / f"{name}.{matrix.languages[candidate.language].suffix}"
     source.write_text(render(region, candidate, matrix))
-    proc, flags = compile_candidate(source, candidate, matrix)
+    flags = candidate.flags(matrix)
+    proc = compile_candidate(source, candidate, matrix, flags)
     (folder / f"{name}.log").write_text(proc.stderr)
     remarks = parse_remarks(proc.stderr, source)
     if proc.returncode != 0:
         return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
     obj = source.with_suffix(".o")
-    if missing := runtime.unresolved(obj, runtime_library(matrix)):
+    if missing := runtime.unresolved(obj, runtime.default_library(matrix)):
         error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
     digest = code_hash(obj)

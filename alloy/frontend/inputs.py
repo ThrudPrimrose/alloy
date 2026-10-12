@@ -1,8 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Program inputs in the HPCAgent-Bench manifest format: ``parameters`` presets (with a ``fuzzed`` range for
-speculative compiling), ``init.arrays`` / ``init.scalars``, ``input_args`` and ``output_args``. Sizes are drawn by
-the bench's fuzzer under its correctness cap and the arrays by its auto-initializer, so a corpus kernel's manifest
-works unchanged."""
+speculative compiling) and an ``args`` block (shapes, outputs). Sizes are drawn by the bench's fuzzer under its
+correctness cap and the arrays by its auto-initializer, so a corpus kernel's manifest works unchanged; a manifest
+outside the corpus names its kernel as ``file.py:function``."""
 
 import importlib.util
 import pathlib
@@ -34,11 +34,6 @@ def require_bench() -> None:
     """Manifest inputs and the tolerance band live in HPCAgent-Bench, an optional extra of Alloy."""
     if importlib.util.find_spec("hpcagent_bench") is None:
         raise ImportError("manifest inputs and the tolerance band need HPCAgent-Bench: install alloy[bench]")
-
-
-def manifest_for(program_file: pathlib.Path) -> pathlib.Path:
-    """The manifest next to ``program_file``: ``kernel.py`` -> ``kernel.yaml``."""
-    return program_file.with_suffix(".yaml")
 
 
 def load(path: pathlib.Path, program: str | None = None, datatype: str = "float64") -> Manifest:

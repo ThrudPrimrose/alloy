@@ -38,6 +38,6 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
 
     assert sut.regions and sut.verification is not None and sut.timings is not None
     assert all(any(v.ok for v in sut.verification.verdicts[r.region.symbol].values()) for r in sut.regions)
-    full, default = sut.timings[1].arms["alloy_full"], sut.timings[1].arms["dace_default"]
+    full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
     assert full.verdict.ok
     assert math.isfinite(default.median / full.median)

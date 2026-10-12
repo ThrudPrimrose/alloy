@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pytest
+from dace.libraries.standard.nodes import external_call
 from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
 from alloy.frontend import regions
@@ -8,7 +9,7 @@ from alloy.frontend import regions
 def test_the_libm_map_and_the_sum_become_separate_regions():
     sut = outlined()
 
-    assert len(sut.regions) == len(sut.calls) == 3
+    assert len(sut.regions) == len(external_call.external_calls(sut.sdfg)) == 3
     assert [r.calls_libm for r in sut.regions].count(True) == 1
     assert [r.has_reduction for r in sut.regions].count(True) == 1
 

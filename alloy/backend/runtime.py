@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 
+from alloy.configuration_matrix import Matrix
+
 #: Undefined symbols that belong to an OpenMP runtime.
 OPENMP_SYMBOL = re.compile(r"^(GOMP_|__kmpc_|omp_|kmp_|__kmp_)")
 
@@ -30,7 +32,7 @@ def driver_path(executable: str, soname: str) -> pathlib.Path | None:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def runtime_library(soname: str, executables: tuple[str, ...]) -> pathlib.Path | None:
+def find_library(soname: str, executables: tuple[str, ...]) -> pathlib.Path | None:
     """The first ``lib<soname>.so`` any of ``executables`` resolves, in order."""
     for executable in executables:
         if (path := driver_path(executable, soname)) is not None:
@@ -67,7 +69,13 @@ def link_flags(library: pathlib.Path, soname: str) -> list[str]:
 
 def resolve(soname: str, compiler_executables: list[str]) -> pathlib.Path:
     """``lib<soname>.so`` as the matrix's compilers find it; the runtime is mandatory, so a miss raises."""
-    library = runtime_library(soname, tuple(compiler_executables))
+    library = find_library(soname, tuple(compiler_executables))
     if library is None:
         raise LookupError(f"no compiler in the matrix resolves lib{soname}.so")
     return library
+
+
+def default_library(matrix: Matrix) -> pathlib.Path:
+    """The shared object of the matrix's default OpenMP runtime, as its compilers resolve it."""
+    soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
+    return resolve(soname, [exe for comp in matrix.compilers.values() for exe in comp.executables.values()])

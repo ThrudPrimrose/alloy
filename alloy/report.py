@@ -9,13 +9,11 @@ import shutil
 from alloy.backend.build import Build
 from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
-from alloy.evaluate.timing import Measured, ProgramTiming, RegionTiming
+from alloy.evaluate.timing import Measured, ProgramTiming, RegionTiming, Timings
 from alloy.evaluate.verify import Verdict, Verification
 
 #: ``{region symbol: {candidate name: verdict}}``; empty when no manifest was given.
 Verdicts = dict[str, dict[str, Verdict]]
-#: Every region's timing and the whole program's, as ``timing.time_program`` returns them.
-Timings = tuple[dict[str, RegionTiming], ProgramTiming]
 
 
 def verdict_text(verdict: Verdict | None) -> str:
@@ -35,9 +33,15 @@ def row(b: Build, verdict: Verdict | None) -> str:
     )
 
 
-def markdown(reports: list[RegionReport], matrix: Matrix, verdicts: Verdicts, timing: "Timings | None" = None) -> str:
-    lines = ["# Alloy build report", "", f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
-    lines += program_lines(timing[1]) if timing else []
+def markdown(
+    reports: list[RegionReport], matrix: Matrix, verdicts: Verdicts, unstable: list[str], timing: Timings | None
+) -> str:
+    lines = ["# Alloy build report", ""]
+    if unstable:
+        note = "Nondeterministic outputs (differ between reference runs, always compared by band)"
+        lines += [f"{note}: {', '.join(unstable)}", ""]
+    lines += [f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
+    lines += program_lines(timing.program) if timing else []
     _, skipped = matrix.usable_compilers()
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
     lines += [""] if skipped else []
@@ -58,7 +62,7 @@ def markdown(reports: list[RegionReport], matrix: Matrix, verdicts: Verdicts, ti
         mine = verdicts.get(r.symbol, {})
         lines += [row(b, mine.get(b.name)) for b in rep.builds]
         lines.append("")
-        lines += timing_lines(timing[0][r.symbol]) if timing else []
+        lines += timing_lines(timing.regions[r.symbol]) if timing else []
     return "\n".join(lines)
 
 
@@ -138,18 +142,10 @@ def write(
     verdicts = verification.verdicts if verification else {}
     unstable = sorted(verification.nondeterministic) if verification else []
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    text = markdown(reports, matrix, verdicts, timing)
-    if unstable:
-        note = (
-            f"Nondeterministic outputs (differ between reference runs, always compared by band): {', '.join(unstable)}"
-        )
-        text = text.replace("\n\n", f"\n\n{note}\n\n", 1)
-    (out / "report.md").write_text(text)
+    (out / "report.md").write_text(markdown(reports, matrix, verdicts, unstable, timing))
     payload = {
         "nondeterministic_outputs": unstable,
         "regions": as_json(reports, verdicts),
-        "timing": dataclasses.asdict(timing[1]) | {"regions": {k: dataclasses.asdict(v) for k, v in timing[0].items()}}
-        if timing
-        else None,
+        "timing": dataclasses.asdict(timing) if timing else None,
     }
     (out / "report.json").write_text(json.dumps(payload, indent=2))

@@ -78,11 +78,10 @@ def test_alloy_full_links_every_region_winner_and_matches_dace_default(tmp_path)
     verification = verify.verify(program, FEW_REPS, reports, cases, tmp_path / "out")
     linker = Linker(program, FEW_REPS, tmp_path / "out")
 
-    regions, sut = timing.time_program(
-        linker, reports, verification, write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST)
-    )
+    timings = timing.time_program(linker, reports, verification, write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST))
+    sut = timings.program
 
     assert set(sut.arms) == {"dace_default", "alloy_full"}
     assert all(m.verdict.ok and math.isfinite(m.median) for m in sut.arms.values())
     assert timing.footprint(program.original, sut.sizes) >= 2 * machine.largest_cache_bytes()
-    assert all(r.winner in r.final for r in regions.values())
+    assert all(r.winner in r.final for r in timings.regions.values())

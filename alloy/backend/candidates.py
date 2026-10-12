@@ -27,6 +27,10 @@ class Candidate:
         d = matrix.defaults
         return self.index_width or d.index_width, self.fp_level or d.fp_level, self.cost_model or d.cost_model
 
+    def tolerance(self, matrix: Matrix) -> str:
+        """How this candidate's outputs are compared: its FP level's tolerance."""
+        return matrix.fp_levels[self.resolved(matrix)[1]].tolerance
+
     def name(self, matrix: Matrix) -> str:
         width, level, model = self.resolved(matrix)
         parts = [self.language, self.compiler, width, level, model, self.veclib]

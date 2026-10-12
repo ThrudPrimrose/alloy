@@ -285,9 +285,11 @@ def judge_region(
     for b in rep.builds:
         if b.error or b.archive is None:
             continue
-        tolerance = matrix.fp_levels[b.candidate.resolved(matrix)[1]].tolerance
         outputs = ran[rep.region.symbol, b.duplicate_of or b.name]
-        mine[b.name] = outputs if isinstance(outputs, Verdict) else judge(tolerance, refs, outputs, lengths)
+        verdict = (
+            outputs if isinstance(outputs, Verdict) else judge(b.candidate.tolerance(matrix), refs, outputs, lengths)
+        )
+        mine[b.name] = verdict
     return mine
 
 

@@ -60,6 +60,14 @@ class ProgramTiming:
 
 
 @dataclass(slots=True, frozen=True)
+class Timings:
+    """Every region's timing, and alloy-full against DaCe's default codegen."""
+
+    regions: dict[str, RegionTiming]
+    program: ProgramTiming
+
+
+@dataclass(slots=True, frozen=True)
 class Arms:
     """Programs compared on one input, the first being the reference; ``symbol`` names the region whose wrapper is
     read, or is empty to time the whole call."""
@@ -187,7 +195,7 @@ def time_region(linker: Linker, rep: RegionReport, verification: Verification, m
     ]
     arms = Arms(
         {REFERENCE: verification.reference} | {b.name: verification.programs[symbol, b.name] for b in verified},
-        {REFERENCE: "exact"} | {b.name: matrix.fp_levels[b.candidate.resolved(matrix)[1]].tolerance for b in verified},
+        {REFERENCE: "exact"} | {b.name: b.candidate.tolerance(matrix) for b in verified},
         symbol,
         manifest.outputs,
         verification.nondeterministic,
@@ -214,7 +222,7 @@ def length(linker: Linker, sizes: dict[str, int]) -> int:
 
 def time_program(
     linker: Linker, reports: list[RegionReport], verification: Verification, manifest: Manifest
-) -> tuple[dict[str, RegionTiming], ProgramTiming]:
+) -> Timings:
     """Every region's timing, then alloy-full against DaCe's default codegen on every core."""
     regions = {rep.region.symbol: time_region(linker, rep, verification, manifest) for rep in reports}
     winners = {rep.region.symbol: winning_build(rep, regions[rep.region.symbol].winner) for rep in reports}
@@ -230,7 +238,7 @@ def time_program(
     t, original = linker.matrix.timing, linker.program.original
     sizes = stage_sizes(original, original, manifest, t.final_cache_factor, t.max_program_cache_factor, grow_only=True)
     program = measure(arms, inputs.at(manifest, sizes), length(linker, sizes), machine.physical_cores(), t.final_reps)
-    return regions, ProgramTiming(program, sizes)
+    return Timings(regions, ProgramTiming(program, sizes))
 
 
 def winning_build(rep: RegionReport, winner: str) -> Build:
