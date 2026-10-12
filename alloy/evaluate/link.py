@@ -10,6 +10,7 @@ import subprocess
 from contextlib import ExitStack
 from dataclasses import dataclass
 
+import dace
 from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
 
@@ -64,6 +65,15 @@ class Linker:
             for soname in comp.support_libraries:
                 flags += runtime.link_flags(runtime.resolve(soname, executables), soname)
         return flags
+
+    def library_sdfg(self, archives: dict[str, pathlib.Path], compilers: frozenset[str]) -> dace.SDFG:
+        """A copy of the outlined program whose every region calls ``archives[symbol]``, linked with the matrix's
+        OpenMP runtime and the support libraries of ``compilers``: what a standalone (CPF) library renders."""
+        sdfg = copy.deepcopy(self.program.sdfg)
+        flags = self.link_flags() + self.support_flags(compilers)
+        for call in external_call.external_calls(sdfg):
+            call.implementation, call.lib_path, call.link_flags = "ExternCall", str(archives[call.symbol]), flags
+        return sdfg
 
     def compile(
         self, archives: dict[str, pathlib.Path], tag: str, compilers: frozenset[str] = frozenset()

@@ -117,6 +117,19 @@ Status: not built. Picks one candidate per region from the builds alone, without
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
 
+## Bench experiments: dace+alloy (decided 10-12, not built)
+
+- Columns: `dace-par + alloy` and `dace-canon + alloy`: the bench's `parallel_cpu` / `canon_cpu` pipeline output is
+  Alloy's input SDFG. Profile (timed) and speculative (heuristic, verify only) flavors of each.
+- Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
+  compilers in parallel; `/score` the top ~5 per region on the judge; `/submit` the winner once.
+- Submission: CPF renders the outlined program in the bench C ABI (the bench's `cpf_bridge` preparation and
+  `EntrySignature`), the region archives come from `Rendering.link` (DaCe extended 844ebca; the bench must pin it).
+  No DaCe build, no libdace.
+- OpenMP: the library links LLVM libomp, which exports `GOMP_*` and `__kmpc_*`, so gcc, clang, icx and nvc objects
+  share it. Measured: `clang-21 -fopenmp=libgomp` emits no OpenMP calls (the pragmas are dropped), so libgomp would
+  leave gcc as the only parallel compiler. Probe the judge process once for a second runtime.
+
 ## Report format
 
 Status: built. Per region: the candidate table, then the re-timed arms with screening median, final median and CI,

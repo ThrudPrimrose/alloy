@@ -236,7 +236,6 @@ source = { editable = "." }
 dependencies = [
     { name = "dace" },
     { name = "numpy" },
-    { name = "pygments" },
 ]
 
 [package.optional-dependencies]
@@ -287,11 +286,10 @@ requires-dist = [
     { name = "alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace", git = "https://github.com/spcl/dace.git?rev=dbcb1e8a6adb659e4f6d702efa2c9831ce69afc0" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=454e88445d84dd90726e18d0eb79830c004e2ea1" },
+    { name = "dace", git = "https://github.com/spcl/dace.git?rev=844ebcadb55f5e6645eb39174b1bbe960194b81c" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=e7229fc4444fba2be1a5d7bed30200740cdd0cdd" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pygments" },
     { name = "pyright", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
@@ -1149,7 +1147,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0a10"
-source = { git = "https://github.com/spcl/dace.git?rev=dbcb1e8a6adb659e4f6d702efa2c9831ce69afc0#dbcb1e8a6adb659e4f6d702efa2c9831ce69afc0" }
+source = { git = "https://github.com/spcl/dace.git?rev=844ebcadb55f5e6645eb39174b1bbe960194b81c#844ebcadb55f5e6645eb39174b1bbe960194b81c" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1164,6 +1162,7 @@ dependencies = [
     { name = "ordered-set" },
     { name = "packaging" },
     { name = "ply" },
+    { name = "pygments" },
     { name = "pyreadline", marker = "sys_platform == 'win32' or (extra == 'extra-5-alloy-amdgpu' and extra == 'extra-5-alloy-dev-nvidia') or (extra == 'extra-5-alloy-amdgpu' and extra == 'extra-5-alloy-nvgpu') or (extra == 'extra-5-alloy-dev-amd' and extra == 'extra-5-alloy-dev-nvidia') or (extra == 'extra-5-alloy-dev-amd' and extra == 'extra-5-alloy-nvgpu')" },
     { name = "pyyaml" },
     { name = "scikit-build" },
@@ -1710,12 +1709,12 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=454e88445d84dd90726e18d0eb79830c004e2ea1#454e88445d84dd90726e18d0eb79830c004e2ea1" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=e7229fc4444fba2be1a5d7bed30200740cdd0cdd#e7229fc4444fba2be1a5d7bed30200740cdd0cdd" }
 
 [[package]]
 name = "hpcagent-bench"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=454e88445d84dd90726e18d0eb79830c004e2ea1#454e88445d84dd90726e18d0eb79830c004e2ea1" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=e7229fc4444fba2be1a5d7bed30200740cdd0cdd#e7229fc4444fba2be1a5d7bed30200740cdd0cdd" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },

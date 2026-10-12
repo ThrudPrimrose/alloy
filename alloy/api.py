@@ -16,12 +16,15 @@ from alloy.evaluate.timing import Timings
 from alloy.evaluate.verify import Verification
 from alloy.frontend import inputs, regions
 from alloy.frontend.inputs import Manifest
+from alloy.frontend.regions import Program
 
 
 @dataclass(slots=True, frozen=True)
 class Result:
-    """Every region's builds, their verdicts and timings (``None`` without a manifest), and the report."""
+    """The outlined program, every region's builds, their verdicts and timings (``None`` without a manifest), and
+    the report."""
 
+    program: Program
     regions: list[RegionReport]
     verification: Verification | None
     timings: Timings | None
@@ -50,4 +53,4 @@ def generate(
         verification = verify.verify(program, matrix, reports, cases, out)
         timings = timing.time_program(Linker(program, matrix, out), reports, verification, manifest)
     report.write(reports, matrix, out, verification, timings)
-    return Result(reports, verification, timings, out / "report.md")
+    return Result(program, reports, verification, timings, out / "report.md")
