@@ -1,11 +1,13 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Shared test helpers: example programs, the shipped matrix, and matrix variants."""
 
+import importlib.util
 import pathlib
 import subprocess
 
+from dace.frontend.python.parser import DaceProgram
+
 from alloy import configuration_matrix
-from alloy.cli import load_program
 from alloy.evaluate import verify
 from alloy.frontend import inputs, regions
 
@@ -13,6 +15,18 @@ EXAMPLES = pathlib.Path(__file__).parent.parent / "examples"
 EXAMPLE = EXAMPLES / "two_regions.py"
 REDUCTIONS = EXAMPLES / "reductions.py"
 MATRIX = configuration_matrix.load()
+
+
+def load_program(spec: str) -> DaceProgram:
+    """The ``@dace.program`` named by ``file.py:function``."""
+    path, _, name = spec.partition(":")
+    module_spec = importlib.util.spec_from_file_location(pathlib.Path(path).stem, path)
+    assert module_spec is not None and module_spec.loader is not None, f"cannot import {path}"
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    program = vars(module)[name]
+    assert isinstance(program, DaceProgram), f"{spec} is not a @dace.program"
+    return program
 
 
 def outlined() -> regions.Program:

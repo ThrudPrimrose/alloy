@@ -24,7 +24,7 @@ Imports of `hpcagent_bench` stay function-local.
 Status: built (one factor at a time; combining winners is open).
 
 All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configuration_matrix.py`;
-`alloy build --matrix` swaps it; every output folder keeps a copy). Code holds only the gating rules.
+`api.generate(..., matrix=)` swaps it; every output folder keeps a copy). Code holds only the gating rules.
 
 - Rendering: CPF-C (C23) and CPF-C++ (C++20).
 - Compiler: gcc and clang. Always `-O3 -march=native`.

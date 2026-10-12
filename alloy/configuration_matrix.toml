@@ -1,5 +1,5 @@
 # Alloy configuration matrix: every compiler, flag and codegen option the sweep tries.
-# Checked by alloy/configuration_matrix.py; `alloy build --matrix other.toml` swaps it and every report keeps a copy.
+# Checked by alloy/configuration_matrix.py; `api.generate(..., matrix=configuration_matrix.load(other))` swaps it and every report keeps a copy.
 # Shared sections say what an option MEANS (tolerances, gating); each compiler says how IT spells the option.
 schema = 1
 

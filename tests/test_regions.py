@@ -1,8 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pytest
-from helpers import MATRIX, REDUCTIONS, outlined
+from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
-from alloy.cli import load_program
 from alloy.frontend import regions
 
 

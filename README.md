@@ -5,7 +5,16 @@ Alloy splits it into regions, renders each region under many codegen knobs, comp
 verifies every candidate, times the survivors, and links the best into one program plus a per-region report.
 
     uv sync --extra dev
-    alloy build examples/two_regions.py:two_regions --out out/   # regions, candidates, verdicts, report.md
+
+```python
+import pathlib
+from alloy import api
+from alloy.frontend import inputs
+from examples.two_regions import two_regions
+
+manifest = inputs.load(pathlib.Path("examples/two_regions.yaml"), "examples/two_regions.py:two_regions")
+result = api.generate(two_regions.to_sdfg(), pathlib.Path("out"), manifest=manifest)  # result.report: report.md
+```
 
 Extras: the core (outline, sweep, build) needs only DaCe. `bench` adds HPCAgent-Bench, which verification and
 timing use for manifest inputs and the tolerance band. `nvgpu` / `amdgpu` add the matching cupy build. `dev` is
@@ -21,7 +30,7 @@ Layout:
   resolves and checks the OpenMP runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from region archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
-- `alloy/`: `machine` (cores, cache), `report`, `cli` (`alloy build`). Every compiler, flag and option is in
+- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report`. Every compiler, flag and option is in
   `alloy/configuration_matrix.toml`.
 - `examples/`: input programs for Alloy (dace numpy with symbolic sizes).
 - `samples/`: A/B studies. Each holds a slow and a fast rendering of one kernel, the harness, and the setup that

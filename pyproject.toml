@@ -37,9 +37,6 @@ include = ["alloy*"]
 [tool.setuptools.package-data]
 alloy = ["configuration_matrix.toml"]
 
-[project.scripts]
-alloy = "alloy.cli:main"
-
 [tool.uv]
 conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],
     [{ extra = "nvgpu" }, { extra = "dev-amd" }], [{ extra = "amdgpu" }, { extra = "dev-nvidia" }]]
