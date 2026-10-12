@@ -109,6 +109,10 @@ Status: not built. Picks one candidate per region from the builds alone, without
   `contract`).
 - `-ffast-math` stays on the region's compile, never on the link line: gcc then links `crtfastmath.o`, which sets
   FTZ/DAZ for the whole process, `strict` regions included.
+- Compiler: the one that vectorized the most distinct source loops (`file:line` from the remarks; gcc's epilogue and
+  versioned loops count once), ties broken by the widest vectors in bytes (clang `vectorization width` x element
+  size, gcc `using N byte vectors`).
+- Order: FP level, then compiler, then knobs. A failed verification lowers the FP level and keeps the compiler.
 - Rendering and knobs: chosen from build signals (vectorized loops from remarks, packed vector instruction share,
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
