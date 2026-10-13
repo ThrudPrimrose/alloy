@@ -293,8 +293,8 @@ requires-dist = [
     { name = "alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace", git = "https://github.com/spcl/dace.git?rev=ca072207e9203d20473c3508dc9a61be11ce0bf2" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=a7aed0451a04ad7158338633553b2fc489164445" },
+    { name = "dace", git = "https://github.com/spcl/dace.git?rev=a161a3e626e1083d549d9530778350e9738defcc" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -1219,7 +1219,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0a10"
-source = { git = "https://github.com/spcl/dace.git?rev=ca072207e9203d20473c3508dc9a61be11ce0bf2#ca072207e9203d20473c3508dc9a61be11ce0bf2" }
+source = { git = "https://github.com/spcl/dace.git?rev=a161a3e626e1083d549d9530778350e9738defcc#a161a3e626e1083d549d9530778350e9738defcc" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1781,12 +1781,12 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=a7aed0451a04ad7158338633553b2fc489164445#a7aed0451a04ad7158338633553b2fc489164445" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70#d7ca62ca7d6c5071e51472c62659ae8485b50d70" }
 
 [[package]]
 name = "hpcagent-bench"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=a7aed0451a04ad7158338633553b2fc489164445#a7aed0451a04ad7158338633553b2fc489164445" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70#d7ca62ca7d6c5071e51472c62659ae8485b50d70" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
