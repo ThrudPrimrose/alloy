@@ -49,6 +49,28 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
+def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, tmp_path):
+    """OMEN's scattering self-energies (complex128, an indirect neighbour index, matmuls in an eight-deep nest) after
+    a bench transformation pipeline: every region builds distinct variants and the whole program still verifies."""
+    spec = BenchSpec.load("scattering_self_energies")
+    sdfg = bench.pipeline_sdfg(spec, pipeline, Precision.FP64)
+    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
+
+    sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL)
+
+    assert sut.regions and sut.verification is not None and sut.timings is not None
+    for rep in sut.regions:
+        verdicts = sut.verification.verdicts[rep.region.symbol]
+        variants = [build.name for build in rep.builds[1:]]
+        assert len(variants) >= 2, f"{rep.region.symbol}: only {variants} besides the reference"
+        assert any(verdicts[name].ok for name in variants), f"{rep.region.symbol}: no variant verified"
+    full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
+    assert full.verdict.ok
+    assert math.isfinite(default.median / full.median)
+
+
+@pytest.mark.e2e
 def test_the_framework_program_calls_each_region_winner_and_agrees_with_dace(tmp_path):
     spec = BenchSpec.load("tsvc_2_vpv")
     sdfg = bench.pipeline_sdfg(spec, "parallel_cpu", Precision.FP64)
