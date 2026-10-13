@@ -4,9 +4,10 @@ import subprocess
 
 import pytest
 
+from alloy.backend import sweep
 from alloy.backend.build import build, parse_remarks
 from alloy.backend.candidates import Candidate
-from helpers import MATRIX, outlined, region_with
+from helpers import MATRIX, gcc_only, outlined, region_with
 
 
 def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
@@ -32,6 +33,21 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
     assert first.duplicate_of == ""
     assert sut.object_hash == first.object_hash
     assert sut.duplicate_of == first.name
+
+
+def test_a_parallel_sweep_marks_each_duplicate_against_the_first_candidate_in_candidate_order(tmp_path):
+    sut = sweep.run(outlined(), gcc_only(tmp_path), tmp_path / "out")
+
+    duplicates = 0
+    for report in sut:
+        first: dict[str, str] = {}
+        for built in report.builds:
+            if built.archive is None:
+                continue
+            owner = first.setdefault(built.object_hash, built.name)
+            assert built.duplicate_of == ("" if owner == built.name else owner), built.name
+            duplicates += bool(built.duplicate_of)
+    assert duplicates > 0, "the sweep built no duplicate, so its order went untested"
 
 
 @pytest.mark.parametrize(

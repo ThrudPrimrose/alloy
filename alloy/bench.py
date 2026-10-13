@@ -135,37 +135,47 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
         # one more score, and the harness's own score of the library returned
         return deadline - time.monotonic() > 2 * max(costs, default=SCORE_GUESS_S)
 
-    def scored(selection: dict[str, Build]) -> tuple[float, Submission]:
+    def scored(selection: dict[str, Build]) -> float:
         submission = library(task, spec, linker, selection, deliver)
         start = time.monotonic()
         reply = judge.score(submission, task.kernel)
         costs.append(time.monotonic() - start)
         speedup = reply.get("speedup")
         if reply.get("correct") is not True or not isinstance(speedup, int | float):
-            return -1.0, submission
-        return float(speedup), submission
+            return -1.0
+        return float(speedup)
 
-    chosen = local_winners(result)
+    references = {rep.region.symbol: rep.builds[0] for rep in result.regions}
+    candidates = [
+        (rep.region.symbol, screened(rep, timings.regions[rep.region.symbol].screen, TOP)) for rep in result.regions
+    ]
+    chosen = search(local_winners(result), references, candidates, scored, affordable)
+    # every deliver builds the same .so path, so the chosen library is built last, after every trial
+    return library(task, spec, linker, chosen, deliver)
+
+
+def search[T](
+    winners: dict[str, T],
+    references: dict[str, T],
+    candidates: list[tuple[str, list[T]]],
+    score: Callable[[dict[str, T]], float],
+    affordable: Callable[[], bool],
+) -> dict[str, T]:
+    """The selection to submit, by region symbol. Every region's local winner, unless the judge refuses that (a
+    negative ``score``), then every region's reference; then, while ``affordable``, each region's ``candidates`` in
+    turn with the others at their best, kept when the judge scores it faster than the best so far."""
     if not affordable():
-        return library(task, spec, linker, chosen, deliver)
-    best, submission = scored(chosen)
-    if best < 0:  # the judge refused the local winners: fall back to every region's reference
-        chosen = {rep.region.symbol: rep.builds[0] for rep in result.regions}
-        submission = library(task, spec, linker, chosen, deliver)
-    trial = chosen
-
-    def final() -> Submission:
-        # every deliver rebuilds the same .so path, so a later worse trial overwrote the best one's library
-        return submission if trial is chosen else library(task, spec, linker, chosen, deliver)
-
-    for rep in result.regions:
-        for build in screened(rep, timings.regions[rep.region.symbol].screen, TOP):
-            if build is chosen[rep.region.symbol]:
+        return winners
+    best = score(winners)
+    chosen = winners if best >= 0 else references
+    for symbol, builds in candidates:
+        for build in builds:
+            if build is chosen[symbol]:
                 continue
             if not affordable():
-                return final()
-            trial = {**chosen, rep.region.symbol: build}
-            speedup, candidate = scored(trial)
+                return chosen
+            trial = {**chosen, symbol: build}
+            speedup = score(trial)
             if speedup > best:
-                best, submission, chosen = speedup, candidate, trial
-    return final()
+                best, chosen = speedup, trial
+    return chosen
