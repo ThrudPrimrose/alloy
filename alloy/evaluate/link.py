@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Whole programs from region archives: each region links its archive from one fixed path, so a candidate is one
-archive copy plus a replayed DaCe build (command cache + precompiled header). A timer wraps every region's entry."""
+archive copy plus a replayed DaCe build (command cache + precompiled header). A timer wraps every region's entry; it is
+C++ against DaCe's runtime types, so it declares the entry with the signature DaCe gave it."""
 
 import copy
 import hashlib
@@ -18,13 +19,12 @@ from alloy.backend import runtime
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.regions import Program, Region
 
-TIMER = """#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
+TIMER = """#include <dace/types.h>
+#include <ctime>
 static double seconds;
-void __real_{symbol}({signature});
-double alloy_seconds_{symbol}(void) {{ return seconds; }}
-void __wrap_{symbol}({signature}) {{
+extern "C" void __real_{symbol}({signature});
+extern "C" double alloy_seconds_{symbol}(void) {{ return seconds; }}
+extern "C" void __wrap_{symbol}({signature}) {{
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
   __real_{symbol}({arguments});
@@ -105,15 +105,17 @@ class Linker:
         """The object timing ``region``'s entry, rebuilt when its source changes (a rerun into the same ``out`` after
         the program changed); ``alloy_seconds_<symbol>()`` reads its last call."""
         obj = self.out / "link" / f"timer_{region.symbol}.o"
-        source = obj.with_suffix(".c")
+        source = obj.with_suffix(".cpp")
         text = TIMER.format(symbol=region.symbol, signature=region.signature, arguments=", ".join(region.abi_order))
         if not obj.is_file() or not source.is_file() or source.read_text() != text:
             source.write_text(text)
             usable, skipped = self.matrix.usable_compilers()
-            compiler = next((comp.executables["c"] for comp in usable.values() if "c" in comp.executables), None)
+            compiler = next((comp.executables["cpp"] for comp in usable.values() if "cpp" in comp.executables), None)
             if compiler is None:
-                raise RuntimeError(f"no usable C compiler builds the region timer: {skipped}")
-            subprocess.run([compiler, *self.matrix.build_flags, "-c", str(source), "-o", str(obj)], check=True)
+                raise RuntimeError(f"no usable C++ compiler builds the region timer: {skipped}")
+            include = pathlib.Path(dace.__file__).parent / "runtime" / "include"
+            command = [compiler, self.matrix.languages["cpp"].std, *self.matrix.build_flags, f"-I{include}"]
+            subprocess.run([*command, "-c", str(source), "-o", str(obj)], check=True)
         return obj
 
     def compile_default(self) -> pathlib.Path:

@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import ctypes
+import dataclasses
 import shutil
 import subprocess
 
@@ -33,3 +34,19 @@ def test_a_library_of_region_archives_renders_standalone_and_computes_the_progra
     entry = getattr(ctypes.CDLL(str(library)), sdfg.name)
     entry(ctypes.c_int64(7), out.ctypes.data_as(ctypes.c_void_p), ctypes.c_int64(13), a.ctypes.data_as(ctypes.c_void_p))
     np.testing.assert_allclose(out, a.sum(axis=1), rtol=1e-12)
+
+
+def test_the_timer_of_a_complex_region_declares_its_entry_as_dace_does(tmp_path):
+    """DaCe spells a complex region entry with its runtime types (``dace::complex128``); the timer compiles against them."""
+    program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    region = dataclasses.replace(
+        program.regions[0],
+        symbol="complex_nest",
+        abi_order=("G", "s", "N"),
+        signature="const dace::complex128* __restrict__ G, dace::complex64 s, int64_t N",
+    )
+    (tmp_path / "link").mkdir()
+
+    sut = Linker(program, MATRIX, tmp_path).timer(region)
+
+    assert sut.is_file()
