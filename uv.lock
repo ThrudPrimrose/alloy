@@ -294,7 +294,7 @@ requires-dist = [
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
     { name = "dace", git = "https://github.com/spcl/dace.git?rev=a161a3e626e1083d549d9530778350e9738defcc" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=f0fd5d1ac43c14b4616866425902c7987fa9bc36" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -1781,12 +1781,12 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70#d7ca62ca7d6c5071e51472c62659ae8485b50d70" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=f0fd5d1ac43c14b4616866425902c7987fa9bc36#f0fd5d1ac43c14b4616866425902c7987fa9bc36" }
 
 [[package]]
 name = "hpcagent-bench"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=d7ca62ca7d6c5071e51472c62659ae8485b50d70#d7ca62ca7d6c5071e51472c62659ae8485b50d70" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=f0fd5d1ac43c14b4616866425902c7987fa9bc36#f0fd5d1ac43c14b4616866425902c7987fa9bc36" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
