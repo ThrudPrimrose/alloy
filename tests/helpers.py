@@ -49,8 +49,9 @@ def variant(tmp_path: pathlib.Path, old: str, new: str) -> pathlib.Path:
 
 
 def gcc_only(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
+    """The shipped matrix without its compiler sections after gcc's (they run from clang's to the codegen section)."""
     text = MATRIX.path.read_text()
-    first, last = text.index("# clang 22"), text.index("# Readable-codegen knobs")
+    first, last = text.index("[compilers.clang]"), text.index("[codegen.knobs]")
     return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
 
 

@@ -48,8 +48,8 @@ jobs:
           wget -q https://apt.llvm.org/llvm.sh
           sudo bash llvm.sh $LLVM_VERSION
           sudo apt-get install -y libomp-$LLVM_VERSION-dev
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_VERSION 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_VERSION 100
+          # the runner image ships an older /usr/bin/clang without libomp; this LLVM's bin dir goes first on PATH
+          echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
 
       - name: Intel oneAPI (icx)
         run: |
