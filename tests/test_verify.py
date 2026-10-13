@@ -2,6 +2,7 @@
 import pathlib
 
 import numpy as np
+import pytest
 
 from alloy import machine
 from alloy.backend.build import build
@@ -9,7 +10,16 @@ from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import RegionReport
 from alloy.evaluate import link, verify
 from alloy.frontend import inputs, regions
-from helpers import MATRIX, REDUCTIONS, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases
+from helpers import (
+    MATRIX,
+    REDUCTIONS,
+    ROW_SUM_MANIFEST,
+    SCALE_MANIFEST,
+    handwritten_archive,
+    outlined,
+    program_and_cases,
+    write_manifest,
+)
 
 
 def reference_run(tmp: pathlib.Path, program: regions.Program, cases: verify.Cases) -> tuple:
@@ -111,6 +121,40 @@ def reserve(count: int) -> int:
 
 
 def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine():
-    sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0])
+    sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0], verify.slot_share())
 
     assert sut == "exit code 1"
+
+
+def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    builds = [
+        RegionReport(r, (build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}),)) for r in program.regions
+    ]
+
+    sut = verify.verify(program, MATRIX, builds, cases, tmp_path / "out")
+
+    assert [p.name for p in (tmp_path / "out" / "programs").iterdir()] == [sut.reference.name]
+    for rep in builds:
+        assert sut.programs[rep.region.symbol, rep.builds[0].name] == sut.reference
+        assert sut.verdicts[rep.region.symbol][rep.builds[0].name].status == "exact"
+
+
+def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size():
+    with pytest.raises(ValueError, match="N"):
+        verify.accumulation_length(outlined(), {})
+
+
+def test_the_largest_array_is_counted_at_the_largest_preset(tmp_path):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    manifest = write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+
+    assert inputs.largest_array(manifest, program.original) == 64 * 512
+
+
+def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(tmp_path):
+    text = ROW_SUM_MANIFEST.replace("args:", 'constraints: ["N % 64 == 0", "M <= N"]\nargs:')
+    manifest = write_manifest(tmp_path, "row_sum", text)
+
+    assert inputs.constrained(manifest, {"M": 64, "N": 1000}) == {"M": 64, "N": 960}
+    assert inputs.constrained(manifest, {"M": 4096, "N": 1024}) is None

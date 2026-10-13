@@ -7,8 +7,8 @@ import resource
 
 #: Threads per verification child: comparisons stay multithreaded, so a parallel reduction shows its nondeterminism.
 CHILD_THREADS = 4
-#: Children running at once, whatever the core count (memory of the build box).
-MAX_JOBS = 3
+#: Memory one region compile is budgeted, bounding the compilers run at once on a machine short of memory.
+COMPILE_BYTES = 1 << 30
 
 
 def physical_cores() -> tuple[int, ...]:
@@ -66,9 +66,15 @@ def limit_memory(share: float, threads: int) -> None:
 
 
 def core_slots() -> list[tuple[int, ...]]:
-    """Disjoint sets of ``CHILD_THREADS`` physical cores, at most ``MAX_JOBS``; one set of every core when fewer."""
+    """Disjoint sets of ``CHILD_THREADS`` physical cores; one set of every core when fewer. Each child running in a
+    slot is capped at its share of memory (:func:`limit_memory`)."""
     cores = physical_cores()
-    jobs = min(MAX_JOBS, len(cores) // CHILD_THREADS)
+    jobs = len(cores) // CHILD_THREADS
     if jobs == 0:
         return [cores]
     return [cores[i * CHILD_THREADS : (i + 1) * CHILD_THREADS] for i in range(jobs)]
+
+
+def compile_jobs() -> int:
+    """Compilers run at once: one per physical core, fewer when the available memory does not cover them."""
+    return max(1, min(len(physical_cores()), available_memory() // COMPILE_BYTES))

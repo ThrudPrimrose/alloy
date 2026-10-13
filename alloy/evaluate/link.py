@@ -102,13 +102,17 @@ class Linker:
         return pathlib.Path(sdfg.build_folder)
 
     def timer(self, region: Region) -> pathlib.Path:
-        """The object timing ``region``'s entry, built once; ``alloy_seconds_<symbol>()`` reads its last call."""
+        """The object timing ``region``'s entry, rebuilt when its source changes (a rerun into the same ``out`` after
+        the program changed); ``alloy_seconds_<symbol>()`` reads its last call."""
         obj = self.out / "link" / f"timer_{region.symbol}.o"
-        if not obj.is_file():
-            source = obj.with_suffix(".c")
-            arguments = ", ".join(region.abi_order)
-            source.write_text(TIMER.format(symbol=region.symbol, signature=region.signature, arguments=arguments))
-            compiler = next(iter(self.matrix.compilers.values())).executables["c"]
+        source = obj.with_suffix(".c")
+        text = TIMER.format(symbol=region.symbol, signature=region.signature, arguments=", ".join(region.abi_order))
+        if not obj.is_file() or not source.is_file() or source.read_text() != text:
+            source.write_text(text)
+            usable, skipped = self.matrix.usable_compilers()
+            compiler = next((comp.executables["c"] for comp in usable.values() if "c" in comp.executables), None)
+            if compiler is None:
+                raise RuntimeError(f"no usable C compiler builds the region timer: {skipped}")
             subprocess.run([compiler, *self.matrix.build_flags, "-c", str(source), "-o", str(obj)], check=True)
         return obj
 

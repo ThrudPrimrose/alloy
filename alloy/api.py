@@ -48,7 +48,8 @@ def generate(
     if not program.regions:
         raise ValueError(f"{sdfg.name}: no top-level loop nest to outline, so Alloy has nothing to generate")
     out.mkdir(parents=True, exist_ok=True)
-    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs)
+    max_elements = None if manifest is None else inputs.largest_array(manifest, program.original)
+    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, max_elements=max_elements)
     verification, timings = None, None
     if manifest is not None:
         cases = verify.Cases([inputs.draw(manifest, i) for i in range(iterations)], manifest.outputs)

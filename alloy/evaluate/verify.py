@@ -59,12 +59,12 @@ def openmp_env(cpus: tuple[int, ...]) -> dict[str, str]:
     return {"OMP_NUM_THREADS": str(len(cpus)), "OMP_PROC_BIND": "close", "OMP_PLACES": places}
 
 
-def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], conn: Any) -> None:
+def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], share: float, conn: Any) -> None:
     # The fork server froze the environment it started with and loads no OpenMP runtime, so the runtime the program
     # library brings in reads this child's settings.
     os.sched_setaffinity(0, cpus)
     os.environ.update(openmp_env(cpus))
-    machine.limit_memory(1 / len(machine.core_slots()), len(cpus))  # up to one child per slot runs at once
+    machine.limit_memory(share, len(cpus))
     conn.send(target(*args))
 
 
@@ -85,20 +85,28 @@ def child_context() -> Any:
     return ctx
 
 
-def in_child(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...]) -> Any:
-    """``target(*args)`` in a fork-server child bound to ``cpus``, so a crash is a value: a string describing it."""
+def slot_share() -> float:
+    """The memory share of one child when every core slot runs one at once."""
+    return 1 / len(machine.core_slots())
+
+
+def in_child(
+    target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], share: float, timeout: float = CALL_TIMEOUT_S
+) -> Any:
+    """``target(*args)`` in a fork-server child bound to ``cpus``, capped at ``share`` of the available memory and
+    killed after ``timeout`` seconds, so a crash is a value: a string describing it."""
     ctx = child_context()
     receive, send = ctx.Pipe(duplex=False)
-    child = ctx.Process(target=child_main, args=(target, args, cpus, send))
+    child = ctx.Process(target=child_main, args=(target, args, cpus, share, send))
     child.start()
     send.close()
     result = None
-    if receive.poll(CALL_TIMEOUT_S):
+    if receive.poll(timeout):
         try:
             result = receive.recv()
         except EOFError:  # the child died before sending: the exit code below says how
             result = None
-    child.join(timeout=CALL_TIMEOUT_S)
+    child.join(timeout=timeout)
     if child.is_alive():
         child.kill()
         child.join()
@@ -112,7 +120,8 @@ def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[
     """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child bound to
     ``cpus`` (default: the first core slot)."""
     args = {**{k: copy.deepcopy(v) for k, v in draw.values.items()}, **draw.sizes}
-    return in_child(call_program, (str(folder), args, outputs), machine.core_slots()[0] if cpus is None else cpus)
+    slot = machine.core_slots()[0] if cpus is None else cpus
+    return in_child(call_program, (str(folder), args, outputs), slot, slot_share())
 
 
 class Children:
@@ -149,7 +158,13 @@ def accumulation_length(program: Program, sizes: dict[str, int]) -> int:
     """The longest accumulation chain of the program at ``sizes``: a candidate's reordering can reach an output
     through every region after it, so the program-wide maximum bounds it."""
     subs = {sympy.Symbol(k): v for k, v in sizes.items()}
-    return max(int(sympy.sympify(r.accumulation_length).subs(list(subs.items()))) for r in program.regions)
+    lengths = []
+    for r in program.regions:
+        length = sympy.sympify(r.accumulation_length).subs(list(subs.items()))
+        if length.free_symbols:
+            raise ValueError(f"{r.symbol}: accumulation length {r.accumulation_length} needs {length.free_symbols}")
+        lengths.append(int(length))
+    return max(lengths)
 
 
 def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str) -> Verdict:
@@ -252,9 +267,9 @@ def verify(
     with Children() as children:
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
-        programs: dict[tuple[str, str], pathlib.Path] = {}
+        programs = {(rep.region.symbol, rep.builds[0].name): ref_program for rep in reports}
         for rep in reports:
-            for b in rep.builds:
+            for b in rep.builds[1:]:  # the first build is the reference, already running
                 if b.error or b.archive is None or b.duplicate_of:
                     continue
                 selection = {**reference, rep.region.symbol: b.archive}
@@ -269,6 +284,9 @@ def verify(
                 pending[rep.region.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
+    reference_runs: list[Outcome] = [*refs.outputs]
+    for rep in reports:
+        ran[rep.region.symbol, rep.builds[0].name] = reference_runs
     verdicts = {rep.region.symbol: judge_region(rep, matrix, refs, ran, lengths) for rep in reports}
     return Verification(verdicts, refs.nondeterministic, programs, ref_program)
 

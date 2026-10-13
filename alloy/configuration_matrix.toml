@@ -84,6 +84,11 @@ fp_level = "noerrno"
 probe = "sleefgnuabi"
 fp_level = "noerrno"
 
+# gcc reaches glibc's simd variants only under __FAST_MATH__, so its libmvec build is the fast level.
+[veclibs.libmvec_fast]
+probe = "mvec"
+fp_level = "fast"
+
 # Each compiler: executables per language, remark flags, support libraries its objects need at link time (resolved
 # like the OpenMP runtime), and its spelling of every runtime, FP level, cost model
 # and vector library it supports. Every FP level must be spelled; a missing runtime or vector library means
@@ -110,7 +115,7 @@ cheap = ["-fvect-cost-model=cheap"]
 no_vec = ["-fno-tree-vectorize"]
 
 [compilers.gcc.veclib]
-libmvec = ["-fopenmp-simd", "-ffast-math"]  # glibc declares the simd variants only under __FAST_MATH__
+libmvec_fast = ["-fopenmp-simd", "-ffast-math"]
 
 # clang/clang++ on PATH must come with its LLVM libomp; point PATH (or a copied matrix) at the version that has it.
 [compilers.clang]
@@ -150,7 +155,8 @@ libomp = ["-fiopenmp"]
 strict = ["-fp-model=strict"]
 contract = ["-fp-model=precise", "-ffp-contract=fast"]
 noerrno = ["-fp-model=precise", "-ffp-contract=fast", "-fno-math-errno"]
-reassoc = ["-fp-model=fast"]
+reassoc = ["-fp-model=precise", "-ffp-contract=fast", "-fno-math-errno", "-fno-trapping-math", "-fassociative-math",
+    "-fno-signed-zeros"]  # -fp-model=fast also assumes finite inputs, which only the fast level may
 fast = ["-fp-model=fast=2", "-ftz"]
 
 [compilers.icx.cost_model]

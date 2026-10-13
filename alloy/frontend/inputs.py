@@ -9,6 +9,8 @@ import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import dace
+
 if TYPE_CHECKING:
     from hpcagent_bench.spec import BenchSpec
 
@@ -99,3 +101,26 @@ def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
 def presets(manifest: Manifest) -> list[dict[str, int]]:
     """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges."""
     return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != "fuzzed"]
+
+
+def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | None:
+    """``sizes`` snapped to the manifest's divisibility constraints, or ``None`` when a constraint still fails."""
+    from hpcagent_bench import fuzz  # noqa: PLC0415
+
+    snapped: dict[str, Any] = dict(sizes)
+    fuzz.snap_divisible(snapped, manifest.spec.constraints)
+    if not all(fuzz.safe_eval(c, snapped) for c in manifest.spec.constraints):
+        return None
+    return snapped
+
+
+def largest_array(manifest: Manifest, sdfg: dace.SDFG) -> int:
+    """Element count of the largest array of ``sdfg`` over the manifest's size presets: what a flat index reaches."""
+    return max(
+        (
+            int(dace.symbolic.evaluate(d.total_size, {**sizes}))
+            for sizes in presets(manifest)
+            for d in sdfg.arrays.values()
+        ),
+        default=0,
+    )

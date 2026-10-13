@@ -54,7 +54,7 @@ def test_the_region_timer_reads_nothing_for_an_empty_region_and_time_for_a_real_
     draw = inputs.at(write_manifest(tmp_path, "scale", SCALE_MANIFEST), {"N": 4 * 2**20})
 
     sut = verify.in_child(
-        timing.time_arms, (folders, region.symbol, {**draw.values, **draw.sizes}, 3), machine.physical_cores()[:4]
+        timing.time_arms, (folders, region.symbol, {**draw.values, **draw.sizes}, 3), machine.physical_cores()[:4], 1.0
     )
 
     empty, real_times = sut

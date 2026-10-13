@@ -20,6 +20,7 @@ from alloy.backend.build import Build
 from alloy.backend.sweep import RegionReport
 from alloy.evaluate.link import Linker
 from alloy.evaluate.verify import (
+    CALL_TIMEOUT_S,
     Children,
     Reference,
     Verdict,
@@ -124,10 +125,14 @@ def stage_sizes(
     cache = machine.largest_cache_bytes()
     cap = cap_factor * cache
     presets = inputs.presets(manifest)
+    if not presets:
+        raise ValueError(f"{manifest.path}: no fixed size preset to time at")
     fits = [s for s in presets if footprint(program, s) <= cap] or [min(presets, key=lambda s: footprint(program, s))]
     base = max(fits, key=lambda s: footprint(sdfg, s))
     target = factor * cache
-    return base if grow_only and footprint(sdfg, base) >= target else sized(sdfg, program, base, target, cap)
+    if grow_only and footprint(sdfg, base) >= target:
+        return base
+    return inputs.constrained(manifest, sized(sdfg, program, base, target, cap)) or base
 
 
 def clock(program: Any, symbol: str) -> Callable[[], float]:
@@ -177,7 +182,9 @@ def measure(arms: Arms, draw: Draw, length: int, cpus: tuple[int, ...], reps: in
     verdicts = check(arms, draw, length)
     passing = [name for name in arms.folders if verdicts[name].ok]
     args = {**draw.values, **draw.sizes}
-    times = in_child(time_arms, ([str(arms.folders[n]) for n in passing], arms.symbol, args, reps), cpus)
+    # the one child running: the whole memory, and one call's time budget per timed call
+    timeout = CALL_TIMEOUT_S * (reps + 1) * len(passing)
+    times = in_child(time_arms, ([str(arms.folders[n]) for n in passing], arms.symbol, args, reps), cpus, 1.0, timeout)
     if isinstance(times, str):
         raise RuntimeError(f"timing {arms.symbol or 'the program'} failed: {times}")  # noqa: TRY004 -- a crash, not a bad type
     measured = {name: Measured(*median_ci(t), verdicts[name]) for name, t in zip(passing, times, strict=True)}

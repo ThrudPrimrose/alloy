@@ -43,7 +43,8 @@ All axes live in `alloy/configuration_matrix.toml` (checked by `alloy/configurat
   - `noerrno` (`-fno-math-errno -fno-trapping-math`)
   - `reassoc`: only for regions with a reduction or scan.
   - `fast`: never when inputs can be NaN or Inf.
-- Vector math library (libmvec / SVML / SLEEF): opened only when the region calls libm (sin, cos, exp, log, pow, ...).
+- Vector math library (libmvec / SVML / SLEEF): opened only when the region calls libm (sin, cos, exp, log, pow, ...),
+  at its FP level's requirement: gcc reaches libmvec only under `-ffast-math`, so that build needs finite inputs.
 - Pruning:
   - Skip timing a candidate whose `.o` hash duplicates one already timed.
   - Compiler remarks (`-Rpass-missed`, `-fopt-info-vec-all`) choose the next candidates. For example, an aliasing miss

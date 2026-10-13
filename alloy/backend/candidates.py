@@ -4,6 +4,8 @@
 import ctypes.util
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.regions import Region
 
@@ -71,22 +73,31 @@ def fp_levels(matrix: Matrix, region: Region, *, finite_inputs: bool) -> tuple[s
     return tuple(name for name, level in matrix.fp_levels.items() if met[level.needs])
 
 
-def flips(matrix: Matrix, region: Region, language: str, compiler: str, *, finite_inputs: bool) -> list[Candidate]:
+def index_widths(matrix: Matrix, max_elements: int | None) -> tuple[str, ...]:
+    """Index widths whose type holds every flat index below ``max_elements``, the largest array's element count at
+    the sizes the program runs at; every width when that is unknown (no manifest, so nothing is timed or shipped)."""
+    return tuple(
+        name
+        for name, params in matrix.index_widths.items()
+        if max_elements is None or max_elements <= np.iinfo(np.dtype(params["index_ctype"])).max
+    )
+
+
+def flips(
+    matrix: Matrix, region: Region, language: str, compiler: str, *, finite_inputs: bool, max_elements: int | None
+) -> list[Candidate]:
     """The default for one language and compiler, then every single-factor change of it."""
     comp, d = matrix.compilers[compiler], matrix.defaults
+    levels = fp_levels(matrix, region, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
     for knob, values in matrix.knobs.items():
         out += [Candidate(language, compiler, knobs=((knob, v),), note=f"{knob}={v}") for v in values[1:]]
     out += [
         Candidate(language, compiler, index_width=w, note=f"index width {w}")
-        for w in matrix.index_widths
+        for w in index_widths(matrix, max_elements)
         if w != d.index_width
     ]
-    out += [
-        Candidate(language, compiler, fp_level=lv, note=f"fp {lv}")
-        for lv in fp_levels(matrix, region, finite_inputs=finite_inputs)
-        if lv != d.fp_level
-    ]
+    out += [Candidate(language, compiler, fp_level=lv, note=f"fp {lv}") for lv in levels if lv != d.fp_level]
     out += [
         Candidate(language, compiler, cost_model=m, note=f"cost model {m}")
         for m in comp.cost_model
@@ -96,11 +107,14 @@ def flips(matrix: Matrix, region: Region, language: str, compiler: str, *, finit
         out += [
             Candidate(language, compiler, fp_level=matrix.veclibs[lib].fp_level, veclib=lib, note=f"veclib {lib}")
             for lib in available_veclibs(matrix, comp)
+            if matrix.veclibs[lib].fp_level in levels
         ]
     return out
 
 
-def one_factor_at_a_time(matrix: Matrix, region: Region, *, finite_inputs: bool = False) -> list[Candidate]:
+def one_factor_at_a_time(
+    matrix: Matrix, region: Region, *, finite_inputs: bool = False, max_elements: int | None = None
+) -> list[Candidate]:
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
     return [
@@ -108,5 +122,5 @@ def one_factor_at_a_time(matrix: Matrix, region: Region, *, finite_inputs: bool 
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(matrix, region, lang, comp, finite_inputs=finite_inputs)
+        for c in flips(matrix, region, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements)
     ]
