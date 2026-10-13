@@ -3,12 +3,12 @@ revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and platform_machine == 'ARM64' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and platform_machine != 'ARM64' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and platform_machine != 'ARM64' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and platform_machine == 'ARM64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and platform_machine != 'ARM64' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'ARM64' and sys_platform == 'win32'",
@@ -294,7 +294,7 @@ requires-dist = [
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
     { name = "dace", git = "https://github.com/spcl/dace.git?rev=83a95d2981a128bb2e70f9e0544da84f58b365e1" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=219ea0b17da0cca82926a5e20351bc0b69d50a23" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=caea80e8a87aa57466a75c5012de252c15b93f78" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -1781,12 +1781,12 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=219ea0b17da0cca82926a5e20351bc0b69d50a23#219ea0b17da0cca82926a5e20351bc0b69d50a23" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=caea80e8a87aa57466a75c5012de252c15b93f78#caea80e8a87aa57466a75c5012de252c15b93f78" }
 
 [[package]]
 name = "hpcagent-bench"
 version = "0.1.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=219ea0b17da0cca82926a5e20351bc0b69d50a23#219ea0b17da0cca82926a5e20351bc0b69d50a23" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=caea80e8a87aa57466a75c5012de252c15b93f78#caea80e8a87aa57466a75c5012de252c15b93f78" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
