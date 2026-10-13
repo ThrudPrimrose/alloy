@@ -133,6 +133,10 @@ Status: not built. Picks one candidate per region from the builds alone, without
   library node whose implementation a pipeline chose stays whole as its own region, rendered with that implementation
   (`outline_to_external_calls(library_nodes=True)`, 83a95d2), while an unchosen one still expands into a nest Alloy
   generates. Its accumulation length: input elements per output element (reduce), the whole input (scan).
+- 10-13 coverage re-run (dace 8fd302b): `parallel_cpu` 258/259, `canon_cpu` 252/259; the rest have no nest or
+  library node left. CPF renders Reduce as an OpenMP `reduction` (canon argmax 515 ms -> 0.73 ms per call at 6M,
+  Alloy's argmax run 594 s -> 97 s), never emits `omp critical`, and argmax / argmin reduce through the declared
+  `arg_max_pair` / `arg_min_pair` reductions of `dace/arg_reduction.h`.
 - Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
   compilers in parallel; start from each region's local winner; `/score` the top 5 per region on the judge while the
   kernel's budget (`resolve_kernel_timeout`) still holds one more score and the harness's own grade; `/submit` the
