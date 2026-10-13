@@ -112,10 +112,10 @@ no_vec = ["-fno-tree-vectorize"]
 [compilers.gcc.veclib]
 libmvec = ["-fopenmp-simd", "-ffast-math"]  # glibc declares the simd variants only under __FAST_MATH__
 
-# clang 22 has no libomp-22-dev on the development box, so clang 21.
+# clang/clang++ on PATH must come with its LLVM libomp; point PATH (or a copied matrix) at the version that has it.
 [compilers.clang]
-c = "clang-21"
-cpp = "clang++-21"
+c = "clang"
+cpp = "clang++"
 remarks = ["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize"]
 
 [compilers.clang.openmp]

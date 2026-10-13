@@ -20,7 +20,7 @@ import numpy as np
 from dace.config import set_temporary
 
 HERE = pathlib.Path(__file__).parent
-COMPILERS = {"gcc": "g++", "clang": "clang++-21"}
+COMPILERS = {"gcc": "g++", "clang": "clang++"}
 ARMS = {
     "int64": ("int64", "inferred"),
     "counters32": ("int64", "int32"),

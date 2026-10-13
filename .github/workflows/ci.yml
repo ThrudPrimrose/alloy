@@ -48,6 +48,8 @@ jobs:
           wget -q https://apt.llvm.org/llvm.sh
           sudo bash llvm.sh $LLVM_VERSION
           sudo apt-get install -y libomp-$LLVM_VERSION-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_VERSION 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_VERSION 100
 
       - name: Intel oneAPI (icx)
         run: |
@@ -73,7 +75,7 @@ jobs:
       - name: Toolchain versions
         run: |
           gcc --version | head -1
-          clang-$LLVM_VERSION --version | head -1
+          clang --version | head -1
           icx --version | head -1
           nvc --version | sed -n 2p
 

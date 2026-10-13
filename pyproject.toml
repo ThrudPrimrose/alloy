@@ -53,7 +53,7 @@ venv = ".venv"
 # One mark per compiler in the matrix; deselect the ones a box lacks, e.g. -m "not icx".
 markers = [
     "gcc: needs gcc on PATH",
-    "clang: needs clang-21 on PATH",
+    "clang: needs clang on PATH",
     "nvhpc: needs the NVIDIA HPC SDK (nvc) on PATH",
     "icx: needs Intel oneAPI (icx) on PATH",
     "e2e: an LLR kernel of the bench through the whole pipeline",
