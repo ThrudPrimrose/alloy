@@ -15,12 +15,12 @@ keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
 dependencies = [
     "numpy",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
-    "dace @ git+https://github.com/spcl/dace.git@8fd302bc12df0b76883ac99c9552bed19c6c95af",
+    "dace @ git+https://github.com/spcl/dace.git@e73c92a3a808ebc12d282484b5d39562386f1b3c",
 ]
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@3f4d7f670f05c36567b88b76502f5e7ba36b4205"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@6dca442e9575637b4e0a6fc2afe8d67ea7e28c32"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]

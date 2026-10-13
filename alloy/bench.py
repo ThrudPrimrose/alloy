@@ -5,6 +5,7 @@ each region's local winner (:func:`compiled_winners`). The optimizers start from
 kernel's time budget allows, let the judge's ``/score`` rank the :data:`TOP` screened candidates of each region, one
 region at a time with the others at their best so far; the best library is submitted (:func:`optimize`)."""
 
+import copy
 import pathlib
 import tempfile
 import time
@@ -33,7 +34,7 @@ from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, cmake_args
 from alloy.evaluate.timing import Measured, winning_build
-from alloy.frontend import inputs
+from alloy.frontend import inputs, regions
 
 #: Screened candidates per region the judge scores.
 TOP = 5
@@ -77,6 +78,12 @@ def generated(sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Ma
     return result
 
 
+def nothing_to_generate(sdfg: dace.SDFG, matrix: Matrix) -> bool:
+    """Whether ``sdfg`` outlines into no region (a pipeline folded every loop away): Alloy has no candidate, so the
+    program is the default codegen."""
+    return not regions.outline(sdfg, matrix.libm_calls).regions
+
+
 def local_winners(result: api.Result) -> dict[str, Build]:
     """Every region's locally timed winner, by region symbol."""
     if result.timings is None:
@@ -95,13 +102,16 @@ def compiled_winners(
     sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Matrix | None = None
 ) -> tuple[dace.SDFG, CompiledSDFG]:
     """The framework columns' program: ``sdfg`` (a bench pipeline's output) outlined, each region linking its local
-    winner, built by DaCe on the matrix's OpenMP runtime. The archives link statically, so Alloy's folder goes once
-    the program is built."""
+    winner, built by DaCe on the matrix's OpenMP runtime; with no region, ``sdfg`` itself. The archives link
+    statically, so Alloy's folder goes once the program is built."""
     matrix = matrix or configuration_matrix.load()
     with tempfile.TemporaryDirectory(prefix=f"alloy_{spec.short_name}_") as tmp:
-        out = pathlib.Path(tmp)
-        result = generated(sdfg, spec, precision, matrix, out)
-        program = linked(Linker(result.program, matrix, out), local_winners(result))
+        if nothing_to_generate(sdfg, matrix):
+            program = copy.deepcopy(sdfg)
+        else:
+            out = pathlib.Path(tmp)
+            result = generated(sdfg, spec, precision, matrix, out)
+            program = linked(Linker(result.program, matrix, out), local_winners(result))
         program.name = f"{sdfg.name}_alloy"  # pyright: ignore[reportAttributeAccessIssue]
         with set_temporary("compiler", "extra_cmake_args", value=cmake_args(matrix)):
             return program, program.compile()
@@ -109,22 +119,29 @@ def compiled_winners(
 
 def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Build], deliver: Deliver) -> Submission:
     """The library calling ``selection[symbol]``'s archive for every region, rendered by CPF in the bench C ABI."""
-    sdfg = linked(linker, selection)
+    return rendered(task, spec, linked(linker, selection), deliver)
+
+
+def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> Submission:
+    """``sdfg`` rendered by CPF in the bench C ABI as a library submission."""
     form = render_canonical(spec, spec.short_name, sdfg, DIALECT[task.language], task.precision.value, "cpu")
     return deliver(form.code, form.link)
 
 
 def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the best library the judge scored within the kernel's budget,
-    else the library of every region's local winner."""
+    else the library of every region's local winner; with no region, CPF's default rendering of the program."""
     started = time.monotonic()
     if task.image != "cpu" or task.language not in DIALECT or task.source_mode == "restricted":
         raise NotImplementedError(f"Alloy submits a CPU C/C++ library; got {task.image}/{task.language}")
     spec = BenchSpec.load(task.kernel)
     deadline = started + resolve_kernel_timeout(spec)
-    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
     matrix = configuration_matrix.load()
-    result = generated(pipeline_sdfg(spec, pipeline, task.precision), spec, task.precision, matrix, out)
+    sdfg = pipeline_sdfg(spec, pipeline, task.precision)
+    if nothing_to_generate(sdfg, matrix):
+        return rendered(task, spec, sdfg, deliver)
+    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
+    result = generated(sdfg, spec, task.precision, matrix, out)
     timings = result.timings
     if timings is None:
         raise RuntimeError(f"Alloy timed nothing for {spec.short_name}")

@@ -69,3 +69,25 @@ def test_the_framework_program_calls_each_region_winner_and_agrees_with_dace(tmp
     assert calls and all(call.implementation == "ExternCall" for call in calls)
     for name in manifest.outputs:
         np.testing.assert_allclose(actual[name], expected[name], rtol=1e-12)
+
+
+@pytest.mark.e2e
+def test_a_program_canonicalize_folded_to_closed_form_is_the_default_build_and_agrees_with_dace(tmp_path):
+    spec = BenchSpec.load("tsvc_2_s317")
+    sdfg = bench.pipeline_sdfg(spec, "canon_cpu", Precision.FP64)
+    reference = copy.deepcopy(sdfg)
+    reference.name = "s317_dace_reference"
+    reference.build_folder = str(tmp_path / "reference")
+    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
+    draw = inputs.draw(manifest, 0)
+    expected = {**copy.deepcopy(draw.values), **draw.sizes}
+    actual = {**copy.deepcopy(draw.values), **draw.sizes}
+    reference.compile()(**expected)
+
+    program, sut = bench.compiled_winners(sdfg, spec, Precision.FP64, matrix=SMALL)
+    sut(**actual)
+
+    assert program.name == f"{sdfg.name}_alloy"
+    assert not list(external_call.external_calls(program))
+    for name in manifest.outputs:
+        np.testing.assert_allclose(actual[name], expected[name], rtol=1e-12)
