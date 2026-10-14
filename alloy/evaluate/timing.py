@@ -120,10 +120,11 @@ def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: flo
 def stage_sizes(
     sdfg: dace.SDFG, program: dace.SDFG, manifest: Manifest, factor: float, cap_factor: float, *, grow_only: bool
 ) -> dict[str, int]:
-    """The largest preset (among those whose program fits ``cap_factor`` x the largest cache) scaled to ``factor`` x
-    the largest cache; with ``grow_only``, only when it is smaller."""
+    """The largest preset (among those whose program fits ``cap_factor`` x the largest cache, and the memory
+    :func:`machine.timing_memory_cap` leaves) scaled to ``factor`` x the largest cache; with ``grow_only``, only when
+    it is smaller."""
     cache = machine.largest_cache_bytes()
-    cap = cap_factor * cache
+    cap = min(cap_factor * cache, machine.timing_memory_cap())
     presets = inputs.presets(manifest)
     if not presets:
         raise ValueError(f"{manifest.path}: no fixed size preset to time at")

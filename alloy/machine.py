@@ -45,6 +45,17 @@ def available_memory() -> int:
     raise RuntimeError("/proc/meminfo has no MemAvailable")
 
 
+#: Copies of a timed program's containers alive at once while timing: the drawn inputs, the reference's outputs and
+#: each arm's private copies. A timing size whose program would not fit this many times in the available memory is
+#: refused, so a runner with a large last-level cache but little memory never draws an input it cannot hold.
+TIMING_COPIES = 8
+
+
+def timing_memory_cap() -> int:
+    """Bytes one timed program may touch: the available memory over :data:`TIMING_COPIES`."""
+    return available_memory() // TIMING_COPIES
+
+
 def openmp_stack_bytes() -> int:
     """The stack one OpenMP worker reserves: ``OMP_STACKSIZE`` (a bare number is KiB), else the runtimes' 4 MiB
     default on x86-64 Linux."""

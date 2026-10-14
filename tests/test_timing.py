@@ -41,6 +41,20 @@ def test_a_region_touching_one_vector_stops_growing_at_the_program_cap(tmp_path)
     assert timing.footprint(init.sdfg, sut) < 48 * 2**20
 
 
+def test_a_timing_size_never_outgrows_the_memory_the_machine_has(tmp_path, monkeypatch):
+    # A cache-only cap picked a 2 GiB-per-array preset on a CI runner with a large L3 and the reference ran out of
+    # memory; the memory cap must bind when it is the smaller one.
+    program, _ = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    manifest = write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    available = 64 * 2**20
+    monkeypatch.setattr(machine, "largest_cache_bytes", lambda: 2**30)
+    monkeypatch.setattr(machine, "available_memory", lambda: available)
+
+    sut = timing.stage_sizes(program.original, program.original, manifest, 2.0, 16.0, grow_only=False)
+
+    assert timing.footprint(program.original, sut) <= 1.01 * available / machine.TIMING_COPIES
+
+
 def test_the_region_timer_reads_nothing_for_an_empty_region_and_time_for_a_real_one(tmp_path):
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     (region,) = program.regions
