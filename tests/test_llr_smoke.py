@@ -28,6 +28,15 @@ SMALL = dataclasses.replace(
     ),
 )
 
+# OMEN's flops grow as the product of eight extents, so verify and time it at preset S, not at the cache size.
+TINY = dataclasses.replace(
+    SMALL,
+    timing=dataclasses.replace(
+        SMALL.timing, screen_cache_factor=1e-6, final_cache_factor=1e-6, max_program_cache_factor=1e-6
+    ),
+)
+OMEN_SIZE_CAP = "8"
+
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
@@ -50,14 +59,15 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
-def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, tmp_path):
+def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, tmp_path, monkeypatch):
     """OMEN's scattering self-energies (complex128, an indirect neighbour index, matmuls in an eight-deep nest) after
     a bench transformation pipeline: every region builds distinct variants and the whole program still verifies."""
+    monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")
     sdfg = bench.pipeline_sdfg(spec, pipeline, Precision.FP64)
     manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
 
-    sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL)
+    sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=TINY)
 
     assert sut.regions and sut.verification is not None and sut.timings is not None
     for rep in sut.regions:

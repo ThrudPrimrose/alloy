@@ -116,6 +116,15 @@ def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
     assert sut.status == "ungradeable"
 
 
+def test_a_complex_output_is_judged_under_the_band_of_its_component_precision():
+    expected = np.linspace(1.0, 2.0, 16) * (1 + 1j)
+    reference = verify.Reference([{"Sigma": expected}], frozenset())
+
+    sut = verify.judge("band", reference, [{"Sigma": expected * (1 + 1e-15)}], [1])
+
+    assert sut.status == "pass"
+
+
 def reserve(count: int) -> int:
     return np.empty(count).nbytes  # reserves without touching, so even an uncapped child stays harmless
 

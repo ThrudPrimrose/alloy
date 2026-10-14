@@ -84,14 +84,23 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
 
 
 def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
-    """Inputs from the bench initializer at fixed ``sizes``."""
-    from hpcagent_bench import fuzz  # noqa: PLC0415
+    """Inputs at fixed ``sizes``: a corpus kernel's through the bench's own dispatch (its ``initialize`` when the
+    module defines one, which fixes dtypes the run precision does not, e.g. complex128), else the auto-initializer."""
+    from hpcagent_bench import fuzz, paths  # noqa: PLC0415
+    from hpcagent_bench.frameworks.benchmark import Benchmark  # noqa: PLC0415
     from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
     from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
 
     spec = manifest.spec
     if spec.init is None:
         raise ValueError(f"{manifest.path}: no init block, so there are no inputs to draw")
+    if manifest.path.resolve().is_relative_to(paths.BENCHMARKS.resolve()):
+        data = Benchmark(spec.short_name).get_data(
+            preset=fuzz.FUZZED_PRESET, datatype=manifest.datatype, input_seed=seed, params_override=sizes
+        )
+        return Draw(sizes=sizes, values={name: data[name] for name in spec.init.output_args})
+    if spec.init.func_name:
+        raise ValueError(f"{manifest.path}: a custom {spec.init.func_name}() is only called for a corpus kernel")
     values = auto_initialize(
         spec, fuzz.FUZZED_PRESET, precision_from_datatype(manifest.datatype), seed=seed, params_override=sizes
     )
