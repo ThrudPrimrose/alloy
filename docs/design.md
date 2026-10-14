@@ -12,7 +12,9 @@ A code-generation backend for DaCe that compiles speculatively.
 3. Alloy sweeps rendering candidates per region, verifies them, times them, and links the best one per region.
 4. Output:
    - the full maximally optimized program;
-   - a per-region report (`report.md` plus `report.json`) with what was good, what was bad, and why.
+   - a per-region report (`report.md` plus `report.json`) with what was good, what was bad, and why. `report.json` is
+     written from the pydantic dataclasses of `alloy/report.py`, and `report.load` reads it back, refusing unknown,
+     missing and mistyped keys with the file named in the error.
 5. An "Alloy" skill tells agents how to write the input and how to call the tool. The paper evaluates agents with and
    without the report.
 
