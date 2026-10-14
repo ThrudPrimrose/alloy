@@ -246,7 +246,7 @@ def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int
             return Verdict("crashed", detail=val)
         for name, expected in expected_outputs.items():
             level = "band" if name in ref.nondeterministic else tolerance
-            verdict = compare(level, expected, val[name], length, str(expected.real.dtype))
+            verdict = compare(level, expected, val[name], length, str(np.real(expected).dtype))
             if not verdict.ok:
                 return Verdict(verdict.status, verdict.error, f"{name}: {verdict.detail}")
             if verdict.status == "pass" and verdict.error >= worst.error:
