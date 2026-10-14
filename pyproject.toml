@@ -14,6 +14,7 @@ authors = [{ name = "Yakup Budanaz", email = "budanaz.yakup@gmail.com" }]
 keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
 dependencies = [
     "numpy",
+    "pydantic>=2",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
     "dace @ git+https://github.com/spcl/dace.git@0f445383e4d32a6016997a03decbbd50c8ba7f18",
 ]

@@ -8,7 +8,7 @@ from helpers import variant
 def test_a_matrix_with_an_unknown_key_is_refused(tmp_path):
     path = variant(tmp_path, "schema = 1\n", "schema = 1\ntypo_key = 1\n")
 
-    with pytest.raises(ValueError, match="unknown"):
+    with pytest.raises(ValueError, match="typo_key\n  Unexpected keyword argument"):
         configuration_matrix.load(path)
 
 

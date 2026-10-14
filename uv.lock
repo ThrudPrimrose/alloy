@@ -243,6 +243,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dace" },
     { name = "numpy" },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
@@ -301,6 +302,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "pyright", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
