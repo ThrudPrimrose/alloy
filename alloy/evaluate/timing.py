@@ -14,6 +14,7 @@ from typing import Any
 
 import dace
 import numpy as np
+import pydantic.dataclasses
 
 from alloy import machine
 from alloy.backend.build import Build
@@ -31,11 +32,12 @@ from alloy.evaluate.verify import (
 )
 from alloy.frontend import inputs
 from alloy.frontend.inputs import Draw, Manifest
+from alloy.records import RECORD, Parameters
 
 REFERENCE = "reference"
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class Measured:
     """Median seconds of one arm with its 95% CI (NaN when its outputs failed at this size), and that verdict."""
 
@@ -45,22 +47,26 @@ class Measured:
     verdict: Verdict
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class RegionTiming:
+    """One region's arms screened at ``screen_sizes`` and re-timed at ``final_sizes``, and the arm that won."""
+
     screen: dict[str, Measured]
     final: dict[str, Measured]
     winner: str
-    screen_sizes: dict[str, int]
-    final_sizes: dict[str, int]
+    screen_sizes: Parameters
+    final_sizes: Parameters
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class ProgramTiming:
+    """alloy-full and DaCe's default codegen timed on the whole program at ``sizes``."""
+
     arms: dict[str, Measured]
-    sizes: dict[str, int]
+    sizes: Parameters
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class Timings:
     """Every region's timing, and alloy-full against DaCe's default codegen."""
 

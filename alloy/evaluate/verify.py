@@ -11,9 +11,10 @@ import queue
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import numpy as np
+import pydantic.dataclasses
 import sympy
 from dace.codegen.exceptions import CompilationError
 
@@ -23,6 +24,7 @@ from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker
 from alloy.frontend.inputs import Draw, require_bench
 from alloy.frontend.regions import Program
+from alloy.records import RECORD
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,11 +35,18 @@ class Cases:
     outputs: tuple[str, ...]
 
 
-@dataclass(slots=True, frozen=True)
-class Verdict:
-    """``exact``, ``pass``, ``fail``, ``ungradeable`` or ``crashed``; ``error`` is the worst relative error seen."""
+#: How a candidate's outputs compared: bit-identical (``exact``), inside the band (``pass``), outside the band or not
+#: bit-identical (``fail``), the band's accumulation floor reaches its relative tolerance at this precision and
+#: accumulation length (``ungradeable``), the program call died (``crashed``), or the program did not link
+#: (``link_error``).
+Status = Literal["exact", "pass", "fail", "ungradeable", "crashed", "link_error"]
 
-    status: str
+
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
+class Verdict:
+    """How a candidate's outputs compare with the reference's. ``error`` is the worst relative error seen."""
+
+    status: Status
     error: float = 0.0
     detail: str = ""
 
@@ -208,7 +217,7 @@ class Verification:
     """``verdicts[region symbol][candidate name]``, the outputs the reference does not reproduce, and the program
     built for every candidate (``programs[region symbol, candidate name]``) and for the reference."""
 
-    verdicts: dict[str, dict[str, "Verdict"]]
+    verdicts: dict[str, dict[str, Verdict]]
     nondeterministic: frozenset[str]
     programs: dict[tuple[str, str], pathlib.Path]
     reference: pathlib.Path

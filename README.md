@@ -30,8 +30,10 @@ Layout:
   resolves and checks the OpenMP runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from region archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
-- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report`. Every compiler, flag and option is in
-  `alloy/configuration_matrix.toml`, validated by the pydantic models of `alloy/configuration_matrix.py`.
+- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report` (writes and loads `report.json`),
+  `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,
+  flag and option is in `alloy/configuration_matrix.toml`, validated by the pydantic models of
+  `alloy/configuration_matrix.py`.
 - `examples/`: input programs for Alloy (dace numpy with symbolic sizes).
 - `samples/`: A/B studies. Each holds a slow and a fast rendering of one kernel, the harness, and the setup that
   measured the gap.

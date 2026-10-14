@@ -7,9 +7,12 @@ outside the corpus names its kernel as ``file.py:function``."""
 import importlib.util
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import dace
+import pydantic.dataclasses
+
+from alloy.records import FOREIGN_RECORD, Strings, constructed
 
 if TYPE_CHECKING:
     from hpcagent_bench.spec import BenchSpec
@@ -23,12 +26,16 @@ class Draw:
     values: dict[str, Any]
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)
 class Manifest:
+    """A manifest read by the bench's reader: ``raw`` is the YAML as read, ``spec`` the bench's view of it,
+    ``outputs`` the output arguments, and ``datatype`` the numpy dtype name the inputs are drawn at. The ``spec``
+    annotation resolves in :func:`load`, after the bench is imported."""
+
     path: pathlib.Path
     raw: dict[str, Any]
     spec: "BenchSpec"
-    outputs: tuple[str, ...]
+    outputs: Strings
     datatype: str
 
 
@@ -58,7 +65,10 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
         expanded = {**identity, "relative_path": str(reference.parent), **raw}
         expand_args(expanded, None, str(path))
         spec = BenchSpec.from_dict(expanded, str(path))
-    return Manifest(path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
+    # cast: pydantic types the argument as its internal PydanticDataclass protocol, which the decorator does not
+    # declare on the class
+    pydantic.dataclasses.rebuild_dataclass(cast("Any", Manifest), _types_namespace={"BenchSpec": BenchSpec})
+    return constructed(Manifest, path, path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
 
 
 def draw(manifest: Manifest, iteration: int) -> Draw:
