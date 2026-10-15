@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=724c7f0bc75f83e844269e79cce8dfd8d82fe22d" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=0270fcec6b218b603abe6bfd3367cc731990ff92" }]
 
 [[package]]
 name = "accelerate"
@@ -297,7 +297,7 @@ requires-dist = [
     { name = "alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace", git = "https://github.com/spcl/dace.git?rev=724c7f0bc75f83e844269e79cce8dfd8d82fe22d" },
+    { name = "dace", git = "https://github.com/spcl/dace.git?rev=0270fcec6b218b603abe6bfd3367cc731990ff92" },
     { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=9977765664238e36386f6108eaf3c37c8ef87d35" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
@@ -1224,7 +1224,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0a10"
-source = { git = "https://github.com/spcl/dace.git?rev=724c7f0bc75f83e844269e79cce8dfd8d82fe22d#724c7f0bc75f83e844269e79cce8dfd8d82fe22d" }
+source = { git = "https://github.com/spcl/dace.git?rev=0270fcec6b218b603abe6bfd3367cc731990ff92#0270fcec6b218b603abe6bfd3367cc731990ff92" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
