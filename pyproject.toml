@@ -16,7 +16,7 @@ dependencies = [
     "numpy",
     "pydantic>=2",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
-    "dace @ git+https://github.com/spcl/dace.git@79b28cc263ca9880c5853ed7b9b199e17d4bc721",
+    "dace @ git+https://github.com/spcl/dace.git@f4ee060bfcef50defc8c138129f654ba0fd16982",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +41,7 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
 # The bench pins its own dace; Alloy tracks dace extended ahead of it, so this pin wins over the bench's.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@79b28cc263ca9880c5853ed7b9b199e17d4bc721"]
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@f4ee060bfcef50defc8c138129f654ba0fd16982"]
 
 [tool.mypy]
 python_version = "3.12"
