@@ -12,6 +12,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 
 import dace
+from dace.codegen import cpf
 from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
 
@@ -48,6 +49,7 @@ class Linker:
     program: Program
     matrix: Matrix
     out: pathlib.Path
+    vendor: list[str] | None = None
 
     def link_flags(self) -> list[str]:
         library = runtime.default_library(self.matrix)
@@ -63,11 +65,24 @@ class Linker:
                 flags += runtime.link_flags(runtime.resolve(soname, executables), soname)
         return flags
 
+    def vendor_flags(self) -> list[str]:
+        """The vendor libraries the regions call (``-lopenblas`` for a BLAS library node): a region's archive
+        carries the calls, not the libraries, so the program links them. Rendered once per Linker."""
+        if self.vendor is None:
+            tokens = (
+                cpf.render(
+                    region.sdfg, signature=cpf.EntrySignature(order=list(region.abi_order)), check_compiles=False
+                ).link
+                for region in self.program.regions
+            )
+            self.vendor = list(dict.fromkeys(token for link in tokens for token in link))
+        return self.vendor
+
     def library_sdfg(self, archives: dict[str, pathlib.Path], compilers: frozenset[str]) -> dace.SDFG:
         """A copy of the outlined program whose every region calls ``archives[symbol]``, linked with the matrix's
         OpenMP runtime and the support libraries of ``compilers``: what a standalone (CPF) library renders."""
         sdfg = copy.deepcopy(self.program.sdfg)
-        flags = self.link_flags() + self.support_flags(compilers)
+        flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
         for call in external_call.external_calls(sdfg):
             call.implementation, call.lib_path, call.link_flags = "ExternCall", str(archives[call.symbol]), flags
         return sdfg
@@ -83,7 +98,7 @@ class Linker:
         safe = f"p{hashlib.sha256(tag.encode()).hexdigest()[:12]}"  # candidate names carry '-', SDFG names may not
         sdfg.name = f"{self.program.sdfg.name}_{safe}"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / safe)
-        flags = self.link_flags() + self.support_flags(compilers)
+        flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
         regions = {r.symbol: r for r in self.program.regions}
         for call in external_call.external_calls(sdfg):
             fixed = link / f"lib{call.symbol}.a"

@@ -160,10 +160,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
         start = time.monotonic()
         reply = judge.score(submission, task.kernel)
         costs.append(time.monotonic() - start)
-        speedup = reply.get("speedup")
-        if reply.get("correct") is not True or not isinstance(speedup, int | float):
-            return -1.0
-        return float(speedup)
+        return reply.speedup if reply.correct else -1.0
 
     references = {rep.region.symbol: rep.builds[0] for rep in result.regions}
     candidates = [
