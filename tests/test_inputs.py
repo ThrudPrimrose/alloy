@@ -15,7 +15,8 @@ def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_d
     handed DaCe half-sized buffers."""
     spec = BenchSpec.load("scattering_self_energies")
     manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
-    sizes = {"Nkz": 2, "NE": 4, "Nqz": 2, "Nw": 2, "N3D": 1, "NA": 6, "NB": 2, "Norb": 3}
+    # ``Norb`` is a manifest constant (10), not a drawn size
+    sizes = {"Nkz": 2, "NE": 4, "Nqz": 2, "Nw": 2, "N3D": 1, "NA": 6, "NB": 2}
 
     sut = inputs.at(manifest, sizes)
 
@@ -26,7 +27,7 @@ def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_d
         "D": np.dtype(np.complex128),
         "Sigma": np.dtype(np.complex128),
     }
-    assert sut.values["G"].shape == (2, 4, 6, 3, 3)
+    assert sut.values["G"].shape == (2, 4, 6, 10, 10)
 
 
 def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_the_file(tmp_path):

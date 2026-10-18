@@ -46,7 +46,7 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
     framework.set_datatype("float64")
     bench = Benchmark(kernel)
     sdfg = framework.implementations(bench)[0][0].to_sdfg(simplify=False)
-    manifest = inputs.load(paths.BENCHMARKS / bench.info["relative_path"] / f"{bench.info['module_name']}.yaml")
+    manifest = inputs.load(paths.BENCHMARKS / bench.spec.relative_path / f"{bench.spec.module_name}.yaml")
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL)
 

@@ -50,7 +50,10 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     ``datatype``. A manifest outside the bench corpus names its kernel by ``program`` (``file.py:function``), whose
     signature orders the inputs."""
     require_bench()
-    from hpcagent_bench import paths  # noqa: PLC0415 -- alloy never loads the bench at import time
+    from hpcagent_bench import (
+        manifest_schema,  # noqa: PLC0415
+        paths,  # noqa: PLC0415 -- alloy never loads the bench at import time
+    )
     from hpcagent_bench.spec import BenchSpec, expand_args, load_yaml  # noqa: PLC0415
 
     raw = load_yaml(path.read_text())
@@ -63,7 +66,7 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
         reference = pathlib.Path(file).resolve()
         identity = {"short_name": path.stem, "name": path.stem, "module_name": reference.stem, "func_name": function}
         expanded = {**identity, "relative_path": str(reference.parent), **raw}
-        expand_args(expanded, None, str(path))
+        expand_args(expanded, manifest_schema.validate_manifest(raw, str(path)).args, None, str(path))
         spec = BenchSpec.from_dict(expanded, str(path))
     # cast: pydantic types the argument as its internal PydanticDataclass protocol, which the decorator does not
     # declare on the class
