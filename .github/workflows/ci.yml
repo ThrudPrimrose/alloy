@@ -39,8 +39,8 @@ jobs:
       - name: gcc
         run: |
           sudo apt-get update
-          # OpenBLAS: a BLAS library node in a region expands to cblas (OMEN's Norb-sized products)
-          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev
+          # OpenBLAS + LAPACKE: the BLAS/LAPACK library-node headers a region includes (OMEN's Norb-sized products)
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
 
