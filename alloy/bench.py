@@ -17,6 +17,7 @@ from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from hpcagent_bench import paths
 from hpcagent_bench.cpf_bridge import render_canonical
+from hpcagent_bench.cpf_cache import DEFAULT_HINTS
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, PipelineContext
 from hpcagent_bench.frameworks.framework import framework_class
@@ -124,7 +125,9 @@ def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Bu
 
 def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> Submission:
     """``sdfg`` rendered by CPF in the bench C ABI as a library submission."""
-    form = render_canonical(spec, spec.short_name, sdfg, DIALECT[task.language], task.precision.value, "cpu")
+    form = render_canonical(
+        spec, spec.short_name, sdfg, DIALECT[task.language], task.precision.value, "cpu", DEFAULT_HINTS
+    )
     return deliver(form.code, form.link)
 
 
