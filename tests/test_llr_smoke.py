@@ -1,18 +1,16 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-import copy
 import dataclasses
 import math
 
-import numpy as np
 import pytest
-from dace.libraries.standard.nodes import external_call
 from hpcagent_bench import autogen, paths
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.framework import framework_class
+from hpcagent_bench.harness.alloy_adapter import pipeline_sdfg
 from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
-from alloy import api, bench
+from alloy import api
 from alloy.frontend import inputs
 from helpers import MATRIX
 
@@ -64,7 +62,7 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, 
     a bench transformation pipeline: every region builds distinct variants and the whole program still verifies."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")
-    sdfg = bench.pipeline_sdfg(spec, pipeline, Precision.FP64)
+    sdfg = pipeline_sdfg(spec, pipeline, Precision.FP64)
     manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=TINY)
@@ -78,48 +76,3 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, 
     full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
     assert full.verdict.ok
     assert math.isfinite(default.median / full.median)
-
-
-@pytest.mark.e2e
-def test_the_framework_program_calls_each_region_winner_and_agrees_with_dace(tmp_path):
-    spec = BenchSpec.load("tsvc_2_vpv")
-    sdfg = bench.pipeline_sdfg(spec, "parallel_cpu", Precision.FP64)
-    reference = copy.deepcopy(sdfg)
-    reference.name = "vpv_dace_reference"
-    reference.build_folder = str(tmp_path / "reference")
-    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
-    draw = inputs.draw(manifest, 0)
-    expected = {**copy.deepcopy(draw.values), **draw.sizes}
-    actual = {**copy.deepcopy(draw.values), **draw.sizes}
-    reference.compile()(**expected)
-
-    program, sut = bench.compiled_winners(sdfg, spec, Precision.FP64, matrix=SMALL)
-    sut(**actual)
-
-    assert program.name == f"{sdfg.name}_alloy"
-    calls = list(external_call.external_calls(program))
-    assert calls and all(call.implementation == "ExternCall" for call in calls)
-    for name in manifest.outputs:
-        np.testing.assert_allclose(actual[name], expected[name], rtol=1e-12)
-
-
-@pytest.mark.e2e
-def test_a_program_canonicalize_folded_to_closed_form_is_the_default_build_and_agrees_with_dace(tmp_path):
-    spec = BenchSpec.load("tsvc_2_s317")
-    sdfg = bench.pipeline_sdfg(spec, "canon_cpu", Precision.FP64)
-    reference = copy.deepcopy(sdfg)
-    reference.name = "s317_dace_reference"
-    reference.build_folder = str(tmp_path / "reference")
-    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
-    draw = inputs.draw(manifest, 0)
-    expected = {**copy.deepcopy(draw.values), **draw.sizes}
-    actual = {**copy.deepcopy(draw.values), **draw.sizes}
-    reference.compile()(**expected)
-
-    program, sut = bench.compiled_winners(sdfg, spec, Precision.FP64, matrix=SMALL)
-    sut(**actual)
-
-    assert program.name == f"{sdfg.name}_alloy"
-    assert not list(external_call.external_calls(program))
-    for name in manifest.outputs:
-        np.testing.assert_allclose(actual[name], expected[name], rtol=1e-12)

@@ -9,11 +9,9 @@ from typing import Annotated
 from pydantic import ConfigDict, Field, TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
-#: Validation refuses unknown keys, missing required keys and any conversion between types (``"1"`` is no int,
-#: ``1`` is no bool); the one conversion accepted is an int as a float. JSON writes NaN and the infinities as
-#: ``NaN`` and ``Infinity``, which the JSON validator reads back.
+#: Strict records: no unknown or missing keys, no type conversion except int to float; NaN and Inf round-trip.
 RECORD = ConfigDict(extra="forbid", strict=True, ser_json_inf_nan="constants")
-#: :data:`RECORD` for a record holding a type pydantic has no schema for, checked by ``isinstance``.
+#: :data:`RECORD` for a record holding a type pydantic has no schema for.
 FOREIGN_RECORD = ConfigDict(extra="forbid", strict=True, ser_json_inf_nan="constants", arbitrary_types_allowed=True)
 
 #: A tuple of strings that validates from a JSON array or a list; each item must be a string.

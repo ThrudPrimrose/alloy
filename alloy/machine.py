@@ -29,7 +29,7 @@ def largest_cache_bytes() -> int:
     for cpu in os.sched_getaffinity(0):
         for index in pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/cache").glob("index*"):
             size = (index / "size").read_text().strip()
-            if not size.endswith("K"):  # shortcut: sysfs reports KiB on Linux, extend if another unit appears
+            if not size.endswith("K"):  # sysfs reports KiB on Linux
                 raise ValueError(f"{index}/size: {size!r} is not in KiB")
             key = ((index / "level").read_text().strip(), (index / "shared_cpu_list").read_text().strip())
             sizes[key] = int(size[:-1]) * 1024
@@ -54,9 +54,7 @@ def available_memory() -> int:
     raise RuntimeError("/proc/meminfo has no MemAvailable")
 
 
-#: Copies of a timed program's containers alive at once while timing: the drawn inputs, the reference's outputs and
-#: each arm's private copies. A timing size whose program would not fit this many times in the available memory is
-#: refused, so a runner with a large last-level cache but little memory never draws an input it cannot hold.
+#: Copies of a timed program's containers alive at once (inputs, reference outputs, each arm's copies).
 TIMING_COPIES = 8
 
 
@@ -76,9 +74,8 @@ def openmp_stack_bytes() -> int:
 
 
 def limit_memory(share: float, threads: int) -> None:
-    """Cap this process and its children at ``share`` of the memory available now, so an oversized run fails with
-    a MemoryError (or a crashed child) instead of exhausting the machine. The cap (``RLIMIT_DATA``) also counts the
-    stacks ``threads`` OpenMP workers reserve, so those come on top. Never raises an existing cap."""
+    """Cap this process and its children (``RLIMIT_DATA``) at ``share`` of the available memory plus the stacks of
+    ``threads`` OpenMP workers, so an oversized run fails instead of exhausting the machine. Never raises a cap."""
     _, hard = resource.getrlimit(resource.RLIMIT_DATA)
     limit = int(share * available_memory()) + threads * openmp_stack_bytes()
     limit = limit if hard == resource.RLIM_INFINITY else min(limit, hard)

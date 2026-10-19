@@ -177,7 +177,7 @@ def test_a_report_with_an_unknown_key_or_a_wrong_type_is_refused_naming_the_file
 
 def test_a_verdict_with_an_undeclared_status_is_refused():
     with pytest.raises(ValidationError, match="status"):
-        Verdict(status="passed")
+        Verdict(status="passed")  # pyright: ignore[reportArgumentType] -- the undeclared status is the point
 
 
 def test_the_written_report_json_validates_as_a_report(tmp_path):

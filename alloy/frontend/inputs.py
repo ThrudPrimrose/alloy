@@ -1,8 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Program inputs in the HPCAgent-Bench manifest format: ``parameters`` presets (with a ``fuzzed`` range for
-speculative compiling) and an ``args`` block (shapes, outputs). Sizes are drawn by the bench's fuzzer under its
-correctness cap and the arrays by its auto-initializer, so a corpus kernel's manifest works unchanged; a manifest
-outside the corpus names its kernel as ``file.py:function``."""
+"""Program inputs from an HPCAgent-Bench manifest (``parameters`` presets with a ``fuzzed`` range, ``args``), drawn by
+the bench's fuzzer and initializer; a manifest outside the corpus names its kernel as ``file.py:function``."""
 
 import importlib.util
 import pathlib
@@ -28,9 +26,8 @@ class Draw:
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)
 class Manifest:
-    """A manifest read by the bench's reader: ``raw`` is the YAML as read, ``spec`` the bench's view of it,
-    ``outputs`` the output arguments, and ``datatype`` the numpy dtype name the inputs are drawn at. The ``spec``
-    annotation resolves in :func:`load`, after the bench is imported."""
+    """A manifest as the bench reads it (``raw`` YAML, ``spec``), its output arguments and the dtype inputs are drawn
+    at. ``spec``'s annotation resolves in :func:`load`, after the bench is imported."""
 
     path: pathlib.Path
     raw: dict[str, Any]
@@ -46,9 +43,8 @@ def require_bench() -> None:
 
 
 def load(path: pathlib.Path, program: str | None = None, datatype: str = "float64") -> Manifest:
-    """Parse the manifest with the bench's own reader (``args`` block, derived identity); inputs are drawn at
-    ``datatype``. A manifest outside the bench corpus names its kernel by ``program`` (``file.py:function``), whose
-    signature orders the inputs."""
+    """Parse the manifest with the bench's reader; inputs are drawn at ``datatype``. Outside the corpus, ``program``
+    (``file.py:function``) names the kernel whose signature orders the inputs."""
     require_bench()
     from hpcagent_bench import (
         manifest_schema,  # noqa: PLC0415
@@ -68,8 +64,7 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
         expanded = {**identity, "relative_path": str(reference.parent), **raw}
         expand_args(expanded, manifest_schema.validate_manifest(raw, str(path)).args, None, str(path))
         spec = BenchSpec.from_dict(expanded, str(path))
-    # cast: pydantic types the argument as its internal PydanticDataclass protocol, which the decorator does not
-    # declare on the class
+    # cast: pydantic expects its internal dataclass protocol, which the decorator does not declare
     pydantic.dataclasses.rebuild_dataclass(cast("Any", Manifest), _types_namespace={"BenchSpec": BenchSpec})
     return constructed(Manifest, path, path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
 
@@ -97,8 +92,8 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
 
 
 def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
-    """Inputs at fixed ``sizes``: a corpus kernel's through the bench's own dispatch (its ``initialize`` when the
-    module defines one, which fixes dtypes the run precision does not, e.g. complex128), else the auto-initializer."""
+    """Inputs at fixed ``sizes``: a corpus kernel's through the bench's dispatch (its own ``initialize`` if any),
+    else the auto-initializer."""
     from hpcagent_bench import fuzz, paths  # noqa: PLC0415
     from hpcagent_bench.frameworks.benchmark import Benchmark  # noqa: PLC0415
     from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415

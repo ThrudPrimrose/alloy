@@ -121,14 +121,10 @@ Status: not built. Picks one candidate per region from the builds alone, without
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
 
-## Bench experiments: dace+alloy (decided 10-12; `alloy/bench.py`, adapters `alloy-par` / `alloy-canon`)
+## Bench experiments: dace+alloy (decided 10-12; bench `harness/alloy_adapter.py` since 10-19)
 
-- Columns: `dace-par + alloy` and `dace-canon + alloy`: the bench's `parallel_cpu` / `canon_cpu` pipeline output is
-  Alloy's input SDFG. Profile (timed) and speculative (heuristic, verify only) flavors of each.
-- Framework columns (no judge): bench `dace_cpu_alloy` / `dace_cpu_canonicalize_alloy` (`AlloyFramework`, bench main
-  4c14f18) call `compiled_winners`: each region's local winner, linked and built by DaCe; the bench times
-  that program like any DaCe flavor (`hpcagent-bench job baseline`). Optimizers (`alloy-par` / `alloy-canon`) are the
-  judged path below.
+- Flavors `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_<profile|heuristic>`: the stage's pipeline output is
+  Alloy's input SDFG. The adapter lives in the bench, so Alloy imports no bench code beyond manifest loading.
 - Region coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose region needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record
@@ -142,9 +138,9 @@ Status: not built. Picks one candidate per region from the builds alone, without
   Alloy's argmax run 594 s -> 97 s), never emits `omp critical`, and argmax / argmin reduce through the declared
   `arg_max_pair` / `arg_min_pair` reductions of `dace/arg_reduction.h`.
 - Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
-  compilers in parallel; start from each region's local winner; `/score` the top 5 per region on the judge while the
-  kernel's budget (`resolve_kernel_timeout`) still holds one more score and the harness's own grade; `/submit` the
-  best. Measured on argmax_value (16 cores): Alloy 23 s (candidates compile one per core), one judge `/score`
+  compilers in parallel; start from each region's local winner. Since 10-19 the judge ranks the top 5 per region as
+  `/profile` stubs (`Linker.stub`: the kernel's signature, the regions before at their best, nothing after), then
+  scores the selection once with `/score`. Measured on argmax_value (16 cores): Alloy 23 s (candidates compile one per core), one judge `/score`
   200-240 s, the harness grade 144 s (noop). So L2 (300 s) submits the local winner unscored (judge: correct, 1.74x
   vs auto) and only L3 (600 s) scores; at L1 (180 s) Alloy plus the harness grade still times out on this box.
 - Submission: CPF renders the outlined program in the bench C ABI (the bench's `cpf_bridge` preparation and

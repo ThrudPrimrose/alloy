@@ -16,8 +16,7 @@ OPENMP_SYMBOL = re.compile(r"^(GOMP_|__kmpc_|omp_|kmp_|__kmp_)")
 
 
 def driver_path(executable: str, soname: str) -> pathlib.Path | None:
-    """``lib<soname>.so`` as the compiler driver resolves it: ``-print-file-name`` (gcc, clang, icx), else the
-    ``lib`` folder next to its ``bin`` (nvc, whose driver has no such query)."""
+    """``lib<soname>.so`` as the driver resolves it: ``-print-file-name``, else ``../lib`` beside its ``bin`` (nvc)."""
     found = shutil.which(executable)
     if found is None:
         return None

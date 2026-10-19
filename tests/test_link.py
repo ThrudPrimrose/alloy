@@ -9,16 +9,16 @@ from dace.codegen import cpf
 
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
-from alloy.evaluate.link import Best, Linker
+from alloy.evaluate.link import Best, Linker, built, execution_order
 from alloy.frontend import regions
 from alloy.records import dumped_json, validated_json
-from helpers import MATRIX, REDUCTIONS, load_program
+from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
 
 def test_a_library_of_region_archives_renders_standalone_and_computes_the_program(tmp_path):
     program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     archives = {
-        r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}).archive for r in program.regions
+        r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.regions
     }
     sdfg = Linker(program, MATRIX, tmp_path).library_sdfg(archives, frozenset({"gcc"}))
 
@@ -74,3 +74,47 @@ def test_the_timer_of_a_complex_region_declares_its_entry_as_dace_does(tmp_path)
     sut = Linker(program, MATRIX, tmp_path).timer(region)
 
     assert sut.is_file()
+
+
+def stub_library(linker: Linker, sdfg, tmp_path, name: str) -> ctypes.CDLL:
+    """``sdfg`` rendered by CPF in the program's signature and built into ``lib<name>.so``."""
+    rendered = cpf.render(sdfg, language="c", signature=cpf.EntrySignature(["N", "a", "b", "total"]))
+    source, library = tmp_path / f"{name}.c", tmp_path / f"lib{name}.so"
+    source.write_text(rendered.code)
+    gcc = shutil.which("gcc")
+    assert gcc is not None
+    subprocess.run([gcc, "-O2", "-fPIC", "-shared", str(source), "-o", str(library), *rendered.link], check=True)
+    return ctypes.CDLL(str(library))
+
+
+def test_a_stub_runs_its_region_and_the_regions_before_it_and_no_later_one(tmp_path):
+    program = outlined()
+    linker = Linker(program, MATRIX, tmp_path)
+    selection = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.regions}
+    elementwise = next(r.symbol for r in program.regions if r.calls_libm)
+    reduction = next(r.symbol for r in program.regions if r.has_reduction)
+    a = np.random.default_rng(0).random(64)
+    total_of_the_program = float(np.sum(np.sin(a) * 2.0))
+
+    for symbol in (elementwise, reduction):
+        sut = linker.stub(selection, symbol)
+
+        library = stub_library(linker, sut, tmp_path, f"stub_{symbol}")
+        b, total = np.zeros(64), np.array([-1.0])
+        pointers = (x.ctypes.data_as(ctypes.c_void_p) for x in (a, b, total))
+        getattr(library, sut.name)(ctypes.c_int64(64), *pointers)
+        np.testing.assert_allclose(b, np.sin(a) * 2.0, rtol=1e-12)
+        if symbol == reduction:
+            np.testing.assert_allclose(total[0], total_of_the_program, rtol=1e-12)
+        else:
+            assert total[0] != total_of_the_program, "the reduction runs after the stubbed region, so it must not run"
+
+
+def test_regions_run_in_program_order():
+    program = outlined()
+
+    sut = execution_order(program.sdfg)
+
+    assert sorted(sut) == sorted(r.symbol for r in program.regions)
+    reduction = next(r.symbol for r in program.regions if r.has_reduction)
+    assert sut[-1] == reduction

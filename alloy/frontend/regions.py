@@ -92,11 +92,8 @@ def library_length(state: dace.SDFGState, node: Reduce | ArgReduce | Scan) -> sy
 
 
 def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
-    """The longest accumulation chain of ``sdfg``: over every write-conflict-resolution (reduction) edge leaving a
-    tasklet or a nested SDFG, the reduced map extent around it, times the nested SDFG's own length; a reduce or scan
-    library node counts by :func:`library_length`. Exact on the SDFG,
-    so a square matmul's ``K`` is told apart from its kept ``N``; only WCR reductions count, not a sequential loop
-    that accumulates into a scalar."""
+    """The longest accumulation chain of ``sdfg``: the reduced map extent around each WCR edge (times a nested SDFG's
+    own length), or a reduce/scan node's :func:`library_length`. A sequential loop into a scalar does not count."""
     lengths: list[sympy.Expr] = []
     for state in sdfg.states():
         scope = state.scope_dict()

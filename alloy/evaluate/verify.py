@@ -21,7 +21,7 @@ from dace.codegen.exceptions import CompilationError
 from alloy import machine
 from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
-from alloy.evaluate.link import Linker
+from alloy.evaluate.link import Linker, built
 from alloy.frontend.inputs import Draw, require_bench
 from alloy.frontend.regions import Program
 from alloy.records import RECORD
@@ -322,7 +322,4 @@ def judge_region(
 
 def reference_archive(rep: RegionReport) -> pathlib.Path:
     """The region's first built candidate: the matrix default (first language, first compiler, every default)."""
-    first = rep.builds[0]
-    if first.error or first.archive is None:
-        raise RuntimeError(f"{rep.region.symbol}: the reference candidate {first.name} did not build: {first.error}")
-    return first.archive
+    return built(rep.builds[0])

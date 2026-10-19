@@ -1,7 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Whole programs from region archives: each region links its archive from one fixed path, so a candidate is one
-archive copy plus a replayed DaCe build (command cache + precompiled header). A timer wraps every region's entry; it is
-C++ against DaCe's runtime types, so it declares the entry with the signature DaCe gave it."""
+"""Whole programs from region archives: a candidate is one archive copy plus a replayed DaCe build. A timer wraps each
+region's entry; a stub keeps the program's signature but stops after one region, so a judge can time that region."""
 
 import copy
 import hashlib
@@ -16,6 +15,7 @@ import dace
 from dace.codegen import cpf
 from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
+from dace.sdfg import utils as sdutils
 from pydantic.dataclasses import dataclass as record
 
 from alloy.backend import runtime
@@ -37,6 +37,22 @@ extern "C" void __wrap_{symbol}({signature}) {{
   seconds = (double)(t1.tv_sec - t0.tv_sec) + 1e-9 * (double)(t1.tv_nsec - t0.tv_nsec);
 }}
 """
+#: A region that runs after the stubbed one: its entry, with no body.
+EMPTY = """#include <dace/types.h>
+extern "C" void {symbol}({signature}) {{}}
+"""
+
+
+def execution_order(sdfg: dace.SDFG) -> list[str]:
+    """The region symbols in run order: every call sits in a top-level state (a loop is outlined whole), so a
+    topological walk of the top-level blocks, then of each state, orders them."""
+    order: list[str] = []
+    for block in sdutils.dfs_topological_sort(sdfg):
+        if isinstance(block, dace.SDFGState):
+            order += [
+                n.symbol for n in sdutils.dfs_topological_sort(block) if isinstance(n, external_call.ExternalCall)
+            ]
+    return order
 
 
 def cmake_args(matrix: Matrix) -> str:
@@ -44,6 +60,13 @@ def cmake_args(matrix: Matrix) -> str:
     a second runtime next to the regions'."""
     soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
     return f"-DOpenMP_CXX_LIB_NAMES={soname} -DOpenMP_{soname}_LIBRARY={runtime.default_library(matrix)}"
+
+
+def built(build: Build) -> pathlib.Path:
+    """``build``'s archive; a failed build has none and raises with its error."""
+    if build.error or build.archive is None:
+        raise RuntimeError(f"{build.name} did not build: {build.error}")
+    return build.archive
 
 
 @record(slots=True, frozen=True, config=RECORD)
@@ -175,18 +198,42 @@ class Linker:
         link_line = shlex.join([frame, *frame_flags, "program.c", "-o", library, *plan.link])
         return "\n".join([*lines, f"{library}: program.c {archives}", f"\t{link_line}", ""])
 
+    def stub(self, selection: dict[str, Build], symbol: str) -> dace.SDFG:
+        """The program, same signature, running the regions before ``symbol`` and ``symbol`` from ``selection``; later
+        regions link an empty body. The prefix is equal across ``symbol``'s candidates, so stub times rank them."""
+        order = execution_order(self.program.sdfg)
+        later = set(order[order.index(symbol) + 1 :])
+        regions = {r.symbol: r for r in self.program.regions}
+        archives = {s: self.empty(regions[s]) if s in later else built(selection[s]) for s in order}
+        compilers = frozenset(selection[s].candidate.compiler for s in order if s not in later)
+        return self.library_sdfg(archives, compilers)
+
+    def empty(self, region: Region) -> pathlib.Path:
+        """The archive of ``region``'s entry with an empty body."""
+        archive = self.out / "link" / f"libempty_{region.symbol}.a"
+        obj = self.cpp_object(f"empty_{region.symbol}", EMPTY.format(symbol=region.symbol, signature=region.signature))
+        if not archive.is_file() or archive.stat().st_mtime < obj.stat().st_mtime:
+            archive.unlink(missing_ok=True)
+            subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
+        return archive
+
     def timer(self, region: Region) -> pathlib.Path:
-        """The object timing ``region``'s entry, rebuilt when its source changes (a rerun into the same ``out`` after
-        the program changed); ``alloy_seconds_<symbol>()`` reads its last call."""
-        obj = self.out / "link" / f"timer_{region.symbol}.o"
-        source = obj.with_suffix(".cpp")
+        """The object timing ``region``'s entry; ``alloy_seconds_<symbol>()`` reads its last call."""
         text = TIMER.format(symbol=region.symbol, signature=region.signature, arguments=", ".join(region.abi_order))
+        return self.cpp_object(f"timer_{region.symbol}", text)
+
+    def cpp_object(self, name: str, text: str) -> pathlib.Path:
+        """``link/<name>.o`` compiled from ``text`` against DaCe's runtime types, rebuilt when the text changes (a
+        rerun into the same ``out`` after the program changed)."""
+        (self.out / "link").mkdir(parents=True, exist_ok=True)
+        obj = self.out / "link" / f"{name}.o"
+        source = obj.with_suffix(".cpp")
         if not obj.is_file() or not source.is_file() or source.read_text() != text:
             source.write_text(text)
             usable, skipped = self.matrix.usable_compilers()
             compiler = next((comp.executables["cpp"] for comp in usable.values() if "cpp" in comp.executables), None)
             if compiler is None:
-                raise RuntimeError(f"no usable C++ compiler builds the region timer: {skipped}")
+                raise RuntimeError(f"no usable C++ compiler builds {name}: {skipped}")
             include = pathlib.Path(dace.__file__).parent / "runtime" / "include"
             command = [compiler, self.matrix.languages["cpp"].std, *self.matrix.build_flags, f"-I{include}"]
             subprocess.run([*command, "-c", str(source), "-o", str(obj)], check=True)
