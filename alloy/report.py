@@ -95,7 +95,7 @@ def runtime_matrix(rep: RegionReport, timing: RegionTiming, matrix: Matrix) -> l
     cells: dict[str, dict[str, str]] = {}
     for b in rep.builds:
         m = timing.screen.get(REFERENCE if b is rep.builds[0] else b.name)
-        text = "-" if m is None else m.verdict.status
+        text: str = "-" if m is None else m.verdict.status
         if m is not None and m.verdict.ok:
             text = f"{1e3 * m.median:.3f} ({ref / m.median:.2f}x){'*' if b.name in timing.final else ''}"
         cells.setdefault(b.source.stem, {})[b.candidate.config_name(matrix)] = text

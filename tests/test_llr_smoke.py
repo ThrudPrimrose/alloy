@@ -2,12 +2,12 @@
 import dataclasses
 import math
 
+import dace
 import pytest
 from hpcagent_bench import autogen, paths
 from hpcagent_bench.frameworks.benchmark import Benchmark
+from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, PipelineContext
 from hpcagent_bench.frameworks.framework import framework_class
-from hpcagent_bench.harness.alloy_adapter import pipeline_sdfg
-from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
 from alloy import api
@@ -36,6 +36,15 @@ TINY = dataclasses.replace(
 OMEN_SIZE_CAP = "8"
 
 
+def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
+    """The kernel's fp64 CPU SDFG after the bench's DaCe pipeline ``pipeline``."""
+    framework = framework_class("dace_cpu")("dace_cpu")
+    framework.set_datatype("float64")
+    sdfg = framework.implementations(Benchmark(spec.short_name))[0][0].to_sdfg(simplify=False)
+    PIPELINES_BY_NAME[pipeline].transform(sdfg, PipelineContext(device=dace.dtypes.DeviceType.CPU))
+    return sdfg
+
+
 @pytest.mark.e2e
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
 def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(kernel, tmp_path):
@@ -62,7 +71,7 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, 
     a bench transformation pipeline: every region builds distinct variants and the whole program still verifies."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")
-    sdfg = pipeline_sdfg(spec, pipeline, Precision.FP64)
+    sdfg = pipeline_sdfg(spec, pipeline)
     manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=TINY)
