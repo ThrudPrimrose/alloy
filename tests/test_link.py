@@ -9,8 +9,9 @@ from dace.codegen import cpf
 
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
-from alloy.evaluate.link import Linker
+from alloy.evaluate.link import Best, Linker
 from alloy.frontend import regions
+from alloy.records import dumped_json, validated_json
 from helpers import MATRIX, REDUCTIONS, load_program
 
 
@@ -34,6 +35,29 @@ def test_a_library_of_region_archives_renders_standalone_and_computes_the_progra
     entry = getattr(ctypes.CDLL(str(library)), sdfg.name)
     entry(ctypes.c_int64(7), out.ctypes.data_as(ctypes.c_void_p), ctypes.c_int64(13), a.ctypes.data_as(ctypes.c_void_p))
     np.testing.assert_allclose(out, a.sum(axis=1), rtol=1e-12)
+
+
+def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):
+    program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    winners = {
+        r.symbol: build(r, Candidate("c", "gcc", fp_level="fast"), MATRIX, tmp_path / r.symbol, {})
+        for r in program.regions
+    }
+
+    sut = Linker(program, MATRIX, tmp_path).write_best(winners)
+
+    best = tmp_path / "best"
+    assert "-ffast-math" not in sut.link
+    assert dumped_json(validated_json(Best, best / "link.json")) == dumped_json(sut)
+    subprocess.run(["make", "-C", str(best)], check=True, capture_output=True)
+    rng = np.random.default_rng(0)
+    values = {"M": 7, "N": 13, "a": rng.random((7, 13)), "out": np.zeros(7)}
+    library = ctypes.CDLL(str(best / f"lib{program.sdfg.name}.so"))
+    as_c = {
+        k: ctypes.c_int64(v) if isinstance(v, int) else v.ctypes.data_as(ctypes.c_void_p) for k, v in values.items()
+    }
+    getattr(library, program.sdfg.name)(*(as_c[name] for name in sut.arguments))
+    np.testing.assert_allclose(values["out"], values["a"].sum(axis=1), rtol=1e-12)
 
 
 def test_the_timer_of_a_complex_region_declares_its_entry_as_dace_does(tmp_path):

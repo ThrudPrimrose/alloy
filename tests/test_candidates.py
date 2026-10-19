@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-from alloy.backend.candidates import one_factor_at_a_time
+from alloy import machine
+from alloy.backend.candidates import flips, one_factor_at_a_time
 from helpers import MATRIX, gcc_only, outlined, region_with
 
 
@@ -31,6 +32,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
     per_language = (
         1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
     )
+    per_language += sum(1 for isa in matrix.host_isas(machine.cpu_flags()) if isa in gcc.isa)
     assert {c.compiler for c in sut} == {"gcc"}
     assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
     assert len(sut) == len(matrix.languages) * per_language
@@ -84,3 +86,26 @@ def test_a_narrow_index_is_tried_only_where_every_array_fits_it(tmp_path):
 
     assert "int32" in {c.resolved(matrix)[0] for c in fits}
     assert {c.resolved(matrix)[0] for c in overflows} == {"int64"}
+
+
+def test_an_isa_is_tried_only_where_the_host_runs_it_and_the_compiler_spells_it():
+    region = region_with(outlined(), libm=False, reduction=True)
+    host = ("avx2", "avx512")
+
+    def tried(compiler: str, isas: tuple[str, ...]) -> set[str]:
+        out = flips(MATRIX, region, "c", compiler, finite_inputs=False, max_elements=None, isas=isas)
+        return {c.isa for c in out if c.isa}
+
+    assert tried("gcc", host) == {"avx2", "avx512"}
+    assert tried("nvhpc", host) == {"avx2"}
+    assert tried("gcc", ()) == set()
+
+
+def test_an_isa_candidate_is_built_with_the_compilers_spelling_of_it():
+    region = region_with(outlined(), libm=False, reduction=True)
+    out = flips(MATRIX, region, "c", "clang", finite_inputs=False, max_elements=None, isas=("sve",))
+    (sve,) = [c for c in out if c.isa == "sve"]
+
+    assert sve.flags(MATRIX)[-2:] == ("-mllvm", "-prefer-predicate-over-epilogue=predicate-else-scalar-epilogue")
+    assert sve.config_name(MATRIX).endswith("_sve")
+    assert sve.variant_key(MATRIX) == next(c for c in out if not c.isa and c.note == "default").variant_key(MATRIX)

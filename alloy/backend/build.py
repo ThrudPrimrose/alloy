@@ -12,17 +12,13 @@ from dace.codegen import cpf
 from dace.config import set_temporary
 
 from alloy.backend import runtime
-from alloy.backend.candidates import Candidate
+from alloy.backend.candidates import Candidate, RenderKey
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.regions import Region
 
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
 NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
-
-
-#: A rendering's identity: the language and every codegen knob it was rendered with.
-RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,7 +31,8 @@ class Remarks:
 
 @dataclass(slots=True, frozen=True)
 class Build:
-    """One compiled candidate. ``duplicate_of`` names an earlier candidate with a byte-identical object."""
+    """One compiled candidate. ``source`` is its code variant (``variants/v<k>``, shared by every candidate rendered
+    alike); ``duplicate_of`` names an earlier candidate with a byte-identical object."""
 
     candidate: Candidate
     name: str
@@ -89,43 +86,47 @@ def code_hash(obj: pathlib.Path) -> str:
 
 
 def compile_candidate(
-    source: pathlib.Path, candidate: Candidate, matrix: Matrix, flags: tuple[str, ...]
+    source: pathlib.Path, obj: pathlib.Path, candidate: Candidate, matrix: Matrix, flags: tuple[str, ...]
 ) -> subprocess.CompletedProcess[str]:
-    """Compile ``source`` with ``flags`` and the compiler's remark flags to ``<stem>.o`` next to it."""
+    """Compile ``source`` with ``flags`` and the compiler's remark flags to ``obj``."""
     compiler = matrix.compilers[candidate.compiler]
     executable, remarks = compiler.executables[candidate.language], compiler.remarks
-    command = [executable, *flags, *remarks, "-c", str(source), "-o", str(source.with_suffix(".o"))]
+    command = [executable, *flags, *remarks, "-c", str(source), "-o", str(obj)]
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
 def write_source(
-    region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, str]
+    region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, pathlib.Path]
 ) -> pathlib.Path:
-    """Write ``candidate``'s translation unit into ``folder``. ``renders`` memoizes the text by language and codegen
-    knobs, which most candidates share (they differ only in compile flags)."""
-    folder.mkdir(parents=True, exist_ok=True)
-    key = (candidate.language, tuple(sorted(candidate.codegen_params(matrix).items())))
+    """``candidate``'s code variant, ``folder/variants/v<k>.<suffix>``, rendered and written the first time its key
+    appears; ``renders`` maps each key seen so far to its file, so ``k`` counts variants in order of appearance."""
+    key = candidate.variant_key(matrix)
     if key not in renders:
-        renders[key] = render(region, candidate, matrix)
-    source = folder / f"{candidate.name(matrix)}.{matrix.languages[candidate.language].suffix}"
-    source.write_text(renders[key])
-    return source
+        variants = folder / "variants"
+        variants.mkdir(parents=True, exist_ok=True)
+        source = variants / f"v{len(renders)}.{matrix.languages[candidate.language].suffix}"
+        source.write_text(render(region, candidate, matrix))
+        renders[key] = source
+    return renders[key]
 
 
 def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -> Build:
-    """Compile and archive the unit :func:`write_source` wrote; safe to run concurrently for distinct candidates."""
+    """Compile ``source`` (its code variant) for ``candidate`` into ``<region>/builds/<candidate>.o`` and archive it;
+    safe to run concurrently for distinct candidates."""
     name, params = candidate.name(matrix), candidate.codegen_params(matrix)
     flags = candidate.flags(matrix)
-    proc = compile_candidate(source, candidate, matrix, flags)
-    source.with_suffix(".log").write_text(proc.stderr)
+    builds = source.parent.parent / "builds"
+    builds.mkdir(parents=True, exist_ok=True)
+    obj = builds / f"{name}.o"
+    proc = compile_candidate(source, obj, candidate, matrix, flags)
+    obj.with_suffix(".log").write_text(proc.stderr)
     remarks = parse_remarks(proc.stderr, source)
     if proc.returncode != 0:
         return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
-    obj = source.with_suffix(".o")
     if missing := runtime.unresolved(obj, runtime.default_library(matrix)):
         error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
-    archive = source.parent / f"lib{name}.a"
+    archive = builds / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
     return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks)
 

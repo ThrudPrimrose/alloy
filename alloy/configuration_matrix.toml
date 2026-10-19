@@ -75,6 +75,25 @@ needs = "reduction"
 tolerance = "band"
 needs = "finite_inputs"
 
+# A vector ISA narrower or more specific than -march=native; a candidate's ISA flags follow the build flags. host_flag:
+# the /proc/cpuinfo flag the host must have, else the ISA is skipped. The x86 spellings were checked by the vector
+# registers in the assembly (ymm vs zmm) on a Zen 4; the aarch64 ones by gcc 15 and clang 21 cross compiles for
+# -mcpu=neoverse-v2, where both pick NEON unless forced. Confirm the aarch64 ones on Grace before reporting them.
+[isas.avx2]
+host_flag = "avx2"
+
+[isas.avx512_256]  # AVX-512 instructions at 256-bit width
+host_flag = "avx512f"
+
+[isas.avx512]
+host_flag = "avx512f"
+
+[isas.neon]
+host_flag = "asimd"
+
+[isas.sve]
+host_flag = "sve"
+
 # probe: library name the linker must find. fp_level: the level a vector-library candidate builds at.
 [veclibs.libmvec]
 probe = "mvec"
@@ -117,6 +136,13 @@ no_vec = ["-fno-tree-vectorize"]
 [compilers.gcc.veclib]
 libmvec_fast = ["-fopenmp-simd", "-ffast-math"]
 
+[compilers.gcc.isa]
+avx2 = ["-mno-avx512f"]
+avx512_256 = ["-mprefer-vector-width=256"]
+avx512 = ["-mprefer-vector-width=512"]
+neon = ["--param=aarch64-autovec-preference=asimd-only"]
+sve = ["--param=aarch64-autovec-preference=sve-only"]
+
 # clang/clang++ on PATH must come with its LLVM libomp; point PATH (or a copied matrix) at the version that has it.
 [compilers.clang]
 c = "clang"
@@ -141,6 +167,13 @@ no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
 libmvec = ["-fveclib=libmvec", "-fno-math-errno"]
 sleef = ["-fveclib=SLEEF", "-fno-math-errno"]
 
+[compilers.clang.isa]
+avx2 = ["-mno-avx512f"]
+avx512_256 = ["-mprefer-vector-width=256"]
+avx512 = ["-mprefer-vector-width=512"]
+neon = ["-mllvm", "-scalable-vectorization=off"]
+sve = ["-mllvm", "-prefer-predicate-over-epilogue=predicate-else-scalar-epilogue"]  # tail-folded SVE
+
 # Intel oneAPI; on PATH after `source /opt/intel/oneapi/setvars.sh`. icx defaults to -fp-model=fast, so every
 # level is spelled explicitly.
 [compilers.icx]
@@ -162,6 +195,11 @@ fast = ["-fp-model=fast=2", "-ftz"]
 [compilers.icx.cost_model]
 default = []
 no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
+
+[compilers.icx.isa]
+avx2 = ["-mno-avx512f"]
+avx512_256 = ["-mprefer-vector-width=256"]
+avx512 = ["-mprefer-vector-width=512"]
 
 # NVIDIA HPC SDK; on PATH after adding /opt/nvidia/hpc_sdk/Linux_x86_64/<ver>/compilers/bin. Its flag spellings
 # and whether its objects link against libomp are what the CI interop job checks; trust them only once it is green.
@@ -185,6 +223,9 @@ fast = ["-fast"]
 [compilers.nvhpc.cost_model]
 default = []
 no_vec = ["-Mnovect"]
+
+[compilers.nvhpc.isa]  # -tp names a CPU model; only the generic AVX2 one is listed
+avx2 = ["-tp=haswell"]
 
 # Readable-codegen knobs (compiler.cpu.codegen_params); the first value is DaCe's default.
 [codegen.knobs]

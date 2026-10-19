@@ -48,6 +48,13 @@ class Veclib:
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)
+class Isa:
+    """A vector ISA a candidate may target, when the host lists ``host_flag`` in ``/proc/cpuinfo``."""
+
+    host_flag: str
+
+
+@dataclass(slots=True, frozen=True, config=STRICT)
 class Compiler:
     """How one compiler spells every option; a runtime, cost model or vector library it does not list is
     unsupported."""
@@ -58,6 +65,7 @@ class Compiler:
     fp: dict[str, tuple[str, ...]]
     cost_model: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     veclib: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    isa: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     support_libraries: tuple[str, ...] = ()
 
     def missing_executables(self) -> list[str]:
@@ -108,6 +116,7 @@ class MatrixFile:
     openmp_runtimes: dict[str, OpenMPRuntime]
     fp_levels: dict[str, FPLevel]
     veclibs: dict[str, Veclib]
+    isas: dict[str, Isa]
     compilers: dict[str, Compiler]
     codegen: Codegen
     timing: Timing
@@ -123,10 +132,15 @@ class Matrix:
     openmp_runtimes: dict[str, str]  # runtime -> soname
     fp_levels: dict[str, FPLevel]
     veclibs: dict[str, Veclib]
+    isas: dict[str, Isa]
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     index_widths: dict[str, dict[str, str]]
     timing: Timing
+
+    def host_isas(self, cpu_flags: frozenset[str]) -> tuple[str, ...]:
+        """The declared ISAs a host with ``cpu_flags`` (:func:`alloy.machine.cpu_flags`) can run."""
+        return tuple(name for name, isa in self.isas.items() if isa.host_flag in cpu_flags)
 
     def usable_compilers(self) -> tuple[dict[str, Compiler], dict[str, str]]:
         """``(usable, skipped)``: compilers whose executables are on PATH and that spell the default runtime, and
@@ -171,6 +185,7 @@ def check_consistency(m: Matrix) -> None:
             ("openmp", comp.openmp, m.openmp_runtimes, False),
             ("fp", comp.fp, m.fp_levels, True),
             ("veclib", comp.veclib, m.veclibs, False),
+            ("isa", comp.isa, m.isas, False),
         )
         for option, spelled, declared, complete in options:
             if reason := unknown_options(name, option, spelled, declared, complete=complete):
@@ -208,6 +223,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         openmp_runtimes={n: r.soname for n, r in f.openmp_runtimes.items()},
         fp_levels=f.fp_levels,
         veclibs=f.veclibs,
+        isas=f.isas,
         compilers=f.compilers,
         knobs=f.codegen.knobs,
         index_widths=f.codegen.index_widths,

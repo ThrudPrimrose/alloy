@@ -1,4 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import dataclasses
 import json
 import math
 import pathlib
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 
 from alloy import report
 from alloy.backend import sweep
-from alloy.backend.build import Build, Remarks, build
+from alloy.backend.build import Build, Remarks, build, write_source
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.timing import Measured, ProgramTiming, RegionTiming, Timings
 from alloy.evaluate.verify import Verdict
@@ -34,6 +35,38 @@ def test_the_report_lists_every_candidate_of_every_region(tmp_path):
     assert (tmp_path / "configuration_matrix.toml").read_bytes() == MATRIX.path.read_bytes()
 
 
+def test_the_runtime_matrix_puts_each_candidate_at_its_variant_and_build_config(tmp_path):
+    region = outlined().regions[0]
+    renders: dict = {}
+    candidates = [
+        Candidate("c", "gcc"),
+        Candidate("c", "gcc", isa="avx2"),
+        Candidate("c", "gcc", knobs=(("loop_access_form", "ptr_increment"),)),
+    ]
+    builds = []
+    for c in candidates:
+        source = write_source(region, c, MATRIX, tmp_path, renders)
+        builds.append(Build(c, c.name(MATRIX), {}, source, None, (), "", Remarks(0, ())))
+    passed = Verdict(status="pass", error=0.0, detail="")
+    timed = Measured(median=2e-3, low=2e-3, high=2e-3, verdict=passed)
+    timing = RegionTiming(
+        screen={"reference": timed, builds[1].name: dataclasses.replace(timed, median=1e-3)},
+        final={"reference": timed, builds[1].name: timed},
+        winner="reference",
+        screen_sizes={},
+        final_sizes={},
+    )
+
+    sut = report.runtime_matrix(sweep.RegionReport(region, tuple(builds)), timing, MATRIX)
+
+    assert sut[2:5] == [
+        "| variant | gcc_strict_default_none_native | gcc_strict_default_none_avx2 |",
+        "|---|---|---|",
+        "| v0 | 2.000 (1.00x) | 1.000 (2.00x)* |",
+    ]
+    assert sut[5] == "| v1 | - | - |"
+
+
 def a_report() -> report.Report:
     """A timed report of one region with a verified and a failed candidate; the failed arm's timing is NaN."""
     passed = Verdict(status="pass", error=2.5e-16, detail="")
@@ -43,6 +76,8 @@ def a_report() -> report.Report:
     candidate = report.CandidateRecord(
         name="c_gcc_int64_strict_default_none",
         change="default",
+        variant="v0",
+        config="gcc_strict_default_none_native",
         flags=("-std=c23", "-O3"),
         codegen_params={"index_type": "int64_t"},
         source=pathlib.Path("/out/regions/r0/c.c"),

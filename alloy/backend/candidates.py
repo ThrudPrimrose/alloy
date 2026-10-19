@@ -6,14 +6,19 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from alloy import machine
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.regions import Region
+
+#: A code variant's identity: the language and every codegen knob it is rendered with.
+RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 
 
 @dataclass(slots=True, frozen=True)
 class Candidate:
     """One rendering + build of a region, as names into the matrix. ``knobs`` holds only non-default values;
-    an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default."""
+    an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
+    flags' ``-march=native``."""
 
     language: str
     compiler: str
@@ -22,6 +27,7 @@ class Candidate:
     fp_level: str = ""
     cost_model: str = ""
     veclib: str = "none"
+    isa: str = ""
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str, str]:
@@ -35,8 +41,17 @@ class Candidate:
 
     def name(self, matrix: Matrix) -> str:
         width, level, model = self.resolved(matrix)
-        parts = [self.language, self.compiler, width, level, model, self.veclib]
+        parts = [self.language, self.compiler, width, level, model, self.veclib, *([self.isa] if self.isa else [])]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
+
+    def variant_key(self, matrix: Matrix) -> RenderKey:
+        """The code variant this candidate compiles: candidates with one key share one source."""
+        return self.language, tuple(sorted(self.codegen_params(matrix).items()))
+
+    def config_name(self, matrix: Matrix) -> str:
+        """The build configuration, everything but the source: the column of the region's runtime matrix."""
+        _, level, model = self.resolved(matrix)
+        return "_".join([self.compiler, level, model, self.veclib, self.isa or "native"])
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
@@ -47,10 +62,11 @@ class Candidate:
 
     def flags(self, matrix: Matrix) -> tuple[str, ...]:
         """Compile flags: language standard, build flags, then this compiler's spelling of the default OpenMP
-        runtime, the FP level, the cost model and the vector library."""
+        runtime, the FP level, the cost model, the vector library and the ISA."""
         comp = matrix.compilers[self.compiler]
         _, level, model = self.resolved(matrix)
         veclib = comp.veclib[self.veclib] if self.veclib != "none" else ()
+        isa = comp.isa[self.isa] if self.isa else ()
         return (
             matrix.languages[self.language].std,
             *matrix.build_flags,
@@ -58,6 +74,7 @@ class Candidate:
             *comp.fp[level],
             *comp.cost_model[model],
             *veclib,
+            *isa,
         )
 
 
@@ -84,9 +101,17 @@ def index_widths(matrix: Matrix, max_elements: int | None) -> tuple[str, ...]:
 
 
 def flips(
-    matrix: Matrix, region: Region, language: str, compiler: str, *, finite_inputs: bool, max_elements: int | None
+    matrix: Matrix,
+    region: Region,
+    language: str,
+    compiler: str,
+    *,
+    finite_inputs: bool,
+    max_elements: int | None,
+    isas: tuple[str, ...] = (),
 ) -> list[Candidate]:
-    """The default for one language and compiler, then every single-factor change of it."""
+    """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
+    host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them."""
     comp, d = matrix.compilers[compiler], matrix.defaults
     levels = fp_levels(matrix, region, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
@@ -98,6 +123,7 @@ def flips(
         if w != d.index_width
     ]
     out += [Candidate(language, compiler, fp_level=lv, note=f"fp {lv}") for lv in levels if lv != d.fp_level]
+    out += [Candidate(language, compiler, isa=i, note=f"isa {i}") for i in isas if i in comp.isa]
     out += [
         Candidate(language, compiler, cost_model=m, note=f"cost model {m}")
         for m in comp.cost_model
@@ -117,10 +143,11 @@ def one_factor_at_a_time(
 ) -> list[Candidate]:
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
+    isas = matrix.host_isas(machine.cpu_flags())
     return [
         c
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(matrix, region, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements)
+        for c in flips(matrix, region, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas)
     ]

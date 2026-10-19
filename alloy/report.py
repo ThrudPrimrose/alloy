@@ -10,7 +10,8 @@ from pydantic.dataclasses import dataclass
 from alloy.backend.build import Build
 from alloy.backend.sweep import RegionReport
 from alloy.configuration_matrix import Matrix
-from alloy.evaluate.timing import Measured, ProgramTiming, RegionTiming, Timings
+from alloy.evaluate.link import Best
+from alloy.evaluate.timing import REFERENCE, Measured, ProgramTiming, RegionTiming, Timings
 from alloy.evaluate.verify import Status, Verdict, Verification
 from alloy.records import RECORD, Strings, dumped_json, validated_json
 
@@ -35,8 +36,25 @@ def row(b: Build, verdict: Verdict | None) -> str:
     )
 
 
+def best_lines(best: Best) -> list[str]:
+    """How ``best/`` links the program: each region's winner with its compiler and flags, then the link line."""
+    lines = [
+        "## Linked program (`best/`: `make` builds it)",
+        "",
+        "| region | candidate | compiler | flags |",
+        "|---|---|---|---|",
+    ]
+    lines += [f"| {r.symbol} | {r.candidate} | {r.compiler} | `{' '.join(r.flags)}` |" for r in best.regions]
+    return [*lines, "", f"Entry arguments: {', '.join(best.arguments)}. Link: `{' '.join(best.link)}`", ""]
+
+
 def markdown(
-    reports: list[RegionReport], matrix: Matrix, verdicts: Verdicts, unstable: list[str], timing: Timings | None
+    reports: list[RegionReport],
+    matrix: Matrix,
+    verdicts: Verdicts,
+    unstable: list[str],
+    timing: Timings | None,
+    best: Best | None,
 ) -> str:
     lines = ["# Alloy build report", ""]
     if unstable:
@@ -44,6 +62,7 @@ def markdown(
         lines += [f"{note}: {', '.join(unstable)}", ""]
     lines += [f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
     lines += program_lines(timing.program) if timing else []
+    lines += best_lines(best) if best else []
     _, skipped = matrix.usable_compilers()
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
     lines += [""] if skipped else []
@@ -64,8 +83,26 @@ def markdown(
         mine = verdicts.get(r.symbol, {})
         lines += [row(b, mine.get(b.name)) for b in rep.builds]
         lines.append("")
+        lines += runtime_matrix(rep, timing.regions[r.symbol], matrix) if timing else []
         lines += timing_lines(timing.regions[r.symbol]) if timing else []
     return "\n".join(lines)
+
+
+def runtime_matrix(rep: RegionReport, timing: RegionTiming, matrix: Matrix) -> list[str]:
+    """The screened candidates as code variant (row) x build config (column): ``ms (speedup over the reference)``,
+    ``*`` when re-timed, the verdict when it failed, ``-`` when not screened (not swept, duplicate or not verified)."""
+    ref = timing.screen[REFERENCE].median
+    cells: dict[str, dict[str, str]] = {}
+    for b in rep.builds:
+        m = timing.screen.get(REFERENCE if b is rep.builds[0] else b.name)
+        text = "-" if m is None else m.verdict.status
+        if m is not None and m.verdict.ok:
+            text = f"{1e3 * m.median:.3f} ({ref / m.median:.2f}x){'*' if b.name in timing.final else ''}"
+        cells.setdefault(b.source.stem, {})[b.candidate.config_name(matrix)] = text
+    configs = list(dict.fromkeys(c for row in cells.values() for c in row))
+    lines = ["| variant | " + " | ".join(configs) + " |", "|---" * (len(configs) + 1) + "|"]
+    lines += [f"| {v} | " + " | ".join(row.get(c, "-") for c in configs) + " |" for v, row in cells.items()]
+    return ["Screened ms (speedup), variant x build config:", "", *lines, ""]
 
 
 def ms(m: Measured) -> str:
@@ -112,6 +149,8 @@ class CandidateRecord:
 
     name: str
     change: str
+    variant: str
+    config: str
     flags: Strings
     codegen_params: dict[str, str]
     source: pathlib.Path
@@ -153,10 +192,12 @@ def verdict_record(verdict: Verdict | None) -> VerdictRecord | None:
     return VerdictRecord(status=verdict.status, max_rel_error=verdict.error, detail=verdict.detail or None)
 
 
-def candidate_record(b: Build, verdict: Verdict | None) -> CandidateRecord:
+def candidate_record(b: Build, verdict: Verdict | None, matrix: Matrix) -> CandidateRecord:
     return CandidateRecord(
         name=b.name,
         change=b.candidate.note,
+        variant=b.source.stem,
+        config=b.candidate.config_name(matrix),
         flags=b.flags,
         codegen_params=b.codegen_params,
         source=b.source,
@@ -170,7 +211,7 @@ def candidate_record(b: Build, verdict: Verdict | None) -> CandidateRecord:
     )
 
 
-def region_records(reports: list[RegionReport], verdicts: Verdicts) -> tuple[RegionRecord, ...]:
+def region_records(reports: list[RegionReport], verdicts: Verdicts, matrix: Matrix) -> tuple[RegionRecord, ...]:
     return tuple(
         RegionRecord(
             symbol=rep.region.symbol,
@@ -179,7 +220,9 @@ def region_records(reports: list[RegionReport], verdicts: Verdicts) -> tuple[Reg
             calls_libm=rep.region.calls_libm,
             has_reduction=rep.region.has_reduction,
             accumulation_length=str(rep.region.accumulation_length),
-            candidates=tuple(candidate_record(b, verdicts.get(rep.region.symbol, {}).get(b.name)) for b in rep.builds),
+            candidates=tuple(
+                candidate_record(b, verdicts.get(rep.region.symbol, {}).get(b.name), matrix) for b in rep.builds
+            ),
         )
         for rep in reports
     )
@@ -191,13 +234,16 @@ def write(
     out: pathlib.Path,
     verification: Verification | None = None,
     timing: Timings | None = None,
+    best: Best | None = None,
 ) -> None:
     """Write ``report.md`` and ``report.json``, with a copy of the matrix that produced them."""
     verdicts = verification.verdicts if verification else {}
     unstable = sorted(verification.nondeterministic) if verification else []
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    (out / "report.md").write_text(markdown(reports, matrix, verdicts, unstable, timing))
-    payload = Report(nondeterministic_outputs=tuple(unstable), regions=region_records(reports, verdicts), timing=timing)
+    (out / "report.md").write_text(markdown(reports, matrix, verdicts, unstable, timing, best))
+    payload = Report(
+        nondeterministic_outputs=tuple(unstable), regions=region_records(reports, verdicts, matrix), timing=timing
+    )
     (out / "report.json").write_text(dumped_json(payload))
 
 

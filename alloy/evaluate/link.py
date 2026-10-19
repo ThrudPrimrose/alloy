@@ -6,6 +6,7 @@ C++ against DaCe's runtime types, so it declares the entry with the signature Da
 import copy
 import hashlib
 import pathlib
+import shlex
 import shutil
 import subprocess
 from contextlib import ExitStack
@@ -15,10 +16,13 @@ import dace
 from dace.codegen import cpf
 from dace.config import set_temporary
 from dace.libraries.standard.nodes import external_call
+from pydantic.dataclasses import dataclass as record
 
 from alloy.backend import runtime
+from alloy.backend.build import Build
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.regions import Program, Region
+from alloy.records import RECORD, Strings, dumped_json
 
 TIMER = """#include <dace/types.h>
 #include <ctime>
@@ -40,6 +44,26 @@ def cmake_args(matrix: Matrix) -> str:
     a second runtime next to the regions'."""
     soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
     return f"-DOpenMP_CXX_LIB_NAMES={soname} -DOpenMP_{soname}_LIBRARY={runtime.default_library(matrix)}"
+
+
+@record(slots=True, frozen=True, config=RECORD)
+class BestRegion:
+    """How ``best/`` builds one region: its winning candidate's source, compiler and compile flags."""
+
+    symbol: str
+    candidate: str
+    compiler: str
+    flags: Strings
+    source: str
+
+
+@record(slots=True, frozen=True, config=RECORD)
+class Best:
+    """``best/link.json``: every region's build, the entry's parameter order and the program's link line."""
+
+    regions: tuple[BestRegion, ...]
+    arguments: Strings
+    link: Strings
 
 
 @dataclass(slots=True)
@@ -115,6 +139,41 @@ class Linker:
                 stack.enter_context(set_temporary(*path, value=value))
             sdfg.compile()
         return pathlib.Path(sdfg.build_folder)
+
+    def write_best(self, winners: dict[str, Build]) -> Best:
+        """``out/best/``: each region's winning source, the CPF program calling them, and a Makefile that builds each
+        region with its own compiler and flags, then ``lib<program>.so``. ``-ffast-math`` stays on a region's compile
+        line, never on the link line, so no ``crtfastmath.o`` sets FTZ/DAZ for the whole process."""
+        best = self.out / "best"
+        (best / "regions").mkdir(parents=True, exist_ok=True)
+        regions = []
+        for symbol, b in winners.items():
+            source = f"regions/{symbol}{b.source.suffix}"
+            shutil.copyfile(b.source, best / source)
+            compiler = self.matrix.compilers[b.candidate.compiler].executables[b.candidate.language]
+            regions.append(BestRegion(symbol, b.name, compiler, b.flags, source))
+        archives = {r.symbol: best / f"lib{r.symbol}.a" for r in regions}
+        compilers = frozenset(b.candidate.compiler for b in winners.values())
+        rendering = cpf.render(self.library_sdfg(archives, compilers), language="c", check_compiles=False)
+        (best / "program.c").write_text(rendering.code)
+        link = tuple(token.removeprefix(f"{best}/") for token in rendering.link)  # make runs in best/
+        plan = Best(tuple(regions), rendering.arguments, link)
+        (best / "link.json").write_text(dumped_json(plan))
+        (best / "Makefile").write_text(self.makefile(plan))
+        return plan
+
+    def makefile(self, plan: Best) -> str:
+        library = f"lib{self.program.sdfg.name}.so"
+        archives = " ".join(f"lib{r.symbol}.a" for r in plan.regions)
+        usable, _ = self.matrix.usable_compilers()
+        frame = next(comp.executables["c"] for comp in usable.values() if "c" in comp.executables)
+        frame_flags = [self.matrix.languages["c"].std, "-O3", "-fPIC", "-shared"]
+        lines = [f"all: {library}", ""]
+        for r in plan.regions:
+            compile_line = shlex.join([r.compiler, *r.flags, "-c", r.source, "-o", f"{r.symbol}.o"])
+            lines += [f"lib{r.symbol}.a: {r.source}", f"\t{compile_line}", f"\tar rcs $@ {r.symbol}.o", ""]
+        link_line = shlex.join([frame, *frame_flags, "program.c", "-o", library, *plan.link])
+        return "\n".join([*lines, f"{library}: program.c {archives}", f"\t{link_line}", ""])
 
     def timer(self, region: Region) -> pathlib.Path:
         """The object timing ``region``'s entry, rebuilt when its source changes (a rerun into the same ``out`` after

@@ -37,6 +37,15 @@ def largest_cache_bytes() -> int:
     return sum(size for (level, _), size in sizes.items() if level == top)
 
 
+def cpu_flags() -> frozenset[str]:
+    """The CPU feature flags ``/proc/cpuinfo`` lists: ``flags`` on x86, ``Features`` on aarch64 (first core's line)."""
+    for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() in ("flags", "Features"):
+            return frozenset(value.split())
+    raise RuntimeError("/proc/cpuinfo lists no CPU flags")
+
+
 def available_memory() -> int:
     """``MemAvailable`` from ``/proc/meminfo``, in bytes."""
     for line in pathlib.Path("/proc/meminfo").read_text().splitlines():

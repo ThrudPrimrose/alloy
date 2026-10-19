@@ -6,8 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from alloy import machine
-from alloy.backend.build import Build, RenderKey, compile_source, deduplicated, write_source
-from alloy.backend.candidates import one_factor_at_a_time
+from alloy.backend.build import Build, compile_source, deduplicated, write_source
+from alloy.backend.candidates import RenderKey, one_factor_at_a_time
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.regions import Program, Region
 
@@ -33,7 +33,7 @@ def run(
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
         for region in program.regions:
             folder = out / "regions" / region.symbol
-            renders: dict[RenderKey, str] = {}
+            renders: dict[RenderKey, pathlib.Path] = {}
             candidates = one_factor_at_a_time(matrix, region, finite_inputs=finite_inputs, max_elements=max_elements)
             sources = [write_source(region, cand, matrix, folder, renders) for cand in candidates]
             built = list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, candidates))
