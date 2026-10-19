@@ -94,10 +94,11 @@ def median_ci(samples: list[float]) -> tuple[float, float, float]:
     return statistics.median(s), s[low - 1], s[high - 1]
 
 
-def footprint(sdfg: dace.SDFG, sizes: dict[str, int]) -> int:
+def footprint(sdfg: dace.SDFG, sizes: Parameters) -> int:
     """Bytes of the non-transient containers of ``sdfg`` at ``sizes``."""
     arrays = [d for d in sdfg.arrays.values() if not d.transient]
-    return sum(int(dace.symbolic.evaluate(d.total_size, {**sizes})) * d.dtype.bytes for d in arrays)
+    numeric: dict[dace.symbol | str, int | float] = {n: v for n, v in sizes.items() if isinstance(v, int | float)}
+    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in arrays)
 
 
 def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: float, cap: float) -> dict[str, int]:

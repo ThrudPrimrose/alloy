@@ -47,6 +47,7 @@ override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@647e66e6e3
 python_version = "3.12"
 follow_imports = "silent"
 ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.pyright]
 venvPath = "."

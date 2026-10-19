@@ -51,13 +51,13 @@ def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path
     assert dumped_json(validated_json(Best, best / "link.json")) == dumped_json(sut)
     subprocess.run(["make", "-C", str(best)], check=True, capture_output=True)
     rng = np.random.default_rng(0)
-    values = {"M": 7, "N": 13, "a": rng.random((7, 13)), "out": np.zeros(7)}
+    sizes = {"M": 7, "N": 13}
+    arrays = {"a": rng.random((7, 13)), "out": np.zeros(7)}
     library = ctypes.CDLL(str(best / f"lib{program.sdfg.name}.so"))
-    as_c = {
-        k: ctypes.c_int64(v) if isinstance(v, int) else v.ctypes.data_as(ctypes.c_void_p) for k, v in values.items()
-    }
+    as_c: dict[str, object] = {k: ctypes.c_int64(v) for k, v in sizes.items()}
+    as_c |= {k: v.ctypes.data_as(ctypes.c_void_p) for k, v in arrays.items()}
     getattr(library, program.sdfg.name)(*(as_c[name] for name in sut.arguments))
-    np.testing.assert_allclose(values["out"], values["a"].sum(axis=1), rtol=1e-12)
+    np.testing.assert_allclose(arrays["out"], arrays["a"].sum(axis=1), rtol=1e-12)
 
 
 def test_the_timer_of_a_complex_region_declares_its_entry_as_dace_does(tmp_path):

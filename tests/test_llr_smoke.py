@@ -4,6 +4,7 @@ import math
 
 import dace
 import pytest
+from dace.frontend.python.parser import DaceProgram
 from hpcagent_bench import autogen, paths
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, PipelineContext
@@ -36,11 +37,18 @@ TINY = dataclasses.replace(
 OMEN_SIZE_CAP = "8"
 
 
-def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
-    """The kernel's fp64 CPU SDFG after the bench's DaCe pipeline ``pipeline``."""
+def dace_program(bench: Benchmark) -> DaceProgram:
+    """The kernel's fp64 ``@dace.program`` as the bench's DaCe framework loads it."""
     framework = framework_class("dace_cpu")("dace_cpu")
     framework.set_datatype("float64")
-    sdfg = framework.implementations(Benchmark(spec.short_name))[0][0].to_sdfg(simplify=False)
+    program = framework.implementations(bench)[0][0]
+    assert isinstance(program, DaceProgram), f"{bench.spec.short_name}: the dace port is not a @dace.program"
+    return program
+
+
+def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
+    """The kernel's fp64 CPU SDFG after the bench's DaCe pipeline ``pipeline``."""
+    sdfg = dace_program(Benchmark(spec.short_name)).to_sdfg(simplify=False)
     PIPELINES_BY_NAME[pipeline].transform(sdfg, PipelineContext(device=dace.dtypes.DeviceType.CPU))
     return sdfg
 
@@ -49,10 +57,8 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
 def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(kernel, tmp_path):
     autogen.ensure(kernel, ["dace"])
-    framework = framework_class("dace_cpu")("dace_cpu")
-    framework.set_datatype("float64")
     bench = Benchmark(kernel)
-    sdfg = framework.implementations(bench)[0][0].to_sdfg(simplify=False)
+    sdfg = dace_program(bench).to_sdfg(simplify=False)
     manifest = inputs.load(paths.BENCHMARKS / bench.spec.relative_path / f"{bench.spec.module_name}.yaml")
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL)
