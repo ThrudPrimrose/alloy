@@ -71,6 +71,19 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
 
 
 @pytest.mark.e2e
+def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(tmp_path):
+    autogen.ensure("argmax_value", ["dace"])
+    bench = Benchmark("argmax_value")
+    sdfg = dace_program(bench).to_sdfg(simplify=False)
+    manifest = inputs.load(paths.BENCHMARKS / bench.spec.relative_path / f"{bench.spec.module_name}.yaml")
+
+    sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL, time_locally=False)
+
+    assert sut.verification is not None and (sut.timings, sut.best) == (None, None)
+    assert all(any(v.ok for v in sut.verification.verdicts[r.region.symbol].values()) for r in sut.regions)
+
+
+@pytest.mark.e2e
 @pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
 def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, tmp_path, monkeypatch):
     """OMEN's scattering self-energies (complex128, an indirect neighbour index, matmuls in an eight-deep nest) after
