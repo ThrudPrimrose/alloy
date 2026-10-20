@@ -1,0 +1,29 @@
+# Copyright 2026 ETH Zurich and the Alloy authors.
+"""Alloy's tuners: each tunes the SDFG of its column's DaCe pipeline and delivers the library the judge grades."""
+
+from hpcagent_bench.harness.envelope import Submission
+from hpcagent_bench.harness.optimizers import TunerOptimizer
+from hpcagent_bench.harness.task import Task
+
+__all__ = ["AlloyHeuristicOptimizer", "AlloyProfileOptimizer"]
+
+
+class AlloyProfileOptimizer(TunerOptimizer):
+    """Alloy's profile mode: candidates verified locally and timed by the judge via ``/profile``, the chosen one
+    scored."""
+
+    __slots__ = ()
+
+    def tune(self, task: Task, pipeline: str) -> Submission:
+        from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
+
+        return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link))
+
+
+class AlloyHeuristicOptimizer(TunerOptimizer):
+    """Alloy's heuristic mode: one candidate per region picked from build signals, verified, then scored."""
+
+    __slots__ = ()
+
+    def tune(self, task: Task, pipeline: str) -> Submission:
+        raise NotImplementedError("Alloy's heuristic mode is not built yet")

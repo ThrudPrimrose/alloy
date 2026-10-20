@@ -1,0 +1,14 @@
+name = "alloy"
+description = "Alloy: every region's rendering candidates built and verified, timed by the judge, the fastest delivered."
+
+[tuners.alloy_profile]
+name = "Alloy profile"
+full_name = "Alloy (profiled)"
+optimizer = "alloy.hb_plugin.tuners:AlloyProfileOptimizer"
+dace = ["cpu_canon", "cpu_parallel", "gpu_canon", "gpu_parallel", "cpu_autoopt", "gpu_autoopt"]
+
+[tuners.alloy_heuristic]
+name = "Alloy heuristic"
+full_name = "Alloy (heuristic)"
+optimizer = "alloy.hb_plugin.tuners:AlloyHeuristicOptimizer"
+dace = ["cpu_canon", "cpu_parallel", "gpu_canon", "gpu_parallel", "cpu_autoopt", "gpu_autoopt"]
