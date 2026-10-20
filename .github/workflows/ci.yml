@@ -94,5 +94,9 @@ jobs:
       - run: uv sync --extra dev
 
       # Every compiler is on PATH here, so nothing is deselected by mark.
+      # The OpenMP launch environment HPCAgent-Bench's judge requires before numpy loads (flags.openmp_launch_env).
       - name: Tests
-        run: PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests
+        run: |
+          ulimit -s "$(ulimit -H -s)"
+          export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
+          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests
