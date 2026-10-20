@@ -94,7 +94,8 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
 def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
     """Inputs at fixed ``sizes``: a corpus kernel's through the bench's dispatch (its own ``initialize`` if any),
     else the auto-initializer."""
-    from hpcagent_bench import fuzz, paths  # noqa: PLC0415
+    from hpcagent_bench import paths  # noqa: PLC0415
+    from hpcagent_bench.categories import Preset  # noqa: PLC0415
     from hpcagent_bench.frameworks.benchmark import Benchmark  # noqa: PLC0415
     from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
     from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
@@ -104,20 +105,22 @@ def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
         raise ValueError(f"{manifest.path}: no init block, so there are no inputs to draw")
     if manifest.path.resolve().is_relative_to(paths.BENCHMARKS.resolve()):
         data = Benchmark(spec.short_name).get_data(
-            preset=fuzz.FUZZED_PRESET, datatype=manifest.datatype, input_seed=seed, params_override=sizes
+            preset=Preset.FUZZED, datatype=manifest.datatype, input_seed=seed, params_override=sizes
         )
         return Draw(sizes=sizes, values={name: data[name] for name in spec.init.output_args})
     if spec.init.func_name:
         raise ValueError(f"{manifest.path}: a custom {spec.init.func_name}() is only called for a corpus kernel")
     values = auto_initialize(
-        spec, fuzz.FUZZED_PRESET, precision_from_datatype(manifest.datatype), seed=seed, params_override=sizes
+        spec, Preset.FUZZED, precision_from_datatype(manifest.datatype), seed=seed, params_override=sizes
     )
     return Draw(sizes=sizes, values=dict(zip(spec.init.output_args, values, strict=True)))
 
 
 def presets(manifest: Manifest) -> list[dict[str, int]]:
     """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges."""
-    return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != "fuzzed"]
+    from hpcagent_bench.categories import Preset  # noqa: PLC0415
+
+    return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != Preset.FUZZED.text]
 
 
 def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | None:
