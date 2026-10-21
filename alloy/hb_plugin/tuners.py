@@ -5,7 +5,7 @@ from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import TunerOptimizer
 from hpcagent_bench.harness.task import Task
 
-__all__ = ["AlloyHeuristicOptimizer", "AlloyProfileOptimizer"]
+__all__ = ["AlloyProfileOptimizer"]
 
 
 class AlloyProfileOptimizer(TunerOptimizer):
@@ -18,12 +18,3 @@ class AlloyProfileOptimizer(TunerOptimizer):
         from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
 
         return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link))
-
-
-class AlloyHeuristicOptimizer(TunerOptimizer):
-    """Alloy's heuristic mode: one candidate per region picked from build signals, verified, then scored."""
-
-    __slots__ = ()
-
-    def tune(self, task: Task, pipeline: str) -> Submission:
-        raise NotImplementedError("Alloy's heuristic mode is not built yet")

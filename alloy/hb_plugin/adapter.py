@@ -14,8 +14,8 @@ from dace.frontend.python.parser import DaceProgram
 from hpcagent_agent.tools.http_json import judge_rank, judge_timeout
 from hpcagent_bench import config, paths
 from hpcagent_bench.categories import Language, Preset, SourceMode
-from hpcagent_bench.cpf_bridge import render_canonical
-from hpcagent_bench.cpf_cache import DEFAULT_HINTS, Target
+from hpcagent_bench.cpf.bridge import render_canonical
+from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, PipelineContext
 from hpcagent_bench.frameworks.framework import framework_class
@@ -39,14 +39,12 @@ from alloy.frontend import inputs, regions
 __all__ = [
     "DEVICES",
     "DIALECT",
-    "FAST_SIZE",
-    "PROFILE_REPS",
     "Deliver",
+    "FAST_SIZE",
     "Named",
+    "PROFILE_REPS",
     "Profile",
-    "arch_of",
     "fast_size",
-    "verified",
     "generated",
     "library",
     "linked",
@@ -56,6 +54,8 @@ __all__ = [
     "ranked",
     "rendered",
     "stub_time",
+    "target_of",
+    "verified",
 ]
 
 #: Repetitions the judge times a stub over (one input).
@@ -118,8 +118,8 @@ def linked(linker: Linker, selection: dict[str, Build]) -> dace.SDFG:
     return linker.library_sdfg(archives, frozenset(build.candidate.compiler for build in selection.values()))
 
 
-def arch_of(task: Task) -> Target:
-    """The device a task's image runs: CPU, or GPU for the ``nvidia`` and ``amd`` images."""
+def target_of(task: Task) -> Target:
+    """The target a task's image runs: CPU, or GPU for the ``nvidia`` and ``amd`` images."""
     return Target.CPU if task.image == "cpu" else Target.GPU
 
 
@@ -131,7 +131,7 @@ def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> 
         sdfg,
         DIALECT[task.language],
         task.precision.value,
-        arch_of(task),
+        target_of(task),
         DEFAULT_HINTS,
     )
     return deliver(form.code, form.link)
@@ -194,14 +194,13 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
     spec = BenchSpec.load(task.kernel)
     deadline = started + resolve_kernel_timeout(spec)
     matrix = configuration_matrix.load()
-    sdfg = pipeline_sdfg(spec, pipeline, task.precision, arch_of(task))
+    sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
     out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
     result = generated(sdfg, spec, task.precision, matrix, out)
     verification = result.verification
-    if verification is None:
-        raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
+    assert verification is not None, "generated() refuses an unverified result"
     linker, judge = (
         Linker(result.program, matrix, out),
         JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout()),

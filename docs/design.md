@@ -121,10 +121,11 @@ Status: not built. Picks one candidate per region from the builds alone, without
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
 
-## Bench experiments: dace+alloy (decided 10-12; bench `harness/alloy_adapter.py` since 10-19)
+## Bench experiments: dace+alloy
 
-- Flavors `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_<profile|heuristic>`: the stage's pipeline output is
-  Alloy's input SDFG. The adapter lives in the bench, so Alloy imports no bench code beyond manifest loading.
+- Alloy is an HPCAgent-Bench tuner plugin (`alloy/hb_plugin`, entry point `hpcagent_bench.plugins`). Its tuner
+  `alloy_profile` adds the columns `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_profile`: the stage's pipeline
+  output is Alloy's input SDFG. A heuristic tuner (no judge timing) is planned, not registered.
 - Region coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose region needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record
