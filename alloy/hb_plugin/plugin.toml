@@ -1,9 +1,8 @@
 name = "alloy"
 description = "Alloy: every region's rendering candidates built and verified, timed by the judge, the fastest delivered."
 
-[tuners.alloy_profile]
+[flavors.alloy_profile]
 name = "Alloy profile"
 full_name = "Alloy (profiled)"
 optimizer = "alloy.hb_plugin.tuners:AlloyProfileOptimizer"
-dace = ["cpu_canon", "cpu_parallel", "gpu_canon", "gpu_parallel", "cpu_autoopt", "gpu_autoopt"]
-
+extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_gpu_canon", "dace_gpu_parallel", "dace_cpu_autoopt", "dace_gpu_autoopt"]

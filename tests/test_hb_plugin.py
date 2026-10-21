@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy as an HPCAgent-Bench tuner plugin end to end on one kernel: every region gets several verified
+"""Alloy as an HPCAgent-Bench flavor plugin end to end on one kernel: every region gets several verified
 variants, and both CPU profile flavors submit a library the judge grades correct. The ``alloy`` CI job runs it."""
 
 import pathlib
