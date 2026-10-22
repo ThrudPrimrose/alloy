@@ -16,12 +16,12 @@ dependencies = [
     "numpy",
     "pydantic>=2",
     # Same pins as NestForge, which imports Alloy as its codegen backend.
-    "dace @ git+https://github.com/spcl/dace.git@2ad18e85c29ca470ede3e13bd3eb9400d01b8da2",
+    "dace @ git+https://github.com/spcl/dace.git@dee8dbddd425b459321bbf95ef1b7e54db9d6411",
 ]
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@d159280b5528300ea5ca671afb8509be9146d3ad"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@db03a0a3a32594a05115797f8208307f0bfc0a7a"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -45,7 +45,7 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
 # The bench pins its own dace; Alloy tracks dace extended ahead of it, so this pin wins over the bench's.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@2ad18e85c29ca470ede3e13bd3eb9400d01b8da2"]
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@dee8dbddd425b459321bbf95ef1b7e54db9d6411"]
 
 [tool.mypy]
 python_version = "3.12"
