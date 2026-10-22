@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=dee8dbddd425b459321bbf95ef1b7e54db9d6411" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=8f2d2381e440bf8d27966a0597bd83d6d307f34e" }]
 
 [[package]]
 name = "accelerate"
@@ -297,8 +297,8 @@ requires-dist = [
     { name = "alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace", git = "https://github.com/spcl/dace.git?rev=dee8dbddd425b459321bbf95ef1b7e54db9d6411" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=db03a0a3a32594a05115797f8208307f0bfc0a7a" },
+    { name = "dace", git = "https://github.com/spcl/dace.git?rev=8f2d2381e440bf8d27966a0597bd83d6d307f34e" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=7492ed154eac516662b70933769a4c4c32c688e2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -1224,7 +1224,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0a10"
-source = { git = "https://github.com/spcl/dace.git?rev=dee8dbddd425b459321bbf95ef1b7e54db9d6411#dee8dbddd425b459321bbf95ef1b7e54db9d6411" }
+source = { git = "https://github.com/spcl/dace.git?rev=8f2d2381e440bf8d27966a0597bd83d6d307f34e#8f2d2381e440bf8d27966a0597bd83d6d307f34e" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1786,7 +1786,7 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.3.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=db03a0a3a32594a05115797f8208307f0bfc0a7a#db03a0a3a32594a05115797f8208307f0bfc0a7a" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=7492ed154eac516662b70933769a4c4c32c688e2#7492ed154eac516662b70933769a4c4c32c688e2" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
@@ -1795,7 +1795,7 @@ dependencies = [
 [[package]]
 name = "hpcagent-bench"
 version = "0.3.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=db03a0a3a32594a05115797f8208307f0bfc0a7a#db03a0a3a32594a05115797f8208307f0bfc0a7a" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=7492ed154eac516662b70933769a4c4c32c688e2#7492ed154eac516662b70933769a4c4c32c688e2" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
@@ -1837,6 +1837,7 @@ dependencies = [
     { name = "setuptools" },
     { name = "sympy" },
     { name = "tenacity" },
+    { name = "threadpoolctl" },
     { name = "transformers" },
     { name = "tree-sitter-language-pack" },
     { name = "typer" },
@@ -4907,6 +4908,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/9e/497c1c8ebe5a5b5d1d4a7511aea22c0bb1a97e3170d98abdef0e1b34265a/tenacity-9.2.1.tar.gz", hash = "sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839", size = 58261, upload-time = "2026-10-07T12:13:01.633Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/26/1ff2b0721ac66a3ec5b1402b333110b352ab0a8724052ac279a7b82d40c4/tenacity-9.2.1-py3-none-any.whl", hash = "sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e", size = 32310, upload-time = "2026-10-07T12:13:00.102Z" },
+]
+
+[[package]]
+name = "threadpoolctl"
+version = "3.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/dc/6c58154c1c65f758ea979e7139cb76993a9cfc662d14e9be3c4a667cfb77/threadpoolctl-3.7.0.tar.gz", hash = "sha256:61348cfb77d53b9242e0017029244b559b810c142ced65b4e21eeca1843959a7", size = 31961, upload-time = "2026-09-15T15:46:20.263Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/3f/f88a53f60a472b46f4023f56d204dd7de33d34c5d2acbfa0d70a674e639e/threadpoolctl-3.7.0-py3-none-any.whl", hash = "sha256:cd8b60b5641b45c67bbf73c64c843235fc2d8a480c87389f52f5dbee893b86be", size = 26362, upload-time = "2026-09-15T15:46:19.168Z" },
 ]
 
 [[package]]
