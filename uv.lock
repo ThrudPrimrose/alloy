@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=68969ddbfdde99c7f7edb1e4e9ef961d1ddc28b4" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=a06cfd730a521c0c3a2fa525b25ed23ade74526e" }]
 
 [[package]]
 name = "accelerate"
@@ -297,8 +297,8 @@ requires-dist = [
     { name = "alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace", git = "https://github.com/spcl/dace.git?rev=68969ddbfdde99c7f7edb1e4e9ef961d1ddc28b4" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=2666c06b73eaa9d51f05568e6c584aaafa98ad67" },
+    { name = "dace", git = "https://github.com/spcl/dace.git?rev=a06cfd730a521c0c3a2fa525b25ed23ade74526e" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=e17d2c384653744e6ede8b0cd66f287128e19e33" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -1224,7 +1224,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0a10"
-source = { git = "https://github.com/spcl/dace.git?rev=68969ddbfdde99c7f7edb1e4e9ef961d1ddc28b4#68969ddbfdde99c7f7edb1e4e9ef961d1ddc28b4" }
+source = { git = "https://github.com/spcl/dace.git?rev=a06cfd730a521c0c3a2fa525b25ed23ade74526e#a06cfd730a521c0c3a2fa525b25ed23ade74526e" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1786,7 +1786,7 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.3.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=2666c06b73eaa9d51f05568e6c584aaafa98ad67#2666c06b73eaa9d51f05568e6c584aaafa98ad67" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=e17d2c384653744e6ede8b0cd66f287128e19e33#e17d2c384653744e6ede8b0cd66f287128e19e33" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
@@ -1795,7 +1795,7 @@ dependencies = [
 [[package]]
 name = "hpcagent-bench"
 version = "0.3.0"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=2666c06b73eaa9d51f05568e6c584aaafa98ad67#2666c06b73eaa9d51f05568e6c584aaafa98ad67" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=e17d2c384653744e6ede8b0cd66f287128e19e33#e17d2c384653744e6ede8b0cd66f287128e19e33" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
