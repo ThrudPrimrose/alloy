@@ -55,6 +55,13 @@ def gcc_only(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
     return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
 
 
+def gcc_and_clang(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
+    """The shipped matrix without its compiler sections after clang's (icx and nvhpc), the two CI always has."""
+    text = MATRIX.path.read_text()
+    first, last = text.index("[compilers.icx]"), text.index("[codegen.knobs]")
+    return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
+
+
 SCALE_MANIFEST = """name: scale
 level: 1
 parameters:

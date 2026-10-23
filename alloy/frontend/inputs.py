@@ -46,11 +46,8 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     """Parse the manifest with the bench's reader; inputs are drawn at ``datatype``. Outside the corpus, ``program``
     (``file.py:function``) names the kernel whose signature orders the inputs."""
     require_bench()
-    from hpcagent_bench import (
-        manifest_schema,  # noqa: PLC0415
-        paths,  # noqa: PLC0415 -- alloy never loads the bench at import time
-    )
-    from hpcagent_bench.spec import BenchSpec, expand_args, load_yaml  # noqa: PLC0415
+    from hpcagent_bench import paths  # noqa: PLC0415 -- alloy never loads the bench at import time
+    from hpcagent_bench.spec import BenchSpec, KernelSite, load_yaml  # noqa: PLC0415
 
     raw = load_yaml(path.read_text())
     if path.resolve().is_relative_to(paths.BENCHMARKS.resolve()):
@@ -60,10 +57,10 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     else:
         file, _, function = program.partition(":")
         reference = pathlib.Path(file).resolve()
-        identity = {"short_name": path.stem, "name": path.stem, "module_name": reference.stem, "func_name": function}
-        expanded = {**identity, "relative_path": str(reference.parent), **raw}
-        expand_args(expanded, manifest_schema.validate_manifest(raw, str(path)).args, None, str(path))
-        spec = BenchSpec.from_dict(expanded, str(path))
+        site = KernelSite(
+            short_name=path.stem, relative_path=str(reference.parent), module_name=reference.stem, func_name=function
+        )
+        spec = BenchSpec.from_dict(raw, site, str(path))
     # cast: pydantic expects its internal dataclass protocol, which the decorator does not declare
     pydantic.dataclasses.rebuild_dataclass(cast("Any", Manifest), _types_namespace={"BenchSpec": BenchSpec})
     return constructed(Manifest, path, path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
