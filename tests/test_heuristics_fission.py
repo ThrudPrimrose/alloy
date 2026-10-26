@@ -159,11 +159,14 @@ def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_wid
     cut = build(scope, Candidate("c", "gcc", fission=True), MATRIX, tmp_path, {})
     beyond = {"N": 64 * machine.largest_cache_bytes() // 8}
 
-    sut = [predict.predict(b, scope, beyond, sdfg) for b, sdfg in ((plain, None), (cut, fission.fissioned(scope.sdfg)))]
+    split = fission.fissioned(scope.sdfg)  # how many pieces follows the host's vector registers
 
-    assert sut[0] is not None and sut[1] is not None
-    assert (len(sut[0].loops), len(sut[1].loops)) == (1, 2)
-    assert sut[1].memory > sut[0].memory, "every widened value is stored and loaded once more per element"
+    whole, pieces = (predict.predict(b, scope, beyond, sdfg) for b, sdfg in ((plain, None), (cut, split)))
+
+    assert whole is not None and pieces is not None
+    assert len(maps(split)) > 1
+    assert (len(whole.loops), len(pieces.loops)) == (1, len(maps(split)))
+    assert pieces.memory > whole.memory, "every widened value is stored and loaded once more per element"
 
 
 def expanded(sdfg: dace.SDFG) -> tuple[dace.SDFG, dict[str, int]]:

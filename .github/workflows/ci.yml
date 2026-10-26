@@ -93,13 +93,13 @@ jobs:
           python-version: "3.13"
       - run: uv sync --extra dev
 
-      # Every compiler is on PATH here, so nothing is deselected by mark.
+      # Every compiler is on PATH here, so only the host-ISA mark is deselected: hosted runners may lack AVX-512.
       # The OpenMP launch environment HPCAgent-Bench's judge requires before numpy loads (flags.openmp_launch_env).
       - name: Tests
         run: |
           ulimit -s "$(ulimit -H -s)"
           export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
-          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests \
+          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning -m "not avx512" tests \
             --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py
 
   # The bench kernels end to end on an in-process judge (libraries graded, scratch requested), on the two compilers

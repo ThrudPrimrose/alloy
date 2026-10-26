@@ -101,17 +101,17 @@ def only_scope(program: dace.program) -> scopes.Scope:
 
 
 @pytest.mark.gcc
+@pytest.mark.avx512
 def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path):
     scope = only_scope(load_program(f"{REDUCTIONS}:scale"))
-    wide = build(scope, Candidate("c", "gcc", isa="avx512"), MATRIX, tmp_path, {})
-    narrow = build(scope, Candidate("c", "gcc", isa="avx2"), MATRIX, tmp_path, {})
+    builds = (build(scope, Candidate("c", "gcc", isa=isa), MATRIX, tmp_path, {}) for isa in ("avx512", "avx2"))
 
-    sut = [predict.predict(b, scope) for b in (wide, narrow)]
+    wide, narrow = (predict.predict(b, scope) for b in builds)
 
-    assert sut[0] is not None and sut[1] is not None
-    assert [len(p.loops) for p in sut] == [1, 1], "a main loop and its epilogues are one source loop"
-    assert (sut[0].loops[0].elements, sut[1].loops[0].elements) == (8.0, 4.0)
-    assert sut[0].cycles_per_element < sut[1].cycles_per_element
+    assert wide is not None and narrow is not None
+    assert (len(wide.loops), len(narrow.loops)) == (1, 1), "a main loop and its epilogues are one source loop"
+    assert (wide.loops[0].elements, narrow.loops[0].elements) == (8.0, 4.0)
+    assert wide.cycles_per_element < narrow.cycles_per_element
 
 
 @pytest.mark.gcc
