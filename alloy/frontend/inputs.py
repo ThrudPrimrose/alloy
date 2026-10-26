@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import dace
+import numpy as np
 import pydantic.dataclasses
+from dace.sdfg import nodes
 
+from alloy.frontend import scopes
 from alloy.records import FOREIGN_RECORD, Strings, constructed
 
 if TYPE_CHECKING:
@@ -141,3 +144,57 @@ def largest_array(manifest: Manifest, sdfg: dace.SDFG) -> int:
         ),
         default=0,
     )
+
+
+#: Calls defined on only part of the reals: an input that may reach one has a domain only a manifest states.
+DOMAIN_CALLS = frozenset(
+    {"sqrt", "log", "log2", "log10", "log1p", "pow", "asin", "acos", "acosh", "atanh", "lgamma", "tgamma", "fmod"}
+)
+#: Sizes of the derived draws: odd, so a vector loop has a remainder, and different per draw.
+DERIVED_SIZES = (37, 61)
+
+
+def derived_outputs(sdfg: dace.SDFG) -> tuple[str, ...]:
+    """The arguments ``sdfg`` writes (a non-transient written at its top level), in argument order."""
+    written = {
+        node.data
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.AccessNode)
+        and isinstance(parent, dace.SDFGState)
+        and parent.sdfg is sdfg
+        and parent.in_degree(node) > 0
+    }
+    return tuple(name for name in sdfg.arglist() if name in written and not sdfg.arrays[name].transient)
+
+
+def data_arguments(sdfg: dace.SDFG) -> dict[str, dace.data.Data]:
+    """``sdfg``'s array and scalar arguments in argument order; a size symbol is no data, though ``arglist`` lists it
+    as a scalar."""
+    return {name: desc for name, desc in sdfg.arglist().items() if name not in sdfg.free_symbols}
+
+
+def domain_gap(sdfg: dace.SDFG) -> str:
+    """Why an input of ``sdfg`` may need values only a manifest knows, or ``""`` when any value is valid: a call
+    defined on part of the reals, or an integer argument that is no size symbol (it may index)."""
+    if calls := sorted(scopes.called_names(sdfg) & DOMAIN_CALLS):
+        return f"calls {', '.join(calls)}"
+    integers = [
+        name for name, desc in data_arguments(sdfg).items() if np.issubdtype(desc.dtype.as_numpy_dtype(), np.integer)
+    ]
+    return f"integer argument {integers[0]}" if integers else ""
+
+
+def derived_draw(sdfg: dace.SDFG, iteration: int) -> Draw:
+    """One draw without a manifest: every size symbol at :data:`DERIVED_SIZES`, every array and scalar argument
+    uniform in [0, 1) at its dtype, seeded by ``iteration``. Only valid for an ``sdfg`` without a :func:`domain_gap`."""
+    size = DERIVED_SIZES[iteration % len(DERIVED_SIZES)]
+    sizes = {name: size for name in sdfg.arglist() if name in sdfg.free_symbols}
+    numeric: dict[dace.symbol | str, int | float] = {k: v for k, v in sizes.items()}  # noqa: C416 -- widens types
+    rng = np.random.default_rng(iteration)
+    values: dict[str, Any] = {}
+    for name, desc in data_arguments(sdfg).items():
+        dtype = desc.dtype.as_numpy_dtype()
+        shape = tuple(int(dace.symbolic.evaluate(s, numeric)) for s in desc.shape)
+        drawn = rng.random(shape) if isinstance(desc, dace.data.Array) else rng.random()
+        values[name] = np.asarray(drawn).astype(dtype) if isinstance(desc, dace.data.Array) else dtype.type(drawn)
+    return Draw(sizes=sizes, values=values)

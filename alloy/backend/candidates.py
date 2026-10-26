@@ -115,11 +115,14 @@ def fp_levels(matrix: Matrix, scope: Scope, *, finite_inputs: bool) -> tuple[str
 
 def index_widths(matrix: Matrix, max_elements: int | None) -> tuple[str, ...]:
     """Index widths whose type holds every flat index below ``max_elements``, the largest array's element count at
-    the sizes the program runs at; every width when that is unknown (no manifest, so nothing is timed or shipped)."""
+    the sizes the program runs at; only the default width when that is unknown (no manifest): a speculative pick
+    ships, and a narrower index would overflow at sizes nobody declared."""
+    if max_elements is None:
+        return (matrix.defaults.index_width,)
     return tuple(
         name
         for name, params in matrix.index_widths.items()
-        if max_elements is None or max_elements <= np.iinfo(np.dtype(params["index_ctype"])).max
+        if max_elements <= np.iinfo(np.dtype(params["index_ctype"])).max
     )
 
 

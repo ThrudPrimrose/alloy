@@ -26,7 +26,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
     matrix = gcc_only(tmp_path)
     scope = scope_with(outlined(), libm=False, reduction=True)
 
-    sut = one_factor_at_a_time(matrix, scope)
+    sut = one_factor_at_a_time(matrix, scope, max_elements=2**20)
 
     gcc = matrix.compilers["gcc"]
     per_language = (
@@ -83,15 +83,17 @@ def test_gccs_vector_math_is_tried_only_when_inputs_are_declared_finite(tmp_path
     assert any(c.veclib == "libmvec_fast" for c in declared)
 
 
-def test_a_narrow_index_is_tried_only_where_every_array_fits_it(tmp_path):
+def test_a_narrow_index_is_tried_only_where_every_array_is_known_to_fit_it(tmp_path):
     matrix = gcc_only(tmp_path)
     scope = scope_with(outlined(), libm=False, reduction=True)
 
     fits = one_factor_at_a_time(matrix, scope, max_elements=2**20)
     overflows = one_factor_at_a_time(matrix, scope, max_elements=2**31)
+    unknown = one_factor_at_a_time(matrix, scope)
 
     assert "int32" in {c.resolved(matrix)[0] for c in fits}
     assert {c.resolved(matrix)[0] for c in overflows} == {"int64"}
+    assert {c.resolved(matrix)[0] for c in unknown} == {"int64"}
 
 
 def test_an_isa_is_tried_only_where_the_host_runs_it_and_the_compiler_spells_it():
