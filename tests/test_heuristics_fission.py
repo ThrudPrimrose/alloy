@@ -3,6 +3,7 @@
 the fewest values cross; a cut at a node set splits the map into ``before | set | after`` with the scope's results
 bit for bit."""
 
+import copy
 import pathlib
 import re
 
@@ -13,6 +14,8 @@ from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
+from dace.transformation import helpers
 
 from alloy import machine
 from alloy.backend.build import build
@@ -161,3 +164,47 @@ def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_wid
     assert sut[0] is not None and sut[1] is not None
     assert (len(sut[0].loops), len(sut[1].loops)) == (1, 2)
     assert sut[1].memory > sut[0].memory, "every widened value is stored and loaded once more per element"
+
+
+def expanded(sdfg: dace.SDFG) -> tuple[dace.SDFG, dict[str, int]]:
+    """A copy of ``mix``'s scope as NestForge's ``expand`` shows it: the map body one nested SDFG of three states
+    (exp, then the multiply, then the rest), and the id of the block holding each of the first two tasklets."""
+    sdfg = copy.deepcopy(sdfg)
+    (state,) = sdfg.states()
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    nested = helpers.nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, False, False))
+    (inner,) = nested.sdfg.states()
+    blocks = {}
+    for label in ("_numpy_exp_", "_Mult_"):
+        tasklet = next(n for n in inner.nodes() if isinstance(n, nodes.Tasklet) and n.label == label)
+        blocks[label] = helpers.state_fission(SubgraphView(inner, [tasklet]))
+    return sdfg, {label: nested.sdfg.node_id(block) for label, block in blocks.items()}
+
+
+def cut_states(sdfg: dace.SDFG, *blocks: int) -> fission.Cut:
+    ((index, state),) = list(enumerate(sdfg.states()))
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    return fission.Cut(index, state.node_id(entry), blocks, nested=True)
+
+
+def test_a_cut_at_a_state_of_an_expanded_body_isolates_it_between_the_states_before_and_after_it():
+    scope = only_scope(mix)
+    sdfg, blocks = expanded(scope.sdfg)
+
+    sut = fission.split(sdfg, (cut_states(sdfg, blocks["_Mult_"]),))
+
+    assert maps(sut) == [
+        ["_numpy_exp_"],
+        ["_Mult_"],
+        ["_Add_", "_Sub_", "_numpy_sin_", "assign", "assign"],
+    ]
+    expected = results(scope.sdfg, ("y", "z"))
+    assert all(np.array_equal(results(sut, ("y", "z"))[k], v) for k, v in expected.items())
+
+
+def test_a_cut_at_the_first_state_of_an_expanded_body_makes_two_maps():
+    sdfg, blocks = expanded(only_scope(mix).sdfg)
+
+    sut = fission.split(sdfg, (cut_states(sdfg, blocks["_numpy_exp_"]),))
+
+    assert maps(sut) == [["_numpy_exp_"], ["_Add_", "_Mult_", "_Sub_", "_numpy_sin_", "assign", "assign"]]

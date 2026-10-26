@@ -11,7 +11,9 @@ from dataclasses import dataclass
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import helpers
 from dace.transformation.interstate import SubgraphFission
 
@@ -23,11 +25,13 @@ __all__ = ["Cut", "cuts", "fissioned", "split", "vector_registers"]
 @dataclass(slots=True, frozen=True)
 class Cut:
     """A node set of one top-level map's body, by position: the state's index in ``sdfg.states()``, the map entry's
-    and the set's node ids in that state."""
+    and the set's node ids in that state; with ``nested``, the map's body is one nested SDFG (what NestForge's
+    ``expand`` shows) and ``nodes`` are ids of its top-level blocks, a straight line of states."""
 
     state: int
     entry: int
     nodes: tuple[int, ...]
+    nested: bool = False
 
 
 def vector_registers() -> int:
@@ -173,8 +177,11 @@ def forward(
     return copied
 
 
-def cut_map(sdfg: dace.SDFG, state: dace.SDFGState, entry: nodes.MapEntry, chosen: set[nodes.Node]) -> None:
-    """Cut ``entry``'s map into ``before | chosen | after``; a node between two chosen ones is chosen too."""
+def stage(
+    sdfg: dace.SDFG, state: dace.SDFGState, entry: nodes.MapEntry, chosen: set[nodes.Node]
+) -> tuple[nodes.NestedSDFG, set[ControlFlowBlock]]:
+    """Turn ``entry``'s flat body into a nested body of ``before | chosen | after`` states and return it with the
+    states ``chosen`` became; a node between two chosen ones is chosen too."""
     inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
     members = set(inside.nodes())
     chosen = chosen | (reach(state, chosen, members, up=True) & reach(state, chosen, members, up=False))
@@ -190,17 +197,35 @@ def cut_map(sdfg: dace.SDFG, state: dace.SDFGState, entry: nodes.MapEntry, chose
         if made is not None and later and len(later) < len(reads):
             (before, the_set, after)[made].append(forward(sdfg, state, value, later))
     inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
-    nested = helpers.nest_state_subgraph(sdfg, state, inside)
-    (inner,) = nested.sdfg.states()
-    pieces = [helpers.state_fission(SubgraphView(inner, group)) for group in (before, the_set) if group]
+    body = helpers.nest_state_subgraph(sdfg, state, inside)
+    (inner,) = body.sdfg.states()
+    if before:
+        helpers.state_fission(SubgraphView(inner, before))
+    states: set[ControlFlowBlock] = {helpers.state_fission(SubgraphView(inner, the_set))}
     if not any(isinstance(n, nodes.CodeNode) for n in inner.nodes()):
-        pieces.pop()  # nothing after the set: its piece is the map's last
-    for piece in pieces:
-        cut_after(sdfg, piece)
+        states.add(inner)  # nothing after the set: the set ends the map
+    return body, states
 
 
 def owner(sdfg: dace.SDFG, node: nodes.Node) -> dace.SDFGState:
     return next(s for s in sdfg.states() if node in s.nodes())
+
+
+def body_sdfg(state: dace.SDFGState, entry: nodes.MapEntry) -> nodes.NestedSDFG:
+    """The nested SDFG that is ``entry``'s whole body."""
+    (body,) = [n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG)]
+    return body
+
+
+def cut_blocks(sdfg: dace.SDFG, body: nodes.NestedSDFG, chosen: set[ControlFlowBlock]) -> None:
+    """Cut the map around ``body`` into ``before | chosen | after`` at its block boundaries; a block between two
+    chosen ones is chosen too."""
+    order = list(sdutil.dfs_topological_sort(body.sdfg))
+    picked = [i for i, block in enumerate(order) if block in chosen]
+    first, last = min(picked), max(picked)
+    boundaries = ([order[first - 1]] if first > 0 else []) + ([order[last]] if last < len(order) - 1 else [])
+    for block in boundaries:
+        cut_after(sdfg, block)
 
 
 def split(sdfg: dace.SDFG, cut_list: tuple[Cut, ...]) -> dace.SDFG:
@@ -208,10 +233,16 @@ def split(sdfg: dace.SDFG, cut_list: tuple[Cut, ...]) -> dace.SDFG:
     ``NotImplementedError`` when DaCe refuses a cut."""
     out = copy.deepcopy(sdfg)
     states = list(out.states())
-    targets = [(states[c.state].node(c.entry), {states[c.state].node(n) for n in c.nodes}) for c in cut_list]
-    for entry, chosen in targets:
+    targets = []
+    for c in cut_list:
+        state, entry = states[c.state], states[c.state].node(c.entry)
         assert isinstance(entry, nodes.MapEntry), "a cut names a map entry"
-        cut_map(out, owner(out, entry), entry, chosen)
+        within = body_sdfg(state, entry).sdfg if c.nested else state
+        targets.append((entry, {within.node(n) for n in c.nodes}, c.nested))
+    for entry, chosen, nested in targets:
+        state = owner(out, entry)
+        body, blocks = (body_sdfg(state, entry), chosen) if nested else stage(out, state, entry, chosen)
+        cut_blocks(out, body, blocks)
     out.simplify()
     return out
 

@@ -279,7 +279,7 @@ def evaluated(volume: sympy.Expr, sizes: dict[str, int] | None) -> float | None:
 def temporaries(sdfg: dace.SDFG, sizes: dict[str, int]) -> int:
     """Bytes of ``sdfg``'s transient arrays that grow with the sizes: the values a fission cut widens."""
     grown = [d for d in sdfg.arrays.values() if d.transient and dace.symbolic.issymbolic(d.total_size)]
-    numeric: dict[dace.symbol | str, int | float] = dict(sizes)
+    numeric: dict[dace.symbol | str, int | float] = {k: v for k, v in sizes.items()}  # noqa: C416 -- widens types
     return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in grown)
 
 

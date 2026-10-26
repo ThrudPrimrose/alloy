@@ -7,11 +7,20 @@ Decisions as of 2026-10-26. Change one only with the owner's approval.
 A per-scope code generation backend for DaCe: each scope is built under many configurations, every build is
 verified, and the best one per scope is linked. Two products share one core:
 
-1. **DaCe backend.** Input: an SDFG with symbolic sizes that carries its manifest (today the manifest is passed
-   beside it, `api.generate(sdfg, manifest=)`). To run automatically as part of DaCe compilation.
-2. **HPCAgent-Bench tool and skill.** Input: a manifest plus C or NumPy; the bench turns it into an SDFG (C through
-   its C-to-NumPy translator) and calls 1, so agents never see DaCe. Shipped as a bench user plugin in
-   `alloy/hb_plugin` (tool and skill there); the skill assumes the bench.
+1. **DaCe backend** (`alloy/dace_backend.py`). Input: an SDFG, a manifest optional. The SDFG already states the
+   signature (argument order, every non-transient's shape and dtype, the symbols; outputs are the arguments it
+   writes), so it carries no manifest. `SDFG.compile` hands over when `compiler.alloy.mode` (DaCe extended; `off`
+   by default) is `speculative` or `profile`; the result is a `CompiledSDFG` with the SDFG's own signature, every
+   scope linked from the archive Alloy picked.
+   - Without a manifest only speculative mode runs: the sizes and value domains are unknown. Inputs are verified on
+     draws derived from the SDFG (every size symbol odd, arguments uniform in [0, 1)) only when any value is valid
+     (`inputs.domain_gap`: no `sqrt`/`log`/`pow`/... call, no integer argument that may index); otherwise each
+     scope's default build ships. Only the default (64-bit) index width is built, since the real sizes are unknown.
+   - Profile mode needs a manifest: it times at the declared sizes.
+2. **HPCAgent-Bench tool and skill.** Input: NumPy plus a manifest (DaCe frontend to an SDFG, then 1); the manifest
+   gives the value domains, size presets and constraints. C plus a manifest waits for the bench's C-to-NumPy
+   translator. Shipped as a bench user plugin in `alloy/hb_plugin` (tool and skill there); the skill assumes the
+   bench.
 
 Per run: the program is split into scopes (each top-level nest its own translation unit, compile command and static
 `.a`); Alloy sweeps candidates per scope, verifies them, times them (profile mode) or picks from the builds' reports
@@ -204,14 +213,16 @@ Modes (`api.generate(..., mode=)`):
   - Fission (`heuristics/fission.py`): one more one-factor candidate per compiler when a flat top-level map keeps
     more values live than the host's vector registers (16 on x86-64, 32 with AVX-512 and on aarch64). Work/depth:
     a code node's level is 1 + its deepest producer's; the body is cut after the level that leaves the least
-    pressure in either piece, then the fewest crossing values, then the most even work. A cut is a node set:
-    `before | set | after`, up to three maps (one node isolates it; nodes between two chosen ones join the set).
-    Applied with DaCe's own passes: nest the body, `state_fission` at the set, `SubgraphFission` after each piece,
-    `simplify`. A value read in its own piece and a later one crosses through a copy, so each piece inlines back to
-    a flat map. Verified at its FP level's tolerance; predicted on the split SDFG, the widened values added to the
-    footprint and to each loop's bytes.
+    pressure in either piece, then the fewest crossing values, then the most even work. Boundaries are states: a
+    cut is a set of top-level states of the map's nested body, `before | set | after`, up to three maps (states
+    between two chosen ones join the set), applied with DaCe's `SubgraphFission` at the boundaries, then `simplify`.
+    NestForge's `expand` view is that nested body already. A flat body is staged first: the heuristic picks a node
+    set (nodes between two chosen ones join it), the body is nested and `state_fission` makes `before | set | after`
+    states; a value read in its own piece and a later one crosses through a copy, so each piece inlines back to a
+    flat map. Verified at its FP level's tolerance; predicted on the split SDFG, the widened values added to the
+    footprint and to each loop's bytes. The default heuristic cuts flat bodies only.
     - TODO (feedback phase): cut where a build's loop spills, and where the vectorizer misses a loop (scope too).
-    - TODO: maps nested in maps, and maps whose body is a nested SDFG.
+    - TODO: maps nested in maps.
   - Regret against profile mode is a paper metric. `scale` at 16 MiB (gcc + clang, 28 timed): the pick is the profile
     winner (regret 0); before the memory term it was the 27th of 28.
 
