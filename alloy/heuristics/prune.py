@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import dace
+import sympy
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 
@@ -48,12 +49,11 @@ def operations(tasklet: nodes.Tasklet) -> tuple[set[type], set[str]]:
         return set(), set()
     ops: set[type] = set()
     calls: set[str] = set()
-    for stmt in tasklet.code.code:
-        for node in ast.walk(stmt):
-            if isinstance(node, ast.BinOp):
-                ops.add(type(node.op))
-            elif isinstance(node, ast.Call):
-                calls.add(ast.unparse(node.func).rsplit(".", 1)[-1])
+    for node in ast.walk(ast.parse(tasklet.code.as_string)):
+        if isinstance(node, ast.BinOp):
+            ops.add(type(node.op))
+        elif isinstance(node, ast.Call):
+            calls.add(ast.unparse(node.func).rsplit(".", 1)[-1])
     return ops, calls
 
 
@@ -61,7 +61,7 @@ def feeds_add(state: dace.SDFGState, tasklet: nodes.Tasklet) -> bool:
     """Whether ``tasklet``'s result reaches an add or subtract: a summing write conflict, or a tasklet reading it
     through one access node."""
     for edge in state.out_edges(tasklet):
-        if edge.data.wcr is not None and "+" in edge.data.wcr:
+        if edge.data.wcr is not None and "+" in str(edge.data.wcr):
             return True
         for path_edge in state.memlet_tree(edge):
             reader = path_edge.dst
@@ -75,7 +75,7 @@ def feeds_add(state: dace.SDFGState, tasklet: nodes.Tasklet) -> bool:
 
 def extent(begin: object, end: object, step: object) -> int | None:
     value = dace.symbolic.pystr_to_symbolic(f"(({end}) - ({begin}) + 1) / ({step})")
-    return int(value) if value.is_Integer else None
+    return int(value) if isinstance(value, sympy.Integer) else None
 
 
 def trip_counts(sdfg: dace.SDFG) -> tuple[int | None, ...]:
@@ -99,7 +99,7 @@ def facts(scope: Scope) -> Facts:
     """``scope``'s static facts (see :class:`Facts`)."""
     contracts = approximates = sets_errno = False
     for node, state in scope.sdfg.all_nodes_recursive():
-        if not isinstance(node, nodes.Tasklet):
+        if not isinstance(node, nodes.Tasklet) or not isinstance(state, dace.SDFGState):
             continue
         ops, calls = operations(node)
         contracts |= ast.Mult in ops and (bool(ops & {ast.Add, ast.Sub}) or feeds_add(state, node))

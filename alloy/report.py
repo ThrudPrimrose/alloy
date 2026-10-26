@@ -22,6 +22,7 @@ from alloy.evaluate.verify import Status, Verdict, Verification
 from alloy.frontend import tree
 from alloy.frontend.scopes import Program
 from alloy.frontend.tree import CfgNode
+from alloy.heuristics.predict import Prediction, Predictions
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
@@ -86,6 +87,8 @@ class Variant:
     screen: Time | None
     final: Time | None
     speedup: float | None
+    #: Speculative mode's score of this build; ``None`` when not predicted (profile mode, or no loop to model).
+    prediction: Prediction | None
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -201,16 +204,27 @@ def drop_reason(rep: ScopeReport, b: Build, verdict: Verdict | None, timing: Sco
     return None
 
 
-def ranked(rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTiming | None) -> list[Build]:
-    """The rankable builds, fastest screened first; untimed runs keep sweep order."""
+def ranked(
+    rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTiming | None, scores: dict[str, Prediction]
+) -> list[Build]:
+    """The rankable builds, fastest screened first; untimed, fewest predicted cycles per element first (unpredicted
+    last); neither, sweep order."""
     usable = [b for b in rep.builds if drop_reason(rep, b, verdicts.get(b.name), timing) is None]
-    if timing is None:
-        return usable
-    return sorted(usable, key=lambda b: (math.isnan(m := timing.screen[arm(rep, b)].median), m))
+    if timing is not None:
+        return sorted(usable, key=lambda b: (math.isnan(m := timing.screen[arm(rep, b)].median), m))
+    if scores:
+        return sorted(usable, key=lambda b: scores[b.name].cycles_per_element if b.name in scores else math.inf)
+    return usable
 
 
 def variant(
-    rep: ScopeReport, b: Build, rank: int, verdict: Verdict | None, timing: ScopeTiming | None, matrix: Matrix
+    rep: ScopeReport,
+    b: Build,
+    rank: int,
+    verdict: Verdict | None,
+    timing: ScopeTiming | None,
+    matrix: Matrix,
+    prediction: Prediction | None,
 ) -> Variant:
     screen = timing.screen.get(arm(rep, b)) if timing else None
     final = timing.final.get(arm(rep, b)) if timing else None
@@ -236,18 +250,25 @@ def variant(
         screen=as_time(screen),
         final=as_time(final),
         speedup=base / screen.median if screen is not None and timing else None,
+        prediction=prediction,
     )
 
 
 def scope_record(
-    rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTiming | None, matrix: Matrix, k: int
+    rep: ScopeReport,
+    verdicts: dict[str, Verdict],
+    timing: ScopeTiming | None,
+    matrix: Matrix,
+    k: int,
+    scores: dict[str, Prediction] | None = None,
 ) -> ScopeRecord:
+    scores = scores or {}
     dropped: dict[str, int] = {}
     for b in rep.builds:
         reason = drop_reason(rep, b, verdicts.get(b.name), timing)
         if reason is not None:
             dropped[reason] = dropped.get(reason, 0) + 1
-    top = ranked(rep, verdicts, timing)[:k]
+    top = ranked(rep, verdicts, timing, scores)[:k]
     s = rep.scope
     return ScopeRecord(
         symbol=s.symbol,
@@ -261,46 +282,78 @@ def scope_record(
         dropped=dropped,
         pruned={p.candidate.name(matrix): p.reason for p in rep.pruned},
         baseline=as_time(timing.screen[REFERENCE]) if timing else None,
-        top=tuple(variant(rep, b, rank, verdicts.get(b.name), timing, matrix) for rank, b in enumerate(top, start=1)),
+        top=tuple(
+            variant(rep, b, rank, verdicts.get(b.name), timing, matrix, scores.get(b.name))
+            for rank, b in enumerate(top, start=1)
+        ),
     )
 
 
-def matrix_row(rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTiming | None, matrix: Matrix) -> MatrixRow:
-    """Per build config, the fastest rankable build in it as ``ms (speedup)``; else the first reason none is, a
-    config with no build reading ``pruned: <reason>``."""
+def cell(
+    rep: ScopeReport, b: Build, timing: ScopeTiming | None, scores: dict[str, Prediction], matrix: Matrix
+) -> tuple[float, str] | None:
+    """A rankable build's verdict cell with its sort key: the screened time as ``ms (speedup)``, or untimed, the
+    predicted ``cycles/elem``; ``None`` when it has neither."""
+    note = " not honored" if honored(b, matrix) is False else ""
+    if timing is not None:
+        median, base = timing.screen[arm(rep, b)].median, timing.screen[REFERENCE].median
+        return median, f"{1e3 * median:.3f} ({base / median:.2f}x){note}"
+    if b.name in scores:
+        cost = scores[b.name].cycles_per_element
+        return cost, f"{cost:.2f} cycles/elem{note}"
+    return None
+
+
+def matrix_row(
+    rep: ScopeReport,
+    verdicts: dict[str, Verdict],
+    timing: ScopeTiming | None,
+    matrix: Matrix,
+    scores: dict[str, Prediction] | None = None,
+) -> MatrixRow:
+    """Per build config, its best rankable build (:func:`cell`); else the first reason none is, a config with no
+    build reading ``pruned: <reason>``."""
     cells: dict[str, str] = {}
     best: dict[str, float] = {}
-    base = timing.screen[REFERENCE].median if timing else math.nan
     for b in rep.builds:
         config = b.candidate.config_name(matrix)
         reason = drop_reason(rep, b, verdicts.get(b.name), timing)
-        if reason is not None or timing is None:
+        value = None if reason is not None else cell(rep, b, timing, scores or {}, matrix)
+        if value is None:
             cells.setdefault(config, reason or "built")
             continue
-        median = timing.screen[arm(rep, b)].median
-        if config not in best or median < best[config]:
-            best[config] = median
-            note = " not honored" if honored(b, matrix) is False else ""
-            cells[config] = f"{1e3 * median:.3f} ({base / median:.2f}x){note}"
+        if config not in best or value[0] < best[config]:
+            best[config], cells[config] = value
     for p in rep.pruned:
         cells.setdefault(p.candidate.config_name(matrix), f"pruned: {p.reason}")
     return MatrixRow(scope=rep.scope.symbol, cells=cells)
 
 
 def final(
-    reports: list[ScopeReport], verdicts: Verdicts, timing: Timings | None, commands: Commands | None, matrix: Matrix
+    reports: list[ScopeReport],
+    verdicts: Verdicts,
+    timing: Timings | None,
+    commands: Commands | None,
+    matrix: Matrix,
+    predicted: Predictions | None = None,
+    picked: dict[str, str] | None = None,
 ) -> Final:
+    """The verdict; ``picked`` names the speculative winners, else the timed ones (the first build untimed)."""
     rows = tuple(
         matrix_row(
-            rep, verdicts.get(rep.scope.symbol, {}), timing.scopes.get(rep.scope.symbol) if timing else None, matrix
+            rep,
+            verdicts.get(rep.scope.symbol, {}),
+            timing.scopes.get(rep.scope.symbol) if timing else None,
+            matrix,
+            (predicted or {}).get(rep.scope.symbol),
         )
         for rep in reports
     )
     configs = tuple(dict.fromkeys(config for row in rows for config in row.cells))
-    chosen = {}
+    chosen = dict(picked or {})
     for rep in reports:
         winner = timing.scopes[rep.scope.symbol].winner if timing else REFERENCE
-        chosen[rep.scope.symbol] = rep.builds[0].name if winner == REFERENCE else winner
+        chosen.setdefault(rep.scope.symbol, rep.builds[0].name if winner == REFERENCE else winner)
     program = None
     if timing is not None:
         default, full = timing.program.arms["dace_default"], timing.program.arms["alloy_full"]
@@ -326,8 +379,10 @@ def assemble(
     timing: Timings | None = None,
     commands: Commands | None = None,
     top_k: int = TOP_K,
+    predicted: Predictions | None = None,
+    picked: dict[str, str] | None = None,
 ) -> Report:
-    """The report of one run; profile mode (the only one Alloy runs today)."""
+    """The report of one run: speculative when it carries predictions and no timing, else profile."""
     verdicts = verification.verdicts if verification else {}
     scopes = tuple(
         scope_record(
@@ -336,12 +391,13 @@ def assemble(
             timing.scopes.get(rep.scope.symbol) if timing else None,
             matrix,
             top_k,
+            (predicted or {}).get(rep.scope.symbol),
         )
         for rep in reports
     )
     return Report(
         schema=SCHEMA,
-        mode=Mode.PROFILE,
+        mode=Mode.SPECULATIVE if predicted is not None and timing is None else Mode.PROFILE,
         program=program.sdfg.name,
         tree=tree.cfg_tree(program.sdfg),
         vectorization=tuple(
@@ -350,7 +406,7 @@ def assemble(
         ),
         nondeterministic_outputs=tuple(sorted(verification.nondeterministic)) if verification else (),
         scopes=scopes,
-        verdict=final(reports, verdicts, timing, commands, matrix),
+        verdict=final(reports, verdicts, timing, commands, matrix, predicted, picked),
         timing=timing,
     )
 
@@ -364,9 +420,10 @@ def variant_row(v: Variant) -> str:
     speedup = "-" if v.speedup is None else f"{v.speedup:.2f}x"
     missed = v.missed[0] if v.missed else ""
     masked = f"{v.masked_ops}{' (not honored)' if v.honored is False else ''}"
+    predicted = "-" if v.prediction is None else f"{v.prediction.cycles_per_element:.2f}"
     return (
         f"| {v.rank} | {v.name} | {v.config} | {status} | {time_text(v.screen)} | {time_text(v.final)} | {speedup} "
-        f"| {v.vectorized_loops} | {masked} | {missed} |"
+        f"| {predicted} | {v.vectorized_loops} | {masked} | {missed} |"
     )
 
 
@@ -404,8 +461,9 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         tree.render(s.tree),
         "```",
         "",
-        "| rank | candidate | config | verified | screen ms | final ms | speedup | vectorized | masked ops | first missed |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| rank | candidate | config | verified | screen ms | final ms | speedup | predicted cycles/elem | vectorized "
+        "| masked ops | first missed |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
         *(variant_row(v) for v in s.top),
         "",
     ]
@@ -462,10 +520,12 @@ def write(
     timing: Timings | None = None,
     commands: Commands | None = None,
     top_k: int = TOP_K,
+    predicted: Predictions | None = None,
+    picked: dict[str, str] | None = None,
 ) -> Report:
     """Write ``report.json`` and ``report.md`` (rendered from it), with a copy of the matrix that produced them."""
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    r = assemble(program, reports, matrix, verification, timing, commands, top_k)
+    r = assemble(program, reports, matrix, verification, timing, commands, top_k, predicted, picked)
     (out / "report.json").write_text(dumped_json(r))
     (out / "report.md").write_text(markdown(r, matrix))
     return r

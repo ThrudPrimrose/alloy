@@ -183,7 +183,14 @@ unknown key, a wrong type or another schema); `report.md` is rendered from it an
 Baseline: per scope, the matrix-default candidate (DaCe's compiler, default knobs, strict FP, `-march=native`); for
 the program, DaCe's own default build. Every speedup is over one compiler with one flag set.
 
-Modes: `profile` (verified and timed) is built; `speculative` (verified, untimed, picked from the builds' reports and
-outputs) shares the schema and is not built.
+Modes (`api.generate(..., mode=)`):
+- `profile`: verified and timed; variants ranked by time.
+- `speculative` (`alloy/heuristics/predict.py`): verified, untimed. Each build's innermost loops come from its
+  disassembly (backward branches); llvm-mca on the host CPU gives cycles per iteration (loop-carried chains
+  included), the bytes the loop's non-stack memory operations move over (element bytes x distinct accesses per
+  element) give elements per iteration, and each hot call adds a fixed cost llvm-mca cannot see (vector math calls in
+  a vector loop; every call in a scalar loop). The hot loop is the one handling the most elements per iteration; the
+  pick is the correct build with the fewest cycles per element, ties to the default FP level (`heuristics/fp.py`).
+  The verdict matrix shows `cycles/elem`; `best/` links the picks. Regret against profile mode is a paper metric.
 
 Every interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).
