@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """The Alloy adapter's inner tier without a judge: the stub ranking keeps each region's fastest candidate over the
-best prefix so far, survives a failing stub, stops when the budget does, and reads a stub's time from either profile."""
+best prefix so far, survives a failing stub, stops when the budget does, reads a stub's time from either profile, and
+a rendered library asks for the scratch its entry carves transients from."""
 
 import dataclasses
 
@@ -8,10 +9,22 @@ import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
 
-from hpcagent_bench.categories import Preset  # noqa: E402
-from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
+from collections.abc import Sequence  # noqa: E402
 
-from alloy.hb_plugin.adapter import fast_size, ranked, stub_time  # noqa: E402 -- after the optional-extra skip
+from hpcagent_bench.categories import Language, Preset, SourceMode  # noqa: E402
+from hpcagent_bench.harness.envelope import Submission  # noqa: E402
+from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer  # noqa: E402
+from hpcagent_bench.harness.task import Task  # noqa: E402
+from hpcagent_bench.precision import Precision  # noqa: E402
+from hpcagent_bench.spec import BenchSpec  # noqa: E402
+
+from alloy.hb_plugin.adapter import (  # noqa: E402 -- after the optional-extra skip
+    fast_size,
+    pipeline_sdfg,
+    ranked,
+    rendered,
+    stub_time,
+)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -101,3 +114,25 @@ if __name__ == "__main__":
     test_a_profile_without_a_time_is_refused()
     for token, size in (("XL", Preset.M), ("L+fuzz", Preset.M), ("M", None), ("S", None), ("fuzzed", None)):
         test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token, size)
+
+
+def as_source(code: str, link: Sequence[str]) -> Submission:
+    return Submission(language=Language.CPP, source=code)
+
+
+def test_a_library_whose_entry_keeps_a_transient_asks_for_its_scratch() -> None:
+    spec = BenchSpec.load("atax")  # tmp = A @ x is an M-vector between the two products
+    sdfg = pipeline_sdfg(spec, "canon_cpu", Precision.FP64)
+
+    sut = rendered(Task("atax", SourceMode.ANY, Language.CPP), spec, sdfg, as_source)
+
+    assert sut.workspace_bytes == "8*M + 64"
+
+
+def test_a_library_without_transients_asks_for_no_scratch() -> None:
+    spec = BenchSpec.load("tsvc_2_vpv")
+    sdfg = pipeline_sdfg(spec, "canon_cpu", Precision.FP64)
+
+    sut = rendered(Task("tsvc_2_vpv", SourceMode.ANY, Language.CPP), spec, sdfg, as_source)
+
+    assert sut.workspace_bytes is None

@@ -71,8 +71,10 @@ def test_every_region_gets_several_verified_variants(tmp_path: pathlib.Path) -> 
 
 
 @pytest.mark.parametrize("flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile"])
+@pytest.mark.parametrize("kernel", [KERNEL, "atax"])  # atax's entry keeps a transient in the judge's scratch
 def test_the_profile_flavor_submits_a_library_the_judge_grades_correct(
     flavor: str,
+    kernel: str,
     make_judge: Callable[..., tuple[ThreadingHTTPServer, str]],
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -81,11 +83,11 @@ def test_the_profile_flavor_submits_a_library_the_judge_grades_correct(
     url = make_judge(ServiceConfig(baseline=Baseline.C, oracle=Oracle.AUTO, input_mode=InputMode.ANY, repeat=3))[1]
     monkeypatch.setenv("JUDGE_URL", url)  # the optimizer scores its variants on this judge
 
-    sub = optimizer_registry()[flavor](workdir=tmp_path).solve(Task(KERNEL, SourceMode.ANY, Language.C))
+    sub = optimizer_registry()[flavor](workdir=tmp_path).solve(Task(kernel, SourceMode.ANY, Language.C))
 
     assert sub.library is not None
     with config.overridden("service.submit_feedback", SubmitFeedback.FULL):  # need the measured grade, not the verdict
-        r = tools.JudgeClient(url).submit(sub, KERNEL)
+        r = tools.JudgeClient(url).submit(sub, kernel)
     assert isinstance(r, GradeAnswer), r
     assert r.build_ok is True, r.detail
     assert r.correct is True, r.detail

@@ -134,7 +134,11 @@ def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> 
         target_of(task),
         DEFAULT_HINTS,
     )
-    return deliver(form.code, form.link)
+    submission = deliver(form.code, form.link)
+    # the entry carves its transients out of the judge's scratch; without the request they point past a null buffer
+    if form.workspace_bytes != "0":
+        submission.workspace_bytes = form.workspace_bytes
+    return submission
 
 
 def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Build], deliver: Deliver) -> Submission:

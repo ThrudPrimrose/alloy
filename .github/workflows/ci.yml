@@ -99,4 +99,43 @@ jobs:
         run: |
           ulimit -s "$(ulimit -H -s)"
           export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
-          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests
+          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error::UserWarning tests \
+            --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py
+
+  # The bench kernels end to end on an in-process judge (libraries graded, scratch requested), on the two compilers
+  # every developer box has; a runner of its own, so the toolchain job's interop matrix stays short.
+  bench-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLVM_VERSION: "21"
+      GCC_VERSION: "14"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grading seal and perf events
+        run: |
+          knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$knob" ]; then echo 0 | sudo tee "$knob" > /dev/null; fi
+          sudo sysctl -w kernel.perf_event_paranoid=1
+      - name: gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
+      - name: clang + LLVM libomp
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh $LLVM_VERSION
+          sudo apt-get install -y libomp-$LLVM_VERSION-dev
+          echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra dev
+      - name: Tests
+        run: |
+          ulimit -s "$(ulimit -H -s)"
+          export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
+          PYTHONHASHSEED=0 uv run pytest -n 2 --maxfail=20 -W error::UserWarning --durations=10 \
+            tests/test_hb_plugin.py tests/test_llr_smoke.py
