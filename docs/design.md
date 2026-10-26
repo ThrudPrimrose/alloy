@@ -201,6 +201,17 @@ Modes (`api.generate(..., mode=)`):
     else a measured parallel copy.
   - Pick: the correct build with the lowest cost; builds within 2% tie and go to the default FP level
     (`heuristics/fp.py`), then sweep order. The verdict matrix shows `cycles/elem`; `best/` links the picks.
+  - Fission (`heuristics/fission.py`): one more one-factor candidate per compiler when a flat top-level map keeps
+    more values live than the host's vector registers (16 on x86-64, 32 with AVX-512 and on aarch64). Work/depth:
+    a code node's level is 1 + its deepest producer's; the body is cut after the level that leaves the least
+    pressure in either piece, then the fewest crossing values, then the most even work. A cut is a node set:
+    `before | set | after`, up to three maps (one node isolates it; nodes between two chosen ones join the set).
+    Applied with DaCe's own passes: nest the body, `state_fission` at the set, `SubgraphFission` after each piece,
+    `simplify`. A value read in its own piece and a later one crosses through a copy, so each piece inlines back to
+    a flat map. Verified at its FP level's tolerance; predicted on the split SDFG, the widened values added to the
+    footprint and to each loop's bytes.
+    - TODO (feedback phase): cut where a build's loop spills, and where the vectorizer misses a loop (scope too).
+    - TODO: maps nested in maps, and maps whose body is a nested SDFG.
   - Regret against profile mode is a paper metric. `scale` at 16 MiB (gcc + clang, 28 timed): the pick is the profile
     winner (regret 0); before the memory term it was the 27th of 28.
 

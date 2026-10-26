@@ -25,7 +25,7 @@ from alloy.configuration_matrix import Matrix
 from alloy.evaluate import timing
 from alloy.evaluate.verify import Verdict
 from alloy.frontend.scopes import Scope
-from alloy.heuristics import fp
+from alloy.heuristics import fission, fp
 from alloy.records import RECORD, Strings
 
 __all__ = [
@@ -137,9 +137,10 @@ def disassembly(archive: pathlib.Path) -> dict[str, list[Instruction]]:
             current, source_line = functions.setdefault(head.group(1), []), 0
         elif (position := SOURCE_LINE.match(line)) is not None:
             source_line = int(position.group(1))
-        elif (reloc := RELOCATION.match(line)) is not None and current and CALL.match(current[-1].mnemonic):
-            last = current[-1]
-            current[-1] = Instruction(last.address, last.mnemonic, last.operands, reloc.group(1), last.line)
+        elif (reloc := RELOCATION.match(line)) is not None:  # a call's callee, or a constant's address: no instruction
+            if current and CALL.match(current[-1].mnemonic):
+                last = current[-1]
+                current[-1] = Instruction(last.address, last.mnemonic, last.operands, reloc.group(1), last.line)
         elif (insn := LINE.match(line)) is not None:
             operands = insn.group(3).split("#", 1)[0].split("//", 1)[0].strip()
             current.append(Instruction(int(insn.group(1), 16), insn.group(2), operands, line=source_line))
@@ -275,6 +276,13 @@ def evaluated(volume: sympy.Expr, sizes: dict[str, int] | None) -> float | None:
     return float(value) if value.is_number else None
 
 
+def temporaries(sdfg: dace.SDFG, sizes: dict[str, int]) -> int:
+    """Bytes of ``sdfg``'s transient arrays that grow with the sizes: the values a fission cut widens."""
+    grown = [d for d in sdfg.arrays.values() if d.transient and dace.symbolic.issymbolic(d.total_size)]
+    numeric: dict[dace.symbol | str, int | float] = dict(sizes)
+    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in grown)
+
+
 def hot_calls(loop: Loop, elements: float) -> int:
     """Calls every iteration makes: all of a scalar loop's; a vector loop's calls to vector math entries, its scalar
     calls being the fallback of a few lanes (errno, a special value)."""
@@ -311,7 +319,8 @@ def predict(
         return None
     machine_loops = [loop for code in disassembly(build.archive).values() for loop in innermost_loops(code)]
     labels = tasklet_lines(build.source)
-    maps = innermost_maps(sdfg if sdfg is not None else scope.sdfg)
+    rendered = sdfg if sdfg is not None else scope.sdfg
+    maps = innermost_maps(rendered)
     largest = max(
         (v for f in innermost_maps(scope.sdfg).values() if (v := evaluated(f.volume, sizes)) is not None), default=0.0
     )
@@ -333,7 +342,8 @@ def predict(
     compute = sum(c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements for c in loops)
     compute /= len(machine.physical_cores())  # the scope's loops are OpenMP-parallel
     memory = 0.0
-    if sizes and timing.footprint(scope.sdfg, sizes) > CACHE_RESIDENT * machine.largest_cache_bytes():
+    footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
+    if footprint > CACHE_RESIDENT * machine.largest_cache_bytes():
         bandwidth = machine.memory_bandwidth().bytes_per_second / machine.max_frequency_hz()
         memory = sum(c.weight * c.bytes for c in loops) / bandwidth
     return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops))
@@ -347,8 +357,18 @@ def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None)
     """The prediction of every distinct build of every scope at ``sizes`` (the loops weigh equally without), in
     parallel (llvm-mca runs per loop)."""
     jobs = [(rep, b) for rep in reports for b in rep.builds if not b.error and not b.duplicate_of]
+    cut = {  # what each scope's fission builds rendered, split once per scope
+        rep.scope.symbol: fission.fissioned(rep.scope.sdfg)
+        for rep in reports
+        if any(b.candidate.fission for owner, b in jobs if owner is rep)
+    }
+
+    def score(job: tuple[ScopeReport, Build]) -> Prediction | None:
+        rep, b = job
+        return predict(b, rep.scope, sizes, cut[rep.scope.symbol] if b.candidate.fission else None)
+
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
-        scored = list(pool.map(lambda job: predict(job[1], job[0].scope, sizes), jobs))
+        scored = list(pool.map(score, jobs))
     out: Predictions = {rep.scope.symbol: {} for rep in reports}
     for (rep, b), prediction in zip(jobs, scored, strict=True):
         if prediction is not None:

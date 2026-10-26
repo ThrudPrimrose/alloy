@@ -18,6 +18,7 @@ from alloy.backend import runtime
 from alloy.backend.candidates import Candidate, RenderKey
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Scope
+from alloy.heuristics import fission
 
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
@@ -56,8 +57,9 @@ class Build:
 
 def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
     """The scope's CPF translation unit under ``candidate``'s language and codegen knobs; under an SVE tail its
-    innermost maps are explicit SVE loops."""
-    sdfg = sve_loops(scope.sdfg) if candidate.render(matrix) == "sve" else scope.sdfg
+    innermost maps are explicit SVE loops, under fission its maps are cut (:func:`rendered_sdfg`)."""
+    sdfg = rendered_sdfg(scope, candidate)
+    sdfg = sve_loops(sdfg) if candidate.render(matrix) == "sve" else sdfg
     with ExitStack() as stack:
         for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
@@ -68,6 +70,11 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
             check_compiles=False,
         )
     return rendering.code
+
+
+def rendered_sdfg(scope: Scope, candidate: Candidate) -> dace.SDFG:
+    """The SDFG ``candidate`` renders: the scope's, or a copy with its maps cut (:func:`fission.fissioned`)."""
+    return fission.fissioned(scope.sdfg) if candidate.fission else scope.sdfg
 
 
 def sve_loops(sdfg: dace.SDFG) -> dace.SDFG:

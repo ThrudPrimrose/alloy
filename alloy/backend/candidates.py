@@ -9,6 +9,7 @@ import numpy as np
 from alloy import machine
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.scopes import Scope
+from alloy.heuristics import fission
 
 #: A code variant's identity: the language and every codegen knob it is rendered with.
 RenderKey = tuple[str, tuple[tuple[str, str], ...]]
@@ -18,7 +19,8 @@ RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 class Candidate:
     """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
     an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
-    flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail."""
+    flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail; ``fission`` renders the scope with its
+    maps cut by :func:`fission.cuts`."""
 
     language: str
     compiler: str
@@ -29,6 +31,7 @@ class Candidate:
     veclib: str = "none"
     isa: str = ""
     tail: str = ""
+    fission: bool = False
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str, str]:
@@ -42,15 +45,25 @@ class Candidate:
 
     def name(self, matrix: Matrix) -> str:
         width, level, model = self.resolved(matrix)
-        parts = [self.language, self.compiler, width, level, model, self.veclib, *filter(None, (self.isa, self.tail))]
+        split = "fission" if self.fission else ""
+        parts = [
+            self.language,
+            self.compiler,
+            width,
+            level,
+            model,
+            self.veclib,
+            *filter(None, (self.isa, self.tail, split)),
+        ]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
 
     def variant_key(self, matrix: Matrix) -> RenderKey:
         """The code variant this candidate compiles: candidates with one key share one source. An explicit SVE
-        rendering is a variant of its own."""
+        rendering and a fissioned one are variants of their own."""
         params = tuple(sorted(self.codegen_params(matrix).items()))
         render = self.render(matrix)
-        return self.language, ((*params, ("render", render)) if render else params)
+        params = (*params, ("render", render)) if render else params
+        return self.language, ((*params, ("fission", "cut")) if self.fission else params)
 
     def render(self, matrix: Matrix) -> str:
         """How the scope's loops are rendered: ``"sve"`` for explicit SVE loops, empty for the auto-vectorizer."""
@@ -119,9 +132,11 @@ def flips(
     finite_inputs: bool,
     max_elements: int | None,
     isas: tuple[str, ...] = (),
+    fission: bool = False,
 ) -> list[Candidate]:
     """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
-    host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them."""
+    host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them; ``fission`` adds the fissioned
+    rendering (the scope has a cut)."""
     comp, d = matrix.compilers[compiler], matrix.defaults
     levels = fp_levels(matrix, scope, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
@@ -146,6 +161,8 @@ def flips(
             for lib in available_veclibs(matrix, comp)
             if matrix.veclibs[lib].fp_level in levels
         ]
+    if fission:
+        out.append(Candidate(language, compiler, fission=True, note="fission"))
     return out
 
 
@@ -200,10 +217,13 @@ def one_factor_at_a_time(
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
     isas = matrix.host_isas(machine.cpu_flags())
+    cut = bool(fission.cuts(scope.sdfg, fission.vector_registers()))
     return [
         c
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(matrix, scope, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas)
+        for c in flips(
+            matrix, scope, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas, fission=cut
+        )
     ]
