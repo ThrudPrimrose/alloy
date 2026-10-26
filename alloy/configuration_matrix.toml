@@ -120,6 +120,11 @@ fp_level = "noerrno"
 probe = "sleefgnuabi"
 fp_level = "noerrno"
 
+# Arm Performance Libraries (aarch64): armpl_sv* calls under SVE, armpl_v*q under NEON.
+[veclibs.armpl]
+probe = "armpl"
+fp_level = "noerrno"
+
 # gcc reaches glibc's simd variants only under __FAST_MATH__, so its libmvec build is the fast level.
 [veclibs.libmvec_fast]
 probe = "mvec"
@@ -190,6 +195,7 @@ no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
 [compilers.clang.veclib]
 libmvec = ["-fveclib=libmvec", "-fno-math-errno"]
 sleef = ["-fveclib=SLEEF", "-fno-math-errno"]
+armpl = ["-fveclib=ArmPL", "-fno-math-errno"]
 
 [compilers.clang.isa]
 avx2 = ["-mno-avx512f"]

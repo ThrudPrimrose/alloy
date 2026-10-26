@@ -20,6 +20,7 @@ from pydantic.dataclasses import dataclass as record
 
 from alloy.backend import runtime
 from alloy.backend.build import Build
+from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Program, Scope
 from alloy.records import RECORD, Strings, dumped_json
@@ -111,14 +112,25 @@ class Linker:
         library = runtime.default_library(self.matrix)
         return runtime.link_flags(library, self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime])
 
-    def support_flags(self, compilers: frozenset[str]) -> list[str]:
-        """Link flags for the support libraries of every compiler that built one of the linked archives."""
+    def support_flags(self, candidates: frozenset[Candidate]) -> list[str]:
+        """Link flags for what the linked archives call beyond their objects: the support libraries of every
+        compiler that built one, and every vector library one was built against. Linked explicitly, else a SLEEF
+        build's ``_ZGV*`` calls bind to glibc's libmvec, which ``-lm`` pulls in under the same names."""
         flags: list[str] = []
-        for name in sorted(compilers):
+        for name in sorted({c.compiler for c in candidates}):
             comp = self.matrix.compilers[name]
             executables = list(comp.executables.values())
             for soname in comp.support_libraries:
                 flags += runtime.link_flags(runtime.resolve(soname, executables), soname)
+        for lib in sorted({c.veclib for c in candidates} - {"none"}):
+            probe = self.matrix.veclibs[lib].probe
+            executables = [
+                exe
+                for c in candidates
+                if c.veclib == lib
+                for exe in self.matrix.compilers[c.compiler].executables.values()
+            ]
+            flags += runtime.link_flags(runtime.resolve(probe, executables), probe)
         return flags
 
     def vendor_flags(self) -> list[str]:
@@ -134,17 +146,17 @@ class Linker:
             self.vendor = list(dict.fromkeys(token for link in tokens for token in link))
         return self.vendor
 
-    def library_sdfg(self, archives: dict[str, pathlib.Path], compilers: frozenset[str]) -> dace.SDFG:
+    def library_sdfg(self, archives: dict[str, pathlib.Path], candidates: frozenset[Candidate]) -> dace.SDFG:
         """A copy of the outlined program whose every scope calls ``archives[symbol]``, linked with the matrix's
-        OpenMP runtime and the support libraries of ``compilers``: what a standalone (CPF) library renders."""
+        OpenMP runtime and the libraries ``candidates`` need: what a standalone (CPF) library renders."""
         sdfg = copy.deepcopy(self.program.sdfg)
-        flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
+        flags = self.link_flags() + self.support_flags(candidates) + self.vendor_flags()
         for call in external_call.external_calls(sdfg):
             call.implementation, call.lib_path, call.link_flags = "ExternCall", str(archives[call.symbol]), flags
         return sdfg
 
     def compile(
-        self, archives: dict[str, pathlib.Path], tag: str, compilers: frozenset[str] = frozenset()
+        self, archives: dict[str, pathlib.Path], tag: str, candidates: frozenset[Candidate] = frozenset()
     ) -> pathlib.Path:
         """The program with ``archives[symbol]`` linked for each scope, built under a name of its own so no cache
         or loaded library of another candidate can stand in for it."""
@@ -154,7 +166,7 @@ class Linker:
         safe = f"p{hashlib.sha256(tag.encode()).hexdigest()[:12]}"  # candidate names carry '-', SDFG names may not
         sdfg.name = f"{self.program.sdfg.name}_{safe}"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / safe)
-        flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
+        flags = self.link_flags() + self.support_flags(candidates) + self.vendor_flags()
         scopes = {r.symbol: r for r in self.program.scopes}
         for call in external_call.external_calls(sdfg):
             fixed = link / f"lib{call.symbol}.a"
@@ -185,8 +197,8 @@ class Linker:
             compiler = self.matrix.compilers[b.candidate.compiler].executables[b.candidate.language]
             scopes.append(BestScope(symbol, b.name, compiler, b.flags, source))
         archives = {r.symbol: best / f"lib{r.symbol}.a" for r in scopes}
-        compilers = frozenset(b.candidate.compiler for b in winners.values())
-        rendering = cpf.render(self.library_sdfg(archives, compilers), language="c", check_compiles=False)
+        candidates = frozenset(b.candidate for b in winners.values())
+        rendering = cpf.render(self.library_sdfg(archives, candidates), language="c", check_compiles=False)
         (best / "program.c").write_text(rendering.code)
         link = tuple(token.removeprefix(f"{best}/") for token in rendering.link)  # make runs in best/
         plan = Best(tuple(scopes), rendering.arguments, link)
@@ -221,8 +233,8 @@ class Linker:
         later = set(order[order.index(symbol) + 1 :])
         scopes = {r.symbol: r for r in self.program.scopes}
         archives = {s: self.empty(scopes[s]) if s in later else built(selection[s]) for s in order}
-        compilers = frozenset(selection[s].candidate.compiler for s in order if s not in later)
-        return self.library_sdfg(archives, compilers)
+        candidates = frozenset(selection[s].candidate for s in order if s not in later)
+        return self.library_sdfg(archives, candidates)
 
     def empty(self, scope: Scope) -> pathlib.Path:
         """The archive of ``scope``'s entry with an empty body."""

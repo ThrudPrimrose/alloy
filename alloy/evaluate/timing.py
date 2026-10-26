@@ -239,10 +239,10 @@ def time_program(linker: Linker, reports: list[ScopeReport], verification: Verif
     """Every scope's timing, then alloy-full against DaCe's default codegen on every core."""
     scopes = {rep.scope.symbol: time_scope(linker, rep, verification, manifest) for rep in reports}
     winners = {rep.scope.symbol: winning_build(rep, scopes[rep.scope.symbol].winner) for rep in reports}
-    compilers = frozenset(b.candidate.compiler for b in winners.values())
+    candidates = frozenset(b.candidate for b in winners.values())
     archives = {symbol: b.archive for symbol, b in winners.items() if b.archive}
     arms = Arms(
-        {"dace_default": linker.compile_default(), "alloy_full": linker.compile(archives, "alloy_full", compilers)},
+        {"dace_default": linker.compile_default(), "alloy_full": linker.compile(archives, "alloy_full", candidates)},
         {"dace_default": "exact", "alloy_full": "band"},
         "",
         manifest.outputs,

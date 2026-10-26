@@ -20,7 +20,7 @@ def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program
     archives = {
         r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.scopes
     }
-    sdfg = Linker(program, MATRIX, tmp_path).library_sdfg(archives, frozenset({"gcc"}))
+    sdfg = Linker(program, MATRIX, tmp_path).library_sdfg(archives, frozenset({Candidate("c", "gcc")}))
 
     sut = cpf.render(sdfg, language="c", signature=cpf.EntrySignature(["M", "out", "N", "a"]))
 
@@ -35,6 +35,19 @@ def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program
     entry = getattr(ctypes.CDLL(str(library)), sdfg.name)
     entry(ctypes.c_int64(7), out.ctypes.data_as(ctypes.c_void_p), ctypes.c_int64(13), a.ctypes.data_as(ctypes.c_void_p))
     np.testing.assert_allclose(out, a.sum(axis=1), rtol=1e-12)
+
+
+def test_a_library_links_the_vector_library_its_candidates_were_built_against(tmp_path):
+    program = outlined()
+    archives = {r.symbol: tmp_path / f"lib{r.symbol}.a" for r in program.scopes}
+    linker = Linker(program, MATRIX, tmp_path)
+
+    vector = linker.library_sdfg(archives, frozenset({Candidate("c", "gcc", fp_level="fast", veclib="libmvec_fast")}))
+    plain = linker.library_sdfg(archives, frozenset({Candidate("c", "gcc")}))
+
+    links = [cpf.render(sdfg, language="c", check_compiles=False).link for sdfg in (vector, plain)]
+    assert "-lmvec" in links[0]
+    assert "-lmvec" not in links[1]
 
 
 def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):

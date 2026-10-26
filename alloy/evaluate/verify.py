@@ -270,8 +270,8 @@ def verify(
     compiles; a duplicate object is judged on its original's outputs at its own FP level."""
     linker = Linker(program, matrix, out)
     reference = {rep.scope.symbol: reference_archive(rep) for rep in reports}
-    ref_compilers = frozenset(rep.builds[0].candidate.compiler for rep in reports)
-    ref_program = linker.compile(reference, "reference", ref_compilers)
+    ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
+    ref_program = linker.compile(reference, "reference", ref_candidates)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
     with Children() as children:
         ref_runs = submit_reference(children, ref_program, cases)
@@ -283,9 +283,7 @@ def verify(
                     continue
                 selection = {**reference, rep.scope.symbol: b.archive}
                 try:
-                    compiled = linker.compile(
-                        selection, f"{rep.scope.symbol}_{b.name}", ref_compilers | {b.candidate.compiler}
-                    )
+                    compiled = linker.compile(selection, f"{rep.scope.symbol}_{b.name}", ref_candidates | {b.candidate})
                 except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
                     pending[rep.scope.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
                     continue

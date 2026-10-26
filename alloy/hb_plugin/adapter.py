@@ -115,7 +115,7 @@ def nothing_to_generate(sdfg: dace.SDFG, matrix: Matrix) -> bool:
 def linked(linker: Linker, selection: dict[str, Build]) -> dace.SDFG:
     """The outlined program calling ``selection[symbol]``'s archive for every scope."""
     archives = {symbol: build.archive for symbol, build in selection.items() if build.archive is not None}
-    return linker.library_sdfg(archives, frozenset(build.candidate.compiler for build in selection.values()))
+    return linker.library_sdfg(archives, frozenset(build.candidate for build in selection.values()))
 
 
 def target_of(task: Task) -> Target:
