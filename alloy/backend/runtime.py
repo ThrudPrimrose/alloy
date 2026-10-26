@@ -4,6 +4,7 @@ OpenMP calls resolve against it. gcc emits ``GOMP_*`` calls, clang/icx/nvc emit 
 libnvomp export both, gcc's libgomp only its own."""
 
 import functools
+import os
 import pathlib
 import re
 import shutil
@@ -32,9 +33,13 @@ def driver_path(executable: str, soname: str) -> pathlib.Path | None:
 
 @functools.lru_cache(maxsize=None, typed=True)
 def find_library(soname: str, executables: tuple[str, ...]) -> pathlib.Path | None:
-    """The first ``lib<soname>.so`` any of ``executables`` resolves, in order."""
+    """The first ``lib<soname>.so`` any of ``executables`` resolves, in order, else the first in ``LIBRARY_PATH``,
+    which every driver's link searches but clang's ``-print-file-name`` does not."""
     for executable in executables:
         if (path := driver_path(executable, soname)) is not None:
+            return path
+    for folder in filter(None, os.environ.get("LIBRARY_PATH", "").split(os.pathsep)):
+        if (path := pathlib.Path(folder) / f"lib{soname}.so").is_file():
             return path
     return None
 

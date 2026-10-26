@@ -170,10 +170,11 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
 
 
 def deduplicated(built: Build, seen: dict[str, str]) -> Build:
-    """``built`` pointing at the first candidate in ``seen`` (object hash -> name) with the same object."""
+    """``built`` pointing at the first candidate in ``seen`` (object and vector library -> name) with the same object
+    linked against the same vector library: SLEEF and libmvec builds share an object but not the code it calls."""
     if built.archive is None:
         return built
-    first = seen.setdefault(built.object_hash, built.name)
+    first = seen.setdefault(f"{built.object_hash}+{built.candidate.veclib}", built.name)
     return built if first == built.name else replace(built, duplicate_of=first)
 
 

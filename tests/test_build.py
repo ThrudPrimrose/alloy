@@ -50,6 +50,19 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
     assert sut.duplicate_of == first.name
 
 
+@pytest.mark.clang
+def test_an_object_linked_against_another_vector_library_is_not_a_duplicate(tmp_path):
+    scope = scope_with(outlined(), libm=True, reduction=False)
+    seen: dict[str, str] = {}
+    level = MATRIX.veclibs["libmvec"].fp_level
+    libmvec = build(scope, Candidate("c", "clang", fp_level=level, veclib="libmvec"), MATRIX, tmp_path, seen)
+
+    sut = build(scope, Candidate("c", "clang", fp_level=level, veclib="sleef"), MATRIX, tmp_path, seen)
+
+    assert sut.object_hash == libmvec.object_hash, "one variant, both spell -fveclib=libmvec: only the link differs"
+    assert sut.duplicate_of == ""
+
+
 def test_a_parallel_sweep_marks_each_duplicate_against_the_first_candidate_in_candidate_order(tmp_path):
     sut = sweep.run(outlined(), gcc_only(tmp_path), tmp_path / "out")
 

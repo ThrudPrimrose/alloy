@@ -194,7 +194,9 @@ no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
 
 [compilers.clang.veclib]
 libmvec = ["-fveclib=libmvec", "-fno-math-errno"]
-sleef = ["-fveclib=SLEEF", "-fno-math-errno"]
+# SLEEF's GNU-ABI library exports glibc's vector names (_ZGV*), which -fveclib=libmvec emits on x86-64 and aarch64
+# alike; -fveclib=SLEEF exists only for aarch64. Linking -lsleefgnuabi binds the calls to SLEEF instead of libmvec.
+sleef = ["-fveclib=libmvec", "-fno-math-errno"]
 armpl = ["-fveclib=ArmPL", "-fno-math-errno"]
 
 [compilers.clang.isa]

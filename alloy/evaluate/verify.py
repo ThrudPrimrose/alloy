@@ -3,7 +3,6 @@
 candidate is one archive copy plus a replayed DaCe build (command cache + precompiled header). Every other scope
 keeps its reference archive, and the outputs are compared against the all-reference program on the same inputs."""
 
-import copy
 import multiprocessing
 import os
 import pathlib
@@ -126,9 +125,9 @@ def in_child(
 
 
 def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[int, ...] | None = None) -> Outcome:
-    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw``, in a child bound to
-    ``cpus`` (default: the first core slot)."""
-    args = {**{k: copy.deepcopy(v) for k, v in draw.values.items()}, **draw.sizes}
+    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw`` (the child unpickles
+    its own), in a child bound to ``cpus`` (default: the first core slot)."""
+    args = {**draw.values, **draw.sizes}
     slot = machine.core_slots()[0] if cpus is None else cpus
     return in_child(call_program, (str(folder), args, outputs), slot, slot_share())
 

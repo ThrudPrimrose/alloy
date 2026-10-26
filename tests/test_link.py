@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 import numpy as np
+import pytest
 from dace.codegen import cpf
 
 from alloy.backend.build import build
@@ -12,7 +13,7 @@ from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Best, Linker, built, execution_order
 from alloy.frontend import scopes
 from alloy.records import dumped_json, validated_json
-from helpers import MATRIX, REDUCTIONS, load_program, outlined
+from helpers import MATRIX, REDUCTIONS, load_program, outlined, scope_with
 
 
 def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program(tmp_path):
@@ -48,6 +49,29 @@ def test_a_library_links_the_vector_library_its_candidates_were_built_against(tm
     links = [cpf.render(sdfg, language="c", check_compiles=False).link for sdfg in (vector, plain)]
     assert "-lmvec" in links[0]
     assert "-lmvec" not in links[1]
+
+
+@pytest.mark.clang
+@pytest.mark.sleef
+def test_a_sleef_build_binds_its_vector_calls_to_sleef_not_to_glibcs_libmvec(tmp_path):
+    program = outlined()
+    libm = scope_with(program, libm=True, reduction=False)
+    sleef = Candidate("c", "clang", fp_level=MATRIX.veclibs["sleef"].fp_level, veclib="sleef")
+    builds = {
+        s.symbol: build(s, sleef if s is libm else Candidate("c", "gcc"), MATRIX, tmp_path / s.symbol, {})
+        for s in program.scopes
+    }
+    linker = Linker(program, MATRIX, tmp_path)
+
+    folder = linker.compile(
+        {k: built(b) for k, b in builds.items()}, "sleef", frozenset(b.candidate for b in builds.values())
+    )
+
+    (library,) = folder.glob(f"build/lib{program.sdfg.name}_*.so")
+    dynamic = subprocess.run(["readelf", "-d", str(library)], capture_output=True, text=True, check=True).stdout
+    needed = [line.split("[")[1].rstrip("]") for line in dynamic.splitlines() if "(NEEDED)" in line]
+    assert any(name.startswith("libsleefgnuabi.so") for name in needed)
+    assert not any(name.startswith("libmvec.so") for name in needed)
 
 
 def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):

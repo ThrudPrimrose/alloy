@@ -64,5 +64,6 @@ markers = [
     "clang: needs clang on PATH",
     "nvhpc: needs the NVIDIA HPC SDK (nvc) on PATH",
     "icx: needs Intel oneAPI (icx) on PATH",
+    "sleef: needs SLEEF (libsleefgnuabi) where the linker finds it",
     "e2e: an LLR kernel of the bench through the whole pipeline",
 ]
