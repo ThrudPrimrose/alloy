@@ -22,9 +22,9 @@ from alloy.frontend.scopes import Scope
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
 NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
-#: An instruction under a mask: an AVX-512 opmask operand (``{%k1}``), an SVE governing predicate (``p0/z``,
-#: ``p1/m``) or an SVE loop predicate (``whilelo``, ``whilelt``).
-MASKED_OPERAND = re.compile(r"\{%k[1-7]\}|\bp\d+/[zm]\b|\bwhile(?:lo|lt|le|ls)\b")
+#: A masked loop: an AVX-512 opmask operand (``{%k1}``) or an SVE loop predicate (``whilelo``, ``whilelt``). Every SVE
+#: instruction names a governing predicate (``p7/m``), all-true under ``ptrue`` in an unmasked loop, so those don't count.
+MASKED_OPERAND = re.compile(r"\{%k[1-7]\}|\bwhile(?:lo|lt|le|ls)\b")
 
 
 @dataclass(slots=True, frozen=True)
@@ -77,10 +77,15 @@ def sve_loops(sdfg: dace.SDFG) -> dace.SDFG:
     return vectorized
 
 
+def masked_lines(listing: str) -> int:
+    """How many instructions of a disassembly listing mask a loop."""
+    return sum(1 for line in listing.splitlines() if MASKED_OPERAND.search(line))
+
+
 def masked_ops(obj: pathlib.Path) -> int:
-    """How many of ``obj``'s instructions run under a mask, from its disassembly."""
+    """How many of ``obj``'s instructions mask a loop, from its disassembly."""
     listing = subprocess.run(["objdump", "-d", "--no-show-raw-insn", str(obj)], capture_output=True, text=True)
-    return sum(1 for line in listing.stdout.splitlines() if MASKED_OPERAND.search(line))
+    return masked_lines(listing.stdout)
 
 
 def parse_remarks(log: str, source: pathlib.Path) -> Remarks:

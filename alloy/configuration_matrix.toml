@@ -77,8 +77,9 @@ needs = "finite_inputs"
 
 # A vector ISA narrower or more specific than -march=native; a candidate's ISA flags follow the build flags. host_flag:
 # the /proc/cpuinfo flag the host must have, else the ISA is skipped. The x86 spellings were checked by the vector
-# registers in the assembly (ymm vs zmm) on a Zen 4; the aarch64 ones by gcc 15 and clang 21 cross compiles for
-# -mcpu=neoverse-v2, where both pick NEON unless forced. Confirm the aarch64 ones on Grace before reporting them.
+# registers in the assembly (ymm vs zmm) on a Zen 4; the aarch64 ones by the z vs v registers of gcc 15 and clang 21
+# cross compiles for -mcpu=neoverse-v1, neoverse-v2 and a64fx. On neoverse-v2 (128-bit SVE) both pick NEON unless
+# forced. Ordered FP reductions use SVE fadda even under the neon spelling. Confirm the aarch64 ones on Grace.
 [isas.avx2]
 host_flag = "avx2"
 
@@ -195,7 +196,8 @@ avx2 = ["-mno-avx512f"]
 avx512_256 = ["-mprefer-vector-width=256"]
 avx512 = ["-mprefer-vector-width=512"]
 neon = ["-mllvm", "-scalable-vectorization=off"]
-sve = ["-mllvm", "-scalable-vectorization=preferred"]
+# neoverse-v2 tuning prefers fixed width at equal cost, which keeps NEON under scalable-vectorization alone
+sve = ["-mllvm", "-scalable-vectorization=preferred", "-mllvm", "-sve-prefer-fixed-over-scalable-if-equal=false"]
 
 # clang folds the tail into masks or keeps a scalar epilogue; it has no masked-epilogue mode.
 [compilers.clang.tail]

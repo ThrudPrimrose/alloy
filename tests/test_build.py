@@ -7,7 +7,7 @@ import pytest
 
 from alloy import configuration_matrix
 from alloy.backend import sweep
-from alloy.backend.build import build, parse_remarks
+from alloy.backend.build import build, masked_lines, parse_remarks
 from alloy.backend.candidates import Candidate
 from alloy.frontend import scopes
 from helpers import MATRIX, gcc_only, outlined, scope_with, variant
@@ -103,6 +103,32 @@ def test_a_full_mask_tail_runs_its_loop_under_masks_and_a_scalar_remainder_does_
     assert full.error == "" and scalar.error == ""
     assert full.masked_ops > 0
     assert scalar.masked_ops == 0
+
+
+#: The SVE loop of ``y[i] = a * x[i] + y[i]`` from gcc 15 -mcpu=neoverse-v1 -O3, aarch64 objdump.
+SVE_SCALAR_REMAINDER = """\
+  28:	ptrue	p7.b
+  2c:	ld1d	{z1.d}, p7/z, [x2, x3, lsl #3]
+  30:	ld1d	{z2.d}, p7/z, [x1, x3, lsl #3]
+  34:	fmla	z1.d, p7/m, z2.d, z31.d
+  38:	st1d	{z1.d}, p7, [x2, x3, lsl #3]
+  44:	b.cs	2c <axpy+0x2c>
+"""
+SVE_FULL_MASK = """\
+  14:	whilelo	p7.d, xzr, x0
+  20:	ld1d	{z31.d}, p7/z, [x1, x3, lsl #3]
+  24:	ld1d	{z30.d}, p7/z, [x2, x3, lsl #3]
+  28:	fmul	z31.d, p7/m, z31.d, z0.d
+  2c:	fadd	z31.d, p7/m, z31.d, z30.d
+  30:	st1d	{z31.d}, p7, [x2, x3, lsl #3]
+  38:	whilelo	p7.d, x3, x0
+  3c:	b.ne	20 <axpy+0x20>
+"""
+
+
+def test_an_sve_loop_under_an_all_true_predicate_is_not_masked_and_one_under_whilelo_is():
+    assert masked_lines(SVE_SCALAR_REMAINDER) == 0
+    assert masked_lines(SVE_FULL_MASK) == 2
 
 
 def test_an_sve_tail_renders_the_scopes_maps_as_explicit_sve_loops(tmp_path):

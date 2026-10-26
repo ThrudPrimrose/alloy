@@ -112,7 +112,12 @@ def test_an_isa_candidate_is_built_with_the_compilers_spelling_of_it():
     out = flips(MATRIX, scope, "c", "clang", finite_inputs=False, max_elements=None, isas=("sve",))
     (sve,) = [c for c in out if c.isa == "sve" and not c.tail]
 
-    assert sve.flags(MATRIX)[-2:] == ("-mllvm", "-scalable-vectorization=preferred")
+    assert sve.flags(MATRIX)[-4:] == (
+        "-mllvm",
+        "-scalable-vectorization=preferred",
+        "-mllvm",
+        "-sve-prefer-fixed-over-scalable-if-equal=false",
+    )
     assert sve.config_name(MATRIX).endswith("_sve")
     assert sve.variant_key(MATRIX) == next(c for c in out if not c.isa and c.note == "default").variant_key(MATRIX)
 
