@@ -165,7 +165,8 @@ def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_wid
 
     assert whole is not None and pieces is not None
     assert len(maps(split)) > 1
-    assert (len(whole.loops), len(pieces.loops)) == (1, len(maps(split)))
+    assert len(whole.loops) == 1
+    assert len(pieces.loops) >= len(maps(split)), "every piece is a loop; a copy across the cut may add one"
     assert pieces.memory > whole.memory, "every widened value is stored and loaded once more per element"
 
 
