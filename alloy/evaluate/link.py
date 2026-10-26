@@ -89,6 +89,15 @@ class Best:
     link: Strings
 
 
+@record(slots=True, frozen=True, config=RECORD)
+class Commands:
+    """The full argv that builds ``best/``: each scope's compile, then the program's link (run in ``best/``)."""
+
+    compile: dict[str, Strings]
+    link: Strings
+    library: str
+
+
 @dataclass(slots=True)
 class Linker:
     """Builds the program with a chosen archive per scope, every scope's archive at ``link/lib<symbol>.a``."""
@@ -185,18 +194,25 @@ class Linker:
         (best / "Makefile").write_text(self.makefile(plan))
         return plan
 
-    def makefile(self, plan: Best) -> str:
+    def commands(self, plan: Best) -> Commands:
+        """The argv of every compile and of the link that ``best/Makefile`` runs."""
         library = f"lib{self.program.sdfg.name}.so"
-        archives = " ".join(f"lib{r.symbol}.a" for r in plan.scopes)
         usable, _ = self.matrix.usable_compilers()
         frame = next(comp.executables["c"] for comp in usable.values() if "c" in comp.executables)
         frame_flags = [self.matrix.languages["c"].std, "-O3", "-fPIC", "-shared"]
-        lines = [f"all: {library}", ""]
+        compiles = {r.symbol: (r.compiler, *r.flags, "-c", r.source, "-o", f"{r.symbol}.o") for r in plan.scopes}
+        link = (frame, *frame_flags, "program.c", "-o", library, *plan.link)
+        return Commands(compile=compiles, link=link, library=library)
+
+    def makefile(self, plan: Best) -> str:
+        commands = self.commands(plan)
+        archives = " ".join(f"lib{r.symbol}.a" for r in plan.scopes)
+        lines = [f"all: {commands.library}", ""]
         for r in plan.scopes:
-            compile_line = shlex.join([r.compiler, *r.flags, "-c", r.source, "-o", f"{r.symbol}.o"])
+            compile_line = shlex.join(commands.compile[r.symbol])
             lines += [f"lib{r.symbol}.a: {r.source}", f"\t{compile_line}", f"\tar rcs $@ {r.symbol}.o", ""]
-        link_line = shlex.join([frame, *frame_flags, "program.c", "-o", library, *plan.link])
-        return "\n".join([*lines, f"{library}: program.c {archives}", f"\t{link_line}", ""])
+        link_line = shlex.join(commands.link)
+        return "\n".join([*lines, f"{commands.library}: program.c {archives}", f"\t{link_line}", ""])
 
     def stub(self, selection: dict[str, Build], symbol: str) -> dace.SDFG:
         """The program, same signature, running the scopes before ``symbol`` and ``symbol`` from ``selection``; later

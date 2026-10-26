@@ -4,6 +4,10 @@ Decisions as of 2026-10-08. Change one only with the owner's approval.
 
 ## What Alloy is
 
+Two products on one core: (1) a DaCe code generation backend (an SDFG with symbolic sizes and a manifest in; it is
+to run automatically as part of DaCe compilation), and (2) an HPCAgent-Bench tool and skill (a manifest with C,
+through the bench's C-to-NumPy translator, or with Python in; the report out). The core never imports the bench.
+
 A code-generation backend for DaCe that compiles speculatively.
 
 1. Input: a Python program written with the dace numpy frontend, with symbolic sizes (`dace.symbol`).
@@ -153,8 +157,22 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 
 ## Report format
 
-Status: built. Per scope: the candidate table, then the re-timed arms with screening median, final median and CI,
-speedup over the reference, and the winner. On top: alloy-full against DaCe default with its speedup.
+Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 2, pydantic, refused on an
+unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
 
-One table per scope: the best candidate, the worst candidate, and the cause, taken from the compiler remark. Every
-interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).
+1. The outlined program's control-flow tree (`alloy/frontend/tree.py`, NestForge's row format without work and
+   depth, duplicated on purpose); each scope is a row named by its entry symbol.
+2. Per scope: signature, traits (libm, reduction, accumulation length), its own tree, how many candidates were built
+   and why the rest dropped out (build failed, duplicate object, failed verification, not screened), its baseline,
+   and its top-k correct variants (k = 5 by default), ranked by screened time, re-timed time where taken.
+3. Verdict: scope x build config (every compiler), each cell the config's fastest correct variant as
+   `ms (speedup)` or why it has none; the chosen candidate per scope; the full compile and link argv that
+   `best/Makefile` runs; the whole program against DaCe's default build.
+
+Baseline: per scope, the matrix-default candidate (DaCe's compiler, default knobs, strict FP, `-march=native`); for
+the program, DaCe's own default build. Every speedup is over one compiler with one flag set.
+
+Modes: `profile` (verified and timed) is built; `speculative` (verified, untimed, picked from the builds' reports and
+outputs) shares the schema and is not built.
+
+Every interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).

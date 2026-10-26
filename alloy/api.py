@@ -53,7 +53,7 @@ def generate(
     out.mkdir(parents=True, exist_ok=True)
     max_elements = None if manifest is None else inputs.largest_array(manifest, program.original)
     reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, max_elements=max_elements)
-    verification, timings, best = None, None, None
+    verification, timings, best, commands = None, None, None, None
     if manifest is not None:
         cases = verify.Cases([inputs.draw(manifest, i) for i in range(iterations)], manifest.outputs)
         verification = verify.verify(program, matrix, reports, cases, out)
@@ -62,5 +62,6 @@ def generate(
             timings = timing.time_program(linker, reports, verification, manifest)
             winners = {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
             best = linker.write_best(winners)
-    report.write(reports, matrix, out, verification, timings, best)
+            commands = linker.commands(best)
+    report.write(program, reports, matrix, out, verification, timings, commands)
     return Result(program, reports, verification, timings, best, out / "report.md")
