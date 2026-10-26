@@ -1,2 +1,2 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy: speculative per-scope code generation backend for DaCe."""
+"""Alloy: per-scope code generation backend for DaCe."""

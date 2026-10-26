@@ -1,26 +1,22 @@
 # Alloy design notes
 
-Decisions as of 2026-10-08. Change one only with the owner's approval.
+Decisions as of 2026-10-26. Change one only with the owner's approval.
 
 ## What Alloy is
 
-Two products on one core: (1) a DaCe code generation backend (an SDFG with symbolic sizes and a manifest in; it is
-to run automatically as part of DaCe compilation), and (2) an HPCAgent-Bench tool and skill (a manifest with C,
-through the bench's C-to-NumPy translator, or with Python in; the report out). The core never imports the bench.
+A per-scope code generation backend for DaCe: each scope is built under many configurations, every build is
+verified, and the best one per scope is linked. Two products share one core:
 
-A code-generation backend for DaCe that compiles speculatively.
+1. **DaCe backend.** Input: an SDFG with symbolic sizes that carries its manifest (today the manifest is passed
+   beside it, `api.generate(sdfg, manifest=)`). To run automatically as part of DaCe compilation.
+2. **HPCAgent-Bench tool and skill.** Input: a manifest plus C or NumPy; the bench turns it into an SDFG (C through
+   its C-to-NumPy translator) and calls 1, so agents never see DaCe. Shipped as a bench user plugin in
+   `alloy/hb_plugin` (tool and skill there); the skill assumes the bench.
 
-1. Input: a Python program written with the dace numpy frontend, with symbolic sizes (`dace.symbol`).
-2. Python goes to an SDFG, which is split into scopes: each top-level nest becomes its own translation unit, with its
-   own compile command and its own static `.a`.
-3. Alloy sweeps rendering candidates per scope, verifies them, times them, and links the best one per scope.
-4. Output:
-   - the full maximally optimized program;
-   - a per-scope report (`report.md` plus `report.json`) with what was good, what was bad, and why. `report.json` is
-     written from the pydantic dataclasses of `alloy/report.py`, and `report.load` reads it back, refusing unknown,
-     missing and mistyped keys with the file named in the error.
-5. An "Alloy" skill tells agents how to write the input and how to call the tool. The paper evaluates agents with and
-   without the report.
+Per run: the program is split into scopes (each top-level nest its own translation unit, compile command and static
+`.a`); Alloy sweeps candidates per scope, verifies them, times them (profile mode) or picks from the builds' reports
+and outputs (speculative mode), and links the best one per scope. Output: the linked program and the report
+([Report format](#report-format)). The paper evaluates agents with and without the report.
 
 Alloy is a separate repository and is installed with uv. NestForge imports Alloy; Alloy never imports NestForge.
 Imports of `hpcagent_bench` stay function-local.
@@ -98,7 +94,7 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
   `OMP_NUM_THREADS` = the physical cores used.
 - Screen on 4 physical cores at the 2-4x working set.
 - Re-time the top 3 per scope on every physical core at full size.
-- Only the re-timed numbers are reported.
+- Variants are ranked by their screened time; the re-timed time is reported beside it.
 - Before timing, one draw at the timing size is compared to the reference: the fuzz draws are capped small, and a
   candidate can break only at large sizes (int32 index overflow).
 - Every arm of a scope is loaded into one process and called alternately on one set of buffers (`measurement.md`).
@@ -108,13 +104,13 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
   it is a tie and the reference stays.
 - Baselines: DaCe's default CPU codegen, then alloy-full, both timed as whole programs.
 
-## Heuristic mode
+## Speculative mode
 
 Status: not built. Picks one candidate per scope from the builds alone, without timing; the pick is still verified.
 
-- FP level: a scope with a reduction or scan gets `reassoc`; without one, `fast` unless the inputs can be NaN or Inf
-  (then `noerrno` + `contract`). A failed verification falls back one level (`fast` to `noerrno`, `reassoc` to
-  `contract`).
+- FP level (shared with NestForge's defaults, owner decision 2026-10-26): a scope with a reduction or scan gets
+  `contract`, never `reassoc`; without one, `fast` when the inputs are declared finite, else `noerrno`. A failed
+  verification falls back one level (`fast` to `noerrno`, `noerrno` to `contract`).
 - `-ffast-math` stays on the scope's compile, never on the link line: gcc then links `crtfastmath.o`, which sets
   FTZ/DAZ for the whole process, `strict` scopes included.
 - Compiler: the one that vectorized the most distinct source loops (`file:line` from the remarks; gcc's epilogue and
@@ -129,7 +125,7 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 
 - Alloy is an HPCAgent-Bench flavor plugin (`alloy/hb_plugin`, entry point `hpcagent_bench.plugins`). Its flavor
   `alloy_profile` extends the DaCe stage columns into `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_profile`: the
-  stage's pipeline output is Alloy's input SDFG. A heuristic flavor (no judge timing) is planned, not registered.
+  stage's pipeline output is Alloy's input SDFG. A speculative flavor (no judge timing) is planned, not registered.
 - Scope coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose scope needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record

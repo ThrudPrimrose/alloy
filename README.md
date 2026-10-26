@@ -1,8 +1,9 @@
 # Alloy
 
-Speculative per-scope code generation backend for DaCe. Input: a dace numpy program with symbolic sizes.
+Per-scope code generation backend for DaCe. Input: a dace numpy program with symbolic sizes (as an SDFG).
 Alloy splits it into scopes, renders each scope under many codegen knobs, compilers and FP levels,
-verifies every candidate, times the survivors, and links the best into one program plus a per-scope report.
+verifies every candidate, times the survivors, and links the best into one program plus a report. On
+HPCAgent-Bench it is a user plugin (`alloy/hb_plugin`): agents give a manifest with C or NumPy and read the report.
 
     uv sync --extra dev
 
@@ -25,12 +26,13 @@ an `args` block); without one, candidates are built but not verified.
 
 Layout:
 
-- `alloy/frontend/`: `scopes` outlines a program, `inputs` draws its inputs from a bench manifest.
+- `alloy/frontend/`: `scopes` outlines a program, `inputs` draws its inputs from a bench manifest, `tree` prints the
+  control-flow tree the report carries.
 - `alloy/backend/`: `candidates` enumerates the sweep, `build` renders, compiles and checks one candidate, `runtime`
   resolves and checks the OpenMP runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from scope archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
-- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report` (writes and loads `report.json`),
+- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
   `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,
   flag and option is in `alloy/configuration_matrix.toml`, validated by the pydantic models of
   `alloy/configuration_matrix.py`.
