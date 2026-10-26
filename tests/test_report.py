@@ -27,10 +27,19 @@ PASSED = Verdict(status="pass", error=1e-16, detail="")
 FAILED = Verdict(status="fail", error=math.inf, detail="out: outside the band")
 
 
-def a_build(tmp_path: pathlib.Path, compiler: str = "gcc", isa: str = "", error: str = "", dup: str = "") -> Build:
-    c = Candidate("c", compiler, isa=isa)
+def a_build(
+    tmp_path: pathlib.Path,
+    compiler: str = "gcc",
+    isa: str = "",
+    error: str = "",
+    dup: str = "",
+    tail: str = "",
+    masked: int = 0,
+) -> Build:
+    c = Candidate("c", compiler, isa=isa, tail=tail)
     archive = None if error else tmp_path / "lib.a"
-    return Build(c, c.name(MATRIX), {}, tmp_path / "v0.c", archive, ("-O3",), "0f", Remarks(1, ("m",)), error, dup)
+    remarks = Remarks(1, ("m",))
+    return Build(c, c.name(MATRIX), {}, tmp_path / "v0.c", archive, ("-O3",), "0f", remarks, error, dup, masked)
 
 
 def ms(median: float) -> Measured:
@@ -139,7 +148,8 @@ def test_a_written_report_carries_the_trees_and_renders_every_scope_and_the_verd
     scope_rows = [child for state in sut.tree.children for child in state.children if child.kind == Kind.SCOPE]
     assert [row.label for row in scope_rows] == [s.symbol for s in program.scopes]
     text = (tmp_path / "report.md").read_text()
-    assert text.count("\n## ") == len(program.scopes) + 1 and "## Verdict" in text
+    assert text.count("\n## ") == len(program.scopes) + 2, "vectorization options, every scope, the verdict"
+    assert "## Verdict" in text
     assert (tmp_path / "configuration_matrix.toml").read_bytes() == MATRIX.path.read_bytes()
 
 
@@ -197,3 +207,32 @@ def test_a_report_of_another_schema_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="report schema 1"):
         report.load(path)
+
+
+def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_path):
+    program = outlined()
+    builds = (
+        a_build(tmp_path),
+        a_build(tmp_path, isa="avx512", tail="full_mask", masked=0),
+        a_build(tmp_path, isa="avx512", tail="masked_remainder", masked=6),
+    )
+    rep = sweep.ScopeReport(program.scopes[0], builds)
+    timing = ScopeTiming(
+        screen={"reference": ms(2e-3), builds[1].name: ms(1e-3), builds[2].name: ms(1e-3)},
+        final={},
+        winner="reference",
+        screen_sizes={},
+        final_sizes={},
+    )
+
+    sut = report.matrix_row(rep, {b.name: PASSED for b in builds}, timing, MATRIX)
+
+    assert sut.cells["gcc_strict_default_none_avx512_full_mask"] == "1.000 (2.00x) not honored"
+    assert sut.cells["gcc_strict_default_none_avx512_masked_remainder"] == "1.000 (2.00x)"
+
+
+def test_the_report_lists_every_isa_and_tail_with_its_compilers_or_the_reason(tmp_path):
+    sut = report.markdown(a_report(tmp_path), MATRIX)
+
+    assert "## Vectorization options" in sut
+    assert "| avx2 |" in sut and "avx2 has no masks" in sut

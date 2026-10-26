@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 from alloy import machine
-from alloy.backend.candidates import flips, one_factor_at_a_time
+from alloy.backend.candidates import flips, one_factor_at_a_time, vector_options
 from helpers import MATRIX, gcc_only, outlined, scope_with
 
 
@@ -32,7 +32,13 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
     per_language = (
         1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
     )
-    per_language += sum(1 for isa in matrix.host_isas(machine.cpu_flags()) if isa in gcc.isa)
+    host = matrix.host_isas(machine.cpu_flags())
+    per_language += sum(1 for isa in host if isa in gcc.isa)
+    per_language += sum(
+        1 if not tail.isas else sum(1 for isa in tail.isas if isa in host and isa in gcc.isa)
+        for name, tail in matrix.tails.items()
+        if name in gcc.tail
+    )
     assert {c.compiler for c in sut} == {"gcc"}
     assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
     assert len(sut) == len(matrix.languages) * per_language
@@ -104,8 +110,58 @@ def test_an_isa_is_tried_only_where_the_host_runs_it_and_the_compiler_spells_it(
 def test_an_isa_candidate_is_built_with_the_compilers_spelling_of_it():
     scope = scope_with(outlined(), libm=False, reduction=True)
     out = flips(MATRIX, scope, "c", "clang", finite_inputs=False, max_elements=None, isas=("sve",))
-    (sve,) = [c for c in out if c.isa == "sve"]
+    (sve,) = [c for c in out if c.isa == "sve" and not c.tail]
 
-    assert sve.flags(MATRIX)[-2:] == ("-mllvm", "-prefer-predicate-over-epilogue=predicate-else-scalar-epilogue")
+    assert sve.flags(MATRIX)[-2:] == ("-mllvm", "-scalable-vectorization=preferred")
     assert sve.config_name(MATRIX).endswith("_sve")
     assert sve.variant_key(MATRIX) == next(c for c in out if not c.isa and c.note == "default").variant_key(MATRIX)
+
+
+def tails(compiler: str, isas: tuple[str, ...]) -> set[tuple[str, str]]:
+    scope = scope_with(outlined(), libm=False, reduction=True)
+    out = flips(MATRIX, scope, "c", compiler, finite_inputs=False, max_elements=None, isas=isas)
+    return {(c.tail, c.isa) for c in out if c.tail}
+
+
+def test_a_masked_tail_is_tried_only_on_a_host_isa_with_masks():
+    sut = tails("gcc", ("avx2", "avx512"))
+
+    assert sut == {
+        ("scalar_remainder", ""),
+        ("masked_remainder", "avx512"),
+        ("full_mask", "avx512"),
+    }
+
+
+def test_clang_has_no_masked_epilogue_and_explicit_sve_loops_need_an_sve_host():
+    assert ("masked_remainder", "avx512") not in tails("clang", ("avx512",))
+    assert ("full_mask", "avx512") in tails("clang", ("avx512",))
+    assert ("sve_intrinsics", "sve") in tails("gcc", ("sve",))
+    assert not any(tail == "sve_intrinsics" for tail, _ in tails("gcc", ("avx512",)))
+
+
+def test_a_tail_is_built_with_the_compilers_spelling_and_names_its_config():
+    scope = scope_with(outlined(), libm=False, reduction=True)
+    out = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None, isas=("avx512",))
+    (full,) = [c for c in out if c.tail == "full_mask"]
+    (sve,) = [
+        c
+        for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None, isas=("sve",))
+        if c.tail == "sve_intrinsics"
+    ]
+
+    assert full.flags(MATRIX)[-1] == "--param=vect-partial-vector-usage=2"
+    assert full.config_name(MATRIX).endswith("_avx512_full_mask")
+    assert full.variant_key(MATRIX) == out[0].variant_key(MATRIX), "a flag tail renders the default source"
+    assert sve.variant_key(MATRIX) != out[0].variant_key(MATRIX), "explicit SVE loops are a source of their own"
+
+
+def test_each_isa_and_tail_says_which_compilers_build_it_or_why_none_can():
+    zen4 = frozenset({"avx2", "avx512f"})
+
+    sut = {(o.isa, o.tail): o for o in vector_options(MATRIX, zen4)}
+
+    assert sut[("avx2", "full_mask")].reason == "avx2 has no masks"
+    assert sut[("sve", "full_mask")].reason == "host lacks sve"
+    assert sut[("avx512", "full_mask")].reason == "" and "gcc" in sut[("avx512", "full_mask")].compilers
+    assert "clang" not in sut[("avx512", "masked_remainder")].compilers

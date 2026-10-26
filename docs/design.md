@@ -46,6 +46,12 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   - `noerrno` (`-fno-math-errno -fno-trapping-math`)
   - `reassoc`: only for scopes with a reduction or scan.
   - `fast`: never when inputs can be NaN or Inf.
+- Loop tail (`[tails]`): `scalar_remainder`, `masked_remainder` (masked epilogue) and `full_mask` (every
+  iteration masked) as compiler flags (gcc `--param=vect-partial-vector-usage=0/1/2`, clang
+  `-prefer-predicate-over-epilogue`, which has no masked epilogue), the masked ones only on an ISA with masks the host
+  runs (AVX-512, SVE); `sve_intrinsics` renders the scope's maps as explicit SVE loops (DaCe `SVEVectorization`, CPF
+  renders them), only on an SVE host. A scope the SVE loop cannot express (a libm call) is a failed build naming why.
+  Every build counts its masked instructions from the object; a masked tail without any is reported "not honored".
 - Vector math library (libmvec / SVML / SLEEF): opened only when the scope calls libm (sin, cos, exp, log, pow, ...),
   at its FP level's requirement: gcc reaches libmvec only under `-ffast-math`, so that build needs finite inputs.
 - Pruning:
@@ -154,7 +160,9 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 ## Report format
 
 Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 2, pydantic, refused on an
-unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
+unknown key, a wrong type or another schema; now 3); `report.md` is rendered from it and nothing else.
+
+0. The vectorization options: every ISA x loop tail, with the compilers that build it on this host or why none can.
 
 1. The outlined program's control-flow tree (`alloy/frontend/tree.py`, NestForge's row format without work and
    depth, duplicated on purpose); each scope is a row named by its entry symbol.

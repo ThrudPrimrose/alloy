@@ -55,6 +55,15 @@ class Isa:
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)
+class Tail:
+    """A vectorized loop's tail: the ISAs with masks it needs (any when empty), and whether it renders the scope's
+    loops as explicit SVE loops instead of leaving them to the auto-vectorizer."""
+
+    isas: tuple[str, ...]
+    render: Literal["", "sve"] = ""
+
+
+@dataclass(slots=True, frozen=True, config=STRICT)
 class Compiler:
     """How one compiler spells every option; a runtime, cost model or vector library it does not list is
     unsupported."""
@@ -66,6 +75,7 @@ class Compiler:
     cost_model: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     veclib: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     isa: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    tail: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     support_libraries: tuple[str, ...] = ()
 
     def missing_executables(self) -> list[str]:
@@ -117,6 +127,7 @@ class MatrixFile:
     fp_levels: dict[str, FPLevel]
     veclibs: dict[str, Veclib]
     isas: dict[str, Isa]
+    tails: dict[str, Tail]
     compilers: dict[str, Compiler]
     codegen: Codegen
     timing: Timing
@@ -133,6 +144,7 @@ class Matrix:
     fp_levels: dict[str, FPLevel]
     veclibs: dict[str, Veclib]
     isas: dict[str, Isa]
+    tails: dict[str, Tail]
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     index_widths: dict[str, dict[str, str]]
@@ -186,12 +198,16 @@ def check_consistency(m: Matrix) -> None:
             ("fp", comp.fp, m.fp_levels, True),
             ("veclib", comp.veclib, m.veclibs, False),
             ("isa", comp.isa, m.isas, False),
+            ("tail", comp.tail, m.tails, False),
         )
         for option, spelled, declared, complete in options:
             if reason := unknown_options(name, option, spelled, declared, complete=complete):
                 raise ValueError(f"{m.path}: {reason}")
         if d.cost_model not in comp.cost_model:
             raise ValueError(f"{m.path}: compilers.{name} does not spell the default cost model {d.cost_model!r}")
+    for name, tail in m.tails.items():
+        if unknown := sorted(set(tail.isas) - m.isas.keys()):
+            raise ValueError(f"{m.path}: tails.{name}.isas names undeclared ISAs {unknown}")
     for name, lib in m.veclibs.items():
         if lib.fp_level not in m.fp_levels:
             raise ValueError(f"{m.path}: veclibs.{name}.fp_level {lib.fp_level!r} is not declared")
@@ -224,6 +240,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         fp_levels=f.fp_levels,
         veclibs=f.veclibs,
         isas=f.isas,
+        tails=f.tails,
         compilers=f.compilers,
         knobs=f.codegen.knobs,
         index_widths=f.codegen.index_widths,

@@ -11,7 +11,9 @@ import shutil
 
 from pydantic.dataclasses import dataclass
 
+from alloy import machine
 from alloy.backend.build import Build
+from alloy.backend.candidates import vector_options
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Commands
@@ -23,7 +25,7 @@ from alloy.frontend.tree import CfgNode
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 2
+SCHEMA = 3
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -76,10 +78,24 @@ class Variant:
     object_hash: str
     vectorized_loops: int
     missed: Strings
+    tail: str
+    masked_ops: int
+    #: Whether a tail that needs masks got masked instructions; ``None`` for a tail that needs none.
+    honored: bool | None
     correctness: Correctness | None
     screen: Time | None
     final: Time | None
     speedup: float | None
+
+
+@dataclass(slots=True, frozen=True, config=RECORD)
+class VectorChoice:
+    """One ISA x loop tail cell: the compilers that build it on this host, or why none can."""
+
+    isa: str
+    tail: str
+    compilers: Strings
+    reason: str
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -139,6 +155,7 @@ class Report:
     mode: Mode
     program: str
     tree: CfgNode
+    vectorization: tuple[VectorChoice, ...]
     nondeterministic_outputs: Strings
     scopes: tuple[ScopeRecord, ...]
     verdict: Final
@@ -155,6 +172,13 @@ def correctness(verdict: Verdict | None) -> Correctness | None:
     if verdict is None:
         return None
     return Correctness(status=verdict.status, max_rel_error=verdict.error, detail=verdict.detail or None)
+
+
+def honored(b: Build, matrix: Matrix) -> bool | None:
+    """Whether ``b``'s tail, when it needs masks, shows masked instructions in its object."""
+    if not b.candidate.tail or not matrix.tails[b.candidate.tail].isas:
+        return None
+    return b.masked_ops > 0
 
 
 def arm(rep: ScopeReport, b: Build) -> str:
@@ -203,6 +227,9 @@ def variant(
         object_hash=b.object_hash,
         vectorized_loops=b.remarks.vectorized,
         missed=b.remarks.missed[:MISSED_SHOWN],
+        tail=b.candidate.tail,
+        masked_ops=b.masked_ops,
+        honored=honored(b, matrix),
         correctness=correctness(verdict),
         screen=as_time(screen),
         final=as_time(final),
@@ -249,7 +276,8 @@ def matrix_row(rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTimi
         median = timing.screen[arm(rep, b)].median
         if config not in best or median < best[config]:
             best[config] = median
-            cells[config] = f"{1e3 * median:.3f} ({base / median:.2f}x)"
+            note = " not honored" if honored(b, matrix) is False else ""
+            cells[config] = f"{1e3 * median:.3f} ({base / median:.2f}x){note}"
     return MatrixRow(scope=rep.scope.symbol, cells=cells)
 
 
@@ -310,6 +338,10 @@ def assemble(
         mode=Mode.PROFILE,
         program=program.sdfg.name,
         tree=tree.cfg_tree(program.sdfg),
+        vectorization=tuple(
+            VectorChoice(isa=o.isa, tail=o.tail, compilers=o.compilers, reason=o.reason)
+            for o in vector_options(matrix, machine.cpu_flags())
+        ),
         nondeterministic_outputs=tuple(sorted(verification.nondeterministic)) if verification else (),
         scopes=scopes,
         verdict=final(reports, verdicts, timing, commands, matrix),
@@ -325,10 +357,22 @@ def variant_row(v: Variant) -> str:
     status = "-" if v.correctness is None else v.correctness.status
     speedup = "-" if v.speedup is None else f"{v.speedup:.2f}x"
     missed = v.missed[0] if v.missed else ""
+    masked = f"{v.masked_ops}{' (not honored)' if v.honored is False else ''}"
     return (
         f"| {v.rank} | {v.name} | {v.config} | {status} | {time_text(v.screen)} | {time_text(v.final)} | {speedup} "
-        f"| {v.vectorized_loops} | {missed} |"
+        f"| {v.vectorized_loops} | {masked} | {missed} |"
     )
+
+
+def vectorization_lines(choices: tuple[VectorChoice, ...]) -> list[str]:
+    """ISA (row) x loop tail (column): the compilers that build the cell, or why none can."""
+    tails = list(dict.fromkeys(c.tail for c in choices))
+    rows: dict[str, dict[str, str]] = {}
+    for c in choices:
+        rows.setdefault(c.isa, {})[c.tail] = ", ".join(c.compilers) if c.compilers else c.reason
+    lines = ["## Vectorization options", "", "| isa | " + " | ".join(tails) + " |", "|---" * (len(tails) + 1) + "|"]
+    lines += [f"| {isa} | " + " | ".join(row.get(t, "-") for t in tails) + " |" for isa, row in rows.items()]
+    return [*lines, ""]
 
 
 def scope_lines(s: ScopeRecord) -> list[str]:
@@ -345,8 +389,8 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         tree.render(s.tree),
         "```",
         "",
-        "| rank | candidate | config | verified | screen ms | final ms | speedup | vectorized | first missed |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| rank | candidate | config | verified | screen ms | final ms | speedup | vectorized | masked ops | first missed |",
+        "|---|---|---|---|---|---|---|---|---|---|",
         *(variant_row(v) for v in s.top),
         "",
     ]
@@ -388,6 +432,7 @@ def markdown(r: Report, matrix: Matrix) -> str:
     _, skipped = matrix.usable_compilers()
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
     lines += [""] if skipped else []
+    lines += vectorization_lines(r.vectorization)
     for s in r.scopes:
         lines += scope_lines(s)
     return "\n".join([*lines, *verdict_lines(r.verdict)])

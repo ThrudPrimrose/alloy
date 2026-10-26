@@ -94,6 +94,22 @@ host_flag = "asimd"
 [isas.sve]
 host_flag = "sve"
 
+# The tail of a vectorized loop. isas: the ISAs with masks it needs (empty: any ISA). render = "sve": the scope's
+# innermost maps become explicit Arm SVE predicated loops (DaCe's SVEVectorization) instead of being left to the
+# auto-vectorizer. A candidate without a tail keeps the compiler's own choice.
+[tails.scalar_remainder]
+isas = []
+
+[tails.masked_remainder]  # unmasked main loop, masked epilogue
+isas = ["avx512_256", "avx512", "sve"]
+
+[tails.full_mask]  # every iteration masked, no epilogue
+isas = ["avx512_256", "avx512", "sve"]
+
+[tails.sve_intrinsics]
+isas = ["sve"]
+render = "sve"
+
 # probe: library name the linker must find. fp_level: the level a vector-library candidate builds at.
 [veclibs.libmvec]
 probe = "mvec"
@@ -143,6 +159,13 @@ avx512 = ["-mprefer-vector-width=512"]
 neon = ["--param=aarch64-autovec-preference=asimd-only"]
 sve = ["--param=aarch64-autovec-preference=sve-only"]
 
+# 0: scalar remainder loop; 1: masked epilogue; 2: every iteration masked. Checked by the masked operands in the asm.
+[compilers.gcc.tail]
+scalar_remainder = ["--param=vect-partial-vector-usage=0"]
+masked_remainder = ["--param=vect-partial-vector-usage=1"]
+full_mask = ["--param=vect-partial-vector-usage=2"]
+sve_intrinsics = []
+
 # clang/clang++ on PATH must come with its LLVM libomp; point PATH (or a copied matrix) at the version that has it.
 [compilers.clang]
 c = "clang"
@@ -172,7 +195,13 @@ avx2 = ["-mno-avx512f"]
 avx512_256 = ["-mprefer-vector-width=256"]
 avx512 = ["-mprefer-vector-width=512"]
 neon = ["-mllvm", "-scalable-vectorization=off"]
-sve = ["-mllvm", "-prefer-predicate-over-epilogue=predicate-else-scalar-epilogue"]  # tail-folded SVE
+sve = ["-mllvm", "-scalable-vectorization=preferred"]
+
+# clang folds the tail into masks or keeps a scalar epilogue; it has no masked-epilogue mode.
+[compilers.clang.tail]
+scalar_remainder = ["-mllvm", "-prefer-predicate-over-epilogue=scalar-epilogue"]
+full_mask = ["-mllvm", "-prefer-predicate-over-epilogue=predicate-dont-vectorize"]
+sve_intrinsics = []
 
 # Intel oneAPI; on PATH after `source /opt/intel/oneapi/setvars.sh`. icx defaults to -fp-model=fast, so every
 # level is spelled explicitly.

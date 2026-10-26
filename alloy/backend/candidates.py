@@ -18,7 +18,7 @@ RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 class Candidate:
     """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
     an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
-    flags' ``-march=native``."""
+    flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail."""
 
     language: str
     compiler: str
@@ -28,6 +28,7 @@ class Candidate:
     cost_model: str = ""
     veclib: str = "none"
     isa: str = ""
+    tail: str = ""
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str, str]:
@@ -41,17 +42,24 @@ class Candidate:
 
     def name(self, matrix: Matrix) -> str:
         width, level, model = self.resolved(matrix)
-        parts = [self.language, self.compiler, width, level, model, self.veclib, *([self.isa] if self.isa else [])]
+        parts = [self.language, self.compiler, width, level, model, self.veclib, *filter(None, (self.isa, self.tail))]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
 
     def variant_key(self, matrix: Matrix) -> RenderKey:
-        """The code variant this candidate compiles: candidates with one key share one source."""
-        return self.language, tuple(sorted(self.codegen_params(matrix).items()))
+        """The code variant this candidate compiles: candidates with one key share one source. An explicit SVE
+        rendering is a variant of its own."""
+        params = tuple(sorted(self.codegen_params(matrix).items()))
+        render = self.render(matrix)
+        return self.language, ((*params, ("render", render)) if render else params)
+
+    def render(self, matrix: Matrix) -> str:
+        """How the scope's loops are rendered: ``"sve"`` for explicit SVE loops, empty for the auto-vectorizer."""
+        return matrix.tails[self.tail].render if self.tail else ""
 
     def config_name(self, matrix: Matrix) -> str:
         """The build configuration, everything but the source: the column of the scope's runtime matrix."""
         _, level, model = self.resolved(matrix)
-        return "_".join([self.compiler, level, model, self.veclib, self.isa or "native"])
+        return "_".join([self.compiler, level, model, self.veclib, self.isa or "native", *filter(None, (self.tail,))])
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
@@ -62,11 +70,12 @@ class Candidate:
 
     def flags(self, matrix: Matrix) -> tuple[str, ...]:
         """Compile flags: language standard, build flags, then this compiler's spelling of the default OpenMP
-        runtime, the FP level, the cost model, the vector library and the ISA."""
+        runtime, the FP level, the cost model, the vector library, the ISA and the loop tail."""
         comp = matrix.compilers[self.compiler]
         _, level, model = self.resolved(matrix)
         veclib = comp.veclib[self.veclib] if self.veclib != "none" else ()
         isa = comp.isa[self.isa] if self.isa else ()
+        tail = comp.tail[self.tail] if self.tail else ()
         return (
             matrix.languages[self.language].std,
             *matrix.build_flags,
@@ -75,6 +84,7 @@ class Candidate:
             *comp.cost_model[model],
             *veclib,
             *isa,
+            *tail,
         )
 
 
@@ -124,6 +134,7 @@ def flips(
     ]
     out += [Candidate(language, compiler, fp_level=lv, note=f"fp {lv}") for lv in levels if lv != d.fp_level]
     out += [Candidate(language, compiler, isa=i, note=f"isa {i}") for i in isas if i in comp.isa]
+    out += tail_flips(matrix, language, compiler, isas)
     out += [
         Candidate(language, compiler, cost_model=m, note=f"cost model {m}")
         for m in comp.cost_model
@@ -135,6 +146,51 @@ def flips(
             for lib in available_veclibs(matrix, comp)
             if matrix.veclibs[lib].fp_level in levels
         ]
+    return out
+
+
+def tail_flips(matrix: Matrix, language: str, compiler: str, isas: tuple[str, ...]) -> list[Candidate]:
+    """Every loop tail the compiler spells: a tail any ISA takes on its own, a masked one with each masked ISA the
+    host runs and the compiler spells."""
+    comp = matrix.compilers[compiler]
+    out = []
+    for name, tail in matrix.tails.items():
+        if name not in comp.tail:
+            continue
+        if not tail.isas:
+            out.append(Candidate(language, compiler, tail=name, note=f"tail {name}"))
+            continue
+        masked = [i for i in tail.isas if i in isas and i in comp.isa]
+        out += [Candidate(language, compiler, isa=i, tail=name, note=f"tail {name} on {i}") for i in masked]
+    return out
+
+
+@dataclass(slots=True, frozen=True)
+class VectorOption:
+    """One ISA x loop tail cell: the compilers that can build it on this host, or why none can."""
+
+    isa: str
+    tail: str
+    compilers: tuple[str, ...]
+    reason: str
+
+
+def vector_options(matrix: Matrix, cpu_flags: frozenset[str]) -> list[VectorOption]:
+    """Every declared ISA x tail, and what this host and its usable compilers can build of it."""
+    usable, _ = matrix.usable_compilers()
+    out = []
+    for isa_name, isa in matrix.isas.items():
+        for tail_name, tail in matrix.tails.items():
+            builders = tuple(c for c, comp in usable.items() if isa_name in comp.isa and tail_name in comp.tail)
+            if tail.isas and isa_name not in tail.isas:
+                reason = f"{isa_name} has no masks"
+            elif isa.host_flag not in cpu_flags:
+                reason = f"host lacks {isa.host_flag}"
+            elif not builders:
+                reason = f"no usable compiler spells {tail_name} on {isa_name}"
+            else:
+                reason = ""
+            out.append(VectorOption(isa_name, tail_name, builders if not reason else (), reason))
     return out
 
 

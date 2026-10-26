@@ -43,3 +43,10 @@ def test_only_the_isas_the_host_lists_are_offered():
 
     assert MATRIX.host_isas(zen3_flags) == ("avx2",)
     assert MATRIX.host_isas(grace_flags) == ("neon", "sve")
+
+
+def test_a_tail_naming_an_undeclared_isa_is_refused(tmp_path):
+    path = variant(tmp_path, 'isas = ["sve"]\nrender = "sve"', 'isas = ["sme"]\nrender = "sve"')
+
+    with pytest.raises(ValueError, match=r"tails\.sve_intrinsics\.isas names undeclared ISAs \['sme'\]"):
+        configuration_matrix.load(path)

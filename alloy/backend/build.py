@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Render a scope under a candidate, compile it to a static archive, and keep the vectorizer's remarks."""
 
+import copy
 import hashlib
 import pathlib
 import re
@@ -8,8 +9,10 @@ import subprocess
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 
+import dace
 from dace.codegen import cpf
 from dace.config import set_temporary
+from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
 from alloy.backend import runtime
 from alloy.backend.candidates import Candidate, RenderKey
@@ -19,6 +22,9 @@ from alloy.frontend.scopes import Scope
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
 NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
+#: An instruction under a mask: an AVX-512 opmask operand (``{%k1}``), an SVE governing predicate (``p0/z``,
+#: ``p1/m``) or an SVE loop predicate (``whilelo``, ``whilelt``).
+MASKED_OPERAND = re.compile(r"\{%k[1-7]\}|\bp\d+/[zm]\b|\bwhile(?:lo|lt|le|ls)\b")
 
 
 @dataclass(slots=True, frozen=True)
@@ -44,20 +50,37 @@ class Build:
     remarks: Remarks
     error: str = ""
     duplicate_of: str = ""
+    #: Instructions of the object that run under a mask (:data:`MASKED_OPERAND`).
+    masked_ops: int = 0
 
 
 def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
-    """The scope's CPF translation unit under ``candidate``'s language and codegen knobs."""
+    """The scope's CPF translation unit under ``candidate``'s language and codegen knobs; under an SVE tail its
+    innermost maps are explicit SVE loops."""
+    sdfg = sve_loops(scope.sdfg) if candidate.render(matrix) == "sve" else scope.sdfg
     with ExitStack() as stack:
         for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
         rendering = cpf.render(
-            scope.sdfg,
+            sdfg,
             language=matrix.languages[candidate.language].render,
             signature=cpf.EntrySignature(order=list(scope.abi_order)),
             check_compiles=False,
         )
     return rendering.code
+
+
+def sve_loops(sdfg: dace.SDFG) -> dace.SDFG:
+    """A copy of ``sdfg`` with every map SVEVectorization takes rendered as an explicit SVE predicated loop."""
+    vectorized = copy.deepcopy(sdfg)
+    vectorized.apply_transformations_repeated(SVEVectorization)
+    return vectorized
+
+
+def masked_ops(obj: pathlib.Path) -> int:
+    """How many of ``obj``'s instructions run under a mask, from its disassembly."""
+    listing = subprocess.run(["objdump", "-d", "--no-show-raw-insn", str(obj)], capture_output=True, text=True)
+    return sum(1 for line in listing.stdout.splitlines() if MASKED_OPERAND.search(line))
 
 
 def parse_remarks(log: str, source: pathlib.Path) -> Remarks:
@@ -95,6 +118,16 @@ def compile_candidate(
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
+def rendered_or_error(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
+    """:func:`render`, or a unit whose compile fails with the reason the scope cannot be rendered so (an SVE loop
+    over a call SVE has no instruction for): the candidate is a failed build that names its cause."""
+    try:
+        return render(scope, candidate, matrix)
+    except NotImplementedError as err:
+        reason = " ".join(str(err).split())
+        return f"#error alloy: {candidate.note} cannot be rendered: {reason}\n"
+
+
 def write_source(
     scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, pathlib.Path]
 ) -> pathlib.Path:
@@ -105,7 +138,7 @@ def write_source(
         variants = folder / "variants"
         variants.mkdir(parents=True, exist_ok=True)
         source = variants / f"v{len(renders)}.{matrix.languages[candidate.language].suffix}"
-        source.write_text(render(scope, candidate, matrix))
+        source.write_text(rendered_or_error(scope, candidate, matrix))
         renders[key] = source
     return renders[key]
 
@@ -128,7 +161,7 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
     archive = builds / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
-    return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks)
+    return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks, masked_ops=masked_ops(obj))
 
 
 def deduplicated(built: Build, seen: dict[str, str]) -> Build:
