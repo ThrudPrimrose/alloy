@@ -1,9 +1,17 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """The CPUs Alloy runs on: one hardware thread per physical core, never an SMT sibling."""
 
+import functools
 import os
 import pathlib
+import re
 import resource
+import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+
+import numpy as np
 
 #: Threads per verification child: comparisons stay multithreaded, so a parallel reduction shows its nondeterminism.
 CHILD_THREADS = 4
@@ -95,3 +103,87 @@ def core_slots() -> list[tuple[int, ...]]:
 def compile_jobs() -> int:
     """Compilers run at once: one per physical core, fewer when the available memory does not cover them."""
     return max(1, min(len(physical_cores()), available_memory() // COMPILE_BYTES))
+
+
+#: A saved ``dmidecode -t 17`` (reading the DMI tables needs root): this variable's path, else the default below.
+MEMORY_DEVICES_VARIABLE = "ALLOY_MEMORY_DEVICES"
+#: Bytes each thread of the copy measurement streams through, per copy (well beyond any cache).
+STREAM_BYTES_PER_THREAD = 64 << 20
+
+
+@dataclass(slots=True, frozen=True)
+class Bandwidth:
+    """Main-memory bandwidth in bytes per second and where it comes from: ``dmidecode`` (the installed modules'
+    theoretical peak) or ``stream`` (a measured parallel copy)."""
+
+    bytes_per_second: float
+    source: str
+
+
+def memory_devices_file() -> pathlib.Path:
+    cache = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache"))
+    return pathlib.Path(os.environ.get(MEMORY_DEVICES_VARIABLE, cache / "alloy" / "dmidecode-17.txt"))
+
+
+def memory_devices_text() -> str:
+    """``dmidecode -t 17`` output: the saved file when there is one, else a direct run; empty when neither works."""
+    saved = memory_devices_file()
+    if saved.is_file():
+        return saved.read_text()
+    try:
+        run = subprocess.run(["dmidecode", "-t", "17"], capture_output=True, text=True, check=False, timeout=30)
+    except FileNotFoundError:
+        return ""
+    return run.stdout if run.returncode == 0 else ""
+
+
+def theoretical_bandwidth(text: str) -> float | None:
+    """The installed modules' peak in bytes per second: the sum of configured MT/s x data width over every device
+    with a module; ``None`` when the text lists none with a speed and a width."""
+    total = 0.0
+    for device in text.split("Memory Device")[1:]:
+        if re.search(r"^\s*Size:\s*No Module Installed", device, re.MULTILINE):
+            continue
+        speed = re.search(r"^\s*Configured (?:Memory|Clock) Speed:\s*(\d+)\s*MT/s", device, re.MULTILINE) or re.search(
+            r"^\s*Speed:\s*(\d+)\s*MT/s", device, re.MULTILINE
+        )
+        width = re.search(r"^\s*Data Width:\s*(\d+)\s*bits", device, re.MULTILINE)
+        if speed is not None and width is not None:
+            total += int(speed.group(1)) * 1e6 * int(width.group(1)) / 8
+    return total or None
+
+
+def stream_bandwidth(threads: int, rounds: int = 3) -> float:
+    """A measured parallel copy: every thread copies its own arrays (numpy releases the GIL), the best of ``rounds``;
+    bytes read plus bytes written per second."""
+    sources = [np.ones(STREAM_BYTES_PER_THREAD // 8) for _ in range(threads)]
+    targets = [np.empty_like(s) for s in sources]
+    best = 0.0
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        for _ in range(rounds):
+            start = time.perf_counter()
+            list(pool.map(np.copyto, targets, sources))
+            best = max(best, 2 * STREAM_BYTES_PER_THREAD * threads / (time.perf_counter() - start))
+    return best
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def memory_bandwidth() -> Bandwidth:
+    """Main-memory bandwidth: the theoretical peak from ``dmidecode -t 17`` when available, else measured."""
+    peak = theoretical_bandwidth(memory_devices_text())
+    if peak is not None:
+        return Bandwidth(peak, "dmidecode")
+    return Bandwidth(stream_bandwidth(len(physical_cores())), "stream")
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def max_frequency_hz() -> float:
+    """The first usable CPU's maximum clock: cpufreq's ``cpuinfo_max_freq``, else the highest ``cpu MHz`` listed."""
+    cpu = min(os.sched_getaffinity(0))
+    path = pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq")
+    if path.is_file():
+        return int(path.read_text()) * 1e3
+    mhz = re.findall(r"^cpu MHz\s*:\s*([\d.]+)", pathlib.Path("/proc/cpuinfo").read_text(), re.MULTILINE)
+    if not mhz:
+        raise RuntimeError("neither cpufreq nor /proc/cpuinfo gives a CPU clock")
+    return max(float(m) for m in mhz) * 1e6

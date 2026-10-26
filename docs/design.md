@@ -185,12 +185,23 @@ the program, DaCe's own default build. Every speedup is over one compiler with o
 
 Modes (`api.generate(..., mode=)`):
 - `profile`: verified and timed; variants ranked by time.
-- `speculative` (`alloy/heuristics/predict.py`): verified, untimed. Each build's innermost loops come from its
-  disassembly (backward branches); llvm-mca on the host CPU gives cycles per iteration (loop-carried chains
-  included), the bytes the loop's non-stack memory operations move over (element bytes x distinct accesses per
-  element) give elements per iteration, and each hot call adds a fixed cost llvm-mca cannot see (vector math calls in
-  a vector loop; every call in a scalar loop). The hot loop is the one handling the most elements per iteration; the
-  pick is the correct build with the fewest cycles per element, ties to the default FP level (`heuristics/fp.py`).
-  The verdict matrix shows `cycles/elem`; `best/` links the picks. Regret against profile mode is a paper metric.
+- `speculative` (`alloy/heuristics/predict.py`): verified, untimed; each build gets a roofline cost per element.
+  - Loops: the object's innermost loops (backward branches), grouped into source loops by the tasklets their line
+    tables render (every compiler emits line tables, `[compilers.*] line_tables`; no code change, stripped before
+    objects are compared). A main loop and its epilogues are one group; its hot copy handles the most elements per
+    iteration. A loop rendering no statement (OpenMP chunking) only counts when none does.
+  - Compute: llvm-mca on the host CPU (loop-carried chains included) over elements per iteration (bytes the loop's
+    non-stack memory operations move / (element bytes x distinct accesses)), plus a fixed cost per hot call
+    (vector math in a vector loop, every call in a scalar one); weighted by each source loop's iterations at the
+    preset sizes over the scope's largest map's, spread over the physical cores.
+  - Memory: the source loops' bytes per element over main-memory bandwidth (cycles at the maximum clock), once the
+    scope's arrays fill more than half the largest cache. Bandwidth (`machine.memory_bandwidth`): the installed
+    modules' peak from a saved `dmidecode -t 17` (`$ALLOY_MEMORY_DEVICES`, default
+    `$XDG_CACHE_HOME/alloy/dmidecode-17.txt`; `sudo dmidecode -t 17 > that` once), else `dmidecode` run directly,
+    else a measured parallel copy.
+  - Pick: the correct build with the lowest cost; builds within 2% tie and go to the default FP level
+    (`heuristics/fp.py`), then sweep order. The verdict matrix shows `cycles/elem`; `best/` links the picks.
+  - Regret against profile mode is a paper metric. `scale` at 16 MiB (gcc + clang, 28 timed): the pick is the profile
+    winner (regret 0); before the memory term it was the 27th of 28.
 
 Every interesting win or loss also becomes an A/B folder in `samples/` (see `measurement.md`).

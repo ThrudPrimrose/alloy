@@ -116,10 +116,10 @@ def code_hash(obj: pathlib.Path) -> str:
 def compile_candidate(
     source: pathlib.Path, obj: pathlib.Path, candidate: Candidate, matrix: Matrix, flags: tuple[str, ...]
 ) -> subprocess.CompletedProcess[str]:
-    """Compile ``source`` with ``flags`` and the compiler's remark flags to ``obj``."""
+    """Compile ``source`` with ``flags``, the compiler's remark flags and its line tables to ``obj``."""
     compiler = matrix.compilers[candidate.compiler]
     executable, remarks = compiler.executables[candidate.language], compiler.remarks
-    command = [executable, *flags, *remarks, "-c", str(source), "-o", str(obj)]
+    command = [executable, *flags, *remarks, *compiler.line_tables, "-c", str(source), "-o", str(obj)]
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 

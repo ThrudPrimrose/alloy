@@ -9,7 +9,7 @@ import dace
 import numpy as np
 import pytest
 
-from alloy import api
+from alloy import api, machine
 from alloy.backend.build import Build, Remarks, build
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
@@ -20,13 +20,22 @@ from alloy.heuristics.predict import Instruction, Prediction
 from alloy.report import Mode
 from helpers import MATRIX, REDUCTIONS, SCALE_MANIFEST, gcc_only, load_program, write_manifest
 
-N = dace.symbol("N")
+N, M, K = dace.symbol("N"), dace.symbol("M"), dace.symbol("K")
 
 
 @dace.program
 def roots(x: dace.float64[N], y: dace.float64[N]):
     for i in dace.map[0:N]:
         y[i] = np.sqrt(x[i]) / x[i]
+
+
+@dace.program
+def two_rows(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K], d: dace.float64[M, K]):
+    for i in dace.map[0:M]:
+        for j in dace.map[0:N]:
+            b[i, j] = a[i, j] * 2.0
+        for k in dace.map[0:K]:
+            d[i, k] = c[i, k] + 1.0
 
 
 def listing(*lines: tuple[int, str, str]) -> list[Instruction]:
@@ -100,7 +109,8 @@ def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path):
     sut = [predict.predict(b, scope) for b in (wide, narrow)]
 
     assert sut[0] is not None and sut[1] is not None
-    assert (sut[0].elements_per_iteration, sut[1].elements_per_iteration) == (8.0, 4.0)
+    assert [len(p.loops) for p in sut] == [1, 1], "a main loop and its epilogues are one source loop"
+    assert (sut[0].loops[0].elements, sut[1].loops[0].elements) == (8.0, 4.0)
     assert sut[0].cycles_per_element < sut[1].cycles_per_element
 
 
@@ -113,7 +123,7 @@ def test_an_errno_bound_scalar_sqrt_is_predicted_dearer_than_its_fast_math_vecto
     sut = [predict.predict(b, scope) for b in (strict, fast)]
 
     assert sut[0] is not None and sut[1] is not None
-    assert sut[0].elements_per_iteration == 1.0 < sut[1].elements_per_iteration
+    assert sut[0].loops[0].elements == 1.0 < sut[1].loops[0].elements
     assert sut[1].cycles_per_element < sut[0].cycles_per_element
 
 
@@ -124,7 +134,7 @@ def a_build(candidate: Candidate) -> Build:
 
 
 def scored(cost: float) -> Prediction:
-    return Prediction(cost, cost, 1.0, 0, 1)
+    return Prediction(cost, cost, 0.0, (), 1)
 
 
 def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_the_default_fp_level():
@@ -153,3 +163,58 @@ def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
     report = (tmp_path / "out" / "report.md").read_text()
     assert "(speculative)" in report.splitlines()[0]
     assert "cycles/elem" in report
+
+
+def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path):
+    source = tmp_path / "v0.c"
+    source.write_text("for (i = 0; i < N; i += 1) {\n    t = (a * x);  // _Mult_\n    y[i] = t;  // assign_3\n}\n")
+
+    assert predict.tasklet_lines(source) == {2: "_Mult_", 3: "assign_3"}
+
+
+@pytest.mark.gcc
+def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(tmp_path):
+    scope = only_scope(two_rows)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope, {"M": 4, "N": 64, "K": 16})
+
+    assert sut is not None
+    assert sorted(loop.weight for loop in sut.loops) == [0.25, 1.0]
+    weighted = sum(loop.weight * (loop.cycles + predict.CALL_CYCLES * loop.calls) / loop.elements for loop in sut.loops)
+    assert sut.compute == pytest.approx(weighted / len(machine.physical_cores()))
+
+
+@pytest.mark.gcc
+def test_without_sizes_every_source_loop_weighs_the_same(tmp_path):
+    scope = only_scope(two_rows)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope)
+
+    assert sut is not None and [loop.weight for loop in sut.loops] == [1.0, 1.0]
+
+
+def test_a_build_on_the_bandwidth_floor_is_predicted_by_its_memory_term_only_beyond_the_cache(tmp_path):
+    scope = only_scope(load_program(f"{REDUCTIONS}:scale"))
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+    elements = 64 * machine.largest_cache_bytes() // 8  # x and y: 16x the cache
+
+    beyond = predict.predict(built, scope, {"N": elements})
+    within = predict.predict(built, scope, {"N": 64})
+
+    assert beyond is not None and within is not None
+    assert within.memory == 0.0 and within.cycles_per_element == within.compute
+    assert beyond.memory > beyond.compute, "a scaled copy streams two arrays through memory"
+    assert beyond.cycles_per_element == beyond.memory
+
+
+def test_builds_within_the_tie_band_go_to_the_default_fp_level():
+    scope = only_scope(roots)
+    builds = (a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", fp_level="noerrno")))
+    rep = ScopeReport(scope, builds)
+    near = {scope.symbol: {builds[0].name: scored(1.00), builds[1].name: scored(1.01)}}
+    far = {scope.symbol: {builds[0].name: scored(1.00), builds[1].name: scored(1.10)}}
+
+    assert predict.choose(rep, {}, near, MATRIX, finite_inputs=False) is builds[1]
+    assert predict.choose(rep, {}, far, MATRIX, finite_inputs=False) is builds[0]

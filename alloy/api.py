@@ -52,7 +52,8 @@ def generate(
     candidate on ``iterations`` fuzz draws; then in profile mode, when ``time_locally``, time the survivors and link
     the fastest, in speculative mode link the ones :func:`predict.choose` picks, untimed. Without a manifest,
     candidates are only built (and predicted). A caller that times elsewhere (a benchmark's judge) passes
-    ``time_locally=False``. ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it."""
+    ``time_locally=False``. ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need
+    it."""
     matrix = matrix or configuration_matrix.load()
     program = scopes.outline(sdfg, matrix.libm_calls)
     if not program.scopes:
@@ -66,7 +67,8 @@ def generate(
         cases = verify.Cases([inputs.draw(manifest, i) for i in range(iterations)], manifest.outputs)
         verification = verify.verify(program, matrix, reports, cases, out)
     if mode == Mode.SPECULATIVE:
-        predicted = predict.predictions(reports)
+        sizes = inputs.presets(manifest)[0] if manifest is not None and inputs.presets(manifest) else None
+        predicted = predict.predictions(reports, sizes)
         verdicts = verification.verdicts if verification else {}
         winners = {
             rep.scope.symbol: predict.choose(

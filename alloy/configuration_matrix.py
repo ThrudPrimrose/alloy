@@ -79,6 +79,7 @@ class Compiler:
     isa: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     tail: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     support_libraries: tuple[str, ...] = ()
+    line_tables: tuple[str, ...] = ()
 
     def missing_executables(self) -> list[str]:
         return [exe for exe in self.executables.values() if shutil.which(exe) is None]
