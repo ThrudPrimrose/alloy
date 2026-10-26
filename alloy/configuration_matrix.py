@@ -35,7 +35,7 @@ class Language:
 
 @dataclass(slots=True, frozen=True, config=STRICT)
 class FPLevel:
-    """How a level is verified, and the region property it requires (none when empty)."""
+    """How a level is verified, and the scope property it requires (none when empty)."""
 
     tolerance: Literal["exact", "band"]
     needs: Literal["", "reduction", "finite_inputs"] = ""

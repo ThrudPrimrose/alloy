@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""The candidate space for one region, swept one factor at a time from the matrix's defaults."""
+"""The candidate space for one scope, swept one factor at a time from the matrix's defaults."""
 
 import ctypes.util
 from dataclasses import dataclass, field
@@ -8,7 +8,7 @@ import numpy as np
 
 from alloy import machine
 from alloy.configuration_matrix import Compiler, Matrix
-from alloy.frontend.regions import Region
+from alloy.frontend.scopes import Scope
 
 #: A code variant's identity: the language and every codegen knob it is rendered with.
 RenderKey = tuple[str, tuple[tuple[str, str], ...]]
@@ -16,7 +16,7 @@ RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 
 @dataclass(slots=True, frozen=True)
 class Candidate:
-    """One rendering + build of a region, as names into the matrix. ``knobs`` holds only non-default values;
+    """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
     an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
     flags' ``-march=native``."""
 
@@ -49,7 +49,7 @@ class Candidate:
         return self.language, tuple(sorted(self.codegen_params(matrix).items()))
 
     def config_name(self, matrix: Matrix) -> str:
-        """The build configuration, everything but the source: the column of the region's runtime matrix."""
+        """The build configuration, everything but the source: the column of the scope's runtime matrix."""
         _, level, model = self.resolved(matrix)
         return "_".join([self.compiler, level, model, self.veclib, self.isa or "native"])
 
@@ -83,10 +83,10 @@ def available_veclibs(matrix: Matrix, comp: Compiler) -> tuple[str, ...]:
     return tuple(lib for lib in comp.veclib if ctypes.util.find_library(matrix.veclibs[lib].probe))
 
 
-def fp_levels(matrix: Matrix, region: Region, *, finite_inputs: bool) -> tuple[str, ...]:
-    """FP levels whose requirement ``region`` meets: ``reduction`` needs a reducing region, ``finite_inputs`` the
+def fp_levels(matrix: Matrix, scope: Scope, *, finite_inputs: bool) -> tuple[str, ...]:
+    """FP levels whose requirement ``scope`` meets: ``reduction`` needs a reducing scope, ``finite_inputs`` the
     caller's declaration that no input is NaN or Inf."""
-    met = {"": True, "reduction": region.has_reduction, "finite_inputs": finite_inputs}
+    met = {"": True, "reduction": scope.has_reduction, "finite_inputs": finite_inputs}
     return tuple(name for name, level in matrix.fp_levels.items() if met[level.needs])
 
 
@@ -102,7 +102,7 @@ def index_widths(matrix: Matrix, max_elements: int | None) -> tuple[str, ...]:
 
 def flips(
     matrix: Matrix,
-    region: Region,
+    scope: Scope,
     language: str,
     compiler: str,
     *,
@@ -113,7 +113,7 @@ def flips(
     """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
     host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them."""
     comp, d = matrix.compilers[compiler], matrix.defaults
-    levels = fp_levels(matrix, region, finite_inputs=finite_inputs)
+    levels = fp_levels(matrix, scope, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
     for knob, values in matrix.knobs.items():
         out += [Candidate(language, compiler, knobs=((knob, v),), note=f"{knob}={v}") for v in values[1:]]
@@ -129,7 +129,7 @@ def flips(
         for m in comp.cost_model
         if m != d.cost_model
     ]
-    if region.calls_libm:
+    if scope.calls_libm:
         out += [
             Candidate(language, compiler, fp_level=matrix.veclibs[lib].fp_level, veclib=lib, note=f"veclib {lib}")
             for lib in available_veclibs(matrix, comp)
@@ -139,7 +139,7 @@ def flips(
 
 
 def one_factor_at_a_time(
-    matrix: Matrix, region: Region, *, finite_inputs: bool = False, max_elements: int | None = None
+    matrix: Matrix, scope: Scope, *, finite_inputs: bool = False, max_elements: int | None = None
 ) -> list[Candidate]:
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
@@ -149,5 +149,5 @@ def one_factor_at_a_time(
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(matrix, region, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas)
+        for c in flips(matrix, scope, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas)
     ]

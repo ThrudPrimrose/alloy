@@ -1,5 +1,5 @@
 name = "alloy"
-description = "Alloy: every region's rendering candidates built and verified, timed by the judge, the fastest delivered."
+description = "Alloy: every scope's rendering candidates built and verified, timed by the judge, the fastest delivered."
 
 [flavors.alloy_profile]
 name = "Alloy profile"

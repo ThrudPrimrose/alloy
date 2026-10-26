@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""The Alloy adapter's inner tier without a judge: the stub ranking keeps each region's fastest candidate over the
+"""The Alloy adapter's inner tier without a judge: the stub ranking keeps each scope's fastest candidate over the
 best prefix so far, survives a failing stub, stops when the budget does, reads a stub's time from either profile, and
 a rendered library asks for the scratch its entry carves transients from."""
 
@@ -36,7 +36,7 @@ def always() -> bool:
     return True
 
 
-def test_each_region_keeps_its_fastest_stub_over_the_best_prefix() -> None:
+def test_each_scope_keeps_its_fastest_stub_over_the_best_prefix() -> None:
     start = {"r0": Fake("r0.ref"), "r1": Fake("r1.ref")}
     candidates = {"r0": [Fake("r0.fast"), Fake("r0.slow")], "r1": [Fake("r1.fast")]}
     cost = {"r0.ref": 5.0, "r0.fast": 1.0, "r0.slow": 9.0, "r1.ref": 4.0, "r1.fast": 2.0}
@@ -50,7 +50,7 @@ def test_each_region_keeps_its_fastest_stub_over_the_best_prefix() -> None:
     sut = ranked(["r0", "r1"], start, candidates, time_stub, always)
 
     assert {s: b.name for s, b in sut.items()} == {"r0": "r0.fast", "r1": "r1.fast"}
-    assert set(prefixes) == {"r0.fast"}, "the later region's stubs run over the earlier region's winner"
+    assert set(prefixes) == {"r0.fast"}, "the later scope's stubs run over the earlier scope's winner"
 
 
 def test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail() -> None:
@@ -106,7 +106,7 @@ def test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token: st
 
 
 if __name__ == "__main__":
-    test_each_region_keeps_its_fastest_stub_over_the_best_prefix()
+    test_each_scope_keeps_its_fastest_stub_over_the_best_prefix()
     test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail()
     test_the_ranking_stops_when_the_budget_does()
     test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count()

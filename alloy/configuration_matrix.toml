@@ -16,7 +16,7 @@ openmp_runtime = "libomp"  # the process's one OpenMP runtime; every candidate m
 screen_cores = 4
 screen_cache_factor = 3.0
 final_cache_factor = 2.0
-# Region sizes share symbols with the rest of the program: never let the program touch more than this x the cache.
+# Scope sizes share symbols with the rest of the program: never let the program touch more than this x the cache.
 max_program_cache_factor = 16.0
 screen_reps = 11
 final_reps = 31
@@ -56,8 +56,8 @@ soname = "nvomp"
 
 # tolerance: "exact" = bit-identical to the reference build (the strict level IS that reference); "band" = HPCAgent-Bench's
 # per-precision band (hpcagent_bench.precision.TOLERANCE_MATRIX) with its accumulation floor
-# eps_acc(p) * sqrt(l) * ||ref||_inf, l = the region's accumulation length (Region.accumulation_length).
-# needs: the region property a level requires ("reduction", or "finite_inputs" = declared with --finite-inputs).
+# eps_acc(p) * sqrt(l) * ||ref||_inf, l = the scope's accumulation length (Scope.accumulation_length).
+# needs: the scope property a level requires ("reduction", or "finite_inputs" = declared with --finite-inputs).
 [fp_levels.strict]
 tolerance = "exact"
 

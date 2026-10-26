@@ -10,15 +10,15 @@ from dace.codegen import cpf
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Best, Linker, built, execution_order
-from alloy.frontend import regions
+from alloy.frontend import scopes
 from alloy.records import dumped_json, validated_json
 from helpers import MATRIX, REDUCTIONS, load_program, outlined
 
 
-def test_a_library_of_region_archives_renders_standalone_and_computes_the_program(tmp_path):
-    program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program(tmp_path):
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     archives = {
-        r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.regions
+        r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.scopes
     }
     sdfg = Linker(program, MATRIX, tmp_path).library_sdfg(archives, frozenset({"gcc"}))
 
@@ -38,10 +38,10 @@ def test_a_library_of_region_archives_renders_standalone_and_computes_the_progra
 
 
 def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):
-    program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     winners = {
         r.symbol: build(r, Candidate("c", "gcc", fp_level="fast"), MATRIX, tmp_path / r.symbol, {})
-        for r in program.regions
+        for r in program.scopes
     }
 
     sut = Linker(program, MATRIX, tmp_path).write_best(winners)
@@ -60,18 +60,18 @@ def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path
     np.testing.assert_allclose(arrays["out"], arrays["a"].sum(axis=1), rtol=1e-12)
 
 
-def test_the_timer_of_a_complex_region_declares_its_entry_as_dace_does(tmp_path):
-    """DaCe spells a complex region entry with its runtime types (``dace::complex128``); the timer compiles against them."""
-    program = regions.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
-    region = dataclasses.replace(
-        program.regions[0],
+def test_the_timer_of_a_complex_scope_declares_its_entry_as_dace_does(tmp_path):
+    """DaCe spells a complex scope entry with its runtime types (``dace::complex128``); the timer compiles against them."""
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    scope = dataclasses.replace(
+        program.scopes[0],
         symbol="complex_nest",
         abi_order=("G", "s", "N"),
         signature="const dace::complex128* __restrict__ G, dace::complex64 s, int64_t N",
     )
     (tmp_path / "link").mkdir()
 
-    sut = Linker(program, MATRIX, tmp_path).timer(region)
+    sut = Linker(program, MATRIX, tmp_path).timer(scope)
 
     assert sut.is_file()
 
@@ -87,12 +87,12 @@ def stub_library(linker: Linker, sdfg, tmp_path, name: str) -> ctypes.CDLL:
     return ctypes.CDLL(str(library))
 
 
-def test_a_stub_runs_its_region_and_the_regions_before_it_and_no_later_one(tmp_path):
+def test_a_stub_runs_its_scope_and_the_scopes_before_it_and_no_later_one(tmp_path):
     program = outlined()
     linker = Linker(program, MATRIX, tmp_path)
-    selection = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.regions}
-    elementwise = next(r.symbol for r in program.regions if r.calls_libm)
-    reduction = next(r.symbol for r in program.regions if r.has_reduction)
+    selection = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
+    elementwise = next(r.symbol for r in program.scopes if r.calls_libm)
+    reduction = next(r.symbol for r in program.scopes if r.has_reduction)
     a = np.random.default_rng(0).random(64)
     total_of_the_program = float(np.sum(np.sin(a) * 2.0))
 
@@ -107,14 +107,14 @@ def test_a_stub_runs_its_region_and_the_regions_before_it_and_no_later_one(tmp_p
         if symbol == reduction:
             np.testing.assert_allclose(total[0], total_of_the_program, rtol=1e-12)
         else:
-            assert total[0] != total_of_the_program, "the reduction runs after the stubbed region, so it must not run"
+            assert total[0] != total_of_the_program, "the reduction runs after the stubbed scope, so it must not run"
 
 
-def test_regions_run_in_program_order():
+def test_scopes_run_in_program_order():
     program = outlined()
 
     sut = execution_order(program.sdfg)
 
-    assert sorted(sut) == sorted(r.symbol for r in program.regions)
-    reduction = next(r.symbol for r in program.regions if r.has_reduction)
+    assert sorted(sut) == sorted(r.symbol for r in program.scopes)
+    reduction = next(r.symbol for r in program.scopes if r.has_reduction)
     assert sut[-1] == reduction

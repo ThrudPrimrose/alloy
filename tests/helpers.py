@@ -9,10 +9,10 @@ from dace.frontend.python.parser import DaceProgram
 
 from alloy import configuration_matrix
 from alloy.evaluate import verify
-from alloy.frontend import inputs, regions
+from alloy.frontend import inputs, scopes
 
 EXAMPLES = pathlib.Path(__file__).parent.parent / "examples"
-EXAMPLE = EXAMPLES / "two_regions.py"
+EXAMPLE = EXAMPLES / "two_scopes.py"
 REDUCTIONS = EXAMPLES / "reductions.py"
 MATRIX = configuration_matrix.load()
 
@@ -29,12 +29,12 @@ def load_program(spec: str) -> DaceProgram:
     return program
 
 
-def outlined() -> regions.Program:
-    return regions.outline(load_program(f"{EXAMPLE}:two_regions").to_sdfg(), MATRIX.libm_calls)
+def outlined() -> scopes.Program:
+    return scopes.outline(load_program(f"{EXAMPLE}:two_scopes").to_sdfg(), MATRIX.libm_calls)
 
 
-def region_with(program: regions.Program, *, libm: bool, reduction: bool) -> regions.Region:
-    (match,) = [r for r in program.regions if r.calls_libm == libm and r.has_reduction == reduction]
+def scope_with(program: scopes.Program, *, libm: bool, reduction: bool) -> scopes.Scope:
+    (match,) = [r for r in program.scopes if r.calls_libm == libm and r.has_reduction == reduction]
     return match
 
 
@@ -88,9 +88,9 @@ args:
 """
 
 
-def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[regions.Program, verify.Cases]:
+def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[scopes.Program, verify.Cases]:
     manifest = write_manifest(tmp, kernel, manifest_text)
-    program = regions.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
+    program = scopes.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
     return program, verify.Cases([inputs.draw(manifest, i) for i in range(2)], manifest.outputs)
 
 
@@ -100,12 +100,12 @@ def write_manifest(tmp: pathlib.Path, kernel: str, manifest_text: str) -> inputs
     return inputs.load(path, f"{REDUCTIONS}:{kernel}")
 
 
-def handwritten_archive(tmp: pathlib.Path, region: regions.Region, body: str) -> pathlib.Path:
-    """``lib<symbol>.a`` defining the region's entry with ``body``, outside every candidate."""
+def handwritten_archive(tmp: pathlib.Path, scope: scopes.Scope, body: str) -> pathlib.Path:
+    """``lib<symbol>.a`` defining the scope's entry with ``body``, outside every candidate."""
     source, obj, archive = tmp / "hand.c", tmp / "hand.o", tmp / "libhand.a"
-    signature = region.signature.replace("__restrict__", "restrict")
+    signature = scope.signature.replace("__restrict__", "restrict")
     headers = "#include <omp.h>\n#include <stdint.h>\n#include <stdlib.h>\n"
-    source.write_text(f"{headers}void {region.symbol}({signature}) {{ {body} }}\n")
+    source.write_text(f"{headers}void {scope.symbol}({signature}) {{ {body} }}\n")
     subprocess.run(["gcc", "-O2", "-fPIC", "-c", str(source), "-o", str(obj)], check=True)
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
     return archive

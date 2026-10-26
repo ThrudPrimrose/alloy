@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Verify every built candidate inside the whole program: each region links its archive from one fixed path, so a
-candidate is one archive copy plus a replayed DaCe build (command cache + precompiled header). Every other region
+"""Verify every built candidate inside the whole program: each scope links its archive from one fixed path, so a
+candidate is one archive copy plus a replayed DaCe build (command cache + precompiled header). Every other scope
 keeps its reference archive, and the outputs are compared against the all-reference program on the same inputs."""
 
 import copy
@@ -19,11 +19,11 @@ import sympy
 from dace.codegen.exceptions import CompilationError
 
 from alloy import machine
-from alloy.backend.sweep import RegionReport
+from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
 from alloy.frontend.inputs import Draw, require_bench
-from alloy.frontend.regions import Program
+from alloy.frontend.scopes import Program
 from alloy.records import RECORD
 
 
@@ -165,10 +165,10 @@ class Children:
 
 def accumulation_length(program: Program, sizes: dict[str, int]) -> int:
     """The longest accumulation chain of the program at ``sizes``: a candidate's reordering can reach an output
-    through every region after it, so the program-wide maximum bounds it."""
+    through every scope after it, so the program-wide maximum bounds it."""
     subs = {sympy.Symbol(k): v for k, v in sizes.items()}
     lengths = []
-    for r in program.regions:
+    for r in program.scopes:
         length = sympy.sympify(r.accumulation_length).subs(list(subs.items()))
         if length.free_symbols:
             raise ValueError(f"{r.symbol}: accumulation length {r.accumulation_length} needs {length.free_symbols}")
@@ -214,8 +214,8 @@ class Reference:
 
 @dataclass(slots=True, frozen=True)
 class Verification:
-    """``verdicts[region symbol][candidate name]``, the outputs the reference does not reproduce, and the program
-    built for every candidate (``programs[region symbol, candidate name]``) and for the reference."""
+    """``verdicts[scope symbol][candidate name]``, the outputs the reference does not reproduce, and the program
+    built for every candidate (``programs[scope symbol, candidate name]``) and for the reference."""
 
     verdicts: dict[str, dict[str, Verdict]]
     nondeterministic: frozenset[str]
@@ -264,44 +264,44 @@ def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int
 
 
 def verify(
-    program: Program, matrix: Matrix, reports: list[RegionReport], cases: Cases, out: pathlib.Path
+    program: Program, matrix: Matrix, reports: list[ScopeReport], cases: Cases, out: pathlib.Path
 ) -> Verification:
     """A verdict for every built candidate. Program calls run in parallel children while the next candidate
     compiles; a duplicate object is judged on its original's outputs at its own FP level."""
     linker = Linker(program, matrix, out)
-    reference = {rep.region.symbol: reference_archive(rep) for rep in reports}
+    reference = {rep.scope.symbol: reference_archive(rep) for rep in reports}
     ref_compilers = frozenset(rep.builds[0].candidate.compiler for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_compilers)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
     with Children() as children:
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
-        programs = {(rep.region.symbol, rep.builds[0].name): ref_program for rep in reports}
+        programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
         for rep in reports:
             for b in rep.builds[1:]:  # the first build is the reference, already running
                 if b.error or b.archive is None or b.duplicate_of:
                     continue
-                selection = {**reference, rep.region.symbol: b.archive}
+                selection = {**reference, rep.scope.symbol: b.archive}
                 try:
                     compiled = linker.compile(
-                        selection, f"{rep.region.symbol}_{b.name}", ref_compilers | {b.candidate.compiler}
+                        selection, f"{rep.scope.symbol}_{b.name}", ref_compilers | {b.candidate.compiler}
                     )
                 except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
-                    pending[rep.region.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
+                    pending[rep.scope.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
                     continue
-                programs[rep.region.symbol, b.name] = compiled
-                pending[rep.region.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
+                programs[rep.scope.symbol, b.name] = compiled
+                pending[rep.scope.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
     reference_runs: list[Outcome] = [*refs.outputs]
     for rep in reports:
-        ran[rep.region.symbol, rep.builds[0].name] = reference_runs
-    verdicts = {rep.region.symbol: judge_region(rep, matrix, refs, ran, lengths) for rep in reports}
+        ran[rep.scope.symbol, rep.builds[0].name] = reference_runs
+    verdicts = {rep.scope.symbol: judge_scope(rep, matrix, refs, ran, lengths) for rep in reports}
     return Verification(verdicts, refs.nondeterministic, programs, ref_program)
 
 
-def judge_region(
-    rep: RegionReport,
+def judge_scope(
+    rep: ScopeReport,
     matrix: Matrix,
     refs: Reference,
     ran: dict[tuple[str, str], list[Outcome] | Verdict],
@@ -312,7 +312,7 @@ def judge_region(
     for b in rep.builds:
         if b.error or b.archive is None:
             continue
-        outputs = ran[rep.region.symbol, b.duplicate_of or b.name]
+        outputs = ran[rep.scope.symbol, b.duplicate_of or b.name]
         verdict = (
             outputs if isinstance(outputs, Verdict) else judge(b.candidate.tolerance(matrix), refs, outputs, lengths)
         )
@@ -320,6 +320,6 @@ def judge_region(
     return mine
 
 
-def reference_archive(rep: RegionReport) -> pathlib.Path:
-    """The region's first built candidate: the matrix default (first language, first compiler, every default)."""
+def reference_archive(rep: ScopeReport) -> pathlib.Path:
+    """The scope's first built candidate: the matrix default (first language, first compiler, every default)."""
     return built(rep.builds[0])

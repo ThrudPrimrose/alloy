@@ -7,7 +7,7 @@ import resource
 
 #: Threads per verification child: comparisons stay multithreaded, so a parallel reduction shows its nondeterminism.
 CHILD_THREADS = 4
-#: Memory one region compile is budgeted, bounding the compilers run at once on a machine short of memory.
+#: Memory one scope compile is budgeted, bounding the compilers run at once on a machine short of memory.
 COMPILE_BYTES = 1 << 30
 
 

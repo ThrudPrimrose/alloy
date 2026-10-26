@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy as an HPCAgent-Bench flavor plugin end to end on one kernel: every region gets several verified
+"""Alloy as an HPCAgent-Bench flavor plugin end to end on one kernel: every scope gets several verified
 variants, and both CPU profile flavors submit a library the judge grades correct. The ``alloy`` CI job runs it."""
 
 import pathlib
@@ -54,7 +54,7 @@ def make_judge() -> Iterator[Callable[..., tuple[ThreadingHTTPServer, str]]]:
         srv.server_close()
 
 
-def test_every_region_gets_several_verified_variants(tmp_path: pathlib.Path) -> None:
+def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> None:
     from alloy import configuration_matrix
     from alloy.hb_plugin import adapter as bench
 
@@ -63,11 +63,11 @@ def test_every_region_gets_several_verified_variants(tmp_path: pathlib.Path) -> 
 
     sut = bench.generated(sdfg, spec, Precision.FP64, configuration_matrix.load(), tmp_path)
 
-    assert sut.regions
+    assert sut.scopes
     assert sut.verification is not None
-    for rep in sut.regions:
-        variants = bench.verified(rep, sut.verification.verdicts[rep.region.symbol])
-        assert len(variants) >= 2, f"{rep.region.symbol}: {[b.name for b in variants]}"
+    for rep in sut.scopes:
+        variants = bench.verified(rep, sut.verification.verdicts[rep.scope.symbol])
+        assert len(variants) >= 2, f"{rep.scope.symbol}: {[b.name for b in variants]}"
 
 
 @pytest.mark.parametrize("flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile"])

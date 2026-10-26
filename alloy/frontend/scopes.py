@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Split a dace program into regions: one per top-level nest or library node, each a standalone SDFG with a fixed C
+"""Split a dace program into scopes: one per top-level nest or library node, each a standalone SDFG with a fixed C
 ABI."""
 
 import copy
@@ -17,7 +17,7 @@ CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
 @dataclass(slots=True, frozen=True)
-class Region:
+class Scope:
     """One outlined nest: the entry ``symbol``, its parameter order, and the SDFG that renders it."""
 
     symbol: str
@@ -32,12 +32,12 @@ class Region:
 
 @dataclass(slots=True, frozen=True)
 class Program:
-    """The outlined program: ``sdfg`` calls every region through an ``ExternalCall`` node; ``original`` is the
+    """The outlined program: ``sdfg`` calls every scope through an ``ExternalCall`` node; ``original`` is the
     program before outlining."""
 
     sdfg: dace.SDFG
     original: dace.SDFG
-    regions: tuple[Region, ...]
+    scopes: tuple[Scope, ...]
 
 
 def called_names(sdfg: dace.SDFG) -> set[str]:
@@ -137,27 +137,27 @@ def unchosen(node: nodes.LibraryNode) -> bool:
 
 
 def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
-    """Outline each top-level nest and library node of a copy of ``sdfg`` into a region; ``libm_calls`` marks the
-    regions a vector math library could serve."""
+    """Outline each top-level nest and library node of a copy of ``sdfg`` into a scope; ``libm_calls`` marks the
+    scopes a vector math library could serve."""
     sdfg = copy.deepcopy(sdfg)
     sdfg.simplify()
     original = copy.deepcopy(sdfg)
     # An unchosen library node expands into a nest Alloy generates; one whose implementation a pipeline chose is
-    # outlined whole and rendered in its region with that implementation.
+    # outlined whole and rendered in its scope with that implementation.
     sdfg.expand_library_nodes(recursive=True, predicate=unchosen)
     sdfg.simplify()
-    regions = []
+    scopes = []
     for call in passes.outline_to_external_calls(sdfg, library_nodes=True):
-        region_sdfg = standalone(call)
-        regions.append(
-            Region(
+        scope_sdfg = standalone(call)
+        scopes.append(
+            Scope(
                 symbol=call.symbol,
                 abi_order=tuple(call.abi_order),
                 signature=call.signature,
-                sdfg=region_sdfg,
-                calls_libm=bool(called_names(region_sdfg) & libm_calls),
-                has_reduction=has_reduction(region_sdfg),
-                accumulation_length=accumulation_length(region_sdfg),
+                sdfg=scope_sdfg,
+                calls_libm=bool(called_names(scope_sdfg) & libm_calls),
+                has_reduction=has_reduction(scope_sdfg),
+                accumulation_length=accumulation_length(scope_sdfg),
             )
         )
-    return Program(sdfg=sdfg, original=original, regions=tuple(regions))
+    return Program(sdfg=sdfg, original=original, scopes=tuple(scopes))

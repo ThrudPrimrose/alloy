@@ -7,28 +7,28 @@ import pytest
 from alloy.backend import sweep
 from alloy.backend.build import build, parse_remarks
 from alloy.backend.candidates import Candidate
-from helpers import MATRIX, gcc_only, outlined, region_with
+from helpers import MATRIX, gcc_only, outlined, scope_with
 
 
 def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
-    region = region_with(outlined(), libm=True, reduction=False)
+    scope = scope_with(outlined(), libm=True, reduction=False)
 
-    sut = build(region, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+    sut = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
     assert sut.error == ""
     assert sut.archive is not None
     assert sut.archive.is_file()
-    assert f"void {region.symbol}(" in sut.source.read_text()
+    assert f"void {scope.symbol}(" in sut.source.read_text()
     symbols = subprocess.run(["nm", "--defined-only", str(sut.archive)], capture_output=True, text=True, check=True)
-    assert f" T {region.symbol}" in symbols.stdout
+    assert f" T {scope.symbol}" in symbols.stdout
 
 
 def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate(tmp_path):
-    region = region_with(outlined(), libm=True, reduction=False)
+    scope = scope_with(outlined(), libm=True, reduction=False)
     seen: dict[str, str] = {}
-    first = build(region, Candidate("c", "gcc"), MATRIX, tmp_path / "a", seen)
+    first = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "a", seen)
 
-    sut = build(region, Candidate("cpp", "gcc"), MATRIX, tmp_path / "b", seen)
+    sut = build(scope, Candidate("cpp", "gcc"), MATRIX, tmp_path / "b", seen)
 
     assert first.duplicate_of == ""
     assert sut.object_hash == first.object_hash

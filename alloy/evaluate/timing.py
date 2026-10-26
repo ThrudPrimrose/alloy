@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Time the verified candidates of every region inside the whole program, then alloy-full (every region's winner)
+"""Time the verified candidates of every scope inside the whole program, then alloy-full (every scope's winner)
 against DaCe's default CPU codegen. The arms of one comparison run in one child on one set of buffers, alternating
 forward and reversed order, at sizes that keep the working set out of cache (``docs/design.md``, Timing)."""
 
@@ -18,7 +18,7 @@ import pydantic.dataclasses
 
 from alloy import machine
 from alloy.backend.build import Build
-from alloy.backend.sweep import RegionReport
+from alloy.backend.sweep import ScopeReport
 from alloy.evaluate.link import Linker
 from alloy.evaluate.verify import (
     CALL_TIMEOUT_S,
@@ -48,8 +48,8 @@ class Measured:
 
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
-class RegionTiming:
-    """One region's arms screened at ``screen_sizes`` and re-timed at ``final_sizes``, and the arm that won."""
+class ScopeTiming:
+    """One scope's arms screened at ``screen_sizes`` and re-timed at ``final_sizes``, and the arm that won."""
 
     screen: dict[str, Measured]
     final: dict[str, Measured]
@@ -68,15 +68,15 @@ class ProgramTiming:
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class Timings:
-    """Every region's timing, and alloy-full against DaCe's default codegen."""
+    """Every scope's timing, and alloy-full against DaCe's default codegen."""
 
-    regions: dict[str, RegionTiming]
+    scopes: dict[str, ScopeTiming]
     program: ProgramTiming
 
 
 @dataclass(slots=True, frozen=True)
 class Arms:
-    """Programs compared on one input, the first being the reference; ``symbol`` names the region whose wrapper is
+    """Programs compared on one input, the first being the reference; ``symbol`` names the scope whose wrapper is
     read, or is empty to time the whole call."""
 
     folders: dict[str, pathlib.Path]
@@ -103,7 +103,7 @@ def footprint(sdfg: dace.SDFG, sizes: Parameters) -> int:
 
 def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: float, cap: float) -> dict[str, int]:
     """``base`` with the array-extent symbols of ``sdfg`` scaled by the smallest factor that makes ``sdfg`` touch
-    ``target`` bytes, but no further than ``program`` touching ``cap`` bytes: the symbols are shared, so a region
+    ``target`` bytes, but no further than ``program`` touching ``cap`` bytes: the symbols are shared, so a scope
     that touches one vector would otherwise grow the program's other arrays without bound."""
     extents = {str(s) for d in sdfg.arrays.values() if not d.transient for s in d.free_symbols} & base.keys()
     if not extents:
@@ -152,7 +152,7 @@ def clock(program: Any, symbol: str) -> Callable[[], float]:
 
 def time_arms(folders: list[str], symbol: str, args: dict[str, Any], reps: int) -> list[list[float]]:
     """In a child: one warmup, then ``reps`` rounds calling every arm on the same buffers, reversed every other
-    round; every array is reset before each call. Seconds per arm, from the region timer or the whole call."""
+    round; every array is reset before each call. Seconds per arm, from the scope timer or the whole call."""
     from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
 
     programs = [compiler.load_precompiled_sdfg(f) for f in folders]
@@ -199,10 +199,10 @@ def measure(arms: Arms, draw: Draw, length: int, cpus: tuple[int, ...], reps: in
     return {name: measured.get(name, Measured(math.nan, math.nan, math.nan, v)) for name, v in verdicts.items()}
 
 
-def time_region(linker: Linker, rep: RegionReport, verification: Verification, manifest: Manifest) -> RegionTiming:
+def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, manifest: Manifest) -> ScopeTiming:
     """Screen every verified distinct candidate, re-time the fastest on every core, and pick the winner: the
     fastest whose CI lies below the reference's, else the reference."""
-    matrix, symbol = linker.matrix, rep.region.symbol
+    matrix, symbol = linker.matrix, rep.scope.symbol
     verified = [
         b
         for b in rep.builds[1:]
@@ -217,8 +217,8 @@ def time_region(linker: Linker, rep: RegionReport, verification: Verification, m
     )
     t, cores = matrix.timing, machine.physical_cores()
     original, cap = linker.program.original, t.max_program_cache_factor
-    screen_sizes = stage_sizes(rep.region.sdfg, original, manifest, t.screen_cache_factor, cap, grow_only=False)
-    final_sizes = stage_sizes(rep.region.sdfg, original, manifest, t.final_cache_factor, cap, grow_only=True)
+    screen_sizes = stage_sizes(rep.scope.sdfg, original, manifest, t.screen_cache_factor, cap, grow_only=False)
+    final_sizes = stage_sizes(rep.scope.sdfg, original, manifest, t.final_cache_factor, cap, grow_only=True)
     screen = measure(
         arms, inputs.at(manifest, screen_sizes), length(linker, screen_sizes), cores[: t.screen_cores], t.screen_reps
     )
@@ -228,19 +228,17 @@ def time_region(linker: Linker, rep: RegionReport, verification: Verification, m
     final = measure(top, inputs.at(manifest, final_sizes), length(linker, final_sizes), cores, t.final_reps)
     best = min((n for n in ranked[: t.top] if final[n].verdict.ok), key=lambda n: final[n].median, default=REFERENCE)
     winner = best if final[best].high < final[REFERENCE].low else REFERENCE
-    return RegionTiming(screen, final, winner, screen_sizes, final_sizes)
+    return ScopeTiming(screen, final, winner, screen_sizes, final_sizes)
 
 
 def length(linker: Linker, sizes: dict[str, int]) -> int:
     return accumulation_length(linker.program, sizes)
 
 
-def time_program(
-    linker: Linker, reports: list[RegionReport], verification: Verification, manifest: Manifest
-) -> Timings:
-    """Every region's timing, then alloy-full against DaCe's default codegen on every core."""
-    regions = {rep.region.symbol: time_region(linker, rep, verification, manifest) for rep in reports}
-    winners = {rep.region.symbol: winning_build(rep, regions[rep.region.symbol].winner) for rep in reports}
+def time_program(linker: Linker, reports: list[ScopeReport], verification: Verification, manifest: Manifest) -> Timings:
+    """Every scope's timing, then alloy-full against DaCe's default codegen on every core."""
+    scopes = {rep.scope.symbol: time_scope(linker, rep, verification, manifest) for rep in reports}
+    winners = {rep.scope.symbol: winning_build(rep, scopes[rep.scope.symbol].winner) for rep in reports}
     compilers = frozenset(b.candidate.compiler for b in winners.values())
     archives = {symbol: b.archive for symbol, b in winners.items() if b.archive}
     arms = Arms(
@@ -248,13 +246,13 @@ def time_program(
         {"dace_default": "exact", "alloy_full": "band"},
         "",
         manifest.outputs,
-        frozenset(manifest.outputs),  # alloy-full mixes FP levels per region: compare every output by band
+        frozenset(manifest.outputs),  # alloy-full mixes FP levels per scope: compare every output by band
     )
     t, original = linker.matrix.timing, linker.program.original
     sizes = stage_sizes(original, original, manifest, t.final_cache_factor, t.max_program_cache_factor, grow_only=True)
     program = measure(arms, inputs.at(manifest, sizes), length(linker, sizes), machine.physical_cores(), t.final_reps)
-    return Timings(regions, ProgramTiming(program, sizes))
+    return Timings(scopes, ProgramTiming(program, sizes))
 
 
-def winning_build(rep: RegionReport, winner: str) -> Build:
+def winning_build(rep: ScopeReport, winner: str) -> Build:
     return rep.builds[0] if winner == REFERENCE else next(b for b in rep.builds if b.name == winner)

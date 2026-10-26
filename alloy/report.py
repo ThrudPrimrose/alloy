@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Write the per-region report (Markdown + JSON) of a sweep and, when it ran, its verification; read the JSON back
+"""Write the per-scope report (Markdown + JSON) of a sweep and, when it ran, its verification; read the JSON back
 (:func:`load`)."""
 
 import pathlib
@@ -8,14 +8,14 @@ import shutil
 from pydantic.dataclasses import dataclass
 
 from alloy.backend.build import Build
-from alloy.backend.sweep import RegionReport
+from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Best
-from alloy.evaluate.timing import REFERENCE, Measured, ProgramTiming, RegionTiming, Timings
+from alloy.evaluate.timing import REFERENCE, Measured, ProgramTiming, ScopeTiming, Timings
 from alloy.evaluate.verify import Status, Verdict, Verification
 from alloy.records import RECORD, Strings, dumped_json, validated_json
 
-#: ``{region symbol: {candidate name: verdict}}``; empty when no manifest was given.
+#: ``{scope symbol: {candidate name: verdict}}``; empty when no manifest was given.
 Verdicts = dict[str, dict[str, Verdict]]
 
 
@@ -37,19 +37,19 @@ def row(b: Build, verdict: Verdict | None) -> str:
 
 
 def best_lines(best: Best) -> list[str]:
-    """How ``best/`` links the program: each region's winner with its compiler and flags, then the link line."""
+    """How ``best/`` links the program: each scope's winner with its compiler and flags, then the link line."""
     lines = [
         "## Linked program (`best/`: `make` builds it)",
         "",
-        "| region | candidate | compiler | flags |",
+        "| scope | candidate | compiler | flags |",
         "|---|---|---|---|",
     ]
-    lines += [f"| {r.symbol} | {r.candidate} | {r.compiler} | `{' '.join(r.flags)}` |" for r in best.regions]
+    lines += [f"| {r.symbol} | {r.candidate} | {r.compiler} | `{' '.join(r.flags)}` |" for r in best.scopes]
     return [*lines, "", f"Entry arguments: {', '.join(best.arguments)}. Link: `{' '.join(best.link)}`", ""]
 
 
 def markdown(
-    reports: list[RegionReport],
+    reports: list[ScopeReport],
     matrix: Matrix,
     verdicts: Verdicts,
     unstable: list[str],
@@ -67,7 +67,7 @@ def markdown(
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
     lines += [""] if skipped else []
     for rep in reports:
-        r = rep.region
+        r = rep.scope
         unique = sum(1 for b in rep.builds if not b.error and not b.duplicate_of)
         lines += [
             f"## {r.symbol}",
@@ -83,12 +83,12 @@ def markdown(
         mine = verdicts.get(r.symbol, {})
         lines += [row(b, mine.get(b.name)) for b in rep.builds]
         lines.append("")
-        lines += runtime_matrix(rep, timing.regions[r.symbol], matrix) if timing else []
-        lines += timing_lines(timing.regions[r.symbol]) if timing else []
+        lines += runtime_matrix(rep, timing.scopes[r.symbol], matrix) if timing else []
+        lines += timing_lines(timing.scopes[r.symbol]) if timing else []
     return "\n".join(lines)
 
 
-def runtime_matrix(rep: RegionReport, timing: RegionTiming, matrix: Matrix) -> list[str]:
+def runtime_matrix(rep: ScopeReport, timing: ScopeTiming, matrix: Matrix) -> list[str]:
     """The screened candidates as code variant (row) x build config (column): ``ms (speedup over the reference)``,
     ``*`` when re-timed, the verdict when it failed, ``-`` when not screened (not swept, duplicate or not verified)."""
     ref = timing.screen[REFERENCE].median
@@ -109,7 +109,7 @@ def ms(m: Measured) -> str:
     return f"{1e3 * m.median:.3f} [{1e3 * m.low:.3f}, {1e3 * m.high:.3f}]"
 
 
-def timing_lines(timing: RegionTiming) -> list[str]:
+def timing_lines(timing: ScopeTiming) -> list[str]:
     """The re-timed arms against the reference, with the screening median and the winner."""
     ref = timing.final["reference"].median
     lines = [
@@ -164,8 +164,8 @@ class CandidateRecord:
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
-class RegionRecord:
-    """One outlined region and its candidates in ``report.json``; ``accumulation_length`` is a sympy expression."""
+class ScopeRecord:
+    """One outlined scope and its candidates in ``report.json``; ``accumulation_length`` is a sympy expression."""
 
     symbol: str
     signature: str
@@ -178,11 +178,11 @@ class RegionRecord:
 
 @dataclass(slots=True, frozen=True, config=RECORD)
 class Report:
-    """``report.json``: outputs the reference does not reproduce, every region, and the timings (``None`` when the
+    """``report.json``: outputs the reference does not reproduce, every scope, and the timings (``None`` when the
     sweep was not timed)."""
 
     nondeterministic_outputs: Strings
-    regions: tuple[RegionRecord, ...]
+    scopes: tuple[ScopeRecord, ...]
     timing: Timings | None
 
 
@@ -211,17 +211,17 @@ def candidate_record(b: Build, verdict: Verdict | None, matrix: Matrix) -> Candi
     )
 
 
-def region_records(reports: list[RegionReport], verdicts: Verdicts, matrix: Matrix) -> tuple[RegionRecord, ...]:
+def scope_records(reports: list[ScopeReport], verdicts: Verdicts, matrix: Matrix) -> tuple[ScopeRecord, ...]:
     return tuple(
-        RegionRecord(
-            symbol=rep.region.symbol,
-            signature=rep.region.signature,
-            abi_order=rep.region.abi_order,
-            calls_libm=rep.region.calls_libm,
-            has_reduction=rep.region.has_reduction,
-            accumulation_length=str(rep.region.accumulation_length),
+        ScopeRecord(
+            symbol=rep.scope.symbol,
+            signature=rep.scope.signature,
+            abi_order=rep.scope.abi_order,
+            calls_libm=rep.scope.calls_libm,
+            has_reduction=rep.scope.has_reduction,
+            accumulation_length=str(rep.scope.accumulation_length),
             candidates=tuple(
-                candidate_record(b, verdicts.get(rep.region.symbol, {}).get(b.name), matrix) for b in rep.builds
+                candidate_record(b, verdicts.get(rep.scope.symbol, {}).get(b.name), matrix) for b in rep.builds
             ),
         )
         for rep in reports
@@ -229,7 +229,7 @@ def region_records(reports: list[RegionReport], verdicts: Verdicts, matrix: Matr
 
 
 def write(
-    reports: list[RegionReport],
+    reports: list[ScopeReport],
     matrix: Matrix,
     out: pathlib.Path,
     verification: Verification | None = None,
@@ -242,7 +242,7 @@ def write(
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
     (out / "report.md").write_text(markdown(reports, matrix, verdicts, unstable, timing, best))
     payload = Report(
-        nondeterministic_outputs=tuple(unstable), regions=region_records(reports, verdicts, matrix), timing=timing
+        nondeterministic_outputs=tuple(unstable), scopes=scope_records(reports, verdicts, matrix), timing=timing
     )
     (out / "report.json").write_text(dumped_json(payload))
 

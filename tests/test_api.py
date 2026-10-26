@@ -7,17 +7,17 @@ import pytest
 
 from alloy import api
 from alloy.backend.candidates import one_factor_at_a_time
-from alloy.frontend import inputs, regions
+from alloy.frontend import inputs, scopes
 from helpers import EXAMPLE, REDUCTIONS, SCALE_MANIFEST, gcc_and_clang, gcc_only, load_program, write_manifest
 
 
-def test_without_a_manifest_every_region_is_built_and_reported_but_not_verified(tmp_path):
-    sdfg = load_program(f"{EXAMPLE}:two_regions").to_sdfg()
+def test_without_a_manifest_every_scope_is_built_and_reported_but_not_verified(tmp_path):
+    sdfg = load_program(f"{EXAMPLE}:two_scopes").to_sdfg()
 
     sut = api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path))
 
-    assert len(sut.regions) == 3
-    assert all(rep.builds for rep in sut.regions)
+    assert len(sut.scopes) == 3
+    assert all(rep.builds for rep in sut.scopes)
     assert (sut.verification, sut.timings) == (None, None)
     assert sut.report.is_file()
 
@@ -34,7 +34,7 @@ def test_a_program_without_a_loop_nest_is_refused_by_name(tmp_path):
 
 
 def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winner(tmp_path):
-    """``scale``: one region, every single-factor variant of gcc and clang (54 on an x86-64 host), each built,
+    """``scale``: one scope, every single-factor variant of gcc and clang (54 on an x86-64 host), each built,
     verified on fuzzed inputs and timed, and the winner linked into alloy_full."""
     matrix = gcc_and_clang(tmp_path)
     matrix = dataclasses.replace(
@@ -42,16 +42,16 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     )
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
-    (region,) = regions.outline(sdfg, matrix.libm_calls).regions
-    swept = one_factor_at_a_time(matrix, region, max_elements=inputs.largest_array(manifest, sdfg))
+    (scope,) = scopes.outline(sdfg, matrix.libm_calls).scopes
+    swept = one_factor_at_a_time(matrix, scope, max_elements=inputs.largest_array(manifest, sdfg))
 
     sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=matrix)
 
-    (report,) = sut.regions
+    (report,) = sut.scopes
     assert len(swept) >= 40 and len(report.builds) == len(swept)
     assert not [build.name for build in report.builds if build.error]
     assert sut.verification is not None and sut.timings is not None
-    verdicts = sut.verification.verdicts[region.symbol]
+    verdicts = sut.verification.verdicts[scope.symbol]
     assert all(verdicts[build.name].ok for build in report.builds if not build.duplicate_of)
     full = sut.timings.program.arms["alloy_full"]
     assert full.verdict.ok and math.isfinite(full.median)

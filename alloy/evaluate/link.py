@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Whole programs from region archives: a candidate is one archive copy plus a replayed DaCe build. A timer wraps each
-region's entry; a stub keeps the program's signature but stops after one region, so a judge can time that region."""
+"""Whole programs from scope archives: a candidate is one archive copy plus a replayed DaCe build. A timer wraps each
+scope's entry; a stub keeps the program's signature but stops after one scope, so a judge can time that scope."""
 
 import copy
 import hashlib
@@ -21,7 +21,7 @@ from pydantic.dataclasses import dataclass as record
 from alloy.backend import runtime
 from alloy.backend.build import Build
 from alloy.configuration_matrix import Matrix
-from alloy.frontend.regions import Program, Region
+from alloy.frontend.scopes import Program, Scope
 from alloy.records import RECORD, Strings, dumped_json
 
 TIMER = """#include <dace/types.h>
@@ -37,14 +37,14 @@ extern "C" void __wrap_{symbol}({signature}) {{
   seconds = (double)(t1.tv_sec - t0.tv_sec) + 1e-9 * (double)(t1.tv_nsec - t0.tv_nsec);
 }}
 """
-#: A region that runs after the stubbed one: its entry, with no body.
+#: A scope that runs after the stubbed one: its entry, with no body.
 EMPTY = """#include <dace/types.h>
 extern "C" void {symbol}({signature}) {{}}
 """
 
 
 def execution_order(sdfg: dace.SDFG) -> list[str]:
-    """The region symbols in run order: every call sits in a top-level state (a loop is outlined whole), so a
+    """The scope symbols in run order: every call sits in a top-level state (a loop is outlined whole), so a
     topological walk of the top-level blocks, then of each state, orders them."""
     order: list[str] = []
     for block in sdutils.dfs_topological_sort(sdfg):
@@ -57,7 +57,7 @@ def execution_order(sdfg: dace.SDFG) -> list[str]:
 
 def cmake_args(matrix: Matrix) -> str:
     """Make DaCe's own OpenMP the matrix runtime: its CMake would otherwise find the compiler's default one and load
-    a second runtime next to the regions'."""
+    a second runtime next to the scopes'."""
     soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
     return f"-DOpenMP_CXX_LIB_NAMES={soname} -DOpenMP_{soname}_LIBRARY={runtime.default_library(matrix)}"
 
@@ -70,8 +70,8 @@ def built(build: Build) -> pathlib.Path:
 
 
 @record(slots=True, frozen=True, config=RECORD)
-class BestRegion:
-    """How ``best/`` builds one region: its winning candidate's source, compiler and compile flags."""
+class BestScope:
+    """How ``best/`` builds one scope: its winning candidate's source, compiler and compile flags."""
 
     symbol: str
     candidate: str
@@ -82,16 +82,16 @@ class BestRegion:
 
 @record(slots=True, frozen=True, config=RECORD)
 class Best:
-    """``best/link.json``: every region's build, the entry's parameter order and the program's link line."""
+    """``best/link.json``: every scope's build, the entry's parameter order and the program's link line."""
 
-    regions: tuple[BestRegion, ...]
+    scopes: tuple[BestScope, ...]
     arguments: Strings
     link: Strings
 
 
 @dataclass(slots=True)
 class Linker:
-    """Builds the program with a chosen archive per region, every region's archive at ``link/lib<symbol>.a``."""
+    """Builds the program with a chosen archive per scope, every scope's archive at ``link/lib<symbol>.a``."""
 
     program: Program
     matrix: Matrix
@@ -113,20 +113,20 @@ class Linker:
         return flags
 
     def vendor_flags(self) -> list[str]:
-        """The vendor libraries the regions call (``-lopenblas`` for a BLAS library node): a region's archive
+        """The vendor libraries the scopes call (``-lopenblas`` for a BLAS library node): a scope's archive
         carries the calls, not the libraries, so the program links them. Rendered once per Linker."""
         if self.vendor is None:
             tokens = (
                 cpf.render(
-                    region.sdfg, signature=cpf.EntrySignature(order=list(region.abi_order)), check_compiles=False
+                    scope.sdfg, signature=cpf.EntrySignature(order=list(scope.abi_order)), check_compiles=False
                 ).link
-                for region in self.program.regions
+                for scope in self.program.scopes
             )
             self.vendor = list(dict.fromkeys(token for link in tokens for token in link))
         return self.vendor
 
     def library_sdfg(self, archives: dict[str, pathlib.Path], compilers: frozenset[str]) -> dace.SDFG:
-        """A copy of the outlined program whose every region calls ``archives[symbol]``, linked with the matrix's
+        """A copy of the outlined program whose every scope calls ``archives[symbol]``, linked with the matrix's
         OpenMP runtime and the support libraries of ``compilers``: what a standalone (CPF) library renders."""
         sdfg = copy.deepcopy(self.program.sdfg)
         flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
@@ -137,7 +137,7 @@ class Linker:
     def compile(
         self, archives: dict[str, pathlib.Path], tag: str, compilers: frozenset[str] = frozenset()
     ) -> pathlib.Path:
-        """The program with ``archives[symbol]`` linked for each region, built under a name of its own so no cache
+        """The program with ``archives[symbol]`` linked for each scope, built under a name of its own so no cache
         or loaded library of another candidate can stand in for it."""
         link = self.out / "link"
         link.mkdir(parents=True, exist_ok=True)
@@ -146,11 +146,11 @@ class Linker:
         sdfg.name = f"{self.program.sdfg.name}_{safe}"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / safe)
         flags = self.link_flags() + self.support_flags(compilers) + self.vendor_flags()
-        regions = {r.symbol: r for r in self.program.regions}
+        scopes = {r.symbol: r for r in self.program.scopes}
         for call in external_call.external_calls(sdfg):
             fixed = link / f"lib{call.symbol}.a"
             shutil.copyfile(archives[call.symbol], fixed)
-            subprocess.run(["ar", "rs", str(fixed), str(self.timer(regions[call.symbol]))], check=True)
+            subprocess.run(["ar", "rs", str(fixed), str(self.timer(scopes[call.symbol]))], check=True)
             call.implementation, call.lib_path = "ExternCall", str(fixed)
             call.link_flags = [*flags, f"-Wl,--wrap={call.symbol}"]
         with ExitStack() as stack:
@@ -164,63 +164,63 @@ class Linker:
         return pathlib.Path(sdfg.build_folder)
 
     def write_best(self, winners: dict[str, Build]) -> Best:
-        """``out/best/``: each region's winning source, the CPF program calling them, and a Makefile that builds each
-        region with its own compiler and flags, then ``lib<program>.so``. ``-ffast-math`` stays on a region's compile
+        """``out/best/``: each scope's winning source, the CPF program calling them, and a Makefile that builds each
+        scope with its own compiler and flags, then ``lib<program>.so``. ``-ffast-math`` stays on a scope's compile
         line, never on the link line, so no ``crtfastmath.o`` sets FTZ/DAZ for the whole process."""
         best = self.out / "best"
-        (best / "regions").mkdir(parents=True, exist_ok=True)
-        regions = []
+        (best / "scopes").mkdir(parents=True, exist_ok=True)
+        scopes = []
         for symbol, b in winners.items():
-            source = f"regions/{symbol}{b.source.suffix}"
+            source = f"scopes/{symbol}{b.source.suffix}"
             shutil.copyfile(b.source, best / source)
             compiler = self.matrix.compilers[b.candidate.compiler].executables[b.candidate.language]
-            regions.append(BestRegion(symbol, b.name, compiler, b.flags, source))
-        archives = {r.symbol: best / f"lib{r.symbol}.a" for r in regions}
+            scopes.append(BestScope(symbol, b.name, compiler, b.flags, source))
+        archives = {r.symbol: best / f"lib{r.symbol}.a" for r in scopes}
         compilers = frozenset(b.candidate.compiler for b in winners.values())
         rendering = cpf.render(self.library_sdfg(archives, compilers), language="c", check_compiles=False)
         (best / "program.c").write_text(rendering.code)
         link = tuple(token.removeprefix(f"{best}/") for token in rendering.link)  # make runs in best/
-        plan = Best(tuple(regions), rendering.arguments, link)
+        plan = Best(tuple(scopes), rendering.arguments, link)
         (best / "link.json").write_text(dumped_json(plan))
         (best / "Makefile").write_text(self.makefile(plan))
         return plan
 
     def makefile(self, plan: Best) -> str:
         library = f"lib{self.program.sdfg.name}.so"
-        archives = " ".join(f"lib{r.symbol}.a" for r in plan.regions)
+        archives = " ".join(f"lib{r.symbol}.a" for r in plan.scopes)
         usable, _ = self.matrix.usable_compilers()
         frame = next(comp.executables["c"] for comp in usable.values() if "c" in comp.executables)
         frame_flags = [self.matrix.languages["c"].std, "-O3", "-fPIC", "-shared"]
         lines = [f"all: {library}", ""]
-        for r in plan.regions:
+        for r in plan.scopes:
             compile_line = shlex.join([r.compiler, *r.flags, "-c", r.source, "-o", f"{r.symbol}.o"])
             lines += [f"lib{r.symbol}.a: {r.source}", f"\t{compile_line}", f"\tar rcs $@ {r.symbol}.o", ""]
         link_line = shlex.join([frame, *frame_flags, "program.c", "-o", library, *plan.link])
         return "\n".join([*lines, f"{library}: program.c {archives}", f"\t{link_line}", ""])
 
     def stub(self, selection: dict[str, Build], symbol: str) -> dace.SDFG:
-        """The program, same signature, running the regions before ``symbol`` and ``symbol`` from ``selection``; later
-        regions link an empty body. The prefix is equal across ``symbol``'s candidates, so stub times rank them."""
+        """The program, same signature, running the scopes before ``symbol`` and ``symbol`` from ``selection``; later
+        scopes link an empty body. The prefix is equal across ``symbol``'s candidates, so stub times rank them."""
         order = execution_order(self.program.sdfg)
         later = set(order[order.index(symbol) + 1 :])
-        regions = {r.symbol: r for r in self.program.regions}
-        archives = {s: self.empty(regions[s]) if s in later else built(selection[s]) for s in order}
+        scopes = {r.symbol: r for r in self.program.scopes}
+        archives = {s: self.empty(scopes[s]) if s in later else built(selection[s]) for s in order}
         compilers = frozenset(selection[s].candidate.compiler for s in order if s not in later)
         return self.library_sdfg(archives, compilers)
 
-    def empty(self, region: Region) -> pathlib.Path:
-        """The archive of ``region``'s entry with an empty body."""
-        archive = self.out / "link" / f"libempty_{region.symbol}.a"
-        obj = self.cpp_object(f"empty_{region.symbol}", EMPTY.format(symbol=region.symbol, signature=region.signature))
+    def empty(self, scope: Scope) -> pathlib.Path:
+        """The archive of ``scope``'s entry with an empty body."""
+        archive = self.out / "link" / f"libempty_{scope.symbol}.a"
+        obj = self.cpp_object(f"empty_{scope.symbol}", EMPTY.format(symbol=scope.symbol, signature=scope.signature))
         if not archive.is_file() or archive.stat().st_mtime < obj.stat().st_mtime:
             archive.unlink(missing_ok=True)
             subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
         return archive
 
-    def timer(self, region: Region) -> pathlib.Path:
-        """The object timing ``region``'s entry; ``alloy_seconds_<symbol>()`` reads its last call."""
-        text = TIMER.format(symbol=region.symbol, signature=region.signature, arguments=", ".join(region.abi_order))
-        return self.cpp_object(f"timer_{region.symbol}", text)
+    def timer(self, scope: Scope) -> pathlib.Path:
+        """The object timing ``scope``'s entry; ``alloy_seconds_<symbol>()`` reads its last call."""
+        text = TIMER.format(symbol=scope.symbol, signature=scope.signature, arguments=", ".join(scope.abi_order))
+        return self.cpp_object(f"timer_{scope.symbol}", text)
 
     def cpp_object(self, name: str, text: str) -> pathlib.Path:
         """``link/<name>.o`` compiled from ``text`` against DaCe's runtime types, rebuilt when the text changes (a

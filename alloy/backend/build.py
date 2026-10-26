@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Render a region under a candidate, compile it to a static archive, and keep the vectorizer's remarks."""
+"""Render a scope under a candidate, compile it to a static archive, and keep the vectorizer's remarks."""
 
 import hashlib
 import pathlib
@@ -14,7 +14,7 @@ from dace.config import set_temporary
 from alloy.backend import runtime
 from alloy.backend.candidates import Candidate, RenderKey
 from alloy.configuration_matrix import Matrix
-from alloy.frontend.regions import Region
+from alloy.frontend.scopes import Scope
 
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
@@ -46,15 +46,15 @@ class Build:
     duplicate_of: str = ""
 
 
-def render(region: Region, candidate: Candidate, matrix: Matrix) -> str:
-    """The region's CPF translation unit under ``candidate``'s language and codegen knobs."""
+def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
+    """The scope's CPF translation unit under ``candidate``'s language and codegen knobs."""
     with ExitStack() as stack:
         for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
         rendering = cpf.render(
-            region.sdfg,
+            scope.sdfg,
             language=matrix.languages[candidate.language].render,
-            signature=cpf.EntrySignature(order=list(region.abi_order)),
+            signature=cpf.EntrySignature(order=list(scope.abi_order)),
             check_compiles=False,
         )
     return rendering.code
@@ -96,7 +96,7 @@ def compile_candidate(
 
 
 def write_source(
-    region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, pathlib.Path]
+    scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, pathlib.Path]
 ) -> pathlib.Path:
     """``candidate``'s code variant, ``folder/variants/v<k>.<suffix>``, rendered and written the first time its key
     appears; ``renders`` maps each key seen so far to its file, so ``k`` counts variants in order of appearance."""
@@ -105,13 +105,13 @@ def write_source(
         variants = folder / "variants"
         variants.mkdir(parents=True, exist_ok=True)
         source = variants / f"v{len(renders)}.{matrix.languages[candidate.language].suffix}"
-        source.write_text(render(region, candidate, matrix))
+        source.write_text(render(scope, candidate, matrix))
         renders[key] = source
     return renders[key]
 
 
 def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -> Build:
-    """Compile ``source`` (its code variant) for ``candidate`` into ``<region>/builds/<candidate>.o`` and archive it;
+    """Compile ``source`` (its code variant) for ``candidate`` into ``<scope>/builds/<candidate>.o`` and archive it;
     safe to run concurrently for distinct candidates."""
     name, params = candidate.name(matrix), candidate.codegen_params(matrix)
     flags = candidate.flags(matrix)
@@ -139,7 +139,7 @@ def deduplicated(built: Build, seen: dict[str, str]) -> Build:
     return built if first == built.name else replace(built, duplicate_of=first)
 
 
-def build(region: Region, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
+def build(scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
     """Render, compile and archive ``candidate``. ``seen`` maps object hashes to the first candidate that
     produced them, so a duplicate keeps its record but points at the original."""
-    return deduplicated(compile_source(write_source(region, candidate, matrix, folder, {}), candidate, matrix), seen)
+    return deduplicated(compile_source(write_source(scope, candidate, matrix, folder, {}), candidate, matrix), seen)

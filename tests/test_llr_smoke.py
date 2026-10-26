@@ -63,8 +63,8 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(ker
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL)
 
-    assert sut.regions and sut.verification is not None and sut.timings is not None
-    assert all(any(v.ok for v in sut.verification.verdicts[r.region.symbol].values()) for r in sut.regions)
+    assert sut.scopes and sut.verification is not None and sut.timings is not None
+    assert all(any(v.ok for v in sut.verification.verdicts[r.scope.symbol].values()) for r in sut.scopes)
     full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
     assert full.verdict.ok
     assert math.isfinite(default.median / full.median)
@@ -80,14 +80,14 @@ def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=SMALL, time_locally=False)
 
     assert sut.verification is not None and (sut.timings, sut.best) == (None, None)
-    assert all(any(v.ok for v in sut.verification.verdicts[r.region.symbol].values()) for r in sut.regions)
+    assert all(any(v.ok for v in sut.verification.verdicts[r.scope.symbol].values()) for r in sut.scopes)
 
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
-def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, tmp_path, monkeypatch):
+def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(pipeline, tmp_path, monkeypatch):
     """OMEN's scattering self-energies (complex128, an indirect neighbour index, matmuls in an eight-deep nest) after
-    a bench transformation pipeline: every region builds distinct variants and the whole program still verifies."""
+    a bench transformation pipeline: every scope builds distinct variants and the whole program still verifies."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")
     sdfg = pipeline_sdfg(spec, pipeline)
@@ -95,12 +95,12 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_region(pipeline, 
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=TINY)
 
-    assert sut.regions and sut.verification is not None and sut.timings is not None
-    for rep in sut.regions:
-        verdicts = sut.verification.verdicts[rep.region.symbol]
+    assert sut.scopes and sut.verification is not None and sut.timings is not None
+    for rep in sut.scopes:
+        verdicts = sut.verification.verdicts[rep.scope.symbol]
         variants = [build.name for build in rep.builds[1:]]
-        assert len(variants) >= 2, f"{rep.region.symbol}: only {variants} besides the reference"
-        assert any(verdicts[name].ok for name in variants), f"{rep.region.symbol}: no variant verified"
+        assert len(variants) >= 2, f"{rep.scope.symbol}: only {variants} besides the reference"
+        assert any(verdicts[name].ok for name in variants), f"{rep.scope.symbol}: no variant verified"
     full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
     assert full.verdict.ok
     assert math.isfinite(default.median / full.median)

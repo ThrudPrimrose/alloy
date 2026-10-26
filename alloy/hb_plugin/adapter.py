@@ -1,5 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy on HPCAgent-Bench: Alloy builds and verifies every region's candidates, the judge times each as a
+"""Alloy on HPCAgent-Bench: Alloy builds and verifies every scope's candidates, the judge times each as a
 ``/profile`` stub, and the chosen library is scored once with ``/score``."""
 
 import pathlib
@@ -30,11 +30,11 @@ from hpcagent_bench.spec import RUNGS, BenchSpec
 
 from alloy import api, configuration_matrix
 from alloy.backend.build import Build
-from alloy.backend.sweep import RegionReport
+from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, execution_order
 from alloy.evaluate.verify import Verdict
-from alloy.frontend import inputs, regions
+from alloy.frontend import inputs, scopes
 
 __all__ = [
     "DEVICES",
@@ -85,7 +85,7 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str, precision: Precision, target: 
     return sdfg
 
 
-def verified(rep: RegionReport, verdicts: dict[str, Verdict]) -> list[Build]:
+def verified(rep: ScopeReport, verdicts: dict[str, Verdict]) -> list[Build]:
     """``rep``'s builds other than its reference that verified, in Alloy's build order."""
     return [build for build in rep.builds[1:] if build.name in verdicts and verdicts[build.name].ok]
 
@@ -108,12 +108,12 @@ def generated(sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Ma
 
 
 def nothing_to_generate(sdfg: dace.SDFG, matrix: Matrix) -> bool:
-    """Whether ``sdfg`` outlines into no region (the program is the default codegen)."""
-    return not regions.outline(sdfg, matrix.libm_calls).regions
+    """Whether ``sdfg`` outlines into no scope (the program is the default codegen)."""
+    return not scopes.outline(sdfg, matrix.libm_calls).scopes
 
 
 def linked(linker: Linker, selection: dict[str, Build]) -> dace.SDFG:
-    """The outlined program calling ``selection[symbol]``'s archive for every region."""
+    """The outlined program calling ``selection[symbol]``'s archive for every scope."""
     archives = {symbol: build.archive for symbol, build in selection.items() if build.archive is not None}
     return linker.library_sdfg(archives, frozenset(build.candidate.compiler for build in selection.values()))
 
@@ -142,7 +142,7 @@ def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> 
 
 
 def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Build], deliver: Deliver) -> Submission:
-    """The library calling ``selection[symbol]``'s archive for every region."""
+    """The library calling ``selection[symbol]``'s archive for every scope."""
     return rendered(task, spec, linked(linker, selection), deliver)
 
 
@@ -170,7 +170,7 @@ def ranked[B: Named](
     time_stub: Callable[[dict[str, B], str], float],
     affordable: Callable[[], bool],
 ) -> dict[str, B]:
-    """Region by region in execution ``order``, each candidate timed as a stub over the best of the regions before
+    """Scope by scope in execution ``order``, each candidate timed as a stub over the best of the scopes before
     it, the fastest kept; stops when no longer ``affordable``."""
     chosen = dict(start)
     for symbol in order:
@@ -191,7 +191,7 @@ def ranked[B: Named](
 
 def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | None = None) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct, else
-    every region's reference (CPF's default rendering with no region)."""
+    every scope's reference (CPF's default rendering with no scope)."""
     started = time.monotonic()
     if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
         raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
@@ -229,8 +229,8 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
         finally:
             stub_costs.append(time.monotonic() - start)
 
-    references = {rep.region.symbol: rep.builds[0] for rep in result.regions}
-    candidates = {rep.region.symbol: verified(rep, verification.verdicts[rep.region.symbol]) for rep in result.regions}
+    references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
+    candidates = {rep.scope.symbol: verified(rep, verification.verdicts[rep.scope.symbol]) for rep in result.scopes}
     chosen = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
     if chosen != references and deadline - time.monotonic() > score_reserve():
         start = time.monotonic()

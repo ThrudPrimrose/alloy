@@ -1,5 +1,5 @@
 # HPCAgent-Bench manifest schema: sizes, a fuzzed range for speculative compiling, and the inputs to draw.
-name: Two regions
+name: Two scopes
 level: 1
 parameters:
   S:

@@ -7,9 +7,9 @@ import pytest
 from alloy import machine
 from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
-from alloy.backend.sweep import RegionReport
+from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import link, verify
-from alloy.frontend import inputs, regions
+from alloy.frontend import inputs, scopes
 from helpers import (
     MATRIX,
     REDUCTIONS,
@@ -22,13 +22,13 @@ from helpers import (
 )
 
 
-def reference_run(tmp: pathlib.Path, program: regions.Program, cases: verify.Cases) -> tuple:
-    (region,) = program.regions
-    ref = build(region, Candidate("c", "gcc"), MATRIX, tmp / "ref", {})
+def reference_run(tmp: pathlib.Path, program: scopes.Program, cases: verify.Cases) -> tuple:
+    (scope,) = program.scopes
+    ref = build(scope, Candidate("c", "gcc"), MATRIX, tmp / "ref", {})
     assert ref.archive is not None
     linker = link.Linker(program, MATRIX, tmp / "out")
-    compiled = linker.compile({region.symbol: ref.archive}, "reference")
-    return region, ref, linker, verify.reference_outputs(compiled, cases)
+    compiled = linker.compile({scope.symbol: ref.archive}, "reference")
+    return scope, ref, linker, verify.reference_outputs(compiled, cases)
 
 
 def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_path):
@@ -43,8 +43,8 @@ def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_p
 
 def test_the_reference_program_reproduces_itself_bit_for_bit(tmp_path):
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
-    region, ref, linker, refs = reference_run(tmp_path, program, cases)
-    again = linker.compile({region.symbol: ref.archive}, "again")
+    scope, ref, linker, refs = reference_run(tmp_path, program, cases)
+    again = linker.compile({scope.symbol: ref.archive}, "again")
 
     sut = verify.judge("exact", refs, [verify.run(again, d, cases.outputs) for d in cases.draws], [1, 1])
 
@@ -55,9 +55,9 @@ def test_the_reference_program_reproduces_itself_bit_for_bit(tmp_path):
 
 def test_a_wrong_archive_at_the_same_fixed_path_fails_so_no_stale_binary_is_reused(tmp_path):
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
-    region, _, linker, refs = reference_run(tmp_path, program, cases)
-    wrong = handwritten_archive(tmp_path, region, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
-    compiled = linker.compile({region.symbol: wrong}, "wrong")
+    scope, _, linker, refs = reference_run(tmp_path, program, cases)
+    wrong = handwritten_archive(tmp_path, scope, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
+    compiled = linker.compile({scope.symbol: wrong}, "wrong")
 
     sut = verify.judge("band", refs, [verify.run(compiled, d, cases.outputs) for d in cases.draws], [1, 1])
 
@@ -66,8 +66,8 @@ def test_a_wrong_archive_at_the_same_fixed_path_fails_so_no_stale_binary_is_reus
 
 def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path):
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
-    region, _, linker, refs = reference_run(tmp_path, program, cases)
-    compiled = linker.compile({region.symbol: handwritten_archive(tmp_path, region, "abort();")}, "abort")
+    scope, _, linker, refs = reference_run(tmp_path, program, cases)
+    compiled = linker.compile({scope.symbol: handwritten_archive(tmp_path, scope, "abort();")}, "abort")
 
     sut = verify.judge("band", refs, [verify.run(compiled, d, cases.outputs) for d in cases.draws], [1, 1])
 
@@ -76,9 +76,9 @@ def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path):
 
 def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_server_started(tmp_path, monkeypatch):
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
-    region, _, linker, _ = reference_run(tmp_path, program, cases)  # the fork server is running from here on
+    scope, _, linker, _ = reference_run(tmp_path, program, cases)  # the fork server is running from here on
     probe = "out[0] = omp_get_max_threads(); out[1] = omp_get_num_places();"
-    compiled = linker.compile({region.symbol: handwritten_archive(tmp_path, region, probe)}, "probe")
+    compiled = linker.compile({scope.symbol: handwritten_archive(tmp_path, scope, probe)}, "probe")
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
 
     sut = verify.run(compiled, cases.draws[0], cases.outputs)
@@ -90,14 +90,14 @@ def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_se
 
 def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
-    init, reduce_region = program.regions
+    init, reduce_scope = program.scopes
     builds = [
-        RegionReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
-        RegionReport(
-            reduce_region,
+        ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
+        ScopeReport(
+            reduce_scope,
             (
-                build(reduce_region, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {}),
-                build(reduce_region, Candidate("c", "gcc", fp_level="reassoc"), MATRIX, tmp_path / "r2", {}),
+                build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {}),
+                build(reduce_scope, Candidate("c", "gcc", fp_level="reassoc"), MATRIX, tmp_path / "r2", {}),
             ),
         ),
     ]
@@ -105,7 +105,7 @@ def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
     sut = verify.verify(program, MATRIX, builds, cases, tmp_path / "out")
 
     reassoc = builds[1].builds[1].name
-    assert sut.verdicts[reduce_region.symbol][reassoc].ok
+    assert sut.verdicts[reduce_scope.symbol][reassoc].ok
 
 
 def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
@@ -138,15 +138,15 @@ def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_e
 def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path):
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     builds = [
-        RegionReport(r, (build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}),)) for r in program.regions
+        ScopeReport(r, (build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}),)) for r in program.scopes
     ]
 
     sut = verify.verify(program, MATRIX, builds, cases, tmp_path / "out")
 
     assert [p.name for p in (tmp_path / "out" / "programs").iterdir()] == [sut.reference.name]
     for rep in builds:
-        assert sut.programs[rep.region.symbol, rep.builds[0].name] == sut.reference
-        assert sut.verdicts[rep.region.symbol][rep.builds[0].name].status == "exact"
+        assert sut.programs[rep.scope.symbol, rep.builds[0].name] == sut.reference
+        assert sut.verdicts[rep.scope.symbol][rep.builds[0].name].status == "exact"
 
 
 def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size():
