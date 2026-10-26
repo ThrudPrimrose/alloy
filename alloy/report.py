@@ -25,7 +25,7 @@ from alloy.frontend.tree import CfgNode
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 3
+SCHEMA = 4
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -100,8 +100,9 @@ class VectorChoice:
 
 @dataclass(slots=True, frozen=True, config=RECORD)
 class ScopeRecord:
-    """One outlined scope: its entry, traits, own control-flow tree, how many candidates were built and why the
-    others dropped out, its baseline time and its top variants; ``accumulation_length`` is a sympy expression."""
+    """One outlined scope: its entry, traits, own control-flow tree, how many candidates were built, why the others
+    dropped out, the candidates pruned before building (name -> reason), its baseline time and its top variants;
+    ``accumulation_length`` is a sympy expression."""
 
     symbol: str
     signature: str
@@ -112,6 +113,7 @@ class ScopeRecord:
     tree: CfgNode
     candidates: int
     dropped: dict[str, int]
+    pruned: dict[str, str]
     baseline: Time | None
     top: tuple[Variant, ...]
 
@@ -257,13 +259,15 @@ def scope_record(
         tree=tree.cfg_tree(s.sdfg),
         candidates=len(rep.builds),
         dropped=dropped,
+        pruned={p.candidate.name(matrix): p.reason for p in rep.pruned},
         baseline=as_time(timing.screen[REFERENCE]) if timing else None,
         top=tuple(variant(rep, b, rank, verdicts.get(b.name), timing, matrix) for rank, b in enumerate(top, start=1)),
     )
 
 
 def matrix_row(rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTiming | None, matrix: Matrix) -> MatrixRow:
-    """Per build config, the fastest rankable build in it as ``ms (speedup)``; else the first reason none is."""
+    """Per build config, the fastest rankable build in it as ``ms (speedup)``; else the first reason none is, a
+    config with no build reading ``pruned: <reason>``."""
     cells: dict[str, str] = {}
     best: dict[str, float] = {}
     base = timing.screen[REFERENCE].median if timing else math.nan
@@ -278,6 +282,8 @@ def matrix_row(rep: ScopeReport, verdicts: dict[str, Verdict], timing: ScopeTimi
             best[config] = median
             note = " not honored" if honored(b, matrix) is False else ""
             cells[config] = f"{1e3 * median:.3f} ({base / median:.2f}x){note}"
+    for p in rep.pruned:
+        cells.setdefault(p.candidate.config_name(matrix), f"pruned: {p.reason}")
     return MatrixRow(scope=rep.scope.symbol, cells=cells)
 
 
@@ -375,6 +381,14 @@ def vectorization_lines(choices: tuple[VectorChoice, ...]) -> list[str]:
     return [*lines, ""]
 
 
+def pruned_lines(pruned: dict[str, str]) -> list[str]:
+    """The pruned candidates grouped by reason."""
+    by_reason: dict[str, list[str]] = {}
+    for name, why in pruned.items():
+        by_reason.setdefault(why, []).append(name)
+    return [f"Pruned ({why}): {', '.join(names)}" for why, names in by_reason.items()] + ([""] if pruned else [])
+
+
 def scope_lines(s: ScopeRecord) -> list[str]:
     dropped = ", ".join(f"{reason} {count}" for reason, count in s.dropped.items()) or "none"
     return [
@@ -385,6 +399,7 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         f"libm calls: {s.calls_libm}; reduction: {s.has_reduction}; accumulation length: {s.accumulation_length}; "
         f"{s.candidates} candidates, dropped: {dropped}. Baseline (matrix default): {time_text(s.baseline)} ms.",
         "",
+        *pruned_lines(s.pruned),
         "```",
         tree.render(s.tree),
         "```",

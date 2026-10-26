@@ -48,7 +48,7 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=matrix)
 
     (report,) = sut.scopes
-    assert len(swept) >= 40 and len(report.builds) == len(swept)
+    assert len(swept) >= 40 and len(report.builds) + len(report.pruned) == len(swept)
     assert not [build.name for build in report.builds if build.error]
     assert sut.verification is not None and sut.timings is not None
     verdicts = sut.verification.verdicts[scope.symbol]

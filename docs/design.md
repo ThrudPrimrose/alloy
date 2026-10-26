@@ -54,10 +54,16 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   Every build counts its masked instructions from the object; a masked tail without any is reported "not honored".
 - Vector math library (libmvec / SVML / SLEEF): opened only when the scope calls libm (sin, cos, exp, log, pow, ...),
   at its FP level's requirement: gcc reaches libmvec only under `-ffast-math`, so that build needs finite inputs.
-- Pruning:
-  - Skip timing a candidate whose `.o` hash duplicates one already timed.
-  - Compiler remarks (`-Rpass-missed`, `-fopt-info-vec-all`) choose the next candidates. For example, an aliasing miss
-    leads to trying `restrict` / by-value.
+- Pruning (`alloy/heuristics/prune.py`, built): each compiler's default builds first, then the rest minus the cells
+  that cannot change the code, each kept in the report with its reason:
+  - no compiler vectorized a loop: no ISA or tail cell (explicit SVE loops stay);
+  - every innermost trip count a constant multiple of an ISA's lanes x 4 (clang's interleave): no tail on that ISA;
+    SVE's length is unknown at compile time, so never there;
+  - an FP level only where it has something to rewrite: contract needs a multiply feeding an add, noerrno a libm or
+    sqrt call, reassoc a reduction, fast any of those or a division or min/max.
+  - A candidate whose object (and vector library) duplicates an earlier one is built but not verified or timed.
+  - Open: compiler remarks (`-Rpass-missed`, `-fopt-info-vec-all`) choosing the next candidates, e.g. an aliasing
+    miss leading to `restrict` / by-value.
 
 ## Sweep axes (GPU)
 
@@ -159,15 +165,16 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 
 ## Report format
 
-Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 2, pydantic, refused on an
-unknown key, a wrong type or another schema; now 3); `report.md` is rendered from it and nothing else.
+Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 4, pydantic, refused on an
+unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
 
 0. The vectorization options: every ISA x loop tail, with the compilers that build it on this host or why none can.
 
 1. The outlined program's control-flow tree (`alloy/frontend/tree.py`, NestForge's row format without work and
    depth, duplicated on purpose); each scope is a row named by its entry symbol.
 2. Per scope: signature, traits (libm, reduction, accumulation length), its own tree, how many candidates were built
-   and why the rest dropped out (build failed, duplicate object, failed verification, not screened), its baseline,
+   and why the rest dropped out (build failed, duplicate object, failed verification, not screened), the cells
+   pruned before building with their reasons, its baseline,
    and its top-k correct variants (k = 5 by default), ranked by screened time, re-timed time where taken.
 3. Verdict: scope x build config (every compiler), each cell the config's fastest correct variant as
    `ms (speedup)` or why it has none; the chosen candidate per scope; the full compile and link argv that

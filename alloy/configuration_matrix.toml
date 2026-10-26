@@ -76,24 +76,30 @@ tolerance = "band"
 needs = "finite_inputs"
 
 # A vector ISA narrower or more specific than -march=native; a candidate's ISA flags follow the build flags. host_flag:
-# the /proc/cpuinfo flag the host must have, else the ISA is skipped. The x86 spellings were checked by the vector
-# registers in the assembly (ymm vs zmm) on a Zen 4; the aarch64 ones by the z vs v registers of gcc 15 and clang 21
-# cross compiles for -mcpu=neoverse-v1, neoverse-v2 and a64fx. On neoverse-v2 (128-bit SVE) both pick NEON unless
-# forced. Ordered FP reductions use SVE fadda even under the neon spelling. Confirm the aarch64 ones on Grace.
+# the /proc/cpuinfo flag the host must have, else the ISA is skipped; vector_bytes: its register width, 0 when
+# length-agnostic. The x86 spellings were checked by the vector registers in the assembly (ymm vs zmm) on a Zen 4; the
+# aarch64 ones by the z vs v registers of gcc 15 and clang 21 cross compiles for -mcpu=neoverse-v1, neoverse-v2 and
+# a64fx. On neoverse-v2 (128-bit SVE) both pick NEON unless forced. Ordered FP reductions use SVE fadda even under the
+# neon spelling. Confirm the aarch64 ones on Grace.
 [isas.avx2]
 host_flag = "avx2"
+vector_bytes = 32
 
 [isas.avx512_256]  # AVX-512 instructions at 256-bit width
 host_flag = "avx512f"
+vector_bytes = 32
 
 [isas.avx512]
 host_flag = "avx512f"
+vector_bytes = 64
 
 [isas.neon]
 host_flag = "asimd"
+vector_bytes = 16
 
 [isas.sve]
 host_flag = "sve"
+vector_bytes = 0
 
 # The tail of a vectorized loop. isas: the ISAs with masks it needs (empty: any ISA). render = "sve": the scope's
 # innermost maps become explicit Arm SVE predicated loops (DaCe's SVEVectorization) instead of being left to the

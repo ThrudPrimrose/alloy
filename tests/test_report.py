@@ -20,6 +20,7 @@ from alloy.evaluate.timing import Measured, ProgramTiming, ScopeTiming, Timings
 from alloy.evaluate.verify import Verdict, Verification
 from alloy.frontend import scopes
 from alloy.frontend.tree import Kind
+from alloy.heuristics import prune
 from alloy.records import dumped_json
 from helpers import MATRIX, outlined
 
@@ -236,3 +237,17 @@ def test_the_report_lists_every_isa_and_tail_with_its_compilers_or_the_reason(tm
 
     assert "## Vectorization options" in sut
     assert "| avx2 |" in sut and "avx2 has no masks" in sut
+
+
+def test_a_pruned_candidate_shows_its_reason_in_the_scope_and_in_the_verdict_matrix(tmp_path):
+    program = outlined()
+    builds = (a_build(tmp_path),)
+    skipped = Candidate("c", "gcc", isa="avx512", note="isa avx512")
+    rep = sweep.ScopeReport(program.scopes[0], builds, (prune.Pruned(skipped, "nothing vectorizes"),))
+
+    row = report.matrix_row(rep, {b.name: PASSED for b in builds}, None, MATRIX)
+    record = report.scope_record(rep, {}, None, MATRIX, k=report.TOP_K)
+
+    assert row.cells[skipped.config_name(MATRIX)] == "pruned: nothing vectorizes"
+    assert record.pruned == {skipped.name(MATRIX): "nothing vectorizes"}
+    assert f"Pruned (nothing vectorizes): {skipped.name(MATRIX)}" in report.scope_lines(record)

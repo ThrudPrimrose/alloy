@@ -49,9 +49,11 @@ class Veclib:
 
 @dataclass(slots=True, frozen=True, config=STRICT)
 class Isa:
-    """A vector ISA a candidate may target, when the host lists ``host_flag`` in ``/proc/cpuinfo``."""
+    """A vector ISA a candidate may target, when the host lists ``host_flag`` in ``/proc/cpuinfo``; ``vector_bytes``
+    is its register width, 0 for a length-agnostic one (SVE)."""
 
     host_flag: str
+    vector_bytes: int
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)
