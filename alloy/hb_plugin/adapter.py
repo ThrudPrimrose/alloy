@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from typing import Protocol
 
 import dace
+from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from hpcagent_agent.tools.http_json import judge_rank, judge_timeout
 from hpcagent_bench import config, paths
@@ -28,7 +29,7 @@ from hpcagent_bench.harness.tools import JudgeClient
 from hpcagent_bench.precision import Precision, numpy_dtype
 from hpcagent_bench.spec import RUNGS, BenchSpec
 
-from alloy import api, configuration_matrix
+from alloy import api, configuration_matrix, gpu
 from alloy.backend.build import Build
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
@@ -253,7 +254,10 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
 
 def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy's speculative mode on ``task``'s kernel after ``pipeline``: each scope's predicted pick, verified and
-    never timed, if ``/score`` grades it correct, else every scope's reference."""
+    never timed, if ``/score`` grades it correct, else every scope's reference. A GPU task's device maps take their
+    speculated threadblock shapes instead (:func:`speculative_gpu`)."""
+    if target_of(task) is Target.GPU:
+        return speculative_gpu(task, pipeline)
     if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
         raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
     spec = BenchSpec.load(task.kernel)
@@ -272,3 +276,40 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
             # every deliver builds the same .so path, so the returned library is built last
             return library(task, spec, linker, chosen, deliver)
     return library(task, spec, linker, references, deliver)
+
+
+#: A GPU image -> the dialect its device maps' register use is read in: nvcc's report on an NVIDIA device, hipcc's
+#: on an AMD one. The submission itself is the bench's GPU form, HIP on either (``bridge.DEVICE_LANGUAGE``).
+ANALYSIS_DIALECT = {"nvidia": "cuda", "amd": "hip"}
+
+
+def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG) -> Submission:
+    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form: a HIP host and device source."""
+    form = render_canonical(spec, spec.short_name, sdfg, "hip", task.precision.value, Target.GPU, DEFAULT_HINTS)
+    submission = Submission(language=Language.HIP, source=form.code, device_source=form.device_code)
+    if form.workspace_bytes != "0":
+        submission.workspace_bytes = form.workspace_bytes
+    return submission
+
+
+def speculative_gpu(task: Task, pipeline: str) -> Submission:
+    """Every device map of ``task``'s kernel after ``pipeline`` at its speculated threadblock shape
+    (:func:`alloy.gpu.speculate`, for this machine's device), if ``/score`` grades it correct, else the pipeline's
+    own blocks."""
+    if task.image not in ANALYSIS_DIALECT:
+        raise NotImplementedError(f"Alloy's GPU mode reads NVIDIA or AMD compiler reports; got image {task.image}")
+    spec = BenchSpec.load(task.kernel)
+    dialect = ANALYSIS_DIALECT[task.image]
+
+    def run(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
+        with set_temporary("compiler", "cuda", "block_size_overrides", value=gpu.overrides(shapes)):
+            return pipeline_sdfg(spec, pipeline, task.precision, Target.GPU)
+
+    program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
+    blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
+    print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
+    chosen = device_submission(task, spec, program)
+    judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+    if judge.score(chosen, task.kernel).correct:
+        return chosen
+    return device_submission(task, spec, run({}))

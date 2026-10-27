@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@1fa634afc730d8dcf96c877b01ead93c04e0f52c"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@1518279b5348716906bdafeef67e52c93faaf0aa"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -51,7 +51,7 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
 # Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@f77695949d5cf4956ee74be11884ceb39ed3566f"]
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@4c7aa4e64eea1a560376b7d3d0d7efa1bf7e5fbf"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -73,4 +73,6 @@ markers = [
     "sleef: needs SLEEF (libsleefgnuabi) where the linker finds it",
     "avx512: needs an AVX-512 host (hosted CI runners may lack it)",
     "e2e: an LLR kernel of the bench through the whole pipeline",
+    "cuda: needs nvcc (compiles device units for sm_89; no device needed)",
+    "hip: needs hipcc with hipcub (compiles device units for gfx90a; no device needed)",
 ]

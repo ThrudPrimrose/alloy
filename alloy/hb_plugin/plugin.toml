@@ -22,4 +22,4 @@ extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_gpu_canon", "dace_gpu_pa
 name = "Alloy speculative"
 full_name = "Alloy (speculative)"
 optimizer = "alloy.hb_plugin.tuners:AlloySpeculativeOptimizer"
-extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt"]
+extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon", "dace_gpu_parallel", "dace_gpu_autoopt"]

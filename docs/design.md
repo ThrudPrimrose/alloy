@@ -149,6 +149,16 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
   stage's pipeline output is Alloy's input SDFG. `alloy_speculative` extends the CPU columns into
   `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
   once (every scope's reference when the score is wrong).
+- GPU (`alloy/gpu.py`, speculative only): `alloy_speculative` also extends the DaCe GPU columns. The bench GPU
+  pipeline runs once with a probe block per device map (DaCe's `compiler.cuda.block_size_overrides`, read by
+  `SelectGPUDeviceBlockSize`, so the coalesced tiling after it follows), which names each map's kernel; then once
+  per candidate shape (rank 1: 64..1024 threads; rank >= 2: 32x4, 32x8, 16x16, 64x4, 32x16, 128x2), each rendered
+  by CPF and compiled for the device without running (nvcc `-Xptxas -v` on NVIDIA, hipcc
+  `-Rpass-analysis=kernel-resource-usage` on AMD). Each map takes the shape ranked first: no spills, occupancy up to
+  0.5 (CUDA from the SM limits of its compute capability, HIP the compiler's waves per SIMD), an innermost
+  dimension of at least a warp, fewer registers; the pipeline's own block is a candidate too and wins a tie. A map's
+  roofline time does not depend on its shape, so it orders maps, not shapes. The submission is the bench's GPU form
+  (HIP), scored once, else the pipeline's blocks. GPU profile mode and the DaCe build plugin on GPU are not done.
 - Packets `alloy-profile` and `alloy-speculative` (an LLM agent; skill page `alloy`): the tool `alloy_<mode>` posts
   `/alloy/<mode>`, which runs Alloy on the episode's kernel after `canon_cpu` in a spawned process holding a device
   slot (`alloy/hb_plugin/workbench.py`). It answers with plain C/C++ an agent rebuilds without DaCe: `best/program.c`
