@@ -1,6 +1,18 @@
 name = "alloy"
 description = "Alloy: every scope's rendering candidates built and verified; the fastest by judge timing (profile) or the predicted pick (speculative) delivered."
 
+# The package alloy, built from the repository into the judge's interpreter; its dependencies are the benchmark's own.
+[install]
+root = "../.."
+command = ["uv", "pip", "install", "--python", "{python}", "--no-deps", "{root}"]
+
+# What HPCAgent-Bench's user-plugins CI runs: the stub agent through the alloy_speculative tool, and the speculative
+# flavor, on the CPU.
+[ci]
+optimizers = ["dace_cpu_canon_alloy_stub", "dace_cpu_canon_alloy_speculative"]
+kernels = ["tsvc_2_vpv", "atax"]
+language = "c"
+
 # Alloy for an LLM agent: one tool each, both described by the alloy skill page.
 [packets.alloy-profile]
 name = "Alloy (profile)"
@@ -23,3 +35,10 @@ name = "Alloy speculative"
 full_name = "Alloy (speculative)"
 optimizer = "alloy.hb_plugin.tuners:AlloySpeculativeOptimizer"
 extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon", "dace_gpu_parallel", "dace_gpu_autoopt"]
+
+# A stand-in for an LLM agent on the alloy-speculative packet, for CI: one tool call, its library submitted.
+[flavors.alloy_stub]
+name = "Alloy stub"
+full_name = "Alloy (stub agent)"
+optimizer = "alloy.hb_plugin.tuners:AlloyToolStub"
+extends = ["dace_cpu_canon"]

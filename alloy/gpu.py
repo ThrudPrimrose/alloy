@@ -24,12 +24,12 @@ __all__ = [
     "Shape",
     "SmLimits",
     "Usage",
+    "blocks",
     "candidate_shapes",
     "cuda_occupancy",
     "device_maps",
     "hip_usage",
     "nvcc_usage",
-    "overrides",
     "speculate",
 ]
 
@@ -107,7 +107,7 @@ def device_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
 def candidate_shapes(entry: nodes.MapEntry, max_threads: int = 1024) -> list[Shape]:
     """The shapes a map is tried with: by its rank, without one wider than a constant extent of the map or larger than
     ``max_threads`` threads."""
-    sizes = [r[1] - r[0] + 1 for r in reversed(entry.map.range.ranges)]  # innermost first, like gpu_block_size
+    sizes = list(reversed(entry.map.range.size()))  # innermost first, like gpu_block_size
     extents = [None if symbolic.issymbolic(size) else int(size) for size in sizes]
     shapes = SHAPES_1D if len(entry.map.params) == 1 else SHAPES_ND
 
@@ -218,14 +218,23 @@ def compile_usage(device_code: str, dialect: str, arch: str) -> dict[str, Usage]
         return (nvcc_usage if dialect == "cuda" else hip_usage)(done.stdout + done.stderr)
 
 
-#: Runs the program's GPU pipeline with each device map of ``ordinal`` given ``shape``
-#: (``compiler.cuda.block_size_overrides``) and returns the SDFG it produces.
+#: Runs the program's GPU pipeline with each device map of ``ordinal`` given ``shape`` (through :func:`blocks`) and
+#: returns the SDFG it produces.
 Pipeline = Callable[[dict[int, Shape]], dace.SDFG]
 
 
-def overrides(shapes: dict[int, Shape]) -> str:
-    """``shapes`` spelled for ``compiler.cuda.block_size_overrides``."""
-    return ";".join(f"{ordinal}:{x},{y},{z}" for ordinal, (x, y, z) in sorted(shapes.items()))
+def blocks(shapes: dict[int, Shape]) -> Callable[[dace.SDFG], None]:
+    """The bench pipeline's ``offloaded`` hook giving device map ``ordinal`` the block ``shapes[ordinal]``, before the
+    pipeline tiles the map by its block. A map's ordinal is its place, in walk order, among the device maps the
+    pipeline chose a block for (a map holding a thread-block map has none)."""
+
+    def set_blocks(sdfg: dace.SDFG) -> None:
+        chosen = [entry for entry in device_maps(sdfg) if entry.map.gpu_block_size is not None]
+        for ordinal, shape in shapes.items():
+            if ordinal < len(chosen):
+                chosen[ordinal].map.gpu_block_size = list(shape)
+
+    return set_blocks
 
 
 def device_code(sdfg: dace.SDFG, dialect: str) -> str:

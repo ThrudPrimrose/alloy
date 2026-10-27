@@ -10,7 +10,6 @@ from collections.abc import Callable, Sequence
 from typing import Protocol
 
 import dace
-from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from hpcagent_agent.tools.http_json import judge_rank, judge_timeout
 from hpcagent_bench import config, paths
@@ -75,15 +74,22 @@ Deliver = Callable[[str, Sequence[str]], Submission]
 Profile = Callable[[Submission], ProfileAnswer]
 
 
-def pipeline_sdfg(spec: BenchSpec, pipeline: str, precision: Precision, target: Target = Target.CPU) -> dace.SDFG:
-    """The kernel's SDFG at ``precision`` after the bench's DaCe pipeline ``pipeline`` for ``target``."""
+def pipeline_sdfg(
+    spec: BenchSpec,
+    pipeline: str,
+    precision: Precision,
+    target: Target = Target.CPU,
+    offloaded: Callable[[dace.SDFG], None] | None = None,
+) -> dace.SDFG:
+    """The kernel's SDFG at ``precision`` after the bench's DaCe pipeline ``pipeline`` for ``target``; ``offloaded``
+    runs on a GPU program between its offload and its tiling (``PipelineContext.offloaded``)."""
     framework = framework_class(f"dace_{target.text}")(f"dace_{target.text}")
     framework.set_datatype(precision.value)
     program, _ = framework.implementations(Benchmark(spec.short_name))[0]
     if not isinstance(program, DaceProgram):
         raise TypeError(f"{spec.short_name}: the dace port is not a @dace.program")
     sdfg = program.to_sdfg(simplify=False)
-    PIPELINES_BY_NAME[pipeline].transform(sdfg, PipelineContext(device=DEVICES[target]))
+    PIPELINES_BY_NAME[pipeline].transform(sdfg, PipelineContext(device=DEVICES[target], offloaded=offloaded))
     return sdfg
 
 
@@ -302,8 +308,7 @@ def speculative_gpu(task: Task, pipeline: str) -> Submission:
     dialect = ANALYSIS_DIALECT[task.image]
 
     def run(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
-        with set_temporary("compiler", "cuda", "block_size_overrides", value=gpu.overrides(shapes)):
-            return pipeline_sdfg(spec, pipeline, task.precision, Target.GPU)
+        return pipeline_sdfg(spec, pipeline, task.precision, Target.GPU, offloaded=gpu.blocks(shapes))
 
     program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
     blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}

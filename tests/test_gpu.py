@@ -5,7 +5,6 @@ map of a bench kernel gets a shape the report ranks first, and a tie keeps the p
 import shutil
 
 import pytest
-from dace.config import set_temporary
 
 from alloy import gpu
 
@@ -91,8 +90,7 @@ def bench_pipeline(kernel: str):
     spec = BenchSpec.load(kernel)
 
     def run(shapes):
-        with set_temporary("compiler", "cuda", "block_size_overrides", value=gpu.overrides(shapes)):
-            return pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU)
+        return pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU, offloaded=gpu.blocks(shapes))
 
     return run
 

@@ -150,8 +150,8 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
   `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
   once (every scope's reference when the score is wrong).
 - GPU (`alloy/gpu.py`, speculative only): `alloy_speculative` also extends the DaCe GPU columns. The bench GPU
-  pipeline runs once with a probe block per device map (DaCe's `compiler.cuda.block_size_overrides`, read by
-  `SelectGPUDeviceBlockSize`, so the coalesced tiling after it follows), which names each map's kernel; then once
+  pipeline runs once with a probe block per device map (set on each map by the pipeline's `offloaded` hook,
+  between the offload and the tiling, so the coalesced tiling follows it), which names each map's kernel; then once
   per candidate shape (rank 1: 64..1024 threads; rank >= 2: 32x4, 32x8, 16x16, 64x4, 32x16, 128x2), each rendered
   by CPF and compiled for the device without running (nvcc `-Xptxas -v` on NVIDIA, hipcc
   `-Rpass-analysis=kernel-resource-usage` on AMD). Each map takes the shape ranked first: no spills, occupancy up to
