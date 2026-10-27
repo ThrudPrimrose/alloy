@@ -149,6 +149,12 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
   stage's pipeline output is Alloy's input SDFG. `alloy_speculative` extends the CPU columns into
   `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
   once (every scope's reference when the score is wrong).
+- Packets `alloy-profile` and `alloy-speculative` (an LLM agent; skill page `alloy`): the tool `alloy_<mode>` posts
+  `/alloy/<mode>`, which runs Alloy on the episode's kernel after `canon_cpu` in a spawned process holding a device
+  slot (`alloy/hb_plugin/workbench.py`). It answers with plain C/C++ an agent rebuilds without DaCe: `best/program.c`
+  (the CPF entry in the bench C ABI), `best/scopes/<symbol>.<ext>` (each scope's chosen candidate), a `Makefile`
+  compiling every scope with its own compiler and flags, the library it built (submit as `library=`), the scratch
+  it requests and `report.md` with the top candidates per scope.
 - Scope coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose scope needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record

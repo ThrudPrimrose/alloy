@@ -1,6 +1,17 @@
 name = "alloy"
 description = "Alloy: every scope's rendering candidates built and verified; the fastest by judge timing (profile) or the predicted pick (speculative) delivered."
 
+# Alloy for an LLM agent: one tool each, both described by the alloy skill page.
+[packets.alloy-profile]
+name = "Alloy (profile)"
+skills = ["alloy"]
+tools = ["alloy_profile"]
+
+[packets.alloy-speculative]
+name = "Alloy (speculative)"
+skills = ["alloy"]
+tools = ["alloy_speculative"]
+
 [flavors.alloy_profile]
 name = "Alloy profile"
 full_name = "Alloy (profiled)"
