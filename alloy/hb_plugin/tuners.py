@@ -6,7 +6,7 @@ from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import FlavorOptimizer
 from hpcagent_bench.harness.task import Task
 
-__all__ = ["AlloyProfileOptimizer"]
+__all__ = ["AlloyProfileOptimizer", "AlloySpeculativeOptimizer"]
 
 
 class AlloyProfileOptimizer(FlavorOptimizer):
@@ -19,3 +19,15 @@ class AlloyProfileOptimizer(FlavorOptimizer):
         from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
 
         return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link))
+
+
+class AlloySpeculativeOptimizer(FlavorOptimizer):
+    """Alloy's speculative mode: every scope's predicted pick (heuristics, llvm-mca, roofline), verified locally and
+    never timed, the selection scored once."""
+
+    __slots__ = ()
+
+    def tune(self, task: Task, pipeline: str) -> Submission:
+        from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
+
+        return adapter.speculative(task, pipeline, lambda code, link: self.deliver(task, code, link))

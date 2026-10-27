@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Alloy as an HPCAgent-Bench flavor plugin end to end on one kernel: every scope gets several verified
-variants, and both CPU profile flavors submit a library the judge grades correct. The ``alloy`` CI job runs it."""
+variants, and the CPU profile and speculative flavors submit a library the judge grades correct. The ``alloy`` CI job runs it."""
 
 import pathlib
 import threading
@@ -70,9 +70,11 @@ def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> N
         assert len(variants) >= 2, f"{rep.scope.symbol}: {[b.name for b in variants]}"
 
 
-@pytest.mark.parametrize("flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile"])
+@pytest.mark.parametrize(
+    "flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile", "dace_cpu_canon_alloy_speculative"]
+)
 @pytest.mark.parametrize("kernel", [KERNEL, "atax"])  # atax's entry keeps a transient in the judge's scratch
-def test_the_profile_flavor_submits_a_library_the_judge_grades_correct(
+def test_the_flavor_submits_a_library_the_judge_grades_correct(
     flavor: str,
     kernel: str,
     make_judge: Callable[..., tuple[ThreadingHTTPServer, str]],

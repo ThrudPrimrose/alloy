@@ -15,13 +15,14 @@ keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
 dependencies = [
     "numpy",
     "pydantic>=2",
-    # Same pins as NestForge, which imports Alloy as its codegen backend.
-    "dace @ git+https://github.com/spcl/dace.git@3469167e508742b3df6fb9feba4d4c72d9e9f9e8",
+    # Bare: DaCe extended pins Alloy through its `alloy` extra (pip install "dace[alloy] @ git+...@extended"), so
+    # Alloy cannot pin DaCe back. A standalone install needs DaCe extended installed first.
+    "dace",
 ]
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@0cc69ba1088a052bb2aac7cf2db3d2160d2413e2"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@1fa634afc730d8dcf96c877b01ead93c04e0f52c"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -32,6 +33,11 @@ dev-amd = ["alloy[dev,amdgpu]"]
 # Alloy's optimizer flavor as an HPCAgent-Bench plugin (alloy/hb_plugin/plugin.toml).
 [project.entry-points."hpcagent_bench.plugins"]
 alloy = "alloy.hb_plugin"
+
+# Alloy as DaCe's build: SDFG.compile hands over when DaCe's compiler.build_plugin names one of these.
+[project.entry-points."dace.build_plugins"]
+alloy-speculative = "alloy.dace_backend:speculative"
+alloy-profile = "alloy.dace_backend:profile"
 
 [tool.setuptools.packages.find]
 include = ["alloy*"]
@@ -44,8 +50,8 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
     [{ extra = "nvgpu" }, { extra = "dev-amd" }], [{ extra = "amdgpu" }, { extra = "dev-nvidia" }]]
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
-# The bench pins its own dace; Alloy tracks dace extended ahead of it, so this pin wins over the bench's.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@3469167e508742b3df6fb9feba4d4c72d9e9f9e8"]
+# Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@f77695949d5cf4956ee74be11884ceb39ed3566f"]
 
 [tool.mypy]
 python_version = "3.12"

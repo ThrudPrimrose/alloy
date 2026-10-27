@@ -9,8 +9,8 @@ verified, and the best one per scope is linked. Two products share one core:
 
 1. **DaCe backend** (`alloy/dace_backend.py`). Input: an SDFG, a manifest optional. The SDFG already states the
    signature (argument order, every non-transient's shape and dtype, the symbols; outputs are the arguments it
-   writes), so it carries no manifest. `SDFG.compile` hands over when `compiler.alloy.mode` (DaCe extended; `off`
-   by default) is `speculative` or `profile`; the result is a `CompiledSDFG` with the SDFG's own signature, every
+   writes), so it carries no manifest. `SDFG.compile` hands over when DaCe's `compiler.build_plugin` (DaCe extended;
+   empty by default) names `alloy-speculative` or `alloy-profile`, entry points of `dace.build_plugins`; the result is a `CompiledSDFG` with the SDFG's own signature, every
    scope linked from the archive Alloy picked.
    - Without a manifest only speculative mode runs: the sizes and value domains are unknown. Inputs are verified on
      draws derived from the SDFG (every size symbol odd, arguments uniform in [0, 1)) only when any value is valid
@@ -146,7 +146,9 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 
 - Alloy is an HPCAgent-Bench flavor plugin (`alloy/hb_plugin`, entry point `hpcagent_bench.plugins`). Its flavor
   `alloy_profile` extends the DaCe stage columns into `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_profile`: the
-  stage's pipeline output is Alloy's input SDFG. A speculative flavor (no judge timing) is planned, not registered.
+  stage's pipeline output is Alloy's input SDFG. `alloy_speculative` extends the CPU columns into
+  `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
+  once (every scope's reference when the score is wrong).
 - Scope coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose scope needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record

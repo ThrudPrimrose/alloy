@@ -35,6 +35,7 @@ from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, execution_order
 from alloy.evaluate.verify import Verdict
 from alloy.frontend import inputs, scopes
+from alloy.report import Mode
 
 __all__ = [
     "DEVICES",
@@ -96,12 +97,20 @@ def fast_size(token: str) -> Preset | None:
     return FAST_SIZE if preset.is_rung and RUNGS.index(FAST_SIZE) < RUNGS.index(preset) else None
 
 
-def generated(sdfg: dace.SDFG, spec: BenchSpec, precision: Precision, matrix: Matrix, out: pathlib.Path) -> api.Result:
-    """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision`` and timed by nobody here."""
+def generated(
+    sdfg: dace.SDFG,
+    spec: BenchSpec,
+    precision: Precision,
+    matrix: Matrix,
+    out: pathlib.Path,
+    mode: Mode = Mode.PROFILE,
+) -> api.Result:
+    """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision`` and timed by nobody here; in
+    speculative mode each scope's pick is the prediction's."""
     manifest = inputs.load(
         paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml", datatype=numpy_dtype(precision).__name__
     )
-    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, time_locally=False)
+    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=False)
     if result.verification is None:
         raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
     return result
@@ -237,6 +246,29 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
         correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
         score_costs.append(time.monotonic() - start)
         if correct:
+            # every deliver builds the same .so path, so the returned library is built last
+            return library(task, spec, linker, chosen, deliver)
+    return library(task, spec, linker, references, deliver)
+
+
+def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
+    """Alloy's speculative mode on ``task``'s kernel after ``pipeline``: each scope's predicted pick, verified and
+    never timed, if ``/score`` grades it correct, else every scope's reference."""
+    if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
+        raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
+    spec = BenchSpec.load(task.kernel)
+    matrix = configuration_matrix.load()
+    sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
+    if nothing_to_generate(sdfg, matrix):
+        return rendered(task, spec, sdfg, deliver)
+    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
+    result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE)
+    linker = Linker(result.program, matrix, out)
+    references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
+    chosen = {**references, **(result.winners or {})}
+    if chosen != references:
+        judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+        if judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct:
             # every deliver builds the same .so path, so the returned library is built last
             return library(task, spec, linker, chosen, deliver)
     return library(task, spec, linker, references, deliver)

@@ -1,7 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Alloy as DaCe's backend: the compiled program keeps the SDFG's signature, links every scope from the build Alloy
-picked, and computes what DaCe's own build computes; ``SDFG.compile`` hands over when ``compiler.alloy.mode`` is
-set."""
+picked, and computes what DaCe's own build computes; ``SDFG.compile`` hands over when ``compiler.build_plugin``
+names Alloy's entry point."""
 
 import pathlib
 import subprocess
@@ -51,12 +51,12 @@ def test_the_program_alloy_builds_is_called_like_the_sdfg_and_computes_what_dace
 
 
 @pytest.mark.gcc
-def test_sdfg_compile_hands_the_sdfg_to_alloy_when_its_mode_is_set(tmp_path):
+def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp_path):
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     sdfg.build_folder = str(tmp_path / "build")
     expected = outputs(load_program(f"{REDUCTIONS}:scale").to_sdfg())
 
-    with set_temporary("compiler", "alloy", "mode", value="speculative"):
+    with set_temporary("compiler", "build_plugin", value="alloy-speculative"):
         sut = sdfg.compile()
 
     assert (tmp_path / "build" / "alloy" / "report.md").is_file()

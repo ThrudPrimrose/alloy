@@ -1,8 +1,14 @@
 name = "alloy"
-description = "Alloy: every scope's rendering candidates built and verified, timed by the judge, the fastest delivered."
+description = "Alloy: every scope's rendering candidates built and verified; the fastest by judge timing (profile) or the predicted pick (speculative) delivered."
 
 [flavors.alloy_profile]
 name = "Alloy profile"
 full_name = "Alloy (profiled)"
 optimizer = "alloy.hb_plugin.tuners:AlloyProfileOptimizer"
 extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_gpu_canon", "dace_gpu_parallel", "dace_cpu_autoopt", "dace_gpu_autoopt"]
+
+[flavors.alloy_speculative]
+name = "Alloy speculative"
+full_name = "Alloy (speculative)"
+optimizer = "alloy.hb_plugin.tuners:AlloySpeculativeOptimizer"
+extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt"]
