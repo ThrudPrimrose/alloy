@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@e7d161d6f439b4f265b9130bb0c81159fd26577a"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@1839c85c51d734babbd2082bfc96a372de68b721"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -43,7 +43,7 @@ alloy-profile = "alloy.dace_backend:profile"
 include = ["alloy*"]
 
 [tool.setuptools.package-data]
-alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompts/*/*.md", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py"]
+alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompts/*/*.md", "hb_plugin/prompts/*.yaml", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py"]
 
 [tool.uv]
 conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],

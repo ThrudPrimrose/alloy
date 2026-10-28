@@ -22,7 +22,7 @@ tools = ["alloy_profile"]
 
 [packets.alloy-profile.prompt]
 template_dirs = ["prompts"]
-append = { intro = "alloy/what_it_does.md", agent_intro = "alloy/what_it_does.md" }
+overlays = ["prompts/alloy.yaml"]
 
 [packets.alloy-speculative]
 name = "Alloy (speculative)"
@@ -31,7 +31,7 @@ tools = ["alloy_speculative"]
 
 [packets.alloy-speculative.prompt]
 template_dirs = ["prompts"]
-append = { intro = "alloy/what_it_does.md", agent_intro = "alloy/what_it_does.md" }
+overlays = ["prompts/alloy.yaml"]
 
 [flavors.alloy_profile]
 name = "Alloy profile"
