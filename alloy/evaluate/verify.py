@@ -176,8 +176,10 @@ def accumulation_length(program: Program, sizes: dict[str, int]) -> int:
 
 
 def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str) -> Verdict:
-    """``exact``: bit-identical. ``band``: HPCAgent-Bench's per-precision band with its eps_acc*sqrt(l) floor."""
-    if tolerance == "exact":
+    """``exact``: bit-identical. ``band``: HPCAgent-Bench's per-precision band with its eps_acc*sqrt(l) floor, at the
+    kernel's ``datatype``, else (an integer kernel's float output) at the output's own; an integer or boolean output
+    has no rounding, so it is always compared bit-identical."""
+    if tolerance == "exact" or not np.issubdtype(ref.dtype, np.inexact):
         same = np.array_equal(ref, val, equal_nan=np.issubdtype(ref.dtype, np.inexact))
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
     require_bench()
@@ -189,7 +191,10 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
         tolerance_band,
     )
 
-    precision = precision_from_datatype(datatype)
+    try:
+        precision = precision_from_datatype(datatype)
+    except ValueError:
+        precision = precision_from_datatype(ref.dtype.name)
     band = tolerance_band(precision)
     try:
         ok, err, detail = compare_arrays(

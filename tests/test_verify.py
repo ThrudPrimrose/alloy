@@ -167,3 +167,15 @@ def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(
 
     assert inputs.constrained(manifest, {"M": 64, "N": 1000}) == {"M": 64, "N": 960}
     assert inputs.constrained(manifest, {"M": 4096, "N": 1024}) is None
+
+
+def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatype():
+    """An integer kernel (``int64``) has no rounding band: its outputs match exactly or fail, and an integer kernel's
+    float output takes the band of its own dtype."""
+    index = np.arange(8, dtype=np.int64)
+
+    same = verify.compare("band", index, index.copy(), 8, "int64")
+    off = verify.compare("band", index, index + 1, 8, "int64")
+    value = verify.compare("band", np.ones(8), np.ones(8), 8, "int64")
+
+    assert same.status == "exact" and off.status == "fail" and value.status == "pass"
