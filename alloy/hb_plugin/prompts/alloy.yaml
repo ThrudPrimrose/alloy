@@ -1,7 +1,0 @@
-# Alloy's packets: both prompts say what Alloy does right after their intro.
-agent:
-  insert:
-    - {after: intro, block: {id: alloy, text: "file:alloy/what_it_does.md"}}
-task:
-  insert:
-    - {after: intro, block: {id: alloy, text: "file:alloy/what_it_does.md"}}
