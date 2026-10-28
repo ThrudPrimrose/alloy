@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@1839c85c51d734babbd2082bfc96a372de68b721"]
+bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@42258b02b87fe19b414105456ae12a00c3190227"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -51,7 +51,7 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
 # Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@0f8ac02271cf5e0952bb591f402e8a47971348bd"]
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@3dc9b980ed0a520e48286b9293ff045b1c1209bf"]
 
 [tool.mypy]
 python_version = "3.12"
