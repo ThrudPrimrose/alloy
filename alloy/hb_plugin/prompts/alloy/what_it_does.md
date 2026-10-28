@@ -5,4 +5,3 @@ floating-point mode, layout), builds and checks them, and answers with a library
 chosen candidate per loop nest, ready for `score` and `submit`, plus its sources, a `Makefile` and a report that
 ranks the candidates. Call it first and `score` its library, then improve the loop nests the report flags, as the
 `alloy` skill page explains.
-
