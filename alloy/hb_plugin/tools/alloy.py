@@ -6,7 +6,7 @@ from typing import Any
 
 import pydantic
 from hpcagent_agent.tools import http_json
-from hpcagent_agent.tools.registry import Spec, tool
+from hpcagent_agent.tools.registry import Hints, Spec, tool
 
 
 class NoArgs(pydantic.BaseModel):
@@ -22,6 +22,10 @@ MODES = {
 }
 
 
+#: Both modes write a fresh folder and library in the shared folder and touch nothing else; a repeat gives the same.
+HINTS = Hints(read_only=False, destructive=False, idempotent=True, open_world=False)
+
+
 def poster(mode: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def run(payload: dict[str, Any]) -> dict[str, Any]:
         return http_json.post_judge(f"/alloy/{mode}", {**payload, "kernel": http_json.assigned_kernel(payload)})
@@ -31,4 +35,5 @@ def poster(mode: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
 
 for mode, description in MODES.items():
     name = f"alloy_{mode}"
-    tool(spec=Spec(description, NoArgs, f"- `{name}` -- {description}"), core=False, name=name)(poster(mode))
+    spec = Spec(description, NoArgs, f"- `{name}` -- {description}", HINTS)
+    tool(spec=spec, core=False, name=name)(poster(mode))
