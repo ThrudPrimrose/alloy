@@ -1,0 +1,12 @@
+# What the alloy packets change in both prompts: what Alloy does after the intro, and the agent's end-to-end steps
+# starting from Alloy's library. A text "file:<path>" is relative to this file.
+agent:
+  insert:
+    - after: intro
+      block: {id: alloy, text: "file:about.md"}
+  set:
+    end_to_end: {text: "file:agent/end_to_end.md"}
+task:
+  insert:
+    - after: intro
+      block: {id: alloy, text: "file:about.md"}
