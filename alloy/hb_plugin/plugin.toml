@@ -19,10 +19,8 @@ language = "c"
 name = "Alloy (profile)"
 skills = ["alloy"]
 tools = ["alloy_profile"]
-
-[packets.alloy-profile.prompt]
 about = "prompt/about.md"
-replace.agent = { end_to_end = "prompt/agent/end_to_end.md" }
+replace = { end_to_end = "prompt/agent/end_to_end.md" }
 
 [packets.alloy-speculative]
 extends = "alloy-profile"
