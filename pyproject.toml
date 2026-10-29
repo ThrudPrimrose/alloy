@@ -43,7 +43,7 @@ alloy-profile = "alloy.dace_backend:profile"
 include = ["alloy*"]
 
 [tool.setuptools.package-data]
-alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompts/*/*.md", "hb_plugin/prompts/*.yaml", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py"]
+alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompt/*.md", "hb_plugin/prompt/*/*.md", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py"]
 
 [tool.uv]
 conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],
