@@ -101,7 +101,7 @@ class Commands:
 
 @dataclass(slots=True)
 class Linker:
-    """Builds the program with a chosen archive per scope, every scope's archive at ``link/lib<symbol>.a``."""
+    """Builds the program with a chosen archive per scope, every scope's archive at ``link/<program>/lib<symbol>.a``."""
 
     program: Program
     matrix: Matrix
@@ -160,10 +160,10 @@ class Linker:
     ) -> pathlib.Path:
         """The program with ``archives[symbol]`` linked for each scope, built under a name of its own so no cache
         or loaded library of another candidate can stand in for it."""
-        link = self.out / "link"
+        safe = f"p{hashlib.sha256(tag.encode()).hexdigest()[:12]}"  # candidate names carry '-', SDFG names may not
+        link = self.out / "link" / safe  # one folder per program: programs build in parallel
         link.mkdir(parents=True, exist_ok=True)
         sdfg = copy.deepcopy(self.program.sdfg)
-        safe = f"p{hashlib.sha256(tag.encode()).hexdigest()[:12]}"  # candidate names carry '-', SDFG names may not
         sdfg.name = f"{self.program.sdfg.name}_{safe}"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / safe)
         flags = self.link_flags() + self.support_flags(candidates) + self.vendor_flags()

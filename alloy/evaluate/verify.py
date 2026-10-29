@@ -1,14 +1,15 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Verify every built candidate inside the whole program: each scope links its archive from one fixed path, so a
-candidate is one archive copy plus a replayed DaCe build (command cache + precompiled header). Every other scope
-keeps its reference archive, and the outputs are compared against the all-reference program on the same inputs."""
+"""Verify every built candidate inside the whole program: a candidate is one archive copy plus a replayed DaCe build
+(command cache + precompiled header), built in a worker process (DaCe's configuration is process-wide) while earlier
+candidates run. Every other scope keeps its reference archive, and the outputs are compared against the all-reference
+program on the same inputs."""
 
 import multiprocessing
 import os
 import pathlib
 import queue
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Literal, Self
 
@@ -18,6 +19,7 @@ import sympy
 from dace.codegen.exceptions import CompilationError
 
 from alloy import machine
+from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
@@ -270,29 +272,37 @@ def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int
 def verify(
     program: Program, matrix: Matrix, reports: list[ScopeReport], cases: Cases, out: pathlib.Path
 ) -> Verification:
-    """A verdict for every built candidate. Program calls run in parallel children while the next candidate
-    compiles; a duplicate object is judged on its original's outputs at its own FP level."""
+    """A verdict for every built candidate. Candidates' programs build in parallel builder processes and run in
+    parallel children as each is built; a duplicate object is judged on its original's outputs at its own FP level."""
     linker = Linker(program, matrix, out)
     reference = {rep.scope.symbol: reference_archive(rep) for rep in reports}
     ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_candidates)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
-    with Children() as children:
+    with Children() as children, ProcessPoolExecutor(machine.compile_jobs()) as builders:
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
         programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
+        building: dict[Future[pathlib.Path], tuple[str, str]] = {}
         for rep in reports:
             for b in rep.builds[1:]:  # the first build is the reference, already running
                 if b.error or b.archive is None or b.duplicate_of:
                     continue
                 selection = {**reference, rep.scope.symbol: b.archive}
-                try:
-                    compiled = linker.compile(selection, f"{rep.scope.symbol}_{b.name}", ref_candidates | {b.candidate})
-                except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
-                    pending[rep.scope.symbol, b.name] = Verdict("link_error", detail=str(exc)[-2000:])
-                    continue
-                programs[rep.scope.symbol, b.name] = compiled
-                pending[rep.scope.symbol, b.name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
+                tag, candidates = f"{rep.scope.symbol}_{b.name}", ref_candidates | {b.candidate}
+                building[builders.submit(linked_program, linker, selection, tag, candidates)] = (
+                    rep.scope.symbol,
+                    b.name,
+                )
+        for done in as_completed(building):
+            key = building[done]
+            try:
+                compiled = done.result()
+            except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
+                pending[key] = Verdict("link_error", detail=str(exc)[-2000:])
+                continue
+            programs[key] = compiled
+            pending[key] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
     reference_runs: list[Outcome] = [*refs.outputs]
@@ -320,6 +330,13 @@ def judge_scope(
         )
         mine[b.name] = verdict
     return mine
+
+
+def linked_program(
+    linker: Linker, selection: dict[str, pathlib.Path], tag: str, candidates: frozenset[Candidate]
+) -> pathlib.Path:
+    """The program linking ``selection``, built in a builder process (:func:`verify`)."""
+    return linker.compile(selection, tag, candidates)
 
 
 def reference_archive(rep: ScopeReport) -> pathlib.Path:
