@@ -1,5 +1,7 @@
 name = "alloy"
 description = "Alloy: every scope's rendering candidates built and verified; the fastest by judge timing (profile) or the predicted pick (speculative) delivered."
+# Every candidate links LLVM's OpenMP (configuration_matrix.toml): the judge serves libomp to Alloy's processes.
+openmp = "libomp"
 
 # The package alloy, built from the repository into the judge's interpreter; its dependencies are the benchmark's own.
 [install]
@@ -20,6 +22,7 @@ name = "Alloy (profile)"
 skills = ["alloy"]
 tools = ["alloy_profile"]
 overlays = ["alloy:prompt/overlay.yaml"]
+env = { JUDGE_INPUT_MODE = "any" }  # the tool hands back a library, submitted as is
 
 [packets.alloy-speculative]
 extends = "alloy-profile"

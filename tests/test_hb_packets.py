@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
 
-from hpcagent_bench import config, plugins
+from hpcagent_bench import config, packets, plugins
 from hpcagent_bench.api import RunConfig
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle
 from hpcagent_bench.config import SubmitFeedback
@@ -109,6 +109,19 @@ def test_make_rebuilds_the_library_the_tool_built(tmp_path: pathlib.Path, monkey
     subprocess.run([*str(result["make"]).split(), "-B"], check=True, capture_output=True)
 
     assert library.is_file()
+
+
+@pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative"])
+def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet: str) -> None:
+    plugins.load()
+
+    assert dict(packets.resolve(packet, "c").env)["JUDGE_INPUT_MODE"] == InputMode.ANY.text
+
+
+def test_alloy_declares_the_openmp_runtime_its_candidates_link() -> None:
+    alloy = next(plugin for plugin in plugins.register() if plugin.name == "alloy")
+
+    assert alloy.manifest.openmp == "libomp"
 
 
 def test_a_mode_alloy_does_not_have_is_not_found(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,6 +13,7 @@ from hpcagent_bench.harness.judge_wire import JudgeAnswer, JudgeError
 from hpcagent_bench.harness.routes import Judge, RouteRequest, route
 from hpcagent_bench.harness.sandbox import shared_dir
 from hpcagent_bench.harness.service import JUDGE_FAULT_CAUSE
+from hpcagent_bench.plugins import openmp_environment
 from hpcagent_bench.precision import precision_from_datatype
 
 from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
@@ -43,7 +44,9 @@ def serve(judge: Judge, request: RouteRequest) -> None:
         spawn = multiprocessing.get_context("spawn")
         with concurrent.futures.ProcessPoolExecutor(1, mp_context=spawn) as pool:
             try:
-                answer = pool.submit(codegen, call).result()
+                with openmp_environment("alloy"):  # the worker starts, in libomp's context, at the first submit
+                    future = pool.submit(codegen, call)
+                answer = future.result()
             except ValueError as err:
                 return judge.reply(HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_{spelled}: {err}"))
             except Exception as err:  # noqa: BLE001 -- any other failure is Alloy's, reported as the judge's fault
