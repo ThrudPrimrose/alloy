@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import dace
+import pytest
 
 from alloy.evaluate.verify import Verdict
 from alloy.guidance import advisable_isa, guidance, scope_dtype, scope_reason
@@ -30,8 +31,9 @@ def scope(calls_libm=True, sdfg=None) -> Any:
     return SimpleNamespace(symbol="s0", calls_libm=calls_libm, sdfg=sdfg or wave_sdfg())
 
 
-def build(name="good", error="", vectorized=1, missed=()) -> Any:
-    return SimpleNamespace(name=name, error=error, remarks=SimpleNamespace(vectorized=vectorized, missed=missed))
+def build(name="good", error="", vectorized=1, missed=(), fp_level="") -> Any:
+    remarks = SimpleNamespace(vectorized=vectorized, missed=missed)
+    return SimpleNamespace(name=name, error=error, remarks=remarks, candidate=SimpleNamespace(fp_level=fp_level))
 
 
 def report(*builds, calls_libm=False) -> Any:
@@ -98,3 +100,22 @@ def test_a_clean_program_has_no_advice():
 
 def test_a_host_outside_the_table_has_no_advice():
     assert guidance([report(build(error="x"))], {}, {}, ()) == {}
+
+
+@pytest.mark.parametrize(
+    ("fp_level", "finite", "level"),
+    [
+        ("", False, "strict"),
+        ("contract", False, "strict"),
+        ("noerrno", False, "strict"),
+        ("", True, "relaxed"),
+        ("fast", False, "relaxed"),  # strict does not compile there
+        ("reassoc", False, "relaxed"),
+    ],
+)
+def test_the_build_and_its_inputs_pick_the_kernel(fp_level, finite, level):
+    rep = report(build(fp_level=fp_level), calls_libm=True)
+
+    texts = guidance([rep], {"s0": {"good": GOOD}}, {"s0": rep.builds[0]}, ("avx2",), finite_inputs=finite)
+
+    assert f"take {level}" in texts["s0"]

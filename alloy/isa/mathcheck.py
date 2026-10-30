@@ -22,6 +22,9 @@ SAMPLES = 1 << 17
 GATE_SAMPLES = 1 << 14
 #: A kernel's re-measured error may exceed the recorded one by this factor.
 SLACK = 1.5
+#: SVE vector length the emulated kernels run at.
+SVE_BITS = 512
+EMULATED_TIMEOUT = 600  # seconds
 LINE = re.compile(r"ULP=(\S+) ABS=(\S+) X=(\S+) Y=(\S+) SPECIAL=(\d+)")
 
 CROSS = {"neon": "armv8.2-a", "sve": "armv8.2-a+sve"}
@@ -36,7 +39,9 @@ DRIVER = """
 typedef @C@ lane;
 typedef @REFTYPE@ ref_t;
 void alloy_run(const lane *xs, const lane *ys, lane *vs);
-#define LANES @LANES@
+int alloy_lanes(void);
+#define MAX_LANES 64  /* the longest vector: SVE at 2048 bits, f32 */
+static int LANES;
 static uint64_t state = 0x9e3779b97f4a7c15ULL;
 static double uniform(void) {
     state ^= state << 13; state ^= state >> 7; state ^= state << 17;
@@ -78,7 +83,7 @@ static int same(lane a, lane b) {
     if (a == 0 || b == 0 || isinf(a) || isinf(b)) return a == b && signbit(a) == signbit(b);
     return fabsl((long double)a - (long double)b) <= 4 * spacing(b);
 }
-static lane xs[LANES], ys[LANES], vs[LANES];
+static lane xs[MAX_LANES], ys[MAX_LANES], vs[MAX_LANES];
 static void run(void) { alloy_run(xs, ys, vs); }
 static void sweep(double lo, double hi, int kind, double ylo, double yhi) {
     for (long i = 0; i < @SAMPLES@; i += LANES) {
@@ -92,6 +97,7 @@ static void sweep(double lo, double hi, int kind, double ylo, double yhi) {
     }
 }
 int main(void) {
+    LANES = alloy_lanes();
 @GRIDS@
     static const lane sp[] = {@SPECIALS@};
     int n = sizeof(sp) / sizeof(sp[0]);
@@ -122,6 +128,7 @@ void alloy_run(const lane *xs, const lane *ys, lane *vs) {
     (void)ys;
 @CALL@
 }
+int alloy_lanes(void) { return (int)@LANES@; }
 """
 
 KINDS = {"lin": 0, "log": 1, "logp": 2, "near": 3}
@@ -198,26 +205,38 @@ def literal_of(value: float, dtype: str) -> str:
     return literal(value, dtype)
 
 
+def emulated(isa: str) -> tuple[str, list[str], list[str]] | None:
+    """How this host runs an aarch64 ``isa`` under qemu: (cross compiler, build flags, launcher), or None."""
+    cc, qemu = shutil.which("aarch64-linux-gnu-gcc"), shutil.which("qemu-aarch64")
+    if isa not in CROSS or platform.machine() == "aarch64" or cc is None or qemu is None:
+        return None
+    return cc, [f"-march={CROSS[isa]}", "-static"], [qemu, "-cpu", f"max,sve{SVE_BITS}=on"]
+
+
 def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] = ()) -> Measured | None:
-    """Run ``k`` on this host; None when the host cannot execute ``isa``."""
-    if not host_can_run(isa, k.dtype) or _compiler() is None:
+    """Run ``k`` on this host, under qemu for an aarch64 ``isa``; None when neither can execute ``isa``."""
+    arm = emulated(isa)
+    if arm is None and (not host_can_run(isa, k.dtype) or _compiler() is None):
         return None
     with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
         folder = pathlib.Path(tmp)
         unit, main = driver(k, isa, samples)
         (folder / "k.c").write_text(unit)
         (folder / "d.c").write_text(main)
-        machine = _c_flags(isa, k.dtype)
-        cc = str(_compiler())
+        cc, machine, launcher = arm or (str(_compiler()), _c_flags(isa, k.dtype), [])
+        link = [flag for flag in machine if flag == "-static"]
+        unit_flags = [flag for flag in machine if flag != "-static"]
         for command in (
-            [cc, "-O2", *flags, *machine, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")],
-            [cc, "-O2", str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")],
+            [cc, "-O2", *flags, *unit_flags, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")],
+            [cc, "-O2", *link, str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")],
         ):
             build = subprocess.run(command, capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
             if build.returncode != 0:
                 raise RuntimeError(f"{k.name} on {isa} does not build: {build.stderr.strip()[:600]}")
         exe = folder / "k"
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
+        run = subprocess.run(
+            [*launcher, str(exe)], capture_output=True, text=True, check=False, timeout=EMULATED_TIMEOUT
+        )
     match = LINE.search(run.stdout)
     if match is None:
         raise RuntimeError(f"{k.name} on {isa} printed nothing: {run.stderr[:300]}")
@@ -251,7 +270,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
     """The gate on one kernel: run it where the host can, cross-compile it where it cannot."""
     k = kernel(fn, dtype, level)
     try:
-        if isa in CROSS:
+        if isa in CROSS and emulated(isa) is None:
             built = compiles(k, isa)
             basis = "cross-compiled, never run"
             return Verdict(None, basis, "no cross compiler") if built is None else Verdict(None, basis, "builds")
@@ -262,7 +281,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
         return Verdict(None, f"host cannot run {isa}/{dtype}", "")
     ok = seen.ulp <= k.error_ulp * SLACK and seen.special == 0
     detail = f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}), {seen.special} special values off libm"
-    return Verdict(ok, "kernel vs wider libm", detail)
+    return Verdict(ok, "kernel under qemu" if isa in CROSS else "kernel vs wider libm", detail)
 
 
 def validate_kernels(isas: tuple[str, ...] = ("avx2", "avx512", "neon", "sve")) -> list[tuple[str, Verdict]]:

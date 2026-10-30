@@ -11,6 +11,7 @@ from alloy.backend.sweep import ScopeReport
 from alloy.evaluate.verify import Verdict
 from alloy.frontend.scopes import Scope
 from alloy.isa.hints import advice
+from alloy.isa.mathkernels import level_for
 from alloy.isa.table import Table, load
 
 __all__ = ["advisable_isa", "guidance", "scope_dtype", "scope_reason"]
@@ -52,8 +53,11 @@ def guidance(
     winners: Mapping[str, Build],
     host_isas: tuple[str, ...],
     table: Table | None = None,
+    *,
+    finite_inputs: bool = False,
 ) -> dict[str, str]:
-    """``{scope symbol: do-it-yourself text}`` for the scopes that need a hand."""
+    """``{scope symbol: do-it-yourself text}`` for the scopes that need a hand; a kernel is recommended from the
+    chosen build's FP level and whether the inputs are declared finite."""
     isa = advisable_isa(host_isas)
     if isa is None:
         return {}
@@ -63,5 +67,8 @@ def guidance(
         symbol = rep.scope.symbol
         reason = scope_reason(rep, verdicts.get(symbol, {}), winners.get(symbol))
         if reason:
-            texts[symbol] = advice(reason, rep.scope.sdfg, isa, scope_dtype(rep.scope), table)
+            winner = winners.get(symbol)
+            fp_level = winner.candidate.fp_level if winner is not None else ""
+            level = level_for(fp_level, finite_inputs=finite_inputs)
+            texts[symbol] = advice(reason, rep.scope.sdfg, isa, scope_dtype(rep.scope), table, level)
     return texts

@@ -48,7 +48,7 @@ consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
    patterns: x86 FP abs/neg (sign-mask AND/XOR), AVX2 scatter (scratch store + scalar), fmod
    (div+trunc+fnmadd), AVX2 f16 (cvtph_ps → f32 op → cvtps_ph).
 5. **Run the checks**: `pytest tests/test_isa*.py -q` (header verification of every identifier-shaped
-   spelling; compiled-kernel validation of every x86 entry the host can execute (no NEON/SVE kernels exist yet); tier re-measurement;
+   spelling; compiled-kernel validation of every x86 entry the host can execute; tier re-measurement;
    skeleton compile-and-run; round-trips; invariants) and `ruff check alloy/ tests/test_isa*.py`.
 6. **Regenerate the pages**: `python -m alloy.isa.render`, then mirror the skills:
    `cp skills/alloy/SKILL.md ~/.kimi-code/skills/alloy/ && cp -r skills/alloy/isa ~/.kimi-code/skills/alloy/`.
@@ -106,7 +106,8 @@ write `program_<fn>`, add its degrees to `DEGREES` and an entry to `PROGRAMS`, r
   worsens accuracy shows in the diff. Read that diff.
 - `strict` has a guard mask or none; a guard costs one cold branch that recomputes those lanes through scalar libm.
   Use it for anything the vector path cannot do, instead of more vector code.
-- A new primitive needs a spelling in all four `[prims.*]` tables. NEON and SVE only cross-compile here.
+- A new primitive needs a spelling in all four `[prims.*]` tables. NEON and SVE run under `qemu-aarch64` when it and
+  `aarch64-linux-gnu-gcc` are on PATH (vectors of 512 bits, static binaries); without them the kernels only cross-compile.
 - Compensated steps do not survive reassociation and no per-function attribute survives inlining, so a `strict`
   kernel is a compile error under `-ffast-math`. `tests/test_isa_kernels.py` pins that and bounds `relaxed` there.
 

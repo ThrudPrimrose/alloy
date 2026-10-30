@@ -23,6 +23,7 @@ __all__ = [
     "functions",
     "kernel",
     "kernels_for",
+    "level_for",
     "libraries",
     "render",
     "spelled",
@@ -233,6 +234,9 @@ def cold_path(k: Kernel, r: Renderer) -> list[str]:
     ]
 
 
+#: The FP levels of ``configuration_matrix.toml`` that compile with reassociation on.
+REASSOCIATING = frozenset({"reassoc", "fast"})
+
 #: Reassociation undoes the compensation ``strict`` relies on, and no per-function attribute survives inlining, so a
 #: strict kernel refuses such a translation unit. ``relaxed`` and ``fast`` tolerate it at about twice the error, but
 #: for the functions of NEEDS_IEEE, whose every level folds its correction term to zero.
@@ -256,6 +260,12 @@ def render(k: Kernel, isa: str, prims: dict | None = None) -> Spelled:
         lines += cold_path(k, r)
     lines += [f"    return {k.result};", "}"]
     return Spelled(k, isa, "\n".join(lines), r.count)
+
+
+def level_for(fp_level: str, *, finite_inputs: bool) -> str:
+    """The kernel a build at ``fp_level`` takes: ``strict`` unless the inputs are declared finite, and never under
+    reassociation, where it does not compile. ``fast`` trades digits, so only a person or an agent picks it."""
+    return "relaxed" if finite_inputs or fp_level in REASSOCIATING else "strict"
 
 
 def target_of(isa: str) -> str:

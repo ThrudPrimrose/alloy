@@ -9,10 +9,11 @@ import subprocess
 
 import pytest
 
+from alloy.isa import load
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
-from alloy.isa.mathcheck import Measured, measure, validate_kernel
-from alloy.isa.mathkernels import LEVELS, Kernel, functions, kernel, kernels_for, libraries, render, spelled
+from alloy.isa.mathcheck import HEADERS, Measured, emulated, measure, validate_kernel
+from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, kernels_for, libraries, render, spelled
 from alloy.isa.validate import host_can_run
 
 ALL = [(fn, dtype, level) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS]
@@ -35,11 +36,12 @@ def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn, dtype, level, i
 
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
-def test_a_kernel_builds_for_the_arm_targets(fn, dtype, level, isa):
+def test_a_kernel_holds_on_the_arm_targets_or_at_least_builds(fn, dtype, level, isa):
+    """Under qemu it reproduces its recorded error; without it, the cross compiler must take it."""
     verdict = validate_kernel(fn, dtype, level, isa)
 
-    assert verdict.ok is None
-    assert verdict.detail in ("builds", "no cross compiler")
+    assert verdict.ok is not False, verdict.detail
+    assert verdict.ok is True or verdict.detail in ("builds", "no cross compiler")
 
 
 def measured(k: Kernel, samples: int, flags: tuple[str, ...] = ()) -> Measured:
@@ -186,3 +188,60 @@ def test_hints_quote_the_levels_and_the_call():
 
     assert "strict" in line and "relaxed" in line and "fast" in line
     assert "python -m alloy.isa kernel avx2 log f64" in line
+
+
+ARM_MOD = """
+#include <math.h>
+#include <stdio.h>
+#include <@HEADER@>
+int main(void) {
+    @C@ a[64], b[64], r[64];
+    int n = (int)(@LANES@), bad = 0;
+    for (int j = 0; j < n; j++) {
+        a[j] = (@C@)((j % 2 ? -1 : 1) * (7.5 + 1.37 * j));
+        b[j] = (@C@)(0.75 + 0.31 * j);
+    }
+    @VEC@ va = @LOAD@, vb = @LOADB@;
+    @VEC@ q = @ROUND@;
+    @STORE@;
+    for (int j = 0; j < n; j++)
+        if (fabs(r[j] - fmod@SUFFIX@(a[j], b[j])) > 1e-5) bad++;
+    printf("bad=%d lanes=%d\\n", bad, n);
+    return bad != 0;
+}
+"""
+
+
+@pytest.mark.parametrize("isa", ["neon", "sve"])
+@pytest.mark.parametrize("dtype", ["f64", "f32"])
+def test_the_arm_fmod_recipes_compute_fmod(isa, dtype, tmp_path):
+    """The table's own recipe steps run: divide, truncate, subtract the multiple."""
+    arm = emulated(isa)
+    if arm is None:
+        pytest.skip("needs qemu-aarch64 and aarch64-linux-gnu-gcc")
+    cc, flags, launcher = arm
+    div, trunc, fnma = load().entry(isa, "mod", dtype).recipe
+    r = Renderer(isa, dtype)
+    pg = "" if isa == "neon" else f"{r.fields['p']}, "
+    # vfmsq and svmls both take the accumulator first: a - q*b
+    holes = {
+        "HEADER": HEADERS[isa],
+        "C": r.fields["c"],
+        "VEC": r.fields["vec"],
+        "LANES": r.fields["lanes"],
+        "LOAD": r.call("load", "a"),
+        "LOADB": r.call("load", "b"),
+        "ROUND": f"{trunc}({pg}{div}({pg}va, vb))",
+        "STORE": r.call("store", "r", f"{fnma}({pg}va, q, vb)"),
+        "SUFFIX": "" if dtype == "f64" else "f",
+    }
+    source = ARM_MOD
+    for key, value in holes.items():
+        source = source.replace(f"@{key}@", value)
+    (tmp_path / "m.c").write_text(source)
+    exe = tmp_path / "m"
+    subprocess.run([cc, "-O1", *flags, str(tmp_path / "m.c"), "-lm", "-o", str(exe)], check=True)
+
+    run = subprocess.run([*launcher, str(exe)], capture_output=True, text=True, check=False)
+
+    assert run.returncode == 0, run.stdout

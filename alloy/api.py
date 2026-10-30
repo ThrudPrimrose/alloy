@@ -115,7 +115,8 @@ def generate(
         best = linker.write_best(winners)
         commands = linker.commands(best)
     verdicts = verification.verdicts if verification else {}
-    advice = guidance.guidance(reports, verdicts, winners, matrix.host_isas(machine.cpu_flags()))
+    host_isas = matrix.host_isas(machine.cpu_flags())
+    advice = guidance.guidance(reports, verdicts, winners, host_isas, finite_inputs=finite_inputs)
     report.write(
         program,
         reports,

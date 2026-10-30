@@ -187,13 +187,15 @@ def _kind(use: OpUse) -> str:
     return "elementwise"
 
 
-def _spelling(table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, bool | None]) -> Spelling | None:
+def _spelling(
+    table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, bool | None], recommended: str = ""
+) -> Spelling | None:
     """The target spelling for one abstract op, with its trap and validation verdict, or None when the
     op is not in the table for (isa, dtype) (e.g. integer ops on a float dtype)."""
     from alloy.isa.validate import host_can_run, validate  # noqa: PLC0415
 
     if op not in OPS:
-        return kernel_spelling(isa, dtype, op)
+        return kernel_spelling(isa, dtype, op, recommended)
     try:
         entry = table.entry(isa, op, dtype)
     except KeyError:
@@ -209,7 +211,7 @@ def _spelling(table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, b
         best = table.approx[entry.approximations[-1]]
         libraries = ", ".join(f"{k} {v}" for k, v in entry.libraries.items()) or "a vector math library"
         spelling = (
-            f"{kernel_summary(isa, dtype, op)}; "
+            f"{kernel_summary(isa, dtype, op, recommended)}; "
             f"or tier '{entry.approximations[-1]}' ({best.error_ulp:.4g} ulp) or call {libraries}"
         )
     else:
@@ -217,8 +219,8 @@ def _spelling(table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, b
     return Spelling(op, spelling, entry.signature, trap, verdicts[op])
 
 
-def kernel_summary(isa: str, dtype: str, fn: str) -> str:
-    """One line naming ``fn``'s three kernels; the C is one CLI call away."""
+def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
+    """One line naming ``fn``'s three kernels and the one this build should take; the C is one CLI call away."""
     target = target_of(isa)
     if target not in KERNEL_ISAS or dtype not in DTYPES:
         return f"no kernel for {isa}/{dtype}"
@@ -226,26 +228,27 @@ def kernel_summary(isa: str, dtype: str, fn: str) -> str:
         f"{level} {(k := kernel(fn, dtype, level)).error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)"
         for level in LEVELS
     )
-    return f"inline intrinsics: {levels}; `python -m alloy.isa kernel {isa} {fn} {dtype}`"
+    pick = f"; take {recommended}" if recommended else ""
+    return f"inline intrinsics: {levels}{pick}; `python -m alloy.isa kernel {isa} {fn} {dtype}`"
 
 
-def kernel_spelling(isa: str, dtype: str, fn: str) -> Spelling | None:
+def kernel_spelling(isa: str, dtype: str, fn: str, recommended: str = "") -> Spelling | None:
     """The hint of a math function outside the abstract ops; its kernels are gated when generated and by CI."""
     if dtype not in DTYPES:
         return None
-    return Spelling(fn, kernel_summary(isa, dtype, fn), "(v) -> v", "", None)
+    return Spelling(fn, kernel_summary(isa, dtype, fn, recommended), "(v) -> v", "", None)
 
 
-def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None) -> list[Hint]:
+def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None, recommended: str = "") -> list[Hint]:
     """Every tasklet's do-it-yourself hints for ``(isa, dtype)`` — relevant spellings, traps, and how
-    each was validated on this host."""
+    each was validated on this host. ``recommended`` names the kernel level the build should take."""
     table = table or load()
     verdicts: dict[str, bool | None] = {}
     hints = []
     for use in _uses(sdfg):
         ops = ("reduce_add",) + use.ops if use.reduces and "reduce_add" not in use.ops else use.ops
         spellings = tuple(
-            spelling for op in ops if (spelling := _spelling(table, isa, dtype, op, verdicts)) is not None
+            spelling for op in ops if (spelling := _spelling(table, isa, dtype, op, verdicts, recommended)) is not None
         )
         hints.append(Hint(use, _kind(use), spellings))
     return hints
@@ -260,7 +263,7 @@ _VERDICT_WORDS = {
 }
 
 
-def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None) -> str:
+def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None, recommended: str = "") -> str:
     """The full do-it-yourself response body: the reason, the instruction, and the tasklet-derived
     hints. This is what the emission path returns when it cannot emit or validation fails."""
     table = table or load()
@@ -274,7 +277,7 @@ def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None) 
         f"Relevant hints from your tasklets ({isa}/{dtype}):",
         "",
     ]
-    for hint in tasklet_hints(sdfg, isa, dtype, table):
+    for hint in tasklet_hints(sdfg, isa, dtype, table, recommended):
         use = hint.use
         ops = ", ".join(use.ops) if use.ops else "(no recognized ops)"
         suffix = "; reduces via summing write-conflict" if use.reduces else ""

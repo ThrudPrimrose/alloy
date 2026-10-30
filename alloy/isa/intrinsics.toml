@@ -1619,7 +1619,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
 recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
-note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
+note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b"
 
 [isa.sve.f64.gather]
 intrinsic = "svld1_gather_s64index_f64"
@@ -1679,7 +1679,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
 recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
-note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
+note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b"
 
 [isa.sve.f32.gather]
 intrinsic = "svld1_gather_s32index_f32"
