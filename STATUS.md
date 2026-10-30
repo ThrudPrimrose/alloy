@@ -34,6 +34,17 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 6 — 2026-10-30 (do-it-yourself advice)
+
+- `alloy/isa/hints.py`: the response body for the emission path when it cannot emit or validation
+  fails — a text reason, a do-it-yourself instruction, and hints computed from the scope's own Python
+  tasklets: every tasklet is collected (ast walk over its code), classified (elementwise / reduction
+  via summing write-conflict / libm), and mapped to the relevant intrinsics for the requested
+  (isa, dtype) — spelling, signature, trap, and the host's validation verdict. Contractable
+  mul+add/sub pairs surface `fma` too; transcendentals name the best tier (with its ULP) and the
+  library call. Integer ops under float dtypes are absent rather than errors.
+- 256 tests across the three ISA test files (hints: 5 new); ruff clean.
+
 ### Snapshot 5 — 2026-10-30 (numerical validation gate)
 
 - `alloy/isa/validate.py`: every spelling is checked before an agent sees it. Host-executable entries
