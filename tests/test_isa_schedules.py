@@ -162,6 +162,8 @@ def test_an_unknown_compiler_or_schedule_names_the_choices():
 def test_the_cli_verifies_a_skeleton():
     import sys
 
+    from alloy.isa.validate import host_can_run
+
     run = subprocess.run(
         [sys.executable, "-m", "alloy.isa", "skeleton", "avx512", "masked_remainder", "f64", "--verify"],
         capture_output=True,
@@ -169,10 +171,10 @@ def test_the_cli_verifies_a_skeleton():
         check=False,
     )
 
-    if run.returncode != 0:  # host cannot execute AVX-512: the skeleton still prints
-        assert "_mm512_mask_storeu_pd" in run.stdout
-    else:
-        assert "// verified: compiled skeleton" in run.stdout
+    assert run.returncode == 0, run.stderr
+    assert "_mm512_mask_storeu_pd" in run.stdout
+    verdict = "// verified: compiled skeleton" if host_can_run("avx512", "f64") else "// unverified: host"
+    assert verdict in run.stdout
 
 
 def test_a_width_alias_is_refused_by_name():

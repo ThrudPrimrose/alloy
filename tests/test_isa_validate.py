@@ -197,7 +197,13 @@ def test_the_libmvec_calls_validate_against_libm():
 def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
     """The whole gate end to end: no failure and no entry the kernels leave unexercised."""
     results = validate_all(TABLE, jobs=2)
-    assert len(results) > 100
+    expected = {
+        f"{isa}/{dtype}/{op}"
+        for isa in ("avx2", *(("avx512",) if AVX512 else ()))
+        for dtype in ("f64", "f32", "i64", "i32")
+        for op in getattr(TABLE.isas[isa], dtype)
+    } | {f"approx/{name}" for name in TABLE.approx}
+    assert expected <= {ident for ident, _ in results}
     assert [(ident, verdict.detail) for ident, verdict in results if verdict.ok is not True] == []
 
 
