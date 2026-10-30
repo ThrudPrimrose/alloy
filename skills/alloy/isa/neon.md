@@ -36,7 +36,7 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `abs` | `vabsq_f64` | `fabs` | `(v) -> v` | — |
 | `neg` | `vnegq_f64` | `fneg` | `(v) -> v` | — |
 | `select` | `vbslq_f64` | `bsl` | `(mask, t, f) -> v` | — |
-| `mod` | recipe: vdivq_f64 -> vrndaq_f64 -> vabsq_f64 | `fdiv+frinta` | `(a, b) -> v` | — |
+| `mod` | recipe: vdivq_f64 -> vrndq_f64 -> vfmsq_f64 | `fdiv+frintz+fmls` | `(a, b) -> v` | — |
 | `gather` | recipe: per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead | `ldr+ins` | `(base, idx) -> v` | — |
 | `scatter` | recipe: per-lane scalar stores via vst1q_lane_f64(v, base + idx[j], j) | `str+ext` | `(base, idx, v) -> void` | — |
 
@@ -52,7 +52,7 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `mul` | `vmulq_f32` | `fmul` | `(a, b) -> v` | — |
 | `div` | `vdivq_f32` | `fdiv` | `(a, b) -> v` | — |
 | `fma` | `vfmaq_f32` | `fmla` | `(a, b, c) -> v` | — |
-| `reduce_add` | `vaddvq_f32` | `addv` | `(v) -> s` | — |
+| `reduce_add` | `vaddvq_f32` | `faddp` | `(v) -> s` | — |
 | `zero` | `vdupq_n_f32` | `movi` | `(0.0f) -> v` | — |
 | `exp` | 6 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
@@ -63,7 +63,7 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `abs` | `vabsq_f32` | `fabs` | `(v) -> v` | — |
 | `neg` | `vnegq_f32` | `fneg` | `(v) -> v` | — |
 | `select` | `vbslq_f32` | `bsl` | `(mask, t, f) -> v` | — |
-| `mod` | recipe: vdivq_f32 -> vrndaq_f32 -> vabsq_f32 | `fdiv+frinta` | `(a, b) -> v` | — |
+| `mod` | recipe: vdivq_f32 -> vrndq_f32 -> vfmsq_f32 | `fdiv+frintz+fmls` | `(a, b) -> v` | — |
 | `gather` | recipe: per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead | `ldr+ins` | `(base, idx) -> v` | — |
 | `scatter` | recipe: per-lane scalar stores via vst1q_lane_f32(v, base + idx[j], j) | `str+ext` | `(base, idx, v) -> void` | — |
 
@@ -92,8 +92,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 |---|---|---|---|---|
 | `and` | `vandq_u64` | `and` | `(a, b) -> v` | — |
 | `or` | `vorrq_u64` | `orr` | `(a, b) -> v` | — |
-| `shl` | `vshlq_u64` | `sshl` | `(a, counts) -> v` | — |
-| `shr` | `vshlq_u64` | `sshl` | `(a, counts) -> v` | — |
+| `shl` | `vshlq_u64` | `ushl` | `(a, counts) -> v` | — |
+| `shr` | `vshlq_u64` | `ushl` | `(a, counts) -> v` | — |
 | `land` | recipe: vceqzq_u64 -> veorq_u64 -> vandq_u64 | `cmeqz+eor+and` | `(a, b) -> v` | — |
 | `lor` | recipe: vceqzq_u64 -> vandq_u64 -> veorq_u64 | `cmeqz+and+eor` | `(a, b) -> v` | — |
 | `mod` | recipe: no vector remainder: divide scalar per lane, or double division while |a| < 2^53 -> r = a - q * b | `sdiv+mul` | `(a, b) -> v` | — |
@@ -104,8 +104,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 |---|---|---|---|---|
 | `and` | `vandq_u32` | `and` | `(a, b) -> v` | — |
 | `or` | `vorrq_u32` | `orr` | `(a, b) -> v` | — |
-| `shl` | `vshlq_u32` | `sshl` | `(a, counts) -> v` | — |
-| `shr` | `vshlq_u32` | `sshl` | `(a, counts) -> v` | — |
+| `shl` | `vshlq_u32` | `ushl` | `(a, counts) -> v` | — |
+| `shr` | `vshlq_u32` | `ushl` | `(a, counts) -> v` | — |
 | `land` | recipe: vceqzq_u32 -> vmvnq_u32 -> vandq_u32 | `cmeqz+mvn+and` | `(a, b) -> v` | — |
 | `lor` | recipe: vceqzq_u32 -> vandq_u32 -> vmvnq_u32 | `cmeqz+and+mvn` | `(a, b) -> v` | — |
 | `mod` | recipe: no vector remainder: divide scalar per lane, or double division while |a| < 2^53 -> r = a - q * b | `sdiv+mul` | `(a, b) -> v` | — |
@@ -123,4 +123,3 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 
 - **fma** (f64): operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd
 - **fma** (f32): operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd
-

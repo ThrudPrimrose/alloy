@@ -272,4 +272,3 @@ Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale
 | sve | f32 | exp | `—` | `—` | `—` |
 | sve | f32 | sin | `—` | `—` | `—` |
 | sve | f32 | cos | `—` | `—` | `—` |
-

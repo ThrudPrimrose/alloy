@@ -6,7 +6,7 @@ a skeleton always spells intrinsics exactly as the lookup would. This is the see
 schedule->vector-schedule translator (plan work item 3): emitting a different body means swapping the
 axpy expression, the loop shape comes from here."""
 
-from alloy.isa.table import DTYPES, Table, load
+from alloy.isa.table import ALIASES, DTYPES, Table, load
 
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
@@ -36,7 +36,8 @@ def compiler_spelling(schedule: str, compiler: str, table: Table | None = None) 
     table = table or load()
     if schedule not in table.schedule_info:
         raise KeyError(f"{schedule!r}: unknown schedule (one of: {', '.join(table.schedule_info)})")
-    spelling = getattr(table.schedule_info[schedule], compiler, "")
+    info = table.schedule_info[schedule]
+    spelling = {"gcc": info.gcc, "clang": info.clang}.get(compiler, "")
     if not spelling:
         raise KeyError(f"{schedule}: no {compiler!r} spelling (one of: gcc, clang)")
     return spelling
@@ -93,8 +94,7 @@ def _lanes(table: Table, isa: str, dtype: str) -> tuple[int, str]:
     return target.lanes[dtype], str(target.lanes[dtype])
 
 
-def _scalar_loop(dtype: str, bound: str, indent: str = "") -> str:
-    s = _C_TYPE[dtype]
+def _scalar_loop(bound: str, indent: str = "") -> str:
     return f"{indent}for (int64_t i = 0; i < {bound}; i++) {{\n{indent}    C[i] = a * X[i] + Y[i];\n{indent}}}"
 
 
@@ -103,6 +103,8 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
     combination is not offered."""
     if dtype not in DTYPES:
         raise KeyError(f"{isa}/{dtype}: skeletons exist for the float dtypes ({', '.join(DTYPES)})")
+    if isa in ALIASES:
+        raise KeyError(f"{isa}: a compiler width knob with no intrinsics of its own: use {ALIASES[isa]}")
     why = legal(isa, schedule, table)
     if why:
         raise KeyError(f"{isa}/{schedule}/{dtype}: {why}")
@@ -112,7 +114,7 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
     header = {"x86": "#include <immintrin.h>", "neon": "#include <arm_neon.h>", "sve": "#include <arm_sve.h>"}[family]
 
     if schedule == "scalar":
-        body = _scalar_loop(dtype, "N")
+        body = _scalar_loop("N")
     elif schedule == "scalar_remainder":
         body = (
             f"const int64_t n_main = {lanes} * (N / {lanes});\n"
@@ -150,7 +152,8 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
         body = (
             f"{iota}\n"
             f"for (int64_t i = 0; i < N; i += {lanes}) {{\n"
-            f"    __mmask{lanes} m = {cmplt}(iota, {set1}(N - i));\n"
+            f"    /* clamped: a 32-bit lane cannot hold every N - i */\n"
+            f"    __mmask{lanes} m = {cmplt}(iota, {set1}(N - i < {lanes} ? N - i : {lanes}));\n"
             f"    {_store(table, isa, dtype, masked, mask='m')}\n"
             f"}}"
         )
@@ -176,26 +179,31 @@ _DRIVER = """
 #include <stdio.h>
 #include <math.h>
 int main(void) {{
-  int N = 19; {ctype} a = 1.5{fsuffix};
-  {ctype} X[19], Y[19], C[19];
-  for (int i = 0; i < N; i++) {{ X[i] = ({ctype})(0.5 + 0.1 * i); Y[i] = ({ctype})(1.0 + 0.25 * i); C[i] = 0; }}
-  axpy(N, a, X, Y, C);
+  enum {{ MAX_N = 67 }};
+  {ctype} a = 1.5{fsuffix}, X[MAX_N + 1], Y[MAX_N + 1], C[MAX_N + 1];
   double maxrel = 0;
-  for (int i = 0; i < N; i++) {{
-    double ref = (double)a * (double)X[i] + (double)Y[i];
-    double d = fabs((double)C[i] - ref);
-    double m = fabs(ref) > 1 ? fabs(ref) : 1;
-    if (d / m > maxrel) maxrel = d / m;
+  for (int N = 0; N <= MAX_N; N++) {{
+    for (int i = 0; i <= MAX_N; i++) {{ X[i] = ({ctype})(0.5 + 0.1 * i); Y[i] = ({ctype})(1.0 + 0.25 * i); C[i] = -7; }}
+    axpy(N, a, X, Y, C);
+    for (int i = 0; i <= MAX_N; i++) {{
+      double ref = i < N ? (double)a * (double)X[i] + (double)Y[i] : -7;  /* past N must stay untouched */
+      double d = fabs((double)C[i] - ref);
+      double m = fabs(ref) > 1 ? fabs(ref) : 1;
+      {track}
+    }}
   }}
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
 }}"""
 
+#: Skeleton tolerance per lane type: fma rounds once, the reference twice.
+SKELETON_TOL = {"f64": 1e-14, "f32": 1e-6}
+
 
 def verify(isa: str, schedule: str, dtype: str, table: Table | None = None):
     """Compile and run a skeleton against the scalar reference: the same numerical gate as for table
     entries, applied to the composed loop shape. ``ok is None`` when this host cannot execute it."""
-    from alloy.isa.validate import Verdict, _c_flags, _compile_run, host_can_run  # noqa: PLC0415
+    from alloy.isa.validate import TRACK_ERROR, Verdict, _c_flags, _compile_run, host_can_run  # noqa: PLC0415
 
     table = table or load()
     why = legal(isa, schedule, table)
@@ -205,8 +213,11 @@ def verify(isa: str, schedule: str, dtype: str, table: Table | None = None):
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
     ctype = _C_TYPE[dtype]
     fsuffix = "" if dtype == "f64" else "f"
-    source = skeleton(table, isa, schedule, dtype) + _DRIVER.format(ctype=ctype, fsuffix=fsuffix)
-    rel = _compile_run(source, _c_flags(isa, dtype))
-    tol = 1e-5  # fma vs mul+add rounding
+    source = skeleton(table, isa, schedule, dtype) + _DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=TRACK_ERROR)
+    try:
+        rel = _compile_run(source, _c_flags(isa, dtype))
+    except RuntimeError as exc:
+        return Verdict(False, "compiled skeleton", str(exc))
+    tol = SKELETON_TOL[dtype]
     ok = rel <= tol
     return Verdict(ok, "compiled skeleton", f"max rel err {rel:.3e} vs tolerance {tol:.3e}")

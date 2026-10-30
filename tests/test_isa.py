@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from alloy.isa import OPS, load, lookup, reverse
-from alloy.isa.table import ALIASES, ALL_DTYPES, DTYPES
+from alloy.isa.table import ALIASES, ALL_DTYPES, DEFAULT_PATH, DTYPES
 from helpers import MATRIX
 
 TABLE = load()
@@ -122,7 +122,7 @@ def test_reverse_strips_an_evex_dot_suffix():
         ("fmla", "neon", "fma", "f64"),
         ("fmla", "sve", "fma", "f32"),
         ("ld1d", "sve", "load", "f64"),
-        ("addv", "sve", "reduce_add", "f64"),
+        ("faddv", "sve", "reduce_add", "f64"),
         ("svaddv_f32", "sve", "reduce_add", "f32"),
         ("_mm512_maskz_loadu_pd", "avx512", "load", "f64"),
     ],
@@ -485,3 +485,47 @@ def test_masked_variant_names_exist_in_the_clang_headers():
                 if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
                     missing.append(name)
     assert not missing
+
+
+@pytest.mark.parametrize(
+    "name, isa, op, dtype",
+    [
+        ("vfnmadd231pd", "avx2", "mod", "f64"),  # one step of a composite
+        ("vfmadd231ph", "avx512", "fma", "f16"),
+        ("vfmadd213sd", "avx2", "fma", "f64"),
+        ("VADDPD", "avx2", "add", "f64"),
+        ("vpsrlvq", "avx512", "shr", "i64"),
+        ("kandb", "avx512", "land", "i64"),
+        ("kandw", "avx512", "land", "i32"),
+        ("_mm256_storeu_pd", "avx2", "scatter", "f64"),  # cited in a prose recipe step
+        ("vld1q_lane_f64", "neon", "gather", "f64"),
+        ("_mm512_castsi512_ph", "avx512", "load", "f16"),  # cited in a masked note
+    ],
+)
+def test_reverse_reads_what_a_disassembly_or_a_recipe_spells(name, isa, op, dtype):
+    assert (isa, op, dtype) in {(hit.isa, hit.op, hit.dtype) for hit in TABLE.reverse(name)}
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_an_empty_name_matches_nothing(name):
+    assert TABLE.reverse(name) == ()
+    assert TABLE.assist(name) == ()
+
+
+def test_fmod_truncates_on_every_isa_with_a_float_recipe():
+    """fmod needs a toward-zero quotient and the final a - q*b; the nearest-rounding step is remainder()."""
+    assert TABLE.entry("neon", "mod", "f64").recipe == ("vdivq_f64", "vrndq_f64", "vfmsq_f64")
+    assert TABLE.entry("sve", "mod", "f32").recipe == ("svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x")
+
+
+def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
+    masked = TABLE.entry("avx512", "fma", "f64").masked
+    assert masked.count(",") == 3, masked
+
+
+def test_the_table_refuses_an_integer_table_with_a_hole(tmp_path):
+    text = DEFAULT_PATH.read_text(encoding="utf-8")
+    broken = tmp_path / "intrinsics.toml"
+    broken.write_text(text.replace("[isa.avx2.i64.shr]", "[isa.avx2.i64.not_shr_at_all]"), encoding="utf-8")
+    with pytest.raises(ValueError, match="lacks ops"):
+        load(broken)

@@ -3,7 +3,6 @@
 reason, the do-it-yourself instruction, and hints computed from the scope's own Python tasklets (each
 classified and mapped to the relevant intrinsics with their traps and validation status)."""
 
-
 from alloy.isa import load
 from alloy.isa.hints import advice, tasklet_hints
 
@@ -67,6 +66,11 @@ def test_integer_ops_under_a_float_dtype_are_absent_not_errors():
     assert "and" not in spellings  # integer op, no f64 spelling
 
 
+def test_min_max_logic_and_conditionals_are_recognized():
+    (hint,) = tasklet_hints(_branchy_sdfg(), "avx512", "f64", TABLE)
+    assert {"min", "max", "select"} <= set(hint.use.ops)
+
+
 def _example_sdfg():
     """Two scopes' worth of tasklets: a contractable elementwise map and a sum reduction."""
     import dace
@@ -118,4 +122,19 @@ def _integer_sdfg():
     state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(b, entry, node, dst_conn="y", memlet=dace.Memlet("b[i]"))
     state.add_memlet_path(node, exit_, c, src_conn="z", memlet=dace.Memlet("c[i]"))
+    return sdfg
+
+
+def _branchy_sdfg():
+    import dace
+
+    sdfg = dace.SDFG("hints_branchy")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", dict(i="0:8"))
+    node = state.add_tasklet("clip", {"x"}, {"y"}, "y = min(x, 1.0) if x > 0.0 else max(x, -1.0)")
+    a, b = state.add_access("a"), state.add_access("b")
+    state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(node, exit_, b, src_conn="y", memlet=dace.Memlet("b[i]"))
     return sdfg

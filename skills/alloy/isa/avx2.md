@@ -25,7 +25,7 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `mul` | `_mm256_mul_pd` | `vmulpd` | `(a, b) -> v` | — |
 | `div` | `_mm256_div_pd` | `vdivpd` | `(a, b) -> v` | — |
 | `fma` | `_mm256_fmadd_pd` | `vfmadd` | `(a, b, c) -> v` | — |
-| `reduce_add` | recipe: _mm256_castpd256_pd128 -> _mm256_extractf128_pd -> _mm_add_pd -> ... | `vextractf128 + vaddpd + vhaddpd` | `(v) -> s` | — |
+| `reduce_add` | recipe: _mm256_castpd256_pd128 -> _mm256_extractf128_pd -> _mm_add_pd -> ... | `vextractf128 + vaddpd + vunpckhpd + vaddsd` | `(v) -> s` | — |
 | `zero` | `_mm256_setzero_pd` | `vxorpd` | `() -> v` | — |
 | `exp` | 6 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
@@ -37,7 +37,7 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `neg` | recipe: _mm256_castsi256_pd -> _mm256_set1_epi64x -> _mm256_xor_pd | `vxorpd` | `(v) -> v` | — |
 | `select` | `_mm256_blendv_pd` | `vblendvpd` | `(a, b, mask) -> v` | — |
 | `mod` | recipe: _mm256_div_pd -> _mm256_round_pd -> _mm256_fnmadd_pd | `vdivpd+vroundpd+vfnmadd` | `(a, b) -> v` | — |
-| `gather` | `_mm256_i64gather_pd` | `vgatherqpd` | `(base, idx) -> v` | — |
+| `gather` | `_mm256_i64gather_pd` | `vgatherqpd` | `(base, idx, scale) -> v` | — |
 | `scatter` | recipe: no vector scatter before AVX-512: _mm256_storeu_pd(v) to a scratch buffer, then scalar per-lane stores; restructure to gather-on-load where possible | `storeu+scalar` | `(base, idx, v) -> void` | — |
 
 ### f32
@@ -52,7 +52,7 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `mul` | `_mm256_mul_ps` | `vmulps` | `(a, b) -> v` | — |
 | `div` | `_mm256_div_ps` | `vdivps` | `(a, b) -> v` | — |
 | `fma` | `_mm256_fmadd_ps` | `vfmadd` | `(a, b, c) -> v` | — |
-| `reduce_add` | recipe: _mm256_castps256_ps128 -> _mm256_extractf128_ps -> _mm_add_ps -> ... | `vextractf128 + vaddps + vmovshdup` | `(v) -> s` | — |
+| `reduce_add` | recipe: _mm256_castps256_ps128 -> _mm256_extractf128_ps -> _mm_add_ps -> ... | `vextractf128 + vaddps + vmovshdup + vmovhlps + vaddss` | `(v) -> s` | — |
 | `zero` | `_mm256_setzero_ps` | `vxorps` | `() -> v` | — |
 | `exp` | 6 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
@@ -64,7 +64,7 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `neg` | recipe: _mm256_castsi256_ps -> _mm256_set1_epi32 -> _mm256_xor_ps | `vxorps` | `(v) -> v` | — |
 | `select` | `_mm256_blendv_ps` | `vblendvps` | `(a, b, mask) -> v` | — |
 | `mod` | recipe: _mm256_div_ps -> _mm256_round_ps -> _mm256_fnmadd_ps | `vdivps+vroundps+vfnmadd` | `(a, b) -> v` | — |
-| `gather` | `_mm256_i32gather_ps` | `vgatherdps` | `(base, idx) -> v` | — |
+| `gather` | `_mm256_i32gather_ps` | `vgatherdps` | `(base, idx, scale) -> v` | — |
 | `scatter` | recipe: no vector scatter before AVX-512: _mm256_storeu_ps(v) to a scratch buffer, then scalar per-lane stores | `storeu+scalar` | `(base, idx, v) -> void` | — |
 
 ### f16
@@ -78,7 +78,7 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `sub` | recipe: _mm256_cvtph_ps -> _mm256_sub_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
 | `mul` | recipe: _mm256_cvtph_ps -> _mm256_mul_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
 | `div` | recipe: _mm256_cvtph_ps -> _mm256_div_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
-| `fma` | recipe: _mm256_cvtph_ps -> _mm256_fmadd_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
+| `fma` | recipe: _mm256_cvtph_ps -> _mm256_fmadd_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b, c) -> v` | — |
 | `sqrt` | recipe: _mm256_cvtph_ps -> _mm256_sqrt_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(v) -> v` | — |
 | `min` | recipe: _mm256_cvtph_ps -> _mm256_min_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
 | `max` | recipe: _mm256_cvtph_ps -> _mm256_max_ps -> _mm256_cvtps_ph | `vcvtph2ps+op+vcvtps2ph` | `(a, b) -> v` | — |
@@ -122,4 +122,3 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 
 - **select** (f64): operand-order trap: mask is LAST and it picks b; blendv tests the mask's SIGN BIT, not ==1 - feed it compare results (all-ones/all-zeros), x86 calls this op blend
 - **select** (f32): operand-order trap: mask is LAST and it picks b; blendv tests the mask's SIGN BIT, not ==1 - feed it compare results (all-ones/all-zeros), x86 calls this op blend
-

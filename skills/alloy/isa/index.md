@@ -25,8 +25,8 @@ The machine abstract math ISA and its per-target spellings. The abstract ops:
 | `or` | v[j] = a[j] | b[j] (integer lanes) | bitwise | vector |
 | `shl` | v[j] = a[j] << b[j] (integer lanes) | shift | vector |
 | `shr` | v[j] = a[j] >> b[j], logical (integer lanes) | shift | vector |
-| `land` | v[j] = (a[j] != 0) && (b[j] != 0), as 0/1 lanes | logical | vector |
-| `lor` | v[j] = (a[j] != 0) || (b[j] != 0), as 0/1 lanes | logical | vector |
+| `land` | (a[j] != 0) && (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
+| `lor` | (a[j] != 0) || (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
 | `reduce_add` | s = sum of every active lane of v | reduction | scalar |
 | `exp` | v[j] = exp(x[j]) | transcendental | vector |
 | `sin` | v[j] = sin(x[j]) | transcendental | vector |
@@ -43,4 +43,3 @@ Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for
 - [`neon.md`](neon.md) — Arm NEON / AdvSIMD (fixed 128-bit)
 - [`sve.md`](sve.md) — Arm SVE (scalable vectors, predicated)
 - [`transcendentals.md`](transcendentals.md) — the exp/sin/cos polynomial tiers with measured ULP and the vector math library calls
-

@@ -126,7 +126,7 @@ semantics = "v[j] = a[j]*b[j] + c[j]"
 note = "Intel order: products first, accumulator last; never write it from another ISA's memory"
 
 [isa.avx2.f64.reduce_add]
-mnemonic = "vextractf128 + vaddpd + vhaddpd"
+mnemonic = "vextractf128 + vaddpd + vunpckhpd + vaddsd"
 signature = "(v) -> s"
 semantics = "s = sum of the 4 lanes of v"
 recipe = ["_mm256_castpd256_pd128", "_mm256_extractf128_pd", "_mm_add_pd", "_mm_unpackhi_pd", "_mm_add_sd", "_mm_cvtsd_f64"]
@@ -189,7 +189,7 @@ semantics = "v[j] = a[j]*b[j] + c[j]"
 note = "Intel order: products first, accumulator last"
 
 [isa.avx2.f32.reduce_add]
-mnemonic = "vextractf128 + vaddps + vmovshdup"
+mnemonic = "vextractf128 + vaddps + vmovshdup + vmovhlps + vaddss"
 signature = "(v) -> s"
 semantics = "s = sum of the 8 lanes of v"
 recipe = ["_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_add_ps", "_mm_movehdup_ps", "_mm_movehl_ps", "_mm_add_ss", "_mm_cvtss_f32"]
@@ -317,7 +317,7 @@ semantics = "v[j] = a[j] / b[j]"
 
 [isa.avx512.f64.fma]
 intrinsic = "_mm512_fmadd_pd"
-masked = "_mm512_mask_fmadd_pd(src, k, a, b, c)"
+masked = "_mm512_mask_fmadd_pd(a, k, b, c)"
 mnemonic = "vfmadd"
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j]*b[j] + c[j]"
@@ -394,7 +394,7 @@ semantics = "v[j] = a[j] / b[j]"
 
 [isa.avx512.f32.fma]
 intrinsic = "_mm512_fmadd_ps"
-masked = "_mm512_mask_fmadd_ps(src, k, a, b, c)"
+masked = "_mm512_mask_fmadd_ps(a, k, b, c)"
 mnemonic = "vfmadd"
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j]*b[j] + c[j]"
@@ -567,7 +567,7 @@ note = "operand-order trap: the accumulator is FIRST, the products last (a + b*c
 
 [isa.neon.f32.reduce_add]
 intrinsic = "vaddvq_f32"
-mnemonic = "addv"
+mnemonic = "faddp"
 signature = "(v) -> s"
 semantics = "s = sum of the 4 lanes of v"
 note = "single horizontal-add instruction"
@@ -676,7 +676,7 @@ note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON â€
 
 [isa.sve.f64.reduce_add]
 intrinsic = "svaddv_f64"
-mnemonic = "addv"
+mnemonic = "faddv"
 signature = "(pg, v) -> s"
 semantics = "s = sum of the active lanes of v"
 note = "cleanest horizontal add of all targets"
@@ -746,7 +746,7 @@ note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON â€
 
 [isa.sve.f32.reduce_add]
 intrinsic = "svaddv_f32"
-mnemonic = "addv"
+mnemonic = "faddv"
 signature = "(pg, v) -> s"
 semantics = "s = sum of the active lanes of v"
 
@@ -1253,7 +1253,7 @@ note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_Z
 [isa.avx2.f64.gather]
 intrinsic = "_mm256_i64gather_pd"
 mnemonic = "vgatherqpd"
-signature = "(base, idx) -> v"
+signature = "(base, idx, scale) -> v"
 semantics = "v[j] = base[idx[j]]"
 note = "slow on AMD Zen1/2 (microcoded): affine indices want a plain load"
 
@@ -1314,7 +1314,7 @@ note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_Z
 [isa.avx2.f32.gather]
 intrinsic = "_mm256_i32gather_ps"
 mnemonic = "vgatherdps"
-signature = "(base, idx) -> v"
+signature = "(base, idx, scale) -> v"
 semantics = "v[j] = base[idx[j]]"
 note = "32-bit indices; slow on AMD Zen1/2"
 
@@ -1379,7 +1379,7 @@ note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (towar
 intrinsic = "_mm512_i64gather_pd"
 masked = "_mm512_mask_i64gather_pd(src, k, idx, base, 8)"
 mnemonic = "vgatherqpd"
-signature = "(idx, base) -> v"
+signature = "(idx, base, scale) -> v"
 semantics = "v[j] = base[idx[j]]"
 note = "operand-order trap: AVX-512 gathers take (index, base), AVX2 took (base, index)"
 
@@ -1387,7 +1387,7 @@ note = "operand-order trap: AVX-512 gathers take (index, base), AVX2 took (base,
 intrinsic = "_mm512_i64scatter_pd"
 masked = "_mm512_mask_i64scatter_pd(base, k, idx, v, 8)"
 mnemonic = "vscatterqpd"
-signature = "(base, idx, v) -> void"
+signature = "(base, idx, v, scale) -> void"
 semantics = "base[idx[j]] = v[j]"
 
 [isa.avx512.f32.sqrt]
@@ -1445,7 +1445,7 @@ note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (towar
 intrinsic = "_mm512_i32gather_ps"
 masked = "_mm512_mask_i32gather_ps(src, k, idx, base, 4)"
 mnemonic = "vgatherdps"
-signature = "(idx, base) -> v"
+signature = "(idx, base, scale) -> v"
 semantics = "v[j] = base[idx[j]]"
 note = "32-bit indices; operand order (index, base)"
 
@@ -1453,7 +1453,7 @@ note = "32-bit indices; operand order (index, base)"
 intrinsic = "_mm512_i32scatter_ps"
 masked = "_mm512_mask_i32scatter_ps(base, k, idx, v, 4)"
 mnemonic = "vscatterdps"
-signature = "(base, idx, v) -> void"
+signature = "(base, idx, v, scale) -> void"
 semantics = "base[idx[j]] = v[j]"
 
 [isa.neon.f64.sqrt]
@@ -1497,11 +1497,11 @@ semantics = "v[j] = mask[j] ? t[j] : f[j]"
 note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
 
 [isa.neon.f64.mod]
-mnemonic = "fdiv+frinta"
+mnemonic = "fdiv+frintz+fmls"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
-recipe = ["vdivq_f64", "vrndaq_f64", "vabsq_f64"]
-note = "no fmod and no round-toward-zero: q = copysign(vrndaq_f64(vabsq_f64(a/b)), a/b), r = a - q*b; NEON has no fused multiply-subtract either"
+recipe = ["vdivq_f64", "vrndq_f64", "vfmsq_f64"]
+note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b"
 
 [isa.neon.f64.gather]
 mnemonic = "ldr+ins"
@@ -1556,11 +1556,11 @@ semantics = "v[j] = mask[j] ? t[j] : f[j]"
 note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
 
 [isa.neon.f32.mod]
-mnemonic = "fdiv+frinta"
+mnemonic = "fdiv+frintz+fmls"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
-recipe = ["vdivq_f32", "vrndaq_f32", "vabsq_f32"]
-note = "no fmod and no round-toward-zero: q = copysign(vrndaq_f32(vabsq_f32(a/b)), a/b), r = a - q*b; NEON has no fused multiply-subtract either"
+recipe = ["vdivq_f32", "vrndq_f32", "vfmsq_f32"]
+note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b"
 
 [isa.neon.f32.gather]
 mnemonic = "ldr+ins"
@@ -1615,10 +1615,10 @@ semantics = "v[j] = pg[j] ? t[j] : f[j]"
 note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
 
 [isa.sve.f64.mod]
-mnemonic = "fdiv+fcvt"
+mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
-recipe = ["svdiv_f64_x", "svcvt_s64_f64_x", "svcvt_f64_s64_x"]
+recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
 note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
 
 [isa.sve.f64.gather]
@@ -1675,10 +1675,10 @@ semantics = "v[j] = pg[j] ? t[j] : f[j]"
 note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
 
 [isa.sve.f32.mod]
-mnemonic = "fdiv+fcvt"
+mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
-recipe = ["svdiv_f32_x", "svcvt_s32_f32_x", "svcvt_f32_s32_x"]
+recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
 note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
 
 [isa.sve.f32.gather]
@@ -1743,8 +1743,8 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 
 [isa.avx2.f16.fma]
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
-signature = "(a, b) -> v"
-semantics = "v[j] = fma(a[j], b[j]) in f16, computed via f32"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j] in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1825,8 +1825,8 @@ note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-la
 [isa.avx512.f16.fma]
 intrinsic = "_mm512_fmadd_ph"
 masked = "_mm512_mask_fmadd_ph"
-mnemonic = "vfmaph"
-signature = "(a, b) -> v"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j] fma b[j]"
 note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
 
@@ -2173,26 +2173,26 @@ semantics = "v[j] = a[j] | b[j]"
 
 [isa.avx512.i64.shl]
 intrinsic = "_mm512_sllv_epi64"
-mnemonic = "vpsllvv"
+mnemonic = "vpsllvq"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j]"
 
 [isa.avx512.i64.shr]
 intrinsic = "_mm512_srlv_epi64"
-mnemonic = "vpsrlvv"
+mnemonic = "vpsrlvq"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
 
 [isa.avx512.i64.land]
 intrinsic = "_kand_mask8"
-mnemonic = "kandq"
+mnemonic = "kandb"
 signature = "(ka, kb) -> k"
 semantics = "k = ka && kb, on compare masks"
 note = "operates on __mmask8 compare results; per-lane 0/1 needs an extra mask-to-vector convert"
 
 [isa.avx512.i64.lor]
 intrinsic = "_kor_mask8"
-mnemonic = "korq"
+mnemonic = "korb"
 signature = "(ka, kb) -> k"
 semantics = "k = ka || kb, on compare masks"
 
@@ -2228,14 +2228,14 @@ semantics = "v[j] = a[j] >> counts[j], logical"
 
 [isa.avx512.i32.land]
 intrinsic = "_mm512_kand"
-mnemonic = "kandd"
+mnemonic = "kandw"
 signature = "(ka, kb) -> k"
 semantics = "k = ka && kb, on compare masks"
 note = "_kand_mask16 is a macro alias for _mm512_kand in clang"
 
 [isa.avx512.i32.lor]
 intrinsic = "_mm512_kor"
-mnemonic = "kord"
+mnemonic = "korw"
 signature = "(ka, kb) -> k"
 semantics = "k = ka || kb, on compare masks"
 
@@ -2259,13 +2259,13 @@ semantics = "v[j] = a[j] | b[j]"
 
 [isa.neon.i64.shl]
 intrinsic = "vshlq_u64"
-mnemonic = "sshl"
+mnemonic = "ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j]"
 
 [isa.neon.i64.shr]
 intrinsic = "vshlq_u64"
-mnemonic = "sshl"
+mnemonic = "ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector"
@@ -2303,13 +2303,13 @@ semantics = "v[j] = a[j] | b[j]"
 
 [isa.neon.i32.shl]
 intrinsic = "vshlq_u32"
-mnemonic = "sshl"
+mnemonic = "ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j]"
 
 [isa.neon.i32.shr]
 intrinsic = "vshlq_u32"
-mnemonic = "sshl"
+mnemonic = "ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector"

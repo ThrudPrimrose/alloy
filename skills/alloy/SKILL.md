@@ -78,10 +78,10 @@ Every `lookup` is **numerically validated on the host before it is returned**: a
 runs the looked-up intrinsic (or its fallback recipe) against a scalar reference, and transcendentals
 are re-measured against libm. The output carries a `verified:` line; on failure the exit code is 3 and
 the output lists potentially relevant spellings (same op on other dtypes/ISAs, the intrinsic's family)
-instead of endorsing a wrong answer. `unverified:` marks ISAs the host cannot execute (NEON/SVE on x86)
+instead of endorsing a wrong answer. `unverified:` marks what cannot run here (NEON/SVE, which have no kernels yet, or a missing ISA or compiler)
 — unverified is never reported as correct.
 
-- ISAs: `avx2`, `avx512` (also `avx512_256` = same intrinsics at 256 bits), `neon`, `sve`. Dtypes:
+- ISAs: `avx2`, `avx512` (also `avx512_256` = avx512 under `-mprefer-vector-width=256`, lookup only), `neon`, `sve`. Dtypes:
   `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the integer ops.
 - `reverse` accepts C intrinsics (`_mm512_add_pd`), recipe steps, and disassembler mnemonics as printed
   (`vaddpd`, `vfmadd231pd`, `fmla`, `ld1d`, `vaddpd.z`). Use it to read a build's disassembly back into math:

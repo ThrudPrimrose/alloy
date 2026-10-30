@@ -2,10 +2,10 @@
 """Numerical validation of table entries: every spelling an agent gets from a lookup is checked before
 it is returned. Two validators, one idea — never hand the agent an unverified mapping:
 
-- entries on an ISA the host can execute (x86: AVX2+FMA, AVX-512F; aarch64: NEON/SVE) are checked by a
-  small compiled C kernel: fixed inputs through the looked-up intrinsic (or its fallback recipe,
-  hand-coded once per op and ISA family — these kernels are the recipes written out, not auto-translated,
-  so a wrong mapping is caught rather than propagated), a scalar reference, and a per-op tolerance.
+- x86 entries the host can execute (AVX2+FMA, AVX-512F+DQ) are checked by a small compiled C kernel:
+  fixed inputs through the looked-up intrinsic (or its fallback recipe, hand-coded once per op and ISA
+  family — :func:`unexercised` refuses a kernel that skips a spelling, so a wrong mapping is caught
+  rather than propagated), a scalar reference, and a per-op tolerance.
 - approximation tiers ([approx]) are re-measured in numpy against libm on their domain: the recorded
   ``error_ulp`` must reproduce within a slack, which catches transcription errors in the coefficients.
 
@@ -13,8 +13,9 @@ When validation fails, :func:`candidates_for` names the potentially relevant spe
 other dtypes and ISAs, the reverse-lookup family — so the caller returns a shortlist with an explicit
 failure notice instead of a wrong answer.
 
-``Verdict.ok is None`` means not verifiable on this host (NEON/SVE on x86, AVX-512 FP16 without the
-hardware, entries with no executable form): unverified is never reported as correct.
+``Verdict.ok is None`` means not verifiable on this host (NEON/SVE, for which no kernels exist yet,
+AVX-512 FP16 without the hardware, entries with no executable form, no C compiler): unverified is never
+reported as correct.
 """
 
 import contextlib
@@ -28,7 +29,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 from alloy.isa.ops import OPS
-from alloy.isa.table import ALL_DTYPES, DTYPES, INT_DTYPES, Hit, Table, load
+from alloy.isa.table import ALIASES, ALL_DTYPES, DTYPES, INT_DTYPES, SPELLED, Entry, Hit, Table, load
 
 __all__ = ["Verdict", "candidates_for", "host_can_run", "validate", "validate_all", "validate_tier"]
 
@@ -61,9 +62,10 @@ TOL: dict[str, float] = {
     "mod": 1e-13,
 }
 TOL_F16 = 4e-3  # the AVX2 f16 recipes compute in f32; a few f16 ulps of slack
-TOL_LIBRARY = 1e-13  # vector math library entries vs scalar libm
+TOL_LIBRARY = {"f64": 1e-13, "f32": 1e-6}  # vector math library entries vs double libm, by lane type
 TIER_SLACK = 2.0  # a tier's re-measured error may exceed the recorded one by this factor
 N_TIER = 2_000_000
+COMPILE_TIMEOUT = 120  # seconds, per compile and per run
 
 VERIFY_LINE = re.compile(r"^ALLOY-VERIFY rel=(\S+)", re.MULTILINE)
 
@@ -101,11 +103,13 @@ def _flags() -> frozenset[str]:
 def host_can_run(isa: str, dtype: str) -> bool:
     """Whether this host compiles AND executes kernels for ``(isa, dtype)``."""
     flags, machine = _flags(), platform.machine()
+    isa = ALIASES.get(isa, isa)
     if machine == "x86_64":
         if isa == "avx2":
             return {"avx2", "fma", "f16c"} <= flags if dtype == "f16" else {"avx2", "fma"} <= flags
-        if isa == "avx512":
-            return {"avx512f", "avx512fp16"} <= flags if dtype == "f16" else {"avx512f"} <= flags
+        if isa == "avx512":  # the kernels and the k-mask entries need DQ
+            needed = {"avx512f", "avx512dq", "avx512fp16"} if dtype == "f16" else {"avx512f", "avx512dq"}
+            return needed <= flags
         return False
     if machine == "aarch64":
         return {"neon": "asimd", "sve": "sve"}.get(isa, "") in flags
@@ -127,49 +131,63 @@ _X86_512 = {
     "i32": ("int32_t", "__m512i", "_mm512", "epi32"),
 }
 
+#: The per-lane error update every kernel ends with: a NaN must stick, a plain ``>`` would drop it.
+TRACK_ERROR = "double e = d / m;\n    if (isnan(e) || e > maxrel) maxrel = e;"
+
 
 def _c_flags(isa: str, dtype: str) -> list[str]:
+    isa = ALIASES.get(isa, isa)
+    if isa == "neon":
+        return []
+    if isa == "sve":
+        return ["-march=armv8-a+sve"]
     if isa == "avx2":
         return ["-mavx2", "-mfma", "-mf16c"] if dtype == "f16" else ["-mavx2", "-mfma"]
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
 
 
-def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
-    """The kernel body for ``(isa, dtype, op)``: (compute C, scalar-reference C, tolerance), or None
-    when the entry has no executable form on this ISA."""
+def _body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float] | None:
+    """The kernel body for ``(isa, dtype, op)``, spelled with the table's own entry so a wrong mapping fails:
+    (compute C, scalar-reference C, tolerance), or None when the entry has no executable form here."""
+    entry = table.entry(isa, op, dtype)
     if dtype == "f16":
-        return _f16_body(op) if isa == "avx2" else None
+        return _f16_body(op, entry) if isa == "avx2" else None
     wide = isa == "avx512"
     lanes = (8 if wide else 4) if dtype in ("f64", "i64") else (16 if wide else 8)
     s, v, p, sfx = (_X86_512 if wide else _X86)[dtype]
     fp = dtype in DTYPES
-    load = f"{p}_loadu_{sfx}" if fp else f"{p}_loadu_si{512 if wide else 256}"
-    iload = f"{p}_loadu_si{512 if wide else 256}"  # index vectors and integer lanes
+    bits = 512 if wide else 256
+    load = table.entry(isa, "load", dtype).intrinsic if fp else f"{p}_loadu_si{bits}"
+    iload = f"{p}_loadu_si{bits}"  # index vectors and integer lanes
+    store_fn = table.entry(isa, "store", dtype).intrinsic if fp else f"{p}_storeu_si{bits}"
     cast = "" if fp else f"({v}*)"
     decl = f"{v} va = {load}({cast}a);\n  {v} vb = {load}({cast}b);"
     out_ptr = f"({s}*)out" if fp else f"({v}*)out"
-    store = f"{p}_storeu_{sfx}({out_ptr}, vr);" if fp else f"{p}_storeu_si{512 if wide else 256}({out_ptr}, vr);"
+    store = f"{store_fn}({out_ptr}, vr);"
     lanes_s = str(lanes)
 
     if op in ("land", "lor"):
         if dtype not in INT_DTYPES:
             return None
-        return _logical(isa, dtype, op, decl, store)
+        return _logical(isa, dtype, op, decl, store, entry)
     if op == "mod" and dtype in INT_DTYPES:
-        # the documented recipe: no vector remainder, divide scalar per lane
-        return ("for (int j = 0; j < VL; j++) { out[j] = a[j] % b[j]; ref[j] = out[j]; }", "", 0.0)
+        # the documented recipe (no vector remainder, r = a - q*b per lane) against libm
+        compute = "for (int j = 0; j < VL; j++) out[j] = a[j] - (a[j] / b[j]) * b[j];"
+        return compute, "for (int j = 0; j < VL; j++) ref[j] = fmod((double)a[j], (double)b[j]);", 0.0
 
     if op == "abs" or op == "neg":
-        mask = {
-            "abs": "0x7fffffffffffffffULL" if dtype == "f64" else "0x7fffffffU",
-            "neg": "0x8000000000000000ULL" if dtype == "f64" else "0x80000000U",
-        }[op]
         if not fp:
             return None  # integer abs/neg are not tabled
-        vi = f"__m{512 if wide else 256}i"
-        iop = f"{p}_{'and' if op == 'abs' else 'xor'}_si{512 if wide else 256}"
-        set1 = f"{p}_set1_{'epi64' if dtype == 'f64' else 'epi32'}"
-        compute = f"{vi} vc = *({vi}*)&va, mk = {set1}((long long){mask});\n  {v} vr; *({vi}*)&vr = {iop}(vc, mk);"
+        mask = {
+            "abs": "(long long)0x7fffffffffffffffULL" if dtype == "f64" else "(int)0x7fffffffU",
+            "neg": "(long long)0x8000000000000000ULL" if dtype == "f64" else "(int)0x80000000U",
+        }[op]
+        if wide:
+            set1 = f"{p}_set1_{'epi64' if dtype == 'f64' else 'epi32'}"
+            compute = f"{v} vr = {p}_castsi512_{sfx}({entry.recipe[0]}({p}_cast{sfx}_si512(va), {set1}({mask})));"
+        else:
+            to_float, set1, bitop = entry.recipe
+            compute = f"{v} vr = {bitop}(va, {to_float}({set1}({mask})));"
         ref = (
             "for (int j = 0; j < VL; j++) ref[j] = a[j] < 0 ? -a[j] : a[j];"
             if op == "abs"
@@ -181,12 +199,9 @@ def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
         if not fp:
             return None
         if wide:
-            compute = (
-                f"__mmask{lanes_s} k = {p}_cmp_{sfx}_mask(va, vb, _CMP_LT_OQ);\n"
-                f"  {v} vr = {p}_mask_blend_{sfx}(k, vb, va);"
-            )
+            compute = f"__mmask{lanes_s} k = {p}_cmp_{sfx}_mask(va, vb, _CMP_LT_OQ);\n  {v} vr = {entry.intrinsic}(k, vb, va);"
         else:
-            compute = f"{v} k = {p}_cmp_{sfx}(va, vb, _CMP_LT_OQ);\n  {v} vr = {p}_blendv_{sfx}(vb, va, k);"
+            compute = f"{v} k = {p}_cmp_{sfx}(va, vb, _CMP_LT_OQ);\n  {v} vr = {entry.intrinsic}(vb, va, k);"
         ref = "for (int j = 0; j < VL; j++) ref[j] = a[j] < b[j] ? a[j] : b[j];"
         return f"{decl}\n  {compute}\n  {store}", ref, 0.0
 
@@ -194,7 +209,7 @@ def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
         if not fp:
             return None
         if wide:
-            compute = f"{s} r = {p}_reduce_add_{sfx}(va);\n  out[0] = r;"
+            compute = f"{s} r = {entry.intrinsic}(va);\n  out[0] = r;"
         elif dtype == "f64":
             compute = (
                 "__m128d lo = _mm256_castpd256_pd128(va), hi = _mm256_extractf128_pd(va, 1);\n"
@@ -217,38 +232,31 @@ def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
     if op in ("gather", "scatter"):
         if not fp:
             return None
-        vi_t = f"__m{512 if wide else 256}i"
+        vi_t = f"__m{bits}i"
         scale = "8" if dtype == "f64" else "4"
         idx_arr = "idx" if dtype == "f64" else "idx32"  # f32 gathers index in 32-bit lanes
         idx_ld = f"{vi_t} vi = {iload}((const {vi_t}*){idx_arr});"
         if op == "gather":
-            g = (
-                f"{idx_ld}\n  {v} vr = {p}_i{'64' if dtype == 'f64' else '32'}gather_{sfx}(vi, a, {scale});"
-                if wide
-                else f"{idx_ld}\n  {v} vr = {p}_i{'64' if dtype == 'f64' else '32'}gather_{sfx}(a, vi, {scale});"
-            )
+            args = f"vi, a, {scale}" if wide else f"a, vi, {scale}"
+            g = f"{idx_ld}\n  {v} vr = {entry.intrinsic}({args});"
             return f"{decl}\n  {g}\n  {store}", "for (int j = 0; j < VL; j++) ref[j] = a[idx[j]];", 0.0
-        st = f"{p}_i{'64' if dtype == 'f64' else '32'}scatter_{sfx}(out, vi, va, {scale});"
         if wide:
-            compute = f"{idx_ld}\n  {st}\n  {v} vr = {p}_setzero_{sfx}();"
+            compute = f"{idx_ld}\n  {entry.intrinsic}(out, vi, va, {scale});"
         else:  # AVX2 has no scatter: the documented fallback, hand-coded
-            compute = (
-                f"{s} buf[VL];\n  {p}_storeu_{sfx}(buf, va);\n"
-                f"  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];\n"
-                f"  {v} vr = {p}_setzero_{sfx}();"
-            )
+            compute = f"{s} buf[VL];\n  {store_fn}(buf, va);\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
         ref = "for (int j = 0; j < VL; j++) ref[j] = 0;\nfor (int j = 0; j < VL; j++) ref[idx[j]] = a[j];"
         return f"{decl}\n  {compute}", ref, 0.0
 
     if op == "gen_mask":
         if not wide or not fp:
             return None
-        bits = "64" if dtype == "f64" else "32"
+        width = "64" if dtype == "f64" else "32"
         iota = ", ".join(str(j) for j in range(lanes))
+        masked_load = table.entry(isa, "load", dtype).masked.split("(", 1)[0]
         compute = (
-            f"__m512i iota = {p}_setr_epi{bits}({iota});\n  int n = VL - 1;\n"
-            f"  __mmask{lanes_s} k = {p}_cmplt_epu{bits}_mask(iota, {p}_set1_epi{bits}(n));\n"
-            f"  {v} vr = {p}_maskz_loadu_{sfx}(k, a);"
+            f"__m512i iota = {p}_setr_epi{width}({iota});\n  int n = VL - 1;\n"
+            f"  __mmask{lanes_s} k = {entry.intrinsic}(iota, {p}_set1_epi{width}(n));\n"
+            f"  {v} vr = {masked_load}(k, a);"
         )
         ref = "for (int j = 0; j < VL; j++) ref[j] = j < n ? a[j] : 0;"
         return f"{decl}\n  {compute}\n  {store}", ref, 0.0
@@ -256,31 +264,30 @@ def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
     if op == "mod":
         if not fp:
             return None
-        if wide:
-            q = f"{p}_roundscale_{sfx}({p}_div_{sfx}(va, vb), 0x0B)"
-        else:
-            q = f"{p}_round_{sfx}({p}_div_{sfx}(va, vb), _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)"
-        compute = f"{v} q = {q};\n  {v} vr = {p}_fnmadd_{sfx}(q, vb, va);"
-        ref = "for (int j = 0; j < VL; j++) ref[j] = fmod(a[j], b[j]);"
+        div, trunc, fnmadd = entry.recipe
+        rounding = "0x0B" if wide else "_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC"
+        compute = f"{v} q = {trunc}({div}(va, vb), {rounding});\n  {v} vr = {fnmadd}(q, vb, va);"
+        ref = f"for (int j = 0; j < VL; j++) ref[j] = fmod{'' if dtype == 'f64' else 'f'}(a[j], b[j]);"
         return f"{decl}\n  {compute}\n  {store}", ref, TOL["mod"]
 
+    name = entry.intrinsic
     exprs = {
-        "add": f"{p}_add_{sfx}(va, vb)",
-        "sub": f"{p}_sub_{sfx}(va, vb)",
-        "mul": f"{p}_mul_{sfx}(va, vb)",
-        "div": f"{p}_div_{sfx}(va, vb)",
-        "min": f"{p}_min_{sfx}(va, vb)",
-        "max": f"{p}_max_{sfx}(va, vb)",
-        "fma": f"{p}_fmadd_{sfx}(va, vb, va)",
-        "and": f"{p}_and_si{512 if wide else 256}(va, vb)",
-        "or": f"{p}_or_si{512 if wide else 256}(va, vb)",
-        "shl": f"{p}_sllv_{sfx}(va, vb)",
-        "shr": f"{p}_srlv_{sfx}(va, vb)",
-        "sqrt": f"{p}_sqrt_{sfx}(va)",
-        "load": "va",
+        "add": f"{name}(va, vb)",
+        "sub": f"{name}(va, vb)",
+        "mul": f"{name}(va, vb)",
+        "div": f"{name}(va, vb)",
+        "min": f"{name}(va, vb)",
+        "max": f"{name}(va, vb)",
+        "fma": f"{name}(va, vb, va)",
+        "and": f"{name}(va, vb)",
+        "or": f"{name}(va, vb)",
+        "shl": f"{name}(va, vb)",
+        "shr": f"{name}(va, vb)",
+        "sqrt": f"{name}(va)",
+        "load": f"{name}(a)",
         "store": "vb",
-        "broadcast": f"{p}_set1_{sfx}(a[0])",
-        "zero": f"{p}_setzero_{sfx}()",
+        "broadcast": f"{name}(a[0])",
+        "zero": f"{name}()",
     }
     if op not in exprs:
         return None
@@ -291,17 +298,15 @@ def _body(isa: str, dtype: str, op: str) -> tuple[str, str, float] | None:
 
 def _scalar_ref(op: str, dtype: str) -> str:
     if dtype in INT_DTYPES:
+        s, u = ("int64_t", "uint64_t") if dtype == "i64" else ("int32_t", "uint32_t")
         refs = {
-            "add": "a[j] + b[j]",
-            "sub": "a[j] - b[j]",
-            "mul": "a[j] * b[j]",
             "and": "a[j] & b[j]",
             "or": "a[j] | b[j]",
-            "shl": "a[j] << (b[j] & 63)",
-            "shr": "a[j] >> (b[j] & 63)",
-            "fma": "a[j] * b[j] + a[j]",
+            "shl": f"({s})(({u})a[j] << b[j])",
+            "shr": f"({s})(({u})a[j] >> b[j])",  # logical: a negative lane must not sign-fill
         }
     else:
+        f = "" if dtype == "f64" else "f"  # a float lane is checked against the float libm
         refs = {
             "add": "a[j] + b[j]",
             "sub": "a[j] - b[j]",
@@ -309,8 +314,8 @@ def _scalar_ref(op: str, dtype: str) -> str:
             "div": "a[j] / b[j]",
             "min": "a[j] < b[j] ? a[j] : b[j]",
             "max": "a[j] > b[j] ? a[j] : b[j]",
-            "fma": "fma(a[j], b[j], a[j])",
-            "sqrt": "sqrt(a[j])",
+            "fma": f"fma{f}(a[j], b[j], a[j])",
+            "sqrt": f"sqrt{f}(a[j])",
             "load": "a[j]",
             "store": "b[j]",
             "broadcast": "a[0]",
@@ -319,21 +324,17 @@ def _scalar_ref(op: str, dtype: str) -> str:
     return f"for (int j = 0; j < VL; j++) ref[j] = {refs[op]};"
 
 
-def _logical(isa: str, dtype: str, op: str, decl: str, store: str) -> tuple[str, str, float]:
+def _logical(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry) -> tuple[str, str, float]:
     """land/lor, full kernel body: k-register ops on AVX-512, the andnot-of-compares recipe on AVX2."""
     wide = isa == "avx512"
     sym = "&&" if op == "land" else "||"
     if wide:
         bits = "8" if dtype == "i64" else "16"
         cmp = f"_mm512_cmpneq_{'epi64' if dtype == 'i64' else 'epi32'}_mask"
-        kop = {
-            "land": "_kand_mask8" if dtype == "i64" else "_mm512_kand",
-            "lor": "_kor_mask8" if dtype == "i64" else "_mm512_kor",
-        }[op]
         compute = (
             f"__mmask{bits} ka = {cmp}(_mm512_loadu_si512((const __m512i*)a), _mm512_setzero_si512());\n"
             f"  __mmask{bits} kb = {cmp}(_mm512_loadu_si512((const __m512i*)b), _mm512_setzero_si512());\n"
-            f"  unsigned got = {kop}(ka, kb), expect = 0;\n"
+            f"  unsigned got = {entry.intrinsic}(ka, kb), expect = 0;\n"
             f"  for (int j = 0; j < VL; j++) expect |= ((unsigned)(a[j] != 0) {sym} (b[j] != 0)) << j;\n"
             "  out[0] = (got == expect) ? 1 : 0;"
         )
@@ -351,46 +352,34 @@ def _logical(isa: str, dtype: str, op: str, decl: str, store: str) -> tuple[str,
     return f"{decl}\n  __m256i vr = {expr};\n  {store}", ref, 0.0
 
 
-def _f16_body(op: str) -> tuple[str, str, float] | None:
-    """AVX2's f16 recipes, hand-coded: arithmetic converts to f32 and back; the bitwise ops work on
-    the storage directly. The reference is native _Float16 arithmetic (gcc >= 12, clang >= 15)."""
-    if op in ("abs", "neg", "select"):
-        iop = {"abs": "_mm256_and_si256", "neg": "_mm256_xor_si256", "select": None}[op]
-        mask = {"abs": "0x7fff", "neg": "0x8000"}.get(op)
-        if op == "select":
-            body = (
-                "__m128i m = _mm_loadu_si128((const __m128i*)mk);\n"
-                "  __m128i ha = _mm_loadu_si128((const __m128i*)h), hb = _mm_loadu_si128((const __m128i*)k);\n"
-                "  __m128i vr = _mm_or_si128(_mm_and_si128(ha, m), _mm_andnot_si128(m, hb));\n"
-                "  _mm_storeu_si128((__m128i*)out16, vr);"
-            )
-            ref = (
-                "for (int j = 0; j < VL; j++) ref[j] = (mk[j] & 0x8000) ? "
-                "(double)(_Float16)h[j] : (double)(_Float16)k[j];"
-            )
-        else:
-            iop = "_mm_and_si128" if op == "abs" else "_mm_xor_si128"
-            body = (
-                f"__m128i ha = _mm_loadu_si128((const __m128i*)h);\n"
-                f"  __m128i sgn = _mm_set1_epi16({mask});\n"
-                f"  __m128i vr = {iop}(ha, sgn);\n"
-                f"  _mm_storeu_si128((__m128i*)out16, vr);"
-            )
-            ref = (
-                f"for (int j = 0; j < VL; j++) ref[j] = "
-                f"{'(double)((_Float16)h[j] < 0 ? -(_Float16)h[j] : (_Float16)h[j])' if op == 'abs' else '(double)(-(_Float16)h[j])'};"
-            )
+def _f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
+    """AVX2's f16 entries, hand-coded over all 16 lanes: memory ops and the bitwise recipes work on the
+    storage, arithmetic converts each 8-lane half to f32 and back. The reference is native _Float16
+    arithmetic (gcc >= 12, clang >= 15)."""
+    load, store = "_mm256_loadu_si256((const __m256i*)h)", "_mm256_storeu_si256((__m256i*)out16, vr);"
+    plain = "for (int j = 0; j < VL; j++) ref[j] = (double)(_Float16)h[j];"
+    if op == "load":
+        return f"__m256i vr = {entry.intrinsic}((const __m256i*)h);\n  {store}", plain, 0.0
+    if op == "store":
+        return f"__m256i vr = {load};\n  {entry.intrinsic}((__m256i*)out16, vr);", plain, 0.0
+    if op == "broadcast":
+        ref = "for (int j = 0; j < VL; j++) ref[j] = (double)(_Float16)h[0];"
+        return f"short bits;\n  memcpy(&bits, h, 2);\n  __m256i vr = {entry.intrinsic}(bits);\n  {store}", ref, 0.0
+    if op == "select":
+        and_, andnot, or_ = entry.recipe
+        body = (
+            f"__m256i m = _mm256_loadu_si256((const __m256i*)mk), hb = _mm256_loadu_si256((const __m256i*)k);\n"
+            f"  __m256i vr = {or_}({and_}({load}, m), {andnot}(m, hb));\n  {store}"
+        )
+        ref = "for (int j = 0; j < VL; j++) ref[j] = mk[j] ? (double)(_Float16)h[j] : (double)(_Float16)k[j];"
         return body, ref, 0.0
-    f32op = {
-        "add": "_mm256_add_ps",
-        "sub": "_mm256_sub_ps",
-        "mul": "_mm256_mul_ps",
-        "div": "_mm256_div_ps",
-        "fma": "_mm256_fmadd_ps",
-        "sqrt": "_mm256_sqrt_ps",
-        "min": "_mm256_min_ps",
-        "max": "_mm256_max_ps",
-    }[op]
+    if op in ("abs", "neg"):
+        set1, bitop = entry.recipe
+        mask = "0x7fff" if op == "abs" else "(short)0x8000"
+        expr = "(_Float16)h[j] < 0 ? -(_Float16)h[j] : (_Float16)h[j]" if op == "abs" else "-(_Float16)h[j]"
+        ref = f"for (int j = 0; j < VL; j++) ref[j] = (double)({expr});"
+        return f"__m256i vr = {bitop}({load}, {set1}({mask}));\n  {store}", ref, 0.0
+    to_f32, f32op, to_f16 = entry.recipe
     if op == "fma":
         compute = f"__m256 vr = {f32op}(fa, fb, fa);"
         ref = "for (int j = 0; j < VL; j++) ref[j] = (_Float16)h[j] * (_Float16)k[j] + (_Float16)h[j];"
@@ -409,17 +398,38 @@ def _f16_body(op: str) -> tuple[str, str, float] | None:
         }[op]
         ref = f"for (int j = 0; j < VL; j++) ref[j] = (double)({expr});"
     body = (
-        f"__m128i ha = _mm_loadu_si128((const __m128i*)h), hb = _mm_loadu_si128((const __m128i*)k);\n"
-        f"  __m256 fa = _mm256_cvtph_ps(ha), fb = _mm256_cvtph_ps(hb);\n  {compute}\n"
-        f"  __m128i hr = _mm256_cvtps_ph(vr, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);\n"
-        f"  _mm_storeu_si128((__m128i*)out16, hr);"
+        f"for (int o = 0; o < VL; o += 8) {{\n"
+        f"    __m128i ha = _mm_loadu_si128((const __m128i*)(h + o)), hb = _mm_loadu_si128((const __m128i*)(k + o));\n"
+        f"    __m256 fa = {to_f32}(ha), fb = {to_f32}(hb);\n    {compute}\n"
+        f"    __m128i hr = {to_f16}(vr, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);\n"
+        f"    _mm_storeu_si128((__m128i*)(out16 + o), hr);\n  }}"
     )
     return body, ref, TOL_F16
 
 
-def kernel_c(isa: str, dtype: str, op: str) -> str | None:
+#: Sixteen exact f16 values per operand, no zero divisor; ``F16_POSITIVE`` feeds sqrt.
+F16_A = (1.0, 0.5, 2.0, 1.5, -0.25, 3.5, -1.25, 0.75, 2.5, -3.0, 0.125, 4.0, -0.5, 1.75, 0.625, -2.25)
+F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5, -0.75, 1.0, 2.25)
+
+
+def _inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
+    """Kernel inputs. Floats are not dyadic, so rounding is exercised, and alternate in sign except for
+    sqrt. Integers alternate in sign, so an arithmetic shift cannot pass for a logical one, and land/lor
+    get every zero / non-zero combination."""
+    if dtype in INT_DTYPES:
+        logical = op in ("land", "lor")
+        a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) for j in range(lanes)]
+        b = [0 if logical and j % 4 < 2 else 1 + j for j in range(lanes)]
+    else:
+        a = [(0.5371 + 0.3 * j) * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
+        b = [1.25 + 0.7 * j for j in range(lanes)]
+    return ", ".join(map(repr, a)), ", ".join(map(repr, b))
+
+
+def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
     """The full C source for a validation kernel, or None when the entry has no executable form."""
-    body = _body(isa, dtype, op)
+    isa = ALIASES.get(isa, isa)
+    body = _body(isa, dtype, op, table or load()) if isa in ("avx2", "avx512") else None
     if body is None:
         return None
     compute, ref, _tol = body
@@ -427,19 +437,22 @@ def kernel_c(isa: str, dtype: str, op: str) -> str | None:
     lanes = (16 if wide else 8) if dtype in ("f32", "i32") else (8 if wide else 4)
     s = {"f64": "double", "f32": "float", "i64": "int64_t", "i32": "int32_t", "f16": "uint16_t"}[dtype]
     if dtype == "f16":
-        # a: 1.0, 0.5, 2.0, 1.5 ; b: 0.25, 3.0, 0.75, 2.5 (exact f16)
+        h_init = ", ".join(repr(abs(v) if op == "sqrt" else v) for v in F16_A)
+        k_init = ", ".join(map(repr, F16_B))
+        mk_init = ", ".join("0xffff" if j % 2 == 0 else "0" for j in range(16))
         return f"""#include <immintrin.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #ifndef __FLT16_MAX__
 #error "_Float16 is required for f16 reference values"
 #endif
-#define VL 8
+#define VL 16
 int main(void) {{
-  _Float16 h[VL] = {{1.0, 0.5, 2.0, 1.5}};
-  _Float16 k[VL] = {{0.25, 3.0, 0.75, 2.5}};
-  uint16_t mk[VL] = {{0xffff, 0, 0xffff, 0}};
+  _Float16 h[VL] = {{{h_init}}};
+  _Float16 k[VL] = {{{k_init}}};
+  uint16_t mk[VL] = {{{mk_init}}};
   double ref[VL] = {{0}};
   uint16_t out16[VL] = {{0}};
   {compute}
@@ -449,17 +462,12 @@ int main(void) {{
     double got = (double)*((_Float16*)&out16[j]);
     double d = fabs(got - ref[j]);
     double m = fabs(ref[j]) > 1 ? fabs(ref[j]) : 1;
-    if (d / m > maxrel) maxrel = d / m;
+    {TRACK_ERROR}
   }}
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
 }}"""
-    if dtype in INT_DTYPES:
-        a_init = ", ".join(str(7 + 3 * j) for j in range(lanes))
-        b_init = ", ".join(str(1 + j) for j in range(lanes))
-    else:
-        a_init = ", ".join(f"{0.5 + 0.25 * j + 0.03125:.6f}" for j in range(lanes))
-        b_init = ", ".join(f"{1.25 + 0.5 * j:.6f}" for j in range(lanes))
+    a_init, b_init = _inputs(op, dtype, lanes)
     idx_init = ", ".join(str((3 * j + 1) % lanes) for j in range(lanes))
     return f"""#include <immintrin.h>
 #include <stdint.h>
@@ -479,27 +487,38 @@ int main(void) {{
   for (int j = 0; j < VL; j++) {{
     double d = fabs((double)out[j] - ref[j]);
     double m = fabs(ref[j]) > 1 ? fabs(ref[j]) : 1;
-    if (d / m > maxrel) maxrel = d / m;
+    {TRACK_ERROR}
   }}
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
 }}"""
 
 
-def _compile_run(source: str, flags: list[str]) -> float:
+def _compiler() -> str | None:
+    return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+
+
+def _compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> float:
     """Compile and run a kernel; the rel error it prints. Raises RuntimeError on build/run failure."""
-    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    cc = _compiler()
     if cc is None:
         raise RuntimeError("no C compiler on PATH")
     with tempfile.TemporaryDirectory(prefix="alloy_verify_") as tmp:
         c_file, exe = pathlib.Path(tmp) / "kernel.c", pathlib.Path(tmp) / "kernel"
         c_file.write_text(source)
-        build = subprocess.run(
-            [cc, "-O1", *flags, str(c_file), "-lm", "-o", str(exe)], capture_output=True, text=True, check=False
-        )
-        if build.returncode != 0:
-            raise RuntimeError(f"build failed: {build.stderr.strip()[:400]}")
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False)
+        try:
+            build = subprocess.run(
+                [cc, "-O1", *flags, str(c_file), *libs, "-lm", "-o", str(exe)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=COMPILE_TIMEOUT,
+            )
+            if build.returncode != 0:
+                raise RuntimeError(f"build failed: {build.stderr.strip()[:400]}")
+            run = subprocess.run([str(exe)], capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"timed out after {COMPILE_TIMEOUT} s: {exc.cmd[0]}") from None
         if run.returncode != 0:
             raise RuntimeError(f"kernel exited {run.returncode}: {run.stderr.strip()[:200]}")
     match = VERIFY_LINE.search(run.stdout)
@@ -509,27 +528,6 @@ def _compile_run(source: str, flags: list[str]) -> float:
 
 
 # ---------------------------------------------------------------- tier validation
-
-
-def _parse_step(step: str) -> tuple[str, str, list[str]]:
-    """One Horner step "p = fma(a, b, c)" -> (result var, op, arg list), splitting on top-level commas."""
-    name, _, rhs = step.strip().partition(" = ")
-    fn, _, rest = rhs.partition("(")
-    if not rest.endswith(")"):
-        raise ValueError(f"unparseable step {step!r}")
-    depth, parts, cur = 0, [], ""
-    for ch in rest[:-1]:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        if ch == "," and depth == 0:
-            parts.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    parts.append(cur)
-    return name.strip(), fn.strip(), [part.strip() for part in parts]
 
 
 def evaluate_tier(tier, n: int = N_TIER):
@@ -625,21 +623,21 @@ def _library_kernel(call: str, op: str, dtype: str) -> str:
         ("f32", 8): "__m256",
         ("f32", 16): "__m512",
     }[(dtype, lanes)]
-    values = ", ".join(f"{v}{suffix}" for v in ("0.5", "0.75", "1.0", "1.25", "1.5", "1.75", "2.0", "2.25")[:lanes])
+    values = ", ".join(f"{0.5 + 0.25 * j}{suffix}" for j in range(lanes))
     return f"""#include <immintrin.h>
 #include <math.h>
 #include <stdio.h>
 #define VL {lanes}
 extern {vec} {call}({vec});
 int main(void) {{
-  {s} a[VL] = {{{values}}};
-  {s} r[VL];
+  _Alignas(64) {s} a[VL] = {{{values}}};
+  _Alignas(64) {s} r[VL];
   *({vec}*)r = {call}(*({vec}*)a);
   double maxrel = 0;
   for (int j = 0; j < VL; j++) {{
     double d = fabs((double)r[j] - {fn}((double)a[j]));
     double m = fabs({fn}((double)a[j])) > 1 ? fabs({fn}((double)a[j])) : 1;
-    if (d / m > maxrel) maxrel = d / m;
+    {TRACK_ERROR}
   }}
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
@@ -659,7 +657,7 @@ def candidates_for(isa: str, op: str, dtype: str, table: Table | None = None) ->
         if other != dtype:
             with contextlib.suppress(KeyError):
                 hits.append(Hit(isa, other, op, table.entry(isa, op, other), "same op, other dtype"))
-    for name in table.isas.keys() - {isa}:
+    for name in (name for name in table.isas if name != ALIASES.get(isa, isa)):
         with contextlib.suppress(KeyError):
             hits.append(Hit(name, dtype, op, table.entry(name, op, dtype), "same op, other ISA"))
     for name in (entry.intrinsic, entry.mnemonic):
@@ -680,23 +678,32 @@ def _validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry)
     if best.ok is False:
         return Verdict(False, best.basis, best.detail, candidates_for(isa, op, dtype, table))
     if (
-        isa in ("avx2", "avx512")
+        ALIASES.get(isa, isa) in ("avx2", "avx512")
         and dtype in DTYPES
+        and host_can_run(isa, dtype)
         and (call := entry.libraries.get("libmvec"))
-        and shutil.which("cc")
+        and _compiler()
     ):
         try:
-            rel = _compile_run(_library_kernel(call, op, dtype), _c_flags(isa, dtype) + ["-lmvec"])
+            rel = _compile_run(_library_kernel(call, op, dtype), _c_flags(isa, dtype), ("-lmvec",))
         except RuntimeError as exc:
             return Verdict(False, "libmvec kernel", str(exc), candidates_for(isa, op, dtype, table))
-        ok = rel <= TOL_LIBRARY
+        tol = TOL_LIBRARY[dtype]
+        ok = rel <= tol
         return Verdict(
             ok,
             "libmvec kernel vs libm",
-            f"max rel err {rel:.3e} vs tolerance {TOL_LIBRARY:.3e}",
+            f"max rel err {rel:.3e} vs tolerance {tol:.3e}",
             candidates_for(isa, op, dtype, table) if not ok else (),
         )
     return Verdict(True, best.basis, best.detail)
+
+
+def unexercised(entry: Entry, source: str) -> list[str]:
+    """The spellings of ``entry`` the kernel ``source`` never calls: a check of those proves nothing."""
+    names = [entry.intrinsic] if entry.intrinsic else []
+    names += [name for step in entry.recipe for name in SPELLED.findall(step)]
+    return [name for name in names if name not in source]
 
 
 def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdict:
@@ -708,9 +715,13 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
         return _validate_transcendental(isa, op, dtype, table, entry)
     if not host_can_run(isa, dtype):
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
-    source = kernel_c(isa, dtype, op)
+    if _compiler() is None:
+        return Verdict(None, "no C compiler on PATH (unverified, not wrong)")
+    source = kernel_c(isa, dtype, op, table)
     if source is None:
         return Verdict(None, "no compiled validator for this entry yet (the table spelling is still in force)")
+    if missing := unexercised(entry, source):
+        return Verdict(None, f"the validator kernel does not run {', '.join(missing)} (unverified, not wrong)")
     try:
         rel = _compile_run(source, _c_flags(isa, dtype))
     except RuntimeError as exc:
@@ -733,8 +744,13 @@ def validate_all(table: Table | None = None, jobs: int = 8) -> list[tuple[str, V
         for op in getattr(target, dtype)
         if host_can_run(isa, dtype)
     ]
+
+    def one(ident: str) -> Verdict:
+        isa, dtype, op = ident.split("/")
+        return validate(isa, op, dtype, table)
+
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        verdicts = list(pool.map(lambda ident: validate(*ident.split("/"), table=table), ids))
+        verdicts = list(pool.map(one, ids))
     tier_ids = [f"approx/{name}" for name in table.approx]
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         tier_verdicts = list(pool.map(lambda n: validate_tier(n.split("/", 1)[1], table), tier_ids))

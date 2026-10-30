@@ -25,7 +25,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `mul` | `svmul_f64_x` | `fmul` | `(pg, a, b) -> v` | — |
 | `div` | `svdiv_f64_x` | `fdiv` | `(pg, a, b) -> v` | — |
 | `fma` | `svmla_f64_x` | `fmla` | `(pg, add, m1, m2) -> v` | — |
-| `reduce_add` | `svaddv_f64` | `addv` | `(pg, v) -> s` | — |
+| `reduce_add` | `svaddv_f64` | `faddv` | `(pg, v) -> s` | — |
 | `zero` | `svdup_f64` | `mov` | `(0.0) -> v` | — |
 | `gen_mask` | `svwhilelt_b64_u64` | `whilelt` | `(i, N) -> pg` | — |
 | `exp` | 6 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
@@ -37,7 +37,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `abs` | `svabs_f64_x` | `fabs` | `(pg, v) -> v` | — |
 | `neg` | `svneg_f64_x` | `fneg` | `(pg, v) -> v` | — |
 | `select` | `svsel_f64` | `sel` | `(pg, t, f) -> v` | — |
-| `mod` | recipe: svdiv_f64_x -> svcvt_s64_f64_x -> svcvt_f64_s64_x | `fdiv+fcvt` | `(pg, a, b) -> v` | — |
+| `mod` | recipe: svdiv_f64_x -> svrintz_f64_x -> svmls_f64_x | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — |
 | `gather` | `svld1_gather_s64index_f64` | `ld1d (gather)` | `(pg, base, idx) -> v` | — |
 | `scatter` | `svst1_scatter_u64index_f64` | `st1d (scatter)` | `(pg, base, idx, v) -> void` | — |
 
@@ -53,7 +53,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `mul` | `svmul_f32_x` | `fmul` | `(pg, a, b) -> v` | — |
 | `div` | `svdiv_f32_x` | `fdiv` | `(pg, a, b) -> v` | — |
 | `fma` | `svmla_f32_x` | `fmla` | `(pg, add, m1, m2) -> v` | — |
-| `reduce_add` | `svaddv_f32` | `addv` | `(pg, v) -> s` | — |
+| `reduce_add` | `svaddv_f32` | `faddv` | `(pg, v) -> s` | — |
 | `zero` | `svdup_f32` | `mov` | `(0.0f) -> v` | — |
 | `gen_mask` | `svwhilelt_b32_u64` | `whilelt` | `(i, N) -> pg` | — |
 | `exp` | 6 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — |
@@ -65,7 +65,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `abs` | `svabs_f32_x` | `fabs` | `(pg, v) -> v` | — |
 | `neg` | `svneg_f32_x` | `fneg` | `(pg, v) -> v` | — |
 | `select` | `svsel_f32` | `sel` | `(pg, t, f) -> v` | — |
-| `mod` | recipe: svdiv_f32_x -> svcvt_s32_f32_x -> svcvt_f32_s32_x | `fdiv+fcvt` | `(pg, a, b) -> v` | — |
+| `mod` | recipe: svdiv_f32_x -> svrintz_f32_x -> svmls_f32_x | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — |
 | `gather` | `svld1_gather_s32index_f32` | `ld1w (gather)` | `(pg, base, idx) -> v` | — |
 | `scatter` | `svst1_scatter_u32index_f32` | `st1w (scatter)` | `(pg, base, idx, v) -> void` | — |
 
@@ -127,4 +127,3 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 
 - **fma** (f64): operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd
 - **fma** (f32): operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd
-

@@ -36,6 +36,8 @@ _CALL_NAMES: dict[str, str] = {
     "sin": "sin",
     "cos": "cos",
     "exp": "exp",
+    "min": "min",
+    "max": "max",
 }
 
 #: Ops a tasklet's arithmetic maps to, in a readable order.
@@ -101,6 +103,7 @@ class Hint:
 def _uses(sdfg) -> list[OpUse]:
     """Every tasklet of ``sdfg`` and what it computes, in SDFG order."""
     import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
+    from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
     from dace.sdfg import nodes  # noqa: PLC0415
 
     uses = []
@@ -116,6 +119,10 @@ def _uses(sdfg) -> list[OpUse]:
                     ops.add(_OP_NAMES[type(child.op)])
                 elif isinstance(child, ast.UnaryOp) and isinstance(child.op, ast.USub):
                     ops.add("neg")
+                elif isinstance(child, ast.BoolOp):
+                    ops.add("land" if isinstance(child.op, ast.And) else "lor")
+                elif isinstance(child, ast.IfExp):
+                    ops.add("select")
                 elif isinstance(child, ast.Call):
                     name = ast.unparse(child.func).rsplit(".", 1)[-1]
                     if name in _CALL_NAMES:
@@ -127,7 +134,10 @@ def _uses(sdfg) -> list[OpUse]:
                 # the summing write-conflict may sit on this edge or anywhere up its memlet tree
                 # (e.g. only on the enclosing map exit's edge); check the whole path
                 tree = {id(e): e for e in [edge, *state.memlet_tree(edge)]}.values()
-                if any(e.data.wcr is not None and "+" in str(e.data.wcr) for e in tree):
+                if any(
+                    e.data.wcr is not None and detect_reduction_type(e.data.wcr) == dace.dtypes.ReductionType.Sum
+                    for e in tree
+                ):
                     reduces = True
                     break
         if {"mul", "add"} <= ops or {"mul", "sub"} <= ops:
@@ -203,7 +213,7 @@ def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None) 
         "",
         "Do it yourself: hand-write the loop in C with intrinsics — read the alloy skill's isa/ "
         "pages for the machine model and traps, `python -m alloy.isa lookup` for spellings, and "
-        "verify each op with `python -m alloy.isa validate'.",
+        "verify each op with `python -m alloy.isa validate`.",
         "",
         f"Relevant hints from your tasklets ({isa}/{dtype}):",
         "",

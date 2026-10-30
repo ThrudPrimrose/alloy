@@ -48,7 +48,7 @@ consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
    patterns: x86 FP abs/neg (sign-mask AND/XOR), AVX2 scatter (scratch store + scalar), fmod
    (div+trunc+fnmadd), AVX2 f16 (cvtph_ps → f32 op → cvtps_ph).
 5. **Run the checks**: `pytest tests/test_isa*.py -q` (header verification of every identifier-shaped
-   spelling; compiled-kernel validation of every entry the host can execute; tier re-measurement;
+   spelling; compiled-kernel validation of every x86 entry the host can execute (no NEON/SVE kernels exist yet); tier re-measurement;
    skeleton compile-and-run; round-trips; invariants) and `ruff check alloy/ tests/test_isa*.py`.
 6. **Regenerate the pages**: `python -m alloy.isa.render`, then mirror the skills:
    `cp skills/alloy/SKILL.md ~/.kimi-code/skills/alloy/ && cp -r skills/alloy/isa ~/.kimi-code/skills/alloy/`.
@@ -75,6 +75,12 @@ say so in the `clang` field — an honest refusal beats a wrong flag.
   `_kand_mask16` (alias of `_mm512_kand`). The header test greps `name\s*(`, so keep macros out of
   `recipe` lists (use them in `note` text). FP16 fma is `_mm512_fmadd_ph`, not `_mm512_fma_ph`;
   the 64-bit broadcast is `_mm256_set1_epi64x` (with an x).
+- **A kernel must run the table's own spelling.** `validate._body` builds calls from `entry.intrinsic` and
+  `entry.recipe`; `unexercised` turns a kernel that skips one into "unverified". Hardcoding the name back
+  makes the gate pass on any mapping. `tests/test_isa_validate.py` swaps in wrong spellings to prove this.
+- **Compare with the lane's own type and watch NaN.** An f32 lane is checked against `sqrtf`/`fmaf`, not the
+  double libm; kernels use non-dyadic inputs and negative lanes, and `TRACK_ERROR` keeps a NaN (a plain
+  `>` drops it). A kernel with a constant reference proves nothing.
 - **Function definitions may have a space before the paren** (`_mm256_set1_epi64x (`) — the test's
   regex tolerates it; your grep should too (`\bname\b`).
 - **Operand-order traps** (fma accumulator first on NEON/SVE, last on Intel; select/blend's three

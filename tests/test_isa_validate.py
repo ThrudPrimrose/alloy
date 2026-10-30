@@ -3,6 +3,8 @@
 runs) or a tier re-measurement before an agent sees it; failures attach the candidate spellings."""
 
 import dataclasses
+import importlib
+import math
 import shutil
 
 import pytest
@@ -10,13 +12,20 @@ import pytest
 from alloy.isa import load
 from alloy.isa.validate import (
     Verdict,
+    _c_flags,
+    _compile_run,
     candidates_for,
     host_can_run,
+    kernel_c,
+    unexercised,
     validate,
+    validate_all,
     validate_tier,
 )
 
 TABLE = load()
+#: The module itself: ``alloy.isa.validate`` the attribute is the function of that name.
+validate_module = importlib.import_module("alloy.isa.validate")
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 AVX2 = CC and host_can_run("avx2", "f64")
 AVX512 = CC and host_can_run("avx512", "f64")
@@ -181,3 +190,64 @@ def test_the_libmvec_calls_validate_against_libm():
     verdict = validate("avx2", "sin", "f64", TABLE)
 
     assert verdict.ok is True, verdict.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
+    """The whole gate end to end: no failure and no entry the kernels leave unexercised."""
+    results = validate_all(TABLE, jobs=2)
+    assert len(results) > 100
+    assert [(ident, verdict.detail) for ident, verdict in results if verdict.ok is not True] == []
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, dtype, wrong",
+    [
+        ("add", "f64", "_mm256_sub_pd"),
+        ("min", "f32", "_mm256_max_ps"),
+        ("shr", "i32", "_mm256_srav_epi32"),  # arithmetic for logical: only a negative lane tells them apart
+        ("mul", "f64", "_mm256_add_pd"),
+    ],
+)
+def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
+    """The kernel runs the table's own spelling, so a mapping that compiles but computes otherwise is caught."""
+    target = TABLE.isas["avx2"]
+    entries = {**getattr(target, dtype), op: dataclasses.replace(getattr(target, dtype)[op], intrinsic=wrong)}
+    broken = dataclasses.replace(TABLE, isas={**TABLE.isas, "avx2": dataclasses.replace(target, **{dtype: entries})})
+    assert validate("avx2", op, dtype, broken).ok is False
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+def test_a_nan_result_fails_the_gate_rather_than_comparing_false():
+    source = kernel_c("avx2", "f64", "add", TABLE).replace(
+        "__m256d vr = _mm256_add_pd(va, vb);", "__m256d vr = _mm256_div_pd(_mm256_setzero_pd(), _mm256_setzero_pd());"
+    )
+    assert math.isnan(_compile_run(source, _c_flags("avx2", "f64")))
+
+
+def test_a_kernel_that_skips_a_spelling_verifies_nothing():
+    assert unexercised(TABLE.entry("avx2", "add", "f64"), "_mm256_mul_pd(a, b)") == ["_mm256_add_pd"]
+    assert unexercised(TABLE.entry("avx2", "scatter", "f64"), "_mm256_storeu_pd(p, v)") == []
+
+
+def test_no_x86_kernel_is_built_for_an_arm_isa():
+    assert kernel_c("neon", "f64", "add", TABLE) is None
+    assert kernel_c("sve", "f64", "add", TABLE) is None
+
+
+def test_an_isa_the_host_lacks_is_unverified_and_not_failed(monkeypatch):
+    monkeypatch.setattr(validate_module, "host_can_run", lambda isa, dtype: False)
+    assert validate("avx512", "add", "f64", TABLE).ok is None
+    assert validate("avx512", "sin", "f32", TABLE).ok is True  # the tier stands, the library call is not run
+
+
+def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch):
+    monkeypatch.setattr(validate_module, "host_can_run", lambda isa, dtype: True)
+    monkeypatch.setattr(validate_module, "_compiler", lambda: None)
+    assert validate("avx2", "add", "f64", TABLE).ok is None
+
+
+def test_the_alias_runs_the_same_kernels():
+    assert host_can_run("avx512_256", "f64") == host_can_run("avx512", "f64")
+    assert kernel_c("avx512_256", "f64", "add", TABLE) == kernel_c("avx512", "f64", "add", TABLE)

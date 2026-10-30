@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "schedule":
             _print_schedule(table, args.isa)
         elif args.command == "skeleton":
-            _print_skeleton(table, args.isa, args.schedule, args.dtype, args.verify)
+            return _print_skeleton(table, args.isa, args.schedule, args.dtype, args.verify)
     except KeyError as exc:
         print(f"alloy.isa: {exc.args[0]}", file=sys.stderr)
         return 2
@@ -85,11 +85,12 @@ def _print_entry(table, isa: str, op: str, dtype: str) -> None:
     target, entry, abstract = table.isa(isa), table.entry(isa, op, dtype), OPS.get(op)
     if abstract is None:
         raise KeyError(f"{op!r}: unknown op (one of: {', '.join(OPS)})")
-    lanes = target.lanes[dtype] or f"svcnt{'d' if dtype == 'f64' else 'w'}()"
+    lanes = target.lanes[dtype] or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
+    if isa in ALIASES:
+        lanes //= 2
     print(f"{isa}/{dtype}/{op}: {abstract.semantics}  ({lanes} lanes)")
     if isa in ALIASES:
-        width = "256" if isa == "avx512_256" else "128"
-        print(f"  note:      {isa} is {ALIASES[isa]} at {width} bits: same intrinsics, half the lanes")
+        print(f"  note:      {isa} is {ALIASES[isa]} under -mprefer-vector-width=256: same source, half the lanes")
     if entry.intrinsic:
         print(f"  intrinsic: {entry.intrinsic}{entry.signature}")
     elif entry.recipe:
@@ -164,6 +165,7 @@ def _print_hits(table, name: str) -> None:
             "masked": hit.entry.masked,
             "recipe": " -> ".join(hit.entry.recipe),
             "library": name,
+            "mnemonic": hit.entry.mnemonic,
         }.get(hit.via, hit.entry.intrinsic)
         print(f"{name} = {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail})")
         if hit.entry.semantics:
@@ -210,18 +212,18 @@ def _print_schedule(table, isa: str) -> None:
             print(f"      clang: {info.clang}")
 
 
-def _print_skeleton(table, isa: str, schedule: str, dtype: str, verify: bool = False) -> None:
+def _print_skeleton(table, isa: str, schedule: str, dtype: str, verify: bool = False) -> int:
     from alloy.isa.schedules import skeleton  # noqa: PLC0415
     from alloy.isa.schedules import verify as verify_skeleton
 
-    try:
-        print(skeleton(table, isa, schedule, dtype))
-        if verify:
-            verdict = verify_skeleton(isa, schedule, dtype, table)
-            mark = "verified" if verdict.ok else ("unverified" if verdict.ok is None else "FAILED")
-            print(f"// {mark}: {verdict.basis}; {verdict.detail}")
-    except KeyError as exc:
-        raise KeyError(exc.args[0]) from None
+    print(skeleton(table, isa, schedule, dtype))
+    if verify:
+        verdict = verify_skeleton(isa, schedule, dtype, table)
+        mark = "verified" if verdict.ok else ("unverified" if verdict.ok is None else "FAILED")
+        print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+        if verdict.ok is False:
+            return 3
+    return 0
 
 
 if __name__ == "__main__":

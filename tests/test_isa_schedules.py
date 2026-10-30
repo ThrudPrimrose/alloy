@@ -173,3 +173,19 @@ def test_the_cli_verifies_a_skeleton():
         assert "_mm512_mask_storeu_pd" in run.stdout
     else:
         assert "// verified: compiled skeleton" in run.stdout
+
+
+def test_a_width_alias_is_refused_by_name():
+    with pytest.raises(KeyError, match="use avx512"):
+        skeleton(TABLE, "avx512_256", "full_mask", "f64")
+
+
+def test_the_full_mask_count_cannot_truncate_to_32_bits():
+    assert "N - i < 16 ? N - i : 16" in skeleton(TABLE, "avx512", "full_mask", "f32")
+
+
+def test_a_compiler_spelling_names_a_compiler_not_any_field():
+    from alloy.isa.schedules import compiler_spelling
+
+    with pytest.raises(KeyError, match="no 'title' spelling"):
+        compiler_spelling("scalar", "title", TABLE)

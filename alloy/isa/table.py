@@ -37,6 +37,7 @@ __all__ = [
     "ScheduleInfo",
     "Hit",
     "Isa",
+    "SPELLED",
     "Table",
     "isas",
     "load",
@@ -64,15 +65,23 @@ INT_OPS = INT_ONLY_OPS | {"mod"}
 DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"
 
 #: Matrix ISA names that are another ISA at a different width: ``avx512_256`` is AVX-512 under
-#: ``-mprefer-vector-width=256`` — same intrinsics, half the lanes (a sweep knob, not a target).
+#: ``-mprefer-vector-width=256`` — same source, half the lanes (a sweep knob, not a target).
 ALIASES = {"avx512_256": "avx512"}
 
-#: An fma family form as the assembler prints it: ``vfmadd231pd`` -> mnemonic ``vfmadd``, dtype f64.
-FMA_FORM = re.compile(r"^vf(m(?:add|sub|nmadd|nmsub))(?:132|213|231)?(pd|ps)$")
+#: An fma family form as the assembler prints it: ``vfnmadd231pd`` -> mnemonic ``vfnmadd``, dtype f64.
+FMA_FORM = re.compile(r"^(vfn?m(?:add|sub))(?:132|213|231)?[ps]([dsh])$")
+#: The last letter of an fma form -> its dtype.
+FMA_DTYPE = {"d": "f64", "s": "f32", "h": "f16"}
 
 #: A disassembler may suffix a mnemonic with flags (an EVEX ``vaddpd.z``); no mnemonic in the table
 #: contains a dot, so the part before it is the mnemonic.
 DOT_SUFFIX = re.compile(r"^([a-z0-9]+)\.[a-z]+$")
+
+#: An intrinsic named anywhere in free text: a bare recipe step, or a prose step or masked note citing one.
+SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_[a-z0-9]+)+)\b")
+
+#: Bytes per lane, the invariant between an ISA's width and its lane counts.
+LANE_BYTES = {"f64": 8, "f32": 4, "f16": 2, "i64": 8, "i32": 4}
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)
@@ -113,8 +122,8 @@ class Approx:
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Assist:
     """A hardware assist the survey surfaced but that is not an abstract op: a single intrinsic that
-    helps implement one (the `helps` op — exp, sin, cos, div, sqrt, min, max, or load), with the
-    assembly mnemonic for reading disassembly and a note on what it does."""
+    helps implement one (the `helps` op), with the
+    assembly mnemonic for reading disassembly and a note on what it does. ``helps`` is an abstract op."""
 
     name: str
     mnemonic: str
@@ -191,6 +200,7 @@ class Table:
     schedule_info: dict[str, ScheduleInfo]
     by_intrinsic: dict[str, tuple[Hit, ...]]
     by_mnemonic: dict[str, tuple[Hit, ...]]
+    by_part: dict[str, tuple[Hit, ...]]
     by_assist: dict[str, tuple[AssistHit, ...]]
 
     def isa(self, name: str) -> Isa:
@@ -223,21 +233,27 @@ class Table:
 
         Accepts a C intrinsic (``_mm256_add_pd``), a composite recipe step, a vector math library call
         (``_ZGVcN4v_sin``, ``_mm512_exp_pd``), or a mnemonic as a disassembler prints it (``vaddpd``,
-        ``vfmadd231pd``, ``fmla``, ``ld1d``, a ``.z``-suffixed EVEX form)."""
-        token = name.strip().split(maxsplit=1)[0].split(",", 1)[0]
+        ``vfmadd231pd``, ``fmla``, ``ld1d``, a ``.z``-suffixed EVEX form, any letter case). A mnemonic that
+        is only one step of a composite (``vfnmadd231pd`` in fmod) matches the composite."""
+        words = name.strip().split(maxsplit=1)
+        if not words:
+            return ()
+        token = words[0].split(",", 1)[0]
         if hits := self.by_intrinsic.get(token, ()):
             return hits
+        token = token.lower()
         if (m := DOT_SUFFIX.match(token)) is not None:
             token = m.group(1)
         if (m := FMA_FORM.match(token)) is not None:
-            mnemonic, dtype = "vf" + m.group(1), "f64" if m.group(2) == "pd" else "f32"
-            return tuple(h for h in self.by_mnemonic.get(mnemonic, ()) if h.dtype == dtype)
-        return self.by_mnemonic.get(token, ())
+            hits = self.by_mnemonic.get(m.group(1)) or self.by_part.get(m.group(1), ())
+            return tuple(h for h in hits if h.dtype == FMA_DTYPE[m.group(2)])
+        return self.by_mnemonic.get(token) or self.by_part.get(token, ())
 
     def assist(self, name: str) -> tuple[AssistHit, ...]:
         """Every assist an intrinsic or mnemonic names (e.g. ``_mm512_scalef_pd``, ``svexpa_f64``,
         ``vreducepd``), or an empty tuple."""
-        return self.by_assist.get(name.strip().split(maxsplit=1)[0], ())
+        words = name.strip().split(maxsplit=1)
+        return self.by_assist.get(words[0], ()) if words else ()
 
 
 def _assist_hits(isas: dict[str, Isa]) -> dict[str, tuple[AssistHit, ...]]:
@@ -250,28 +266,35 @@ def _assist_hits(isas: dict[str, Isa]) -> dict[str, tuple[AssistHit, ...]]:
     return {key: tuple(hits) for key, hits in index.items()}
 
 
-def _hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], dict[str, tuple[Hit, ...]]]:
-    """The reverse indexes over every entry: by intrinsic (and recipe step) and by mnemonic."""
+def _mnemonic_parts(mnemonic: str) -> list[str]:
+    """The real mnemonics of a composite: ``vdivpd+vroundpd+vfnmadd`` splits, ``ld1d (gather)`` keeps its
+    first word, the placeholders ``op`` and ``...`` are dropped."""
+    words = [part.split(maxsplit=1)[0] for part in mnemonic.split("+") if part.strip()]
+    return [word for word in words if word not in ("op", "...")]
+
+
+def _hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], ...]:
+    """The reverse indexes over every entry: by intrinsic (and recipe step), by mnemonic, and by the
+    mnemonics inside a composite."""
     by_intrinsic: dict[str, list[Hit]] = {}
     by_mnemonic: dict[str, list[Hit]] = {}
+    by_part: dict[str, list[Hit]] = {}
     for isa_name, isa in isas.items():
         for dtype in ALL_DTYPES:
             for op, entry in getattr(isa, dtype).items():
                 if entry.intrinsic:
                     by_intrinsic.setdefault(entry.intrinsic, []).append(Hit(isa_name, dtype, op, entry, "intrinsic"))
-                if entry.masked:
-                    name = entry.masked.split("(", 1)[0].split(maxsplit=1)[0]
+                for name in dict.fromkeys(SPELLED.findall(entry.masked)):
                     by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "masked"))
-                for step in entry.recipe:
-                    by_intrinsic.setdefault(step, []).append(Hit(isa_name, dtype, op, entry, "recipe"))
+                for name in dict.fromkeys(name for step in entry.recipe for name in SPELLED.findall(step)):
+                    by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "recipe"))
                 for call in entry.libraries.values():
                     by_intrinsic.setdefault(call, []).append(Hit(isa_name, dtype, op, entry, "library"))
                 if entry.mnemonic:
                     by_mnemonic.setdefault(entry.mnemonic, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
-    return (
-        {key: tuple(hits) for key, hits in by_intrinsic.items()},
-        {key: tuple(hits) for key, hits in by_mnemonic.items()},
-    )
+                    for part in dict.fromkeys(_mnemonic_parts(entry.mnemonic)):
+                        by_part.setdefault(part, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
+    return tuple({key: tuple(hits) for key, hits in index.items()} for index in (by_intrinsic, by_mnemonic, by_part))
 
 
 def _checked(
@@ -321,6 +344,11 @@ def _checked(
         lanes = set(REQUIRED_DTYPES) | ({F16} if isa.f16 else set())
         if set(isa.lanes) != lanes:
             raise ValueError(f"{path}: [isa.{isa_name}].lanes must cover {sorted(lanes)}")
+        if any(isa.lanes[d] * LANE_BYTES[d] != isa.vector_bytes for d in lanes):
+            raise ValueError(f"{path}: [isa.{isa_name}].lanes disagree with vector_bytes {isa.vector_bytes}")
+        for assist in isa.assists:
+            if assist.helps not in OPS:
+                raise ValueError(f"{path}: assist {assist.name} helps {assist.helps!r}, not an abstract op")
         for dtype in ALL_DTYPES:
             entries = getattr(isa, dtype)
             integer = dtype in INT_DTYPES
@@ -338,6 +366,8 @@ def _checked(
                     raise ValueError(f"{path}: [isa.{isa_name}.{dtype}] lacks ops {missing}")
                 if isa.mask and "gen_mask" not in entries:
                     raise ValueError(f"{path}: [isa.{isa_name}.{dtype}] has masks but no gen_mask entry")
+            elif integer and (missing := sorted(INT_OPS - set(entries))):
+                raise ValueError(f"{path}: [isa.{isa_name}.{dtype}] lacks ops {missing}")
             for op, entry in entries.items():
                 entry_ok(isa_name, dtype, op, entry, integer)
         if isa.mask and not isa.gen_mask:
@@ -353,8 +383,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
     approx = TypeAdapter(dict[str, Approx]).validate_python(data.get("approx", {}))
     schedules = TypeAdapter(dict[str, ScheduleInfo]).validate_python(data.get("schedules", {}))
     isas_map = _checked(parsed, approx, schedules, path)
-    by_intrinsic, by_mnemonic = _hits(isas_map)
-    return Table(isas_map, approx, schedules, by_intrinsic, by_mnemonic, _assist_hits(isas_map))
+    return Table(isas_map, approx, schedules, *_hits(isas_map), _assist_hits(isas_map))
 
 
 def isas(table: Table | None = None) -> tuple[str, ...]:
