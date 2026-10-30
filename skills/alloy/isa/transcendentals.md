@@ -248,12 +248,12 @@ Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale
 
 | ISA | dtype | op | libmvec | SVML | SLEEF |
 |---|---|---|---|---|---|
-| avx2 | f64 | exp | `_ZGVcN4v_exp` | `_mm256_exp_pd` | `Sleef_expd4_u10` |
-| avx2 | f64 | sin | `_ZGVcN4v_sin` | `_mm256_sin_pd` | `Sleef_sind4_u10` |
-| avx2 | f64 | cos | `_ZGVcN4v_cos` | `_mm256_cos_pd` | `Sleef_cosd4_u10` |
-| avx2 | f32 | exp | `_ZGVcN8v_expf` | `_mm256_exp_ps` | `Sleef_expf8_u10` |
-| avx2 | f32 | sin | `_ZGVcN8v_sinf` | `_mm256_sin_ps` | `Sleef_sinf8_u10` |
-| avx2 | f32 | cos | `_ZGVcN8v_cosf` | `_mm256_cos_ps` | `Sleef_cosf8_u10` |
+| avx2 | f64 | exp | `_ZGVdN4v_exp` | `_mm256_exp_pd` | `Sleef_expd4_u10` |
+| avx2 | f64 | sin | `_ZGVdN4v_sin` | `_mm256_sin_pd` | `Sleef_sind4_u10` |
+| avx2 | f64 | cos | `_ZGVdN4v_cos` | `_mm256_cos_pd` | `Sleef_cosd4_u10` |
+| avx2 | f32 | exp | `_ZGVdN8v_expf` | `_mm256_exp_ps` | `Sleef_expf8_u10` |
+| avx2 | f32 | sin | `_ZGVdN8v_sinf` | `_mm256_sin_ps` | `Sleef_sinf8_u10` |
+| avx2 | f32 | cos | `_ZGVdN8v_cosf` | `_mm256_cos_ps` | `Sleef_cosf8_u10` |
 | avx512 | f64 | exp | `_ZGVeN8v_exp` | `_mm512_exp_pd` | `Sleef_expd8_u10avx512f` |
 | avx512 | f64 | sin | `_ZGVeN8v_sin` | `_mm512_sin_pd` | `Sleef_sind8_u10avx512f` |
 | avx512 | f64 | cos | `_ZGVeN8v_cos` | `_mm512_cos_pd` | `Sleef_cosd8_u10avx512f` |

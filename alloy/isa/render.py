@@ -6,7 +6,9 @@ table; never edit the pages by hand."""
 import argparse
 import pathlib
 
-from alloy.isa.table import ALL_DTYPES, F16, Table, load
+from alloy.isa.mathkernels import LEVELS, functions, kernel
+from alloy.isa.mathkernels import render as render_kernel
+from alloy.isa.table import ALL_DTYPES, DTYPES, F16, Table, load
 
 __all__ = ["render"]
 
@@ -110,10 +112,49 @@ def render_index(table: Table) -> str:
         isa = table.isas[name]
         lines.append(f"- [`{name}.md`]({name}.md) — {isa.title}")
     lines += [
+        "- [`kernels.md`](kernels.md) — sin, exp, log, pow and more as intrinsics: strict, relaxed and fast",
         "- [`transcendentals.md`](transcendentals.md) — the exp/sin/cos polynomial tiers with "
         "measured ULP and the vector math library calls",
         "",
     ]
+    return "\n".join(lines)
+
+
+def render_kernels() -> str:
+    """The math kernel page: the levels, the measured table, and one kernel in full."""
+    lines = [
+        "# Math kernels — functions as intrinsics (generated, do not edit)",
+        "",
+        "Every function comes as three C functions built from intrinsics; copy one into the loop's translation "
+        "unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> <dtype>`.",
+        "",
+        "- **strict**: matches libm on every input. NaN, infinities, signed zeros, subnormals and huge "
+        "arguments are correct; lanes the vector path cannot hold take one cold branch to scalar libm. About as "
+        "accurate as a default library call, not correctly rounded.",
+        "- **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when "
+        "the inputs are known finite and in range.",
+        "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "
+        "tolerance, an activation, or a first guess.",
+        "",
+        "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
+        "compensation; so is every `log1p`. The other `relaxed` and `fast` kernels build under both at up to 2.5 "
+        "times the listed error.",
+        "",
+        "Inline them only when the loop has other work: the gain over a library call is the call and its "
+        "spills. ULP is the worst sampled error against a wider libm, not a proven bound.",
+        "",
+        "| function | dtype | level | ulp | intrinsics (avx512) | branch | contract |",
+        "|---|---|---|---:|---:|---|---|",
+    ]
+    for fn in functions():
+        for dtype in DTYPES:
+            for level in LEVELS:
+                k = kernel(fn, dtype, level)
+                branch = "cold" if k.guard else "none"
+                count = render_kernel(k, "avx512").intrinsics
+                lines.append(f"| {fn} | {dtype} | {level} | {k.error_ulp:.3g} | {count} | {branch} | {k.contract} |")
+    example = render_kernel(kernel("exp", "f64", "relaxed"), "avx2")
+    lines += ["", "## Example: `exp`, f64, relaxed, AVX2", "", "```c", example.source, "```", ""]
     return "\n".join(lines)
 
 
@@ -160,6 +201,7 @@ def render(table: Table, out: pathlib.Path = DEFAULT_OUT) -> list[pathlib.Path]:
     written = []
     for name, content in [
         ("index", render_index(table)),
+        ("kernels", render_kernels()),
         ("transcendentals", render_transcendentals(table)),
         *[(n, render_isa(table, n)) for n in table.isas],
     ]:

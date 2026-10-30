@@ -308,7 +308,7 @@ def test_the_taylor_ladder_improves_and_minimax_beats_taylor():
 @pytest.mark.parametrize(
     ("call", "isa", "op", "dtype"),
     [
-        ("_ZGVcN4v_sin", "avx2", "sin", "f64"),
+        ("_ZGVdN4v_sin", "avx2", "sin", "f64"),
         ("_ZGVeN16v_expf", "avx512", "exp", "f32"),
         ("_mm256_cos_pd", "avx2", "cos", "f64"),
         ("_mm512_exp_pd", "avx512", "exp", "f64"),
@@ -372,11 +372,11 @@ def test_the_cli_lists_approximation_tiers_with_measured_ulp():
 
     assert run.returncode == 0
     assert "tier sin-quad-cheb13: 8.5 ulp" in run.stdout
-    assert "libmvec: _ZGVcN4v_sin" in run.stdout
+    assert "libmvec: _ZGVdN4v_sin" in run.stdout
 
 
 def test_the_cli_reverses_a_library_call():
-    run = _cli("reverse", "_ZGVcN4v_sin")
+    run = _cli("reverse", "_ZGVdN4v_sin")
 
     assert run.returncode == 0
     assert "sin on avx2/f64" in run.stdout
@@ -418,7 +418,7 @@ def test_the_skill_pages_render_from_the_table(tmp_path):
     written = render(TABLE, tmp_path)
     names = {path.name for path in written}
 
-    assert names == {"index.md", "transcendentals.md", "avx2.md", "avx512.md", "neon.md", "sve.md"}
+    assert names == {"index.md", "kernels.md", "transcendentals.md", "avx2.md", "avx512.md", "neon.md", "sve.md"}
     index = (tmp_path / "index.md").read_text()
     for op in ("load", "gather", "sin"):
         assert f"`{op}`" in index
@@ -428,7 +428,7 @@ def test_the_skill_pages_render_from_the_table(tmp_path):
     assert "| `and` | `_mm512_and_si512` | `vpandd` |" in avx512
     trans = (tmp_path / "transcendentals.md").read_text()
     assert "sin-quad-cheb13" in trans
-    assert "_ZGVcN4v_sin" in trans
+    assert "_ZGVdN4v_sin" in trans
 
 
 def test_the_assists_reverse_by_name_and_mnemonic():

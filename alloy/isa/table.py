@@ -232,7 +232,7 @@ class Table:
         """Every ``(isa, op, dtype)`` an intrinsic, mnemonic or library call spells, or an empty tuple.
 
         Accepts a C intrinsic (``_mm256_add_pd``), a composite recipe step, a vector math library call
-        (``_ZGVcN4v_sin``, ``_mm512_exp_pd``), or a mnemonic as a disassembler prints it (``vaddpd``,
+        (``_ZGVdN4v_sin``, ``_mm512_exp_pd``), or a mnemonic as a disassembler prints it (``vaddpd``,
         ``vfmadd231pd``, ``fmla``, ``ld1d``, a ``.z``-suffixed EVEX form, any letter case). A mnemonic that
         is only one step of a composite (``vfnmadd231pd`` in fmod) matches the composite."""
         words = name.strip().split(maxsplit=1)

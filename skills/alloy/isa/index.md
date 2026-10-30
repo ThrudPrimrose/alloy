@@ -42,4 +42,5 @@ Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for
 - [`avx512.md`](avx512.md) — AVX-512F (512-bit EVEX, opmask k0..k7)
 - [`neon.md`](neon.md) — Arm NEON / AdvSIMD (fixed 128-bit)
 - [`sve.md`](sve.md) — Arm SVE (scalable vectors, predicated)
+- [`kernels.md`](kernels.md) — sin, exp, log, pow and more as intrinsics: strict, relaxed and fast
 - [`transcendentals.md`](transcendentals.md) — the exp/sin/cos polynomial tiers with measured ULP and the vector math library calls

@@ -773,42 +773,42 @@ note = "the standardized gen_mask; the loop steps by svcntw() and never needs a 
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVcN4v_exp", svml = "_mm256_exp_pd", sleef = "Sleef_expd4_u10" }
+libraries = { libmvec = "_ZGVdN4v_exp", svml = "_mm256_exp_pd", sleef = "Sleef_expd4_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVcN4v_sin", svml = "_mm256_sin_pd", sleef = "Sleef_sind4_u10" }
+libraries = { libmvec = "_ZGVdN4v_sin", svml = "_mm256_sin_pd", sleef = "Sleef_sind4_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVcN4v_cos", svml = "_mm256_cos_pd", sleef = "Sleef_cosd4_u10" }
+libraries = { libmvec = "_ZGVdN4v_cos", svml = "_mm256_cos_pd", sleef = "Sleef_cosd4_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVcN8v_expf", svml = "_mm256_exp_ps", sleef = "Sleef_expf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_expf", svml = "_mm256_exp_ps", sleef = "Sleef_expf8_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVcN8v_sinf", svml = "_mm256_sin_ps", sleef = "Sleef_sinf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_sinf", svml = "_mm256_sin_ps", sleef = "Sleef_sinf8_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVcN8v_cosf", svml = "_mm256_cos_ps", sleef = "Sleef_cosf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_cosf", svml = "_mm256_cos_ps", sleef = "Sleef_cosf8_u10" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f64.exp]

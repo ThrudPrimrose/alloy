@@ -9,8 +9,9 @@ status and traps). The hints are never generic: they name the actual tasklets an
 import ast
 import dataclasses
 
+from alloy.isa.mathkernels import LEVELS, functions, kernel, render, target_of
 from alloy.isa.ops import OPS
-from alloy.isa.table import Table, load
+from alloy.isa.table import DTYPES, Table, load
 
 __all__ = ["Hint", "OpUse", "Spelling", "advice", "tasklet_hints"]
 
@@ -38,6 +39,22 @@ _CALL_NAMES: dict[str, str] = {
     "exp": "exp",
     "min": "min",
     "max": "max",
+    "ln": "log",
+    "log": "log",
+    "log2": "log2",
+    "log10": "log10",
+    "log1p": "log1p",
+    "exp2": "exp2",
+    "exp10": "exp10",
+    "expm1": "expm1",
+    "tan": "tan",
+    "atan": "atan",
+    "asin": "asin",
+    "acos": "acos",
+    "sinh": "sinh",
+    "cosh": "cosh",
+    "tanh": "tanh",
+    "pow": "pow",
 }
 
 #: Ops a tasklet's arithmetic maps to, in a readable order.
@@ -46,7 +63,22 @@ _ORDER = (
     "fma",
     "sin",
     "cos",
+    "tan",
     "exp",
+    "exp2",
+    "exp10",
+    "expm1",
+    "log",
+    "log2",
+    "log10",
+    "log1p",
+    "pow",
+    "atan",
+    "asin",
+    "acos",
+    "sinh",
+    "cosh",
+    "tanh",
     "sqrt",
     "mod",
     "div",
@@ -150,8 +182,8 @@ def _uses(sdfg) -> list[OpUse]:
 def _kind(use: OpUse) -> str:
     if use.reduces:
         return "reduction"
-    if any(OPS[op].kind == "transcendental" for op in use.ops if op in OPS):
-        return "libm (no native instruction: use a tier or call the vector library)"
+    if any(op in functions() for op in use.ops):
+        return "libm (no native instruction: inline a kernel or call the vector library)"
     return "elementwise"
 
 
@@ -160,6 +192,8 @@ def _spelling(table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, b
     op is not in the table for (isa, dtype) (e.g. integer ops on a float dtype)."""
     from alloy.isa.validate import host_can_run, validate  # noqa: PLC0415
 
+    if op not in OPS:
+        return kernel_spelling(isa, dtype, op)
     try:
         entry = table.entry(isa, op, dtype)
     except KeyError:
@@ -175,11 +209,31 @@ def _spelling(table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, b
         best = table.approx[entry.approximations[-1]]
         libraries = ", ".join(f"{k} {v}" for k, v in entry.libraries.items()) or "a vector math library"
         spelling = (
-            f"no native instruction: tier '{entry.approximations[-1]}' ({best.error_ulp:.4g} ulp) or call {libraries}"
+            f"{kernel_summary(isa, dtype, op)}; "
+            f"or tier '{entry.approximations[-1]}' ({best.error_ulp:.4g} ulp) or call {libraries}"
         )
     else:
         spelling = "(no spelling)"
     return Spelling(op, spelling, entry.signature, trap, verdicts[op])
+
+
+def kernel_summary(isa: str, dtype: str, fn: str) -> str:
+    """One line naming ``fn``'s three kernels; the C is one CLI call away."""
+    target = target_of(isa)
+    if target not in KERNEL_ISAS or dtype not in DTYPES:
+        return f"no kernel for {isa}/{dtype}"
+    levels = ", ".join(
+        f"{level} {(k := kernel(fn, dtype, level)).error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)"
+        for level in LEVELS
+    )
+    return f"inline intrinsics: {levels}; `python -m alloy.isa kernel {isa} {fn} {dtype}`"
+
+
+def kernel_spelling(isa: str, dtype: str, fn: str) -> Spelling | None:
+    """The hint of a math function outside the abstract ops; its kernels are gated when generated and by CI."""
+    if dtype not in DTYPES:
+        return None
+    return Spelling(fn, kernel_summary(isa, dtype, fn), "(v) -> v", "", None)
 
 
 def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None) -> list[Hint]:
@@ -196,6 +250,8 @@ def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None) -> lis
         hints.append(Hint(use, _kind(use), spellings))
     return hints
 
+
+KERNEL_ISAS = ("avx2", "avx512", "neon", "sve")
 
 _VERDICT_WORDS = {
     True: "verified on this host",

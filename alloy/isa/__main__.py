@@ -6,9 +6,13 @@ tool calls for an agent: the report and this table replace the ISA PDFs.
 Every lookup is numerically validated on the host before it is returned (a small compiled kernel, or
 a tier re-measure for transcendentals): on failure the exit code is 3 and the output lists the
 potentially relevant spellings instead of endorsing a wrong answer. ``--no-verify`` skips the check;
-``validate [isa op dtype]`` runs the gate over everything the host can execute."""
+``validate [isa op dtype]`` runs the gate over everything the host can execute.
+
+``kernel <isa> <function> <dtype>`` returns a math function (sin, exp, log, pow, ...) as intrinsics: a strict, a
+relaxed and a fast C function with measured ULP, for the loop to inline instead of a library call."""
 
 import argparse
+import platform
 import sys
 
 from alloy.isa import ALIASES, OPS, load
@@ -42,6 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     validate_p.add_argument("op", nargs="?")
     validate_p.add_argument("dtype", nargs="?")
 
+    kernel_p = commands.add_parser("kernel", help="sin, exp, log, ... as intrinsics: kernel <isa> <function> <dtype>")
+    kernel_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve")
+    kernel_p.add_argument("function", help="sin, cos, tan, exp, exp2, exp10, expm1, log (ln), log2, log10, log1p, ...")
+    kernel_p.add_argument("dtype", help="f64 or f32")
+    kernel_p.add_argument("--level", choices=("strict", "relaxed", "fast"), help="one level; default all three")
+    kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
+
     commands.add_parser("ops", help="the abstract math ISA")
     commands.add_parser("isas", help="the covered vector ISAs and their machine models")
     schedule_p = commands.add_parser("schedule", help="an ISA's legal loop schedules and gen_mask")
@@ -58,9 +69,9 @@ def main(argv: list[str] | None = None) -> int:
     table = load()
     try:
         if args.command == "lookup":
-            _print_entry(table, args.isa, args.op, args.dtype)
-            if not args.no_verify:
-                return _verify(table, args.isa, args.op, args.dtype)
+            return _lookup(table, args)
+        elif args.command == "kernel":
+            return _print_kernels(table, args.isa, args.function, args.dtype, args.level, not args.no_verify)
         elif args.command == "reverse":
             _print_hits(table, args.name)
         elif args.command == "assist":
@@ -108,6 +119,50 @@ def _print_entry(table, isa: str, op: str, dtype: str) -> None:
         print(f"  note:      {entry.note}")
 
 
+def _lookup(table, args) -> int:
+    """One op's entry, then its math kernels when it is a function; a function without an entry has only those."""
+    from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES  # noqa: PLC0415
+    from alloy.isa.mathkernels import functions  # noqa: PLC0415
+
+    function = FUNCTION_ALIASES.get(args.op, args.op)
+    status = 0
+    if function in OPS:
+        _print_entry(table, args.isa, function, args.dtype)
+        if not args.no_verify:
+            status = _verify(table, args.isa, function, args.dtype)
+    if function in functions():
+        return status or _print_kernels(table, args.isa, function, args.dtype, None, not args.no_verify)
+    if function not in OPS:
+        raise KeyError(f"{args.op!r}: neither an abstract op nor a math function")
+    return status
+
+
+def _print_kernels(table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
+    """The kernels as C. Exit code 3 when one fails its gate."""
+    from alloy.isa.mathcheck import validate_kernel  # noqa: PLC0415 -- compiles only when verifying
+    from alloy.isa.mathkernels import LEVELS, libraries, render, target_of  # noqa: PLC0415
+    from alloy.isa.mathkernels import kernel as find  # noqa: PLC0415
+
+    table.isa(isa)
+    target = target_of(isa)
+    status = 0
+    for name in (level,) if level else LEVELS:
+        k = find(function, dtype, name)
+        spelled = render(k, target)
+        branch = "one cold branch to scalar libm" if k.guard else "no branch"
+        print(f"// {name}: {k.error_ulp:.4g} ulp; {spelled.intrinsics} intrinsics; {branch}; contract: {k.contract}")
+        print(spelled.source)
+        for library, call in libraries(function, dtype, target, name).items():
+            print(f"// or call {library}: {call}")
+        if verify:
+            verdict = validate_kernel(k.fn, dtype, name, target)
+            mark = {True: "verified", None: "unverified", False: "FAILED"}[verdict.ok]
+            print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+            status = 3 if verdict.ok is False else status
+        print()
+    return status
+
+
 def _verify(table, isa: str, op: str, dtype: str) -> int:
     """The numerical gate on a lookup: print the verdict; on failure list the candidates and exit 3."""
     from alloy.isa.validate import validate  # noqa: PLC0415 -- compiles only when verifying
@@ -129,6 +184,7 @@ def _verify(table, isa: str, op: str, dtype: str) -> int:
 
 def _validate_cmd(table, args) -> int:
     """The ``validate`` subcommand: one entry, or every entry the host can run plus every tier."""
+    from alloy.isa.mathcheck import validate_kernels  # noqa: PLC0415
     from alloy.isa.validate import validate, validate_all  # noqa: PLC0415
 
     if args.isa or args.op or args.dtype:
@@ -142,13 +198,15 @@ def _validate_cmd(table, args) -> int:
             print(f"  candidate: {hit.op} on {hit.isa}/{hit.dtype} ({hit.via})")
         return 0 if verdict.ok is not False else 3
     results = validate_all(table)
+    if platform.machine() in ("x86_64", "aarch64"):
+        results += validate_kernels()
     failed = [(ident, v) for ident, v in results if v.ok is False]
     skipped = [(ident, v) for ident, v in results if v.ok is None]
     for ident, verdict in results:
         if verdict.ok is False:
             print(f"FAIL {ident}: {verdict.detail}")
     print(
-        f"validated {len(results) - len(skipped)} entries and tiers on this host: "
+        f"validated {len(results) - len(skipped)} entries, tiers and kernels on this host: "
         f"{len(results) - len(skipped) - len(failed)} passed, {len(failed)} failed, "
         f"{len(skipped)} not verifiable here"
     )

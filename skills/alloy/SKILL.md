@@ -67,6 +67,7 @@ how; the per-ISA pages list them.
 
 ```bash
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps
+python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> strict/relaxed/fast C intrinsics
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute
 python -m alloy.isa skeleton <isa> <schedule> <dtype> [--verify]   # the C loop shape, ready to edit
@@ -151,7 +152,7 @@ python -m alloy.isa reverse vfmadd231pd
 ## Reference priority (the lookup-before-docs rule)
 
 1. Alloy's `report.md` / `report.json` — what the sweep already measured; never re-derive it.
-2. The generated pages in this skill's `isa/` folder (`index.md`, one page per ISA, `transcendentals.md`)
+2. The generated pages in this skill's `isa/` folder (`index.md`, one page per ISA, `kernels.md`, `transcendentals.md`)
    — static context rendered from `intrinsics.toml`, always current; read these before any tool call.
 3. `python -m alloy.isa ...` — for what the pages don't cover (custom reverse lookups, schedule details).
 4. Per-target ESSENTIALS sheets (ISA docs package) — machine model and schedules beyond the table.

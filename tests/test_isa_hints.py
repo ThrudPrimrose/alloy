@@ -45,7 +45,8 @@ def test_a_libm_tasklet_points_at_tiers_and_the_library():
     assert "libm" in hint.kind
     (spelling,) = hint.spellings
     assert "sin-quad-cheb13" in spelling.spelling
-    assert "_ZGVcN4v_sin" in spelling.spelling
+    assert "_ZGVdN4v_sin" in spelling.spelling
+    assert "python -m alloy.isa kernel avx2 sin f64" in spelling.spelling
 
 
 def test_advice_carries_the_reason_the_instruction_and_the_hints():
