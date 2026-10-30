@@ -9,12 +9,40 @@
 # (masked epilogue), full_mask (every iteration masked), sve_intrinsics (explicit predicated SVE
 # loops, DaCe's SVEVectorization). Tenstorrent Tensix is absent: no C intrinsic path (design.md).
 
+# --- Loop schedules: what each tail strategy is. Legality per ISA lives in [isa.*].schedules;
+# "scalar" is legal everywhere (it is the fallback when nothing vectorizes).
+
+[schedules.scalar]
+title = "Scalar loop"
+description = "No vectorization: one element per iteration, no tail handling. The baseline every speedup is measured against."
+tail = "none"
+
+[schedules.scalar_remainder]
+title = "Vector main loop + scalar remainder"
+description = "The vectorizer's default shape on maskless ISAs: a full-width main loop while i + VL <= N, then a scalar loop for the last N mod VL elements (AVX2, NEON; AVX-512 may also use it instead of masking)."
+tail = "scalar remainder loop after the vector main loop"
+
+[schedules.masked_remainder]
+title = "Unmasked main loop + masked epilogue"
+description = "AVX-512/SVE shape: the main loop runs unmasked while a whole vector fits; only the final partial iteration is predicated (AVX-512: opmask epilogue; the compiler emits it from vect-partial-vector-usage)."
+tail = "masked epilogue (opmask or predicate) after the unmasked main loop"
+
+[schedules.full_mask]
+title = "Every iteration masked"
+description = "AVX-512 shape: a single loop where every iteration applies its opmask (prefer-predicate-over-epilogue); no separate epilogue at all. Costs a mask per iteration in the main loop."
+tail = "every iteration predicated, no epilogue"
+
+[schedules.sve_intrinsics]
+title = "Explicit predicated SVE loops"
+description = "SVE shape rendered by DaCe's SVEVectorization (the sve_intrinsics tail): the loop steps by svcntd()/svcntw() and svwhilelt builds the tail predicate every iteration, so there is no remainder loop at all. Loop predicates are named __pg_{param}."
+tail = "predicate every iteration (svwhilelt), runtime vector length, no remainder"
+
 [isa.avx2]
 title = "AVX2 + FMA3 (256-bit VEX)"
 vector_bytes = 32
 lanes = { f64 = 4, f32 = 8, i64 = 4, i32 = 8, f16 = 16 }
 mask = false
-schedules = ["scalar_remainder"]
+schedules = ["scalar", "scalar_remainder"]
 gen_mask = ""
 note = "No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f128) are slow; keep reductions out of inner loops. Mixing SSE and VEX stalls on old targets: vzeroupper after 256-bit code."
 
@@ -150,7 +178,7 @@ title = "AVX-512F (512-bit EVEX, opmask k0..k7)"
 vector_bytes = 64
 lanes = { f64 = 8, f32 = 16, i64 = 8, i32 = 16, f16 = 32 }
 mask = true
-schedules = ["scalar_remainder", "masked_remainder", "full_mask"]
+schedules = ["scalar", "scalar_remainder", "masked_remainder", "full_mask"]
 gen_mask = "_mm512_cmplt_epu{64,32}_mask(iota, set1(N - i))"
 note = "The only x86 target with predication: masked tail forms take a leading __mmask8/16. avx512_256 (the matrix's -mprefer-vector-width=256) is this ISA at 256 bits: same intrinsics, half the lanes. Downclocking risk on some cores is why the width is a sweep knob. EVEX extras: embedded rounding, SAE, embedded broadcast {1to8}."
 
@@ -313,7 +341,7 @@ title = "Arm NEON / AdvSIMD (fixed 128-bit)"
 vector_bytes = 16
 lanes = { f64 = 2, f32 = 4, i64 = 2, i32 = 4, f16 = 8 }
 mask = false
-schedules = ["scalar_remainder"]
+schedules = ["scalar", "scalar_remainder"]
 gen_mask = ""
 note = "AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. NEON and SVE coexist on one core; gcc --param=aarch64-autovec-preference and clang -mllvm -scalable-vectorization=off gate which the auto-vectorizer prefers. fma availability: vfmaq_f64 (ACLE __ARM_FEATURE_FMA)."
 
@@ -446,7 +474,7 @@ title = "Arm SVE (scalable vectors, predicated)"
 vector_bytes = 0
 lanes = { f64 = 0, f32 = 0, i64 = 0, i32 = 0, f16 = 0 }
 mask = true
-schedules = ["sve_intrinsics"]
+schedules = ["scalar", "sve_intrinsics"]
 gen_mask = "svwhilelt_b{64,32}_u64(i, N)"
 note = "Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) and known only at runtime via svcntd()/svcntw() — lanes 0 here mean 'runtime length'. Everything is predicated: every op takes a leading svbool_t pg plus an activity-policy suffix _x (don't-care, fastest), _z (inactive lanes zeroed), _m (inactive lanes from a source operand). The predicate subsumes every tail schedule: no remainder loop. Host flag: -march=armv8-a+sve."
 

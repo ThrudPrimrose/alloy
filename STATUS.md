@@ -34,6 +34,22 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 7 — 2026-10-30 (the schedule axis)
+
+- Schedules are first-class: `[schedules]` metadata in the table (title, description, tail strategy),
+  `scalar` offered everywhere, and `legal(isa, schedule)` answers with a reason ("avx2 has no
+  predication", "not offered on sve (legal there: ...)"). `Table` carries `schedule_info`;
+  `_checked` cross-references ISA offers against the metadata.
+- `alloy/isa/schedules.py`: `skeleton(isa, schedule, dtype)` emits the canonical axpy C source for
+  every legal combination, composed from the table's own entries (loads, stores, broadcast, fma,
+  gen_mask) so operand-order traps (NEON/SVE accumulator-first fma) are respected by construction.
+  Shapes: scalar, scalar_remainder (maskless remainder loop), masked_remainder and full_mask
+  (AVX-512 opmask, iota + cmplt gen_mask), sve_intrinsics (svwhilelt predicate named __pg_i per the
+  contract, svcntd/svcntw step). This is the seed of the schedule->vector-schedule translator.
+  Every skeleton the host can execute is compile-and-run verified in tests (24 new; 280 total).
+- CLI: `schedule <isa>` prints per-schedule legality with reasons; `skeleton <isa> <schedule>
+  <dtype>` prints the C source.
+
 ### Snapshot 6 — 2026-10-30 (do-it-yourself advice)
 
 - `alloy/isa/hints.py`: the response body for the emission path when it cannot emit or validation

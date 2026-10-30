@@ -43,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("isas", help="the covered vector ISAs and their machine models")
     schedule_p = commands.add_parser("schedule", help="an ISA's legal loop schedules and gen_mask")
     schedule_p.add_argument("isa")
+    skeleton_p = commands.add_parser("skeleton", help="the canonical axpy C source: skeleton <isa> <schedule> <dtype>")
+    skeleton_p.add_argument("isa")
+    skeleton_p.add_argument("schedule")
+    skeleton_p.add_argument("dtype")
 
     args = parser.parse_args(argv)
     table = load()
@@ -61,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
             _print_isas(table)
         elif args.command == "schedule":
             _print_schedule(table, args.isa)
+        elif args.command == "skeleton":
+            _print_skeleton(table, args.isa, args.schedule, args.dtype)
     except KeyError as exc:
         print(f"alloy.isa: {exc.args[0]}", file=sys.stderr)
         return 2
@@ -169,11 +175,26 @@ def _print_isas(table) -> None:
 
 
 def _print_schedule(table, isa: str) -> None:
+    from alloy.isa.schedules import legal  # noqa: PLC0415
+
     target = table.isa(isa)
     print(f"{isa}: {target.title}")
-    print(f"  schedules: {', '.join(target.schedules)}")
     print(f"  gen_mask:  {target.gen_mask or 'unsupported (no predication)'}")
-    print(f"  {target.note}")
+    print(f"  {target.note}\n")
+    for name, info in table.schedule_info.items():
+        why = legal(isa, name, table)
+        mark = "LEGAL" if not why else f"refused: {why}"
+        print(f"  {name}: {info.title} — {info.tail}  [{mark}]")
+        print(f"      {info.description}")
+
+
+def _print_skeleton(table, isa: str, schedule: str, dtype: str) -> None:
+    from alloy.isa.schedules import skeleton  # noqa: PLC0415
+
+    try:
+        print(skeleton(table, isa, schedule, dtype))
+    except KeyError as exc:
+        raise KeyError(exc.args[0]) from None
 
 
 if __name__ == "__main__":

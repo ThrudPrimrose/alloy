@@ -2,7 +2,7 @@
 
 Vector bytes: 32; lanes: f64: 4, f32: 8, f16: 16, i64: 4, i32: 8; no predication.
 
-Legal schedules: scalar_remainder. gen_mask: unsupported (no predication).
+Legal schedules: scalar, scalar_remainder. gen_mask: unsupported (no predication).
 
 No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f128) are slow; keep reductions out of inner loops. Mixing SSE and VEX stalls on old targets: vzeroupper after 256-bit code.
 

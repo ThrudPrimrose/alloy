@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT_PATH",
     "Approx",
     "Entry",
+    "ScheduleInfo",
     "Hit",
     "Isa",
     "Table",
@@ -108,6 +109,18 @@ class Approx:
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)
+class ScheduleInfo:
+    """One loop schedule: what it is and how it handles the tail (the vectorizer knob it maps to in
+    the matrix's ``[tails]``; ``scalar`` and ``scalar_remainder`` keep the remainder a scalar loop,
+    ``masked_remainder`` masks only the epilogue, ``full_mask`` masks every iteration, and
+    ``sve_intrinsics`` renders explicit predicated SVE loops)."""
+
+    title: str
+    description: str
+    tail: str
+
+
+@dataclass(slots=True, frozen=True, config=TABLE)
 class Isa:
     """One vector ISA: its machine model (vector width, lanes per dtype, mask capability, legal loop
     schedules, the ``gen_mask`` spelling) and the op table per dtype. ``vector_bytes`` 0 and ``lanes``
@@ -145,10 +158,12 @@ class Hit:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Table:
-    """The parsed table and both indexes: ISAs, the shared approximation tiers, and the reverse maps."""
+    """The parsed table and both indexes: ISAs, the shared approximation tiers, the schedule
+    metadata, and the reverse maps."""
 
     isas: dict[str, Isa]
     approx: dict[str, Approx]
+    schedule_info: dict[str, ScheduleInfo]
     by_intrinsic: dict[str, tuple[Hit, ...]]
     by_mnemonic: dict[str, tuple[Hit, ...]]
 
@@ -218,7 +233,9 @@ def _hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], dict[str, t
     )
 
 
-def _checked(parsed: dict[str, Isa], approx: dict[str, Approx], path: pathlib.Path) -> dict[str, Isa]:
+def _checked(
+    parsed: dict[str, Isa], approx: dict[str, Approx], schedules: dict[str, ScheduleInfo], path: pathlib.Path
+) -> dict[str, Isa]:
     """The invariants every ISA table must hold, or ``ValueError`` naming the broken one.
 
     f64/f32 and i64/i32 must cover the full op set; f16 is optional and carries the arithmetic
@@ -257,6 +274,9 @@ def _checked(parsed: dict[str, Isa], approx: dict[str, Approx], path: pathlib.Pa
         if not tier.domain or tier.error_ulp <= 0:
             raise ValueError(f"{path}: [approx.{name}] needs a domain and a positive error_ulp")
     for isa_name, isa in parsed.items():
+        unknown = [s for s in isa.schedules if s not in schedules]
+        if unknown:
+            raise ValueError(f"{path}: [isa.{isa_name}].schedules cites unknown [schedules] {unknown}")
         lanes = set(REQUIRED_DTYPES) | ({F16} if isa.f16 else set())
         if set(isa.lanes) != lanes:
             raise ValueError(f"{path}: [isa.{isa_name}].lanes must cover {sorted(lanes)}")
@@ -290,9 +310,10 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
         data = tomllib.load(handle)
     parsed = TypeAdapter(dict[str, Isa]).validate_python(data["isa"])
     approx = TypeAdapter(dict[str, Approx]).validate_python(data.get("approx", {}))
-    isas_map = _checked(parsed, approx, path)
-    by_intrinsic, by_mnemonic = _hits(isas_map)
-    return Table(isas_map, approx, by_intrinsic, by_mnemonic)
+    schedules = TypeAdapter(dict[str, ScheduleInfo]).validate_python(data.get("schedules", {}))
+    isas_map = _checked(parsed, approx, schedules, path)
+    by_intrinsic, by_intrinsic_m = _hits(isas_map)
+    return Table(isas_map, approx, schedules, by_intrinsic, by_intrinsic_m)
 
 
 def isas(table: Table | None = None) -> tuple[str, ...]:

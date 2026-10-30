@@ -2,7 +2,7 @@
 
 Vector bytes: 16; lanes: f64: 2, f32: 4, f16: 8, i64: 2, i32: 4; no predication.
 
-Legal schedules: scalar_remainder. gen_mask: unsupported (no predication).
+Legal schedules: scalar, scalar_remainder. gen_mask: unsupported (no predication).
 
 AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. NEON and SVE coexist on one core; gcc --param=aarch64-autovec-preference and clang -mllvm -scalable-vectorization=off gate which the auto-vectorizer prefers. fma availability: vfmaq_f64 (ACLE __ARM_FEATURE_FMA).
 

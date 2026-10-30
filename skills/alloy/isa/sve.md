@@ -2,7 +2,7 @@
 
 Vector bytes: length-agnostic; lanes: f64: runtime, f32: runtime, f16: runtime, i64: runtime, i32: runtime; opmask/predicate.
 
-Legal schedules: sve_intrinsics. gen_mask: svwhilelt_b{64,32}_u64(i, N).
+Legal schedules: scalar, sve_intrinsics. gen_mask: svwhilelt_b{64,32}_u64(i, N).
 
 Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) and known only at runtime via svcntd()/svcntw() — lanes 0 here mean 'runtime length'. Everything is predicated: every op takes a leading svbool_t pg plus an activity-policy suffix _x (don't-care, fastest), _z (inactive lanes zeroed), _m (inactive lanes from a source operand). The predicate subsumes every tail schedule: no remainder loop. Host flag: -march=armv8-a+sve.
 
