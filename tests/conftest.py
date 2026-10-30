@@ -1,6 +1,14 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import os
 import resource
+import sys
+
+# No test uses MPI, and DaCe's usability probe (mpi4py_is_usable, reached from every
+# ``@dace.program`` parse) runs ``from mpi4py import MPI``, which dlopens libmpi and MPI_Inits a
+# singleton job; on a box without an MPI launcher that bring-up can stall and hang the run (seen as
+# a parse stuck in preprocess_dace_program). Make the probe answer "no MPI": the import then raises
+# ImportError, which the probe catches and reports as unavailable.
+sys.modules.setdefault("mpi4py", None)
 
 from alloy import machine
 

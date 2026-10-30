@@ -1,0 +1,2419 @@
+# The op x dtype x ISA instruction table: the abstract math ops of alloy/isa/ops.py spelled as C
+# intrinsics (and assembly mnemonics) per vector ISA. Checked-in reference data; every spelling was
+# verified against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h). Sources:
+# the per-target ESSENTIALS sheets of the ISA docs package (Intel SDM ch.14/15, Arm NEON intrinsics
+# reference, ACLE, ACLE for SVE). Operand-order traps (NEON/SVE fma differ from Intel) are recorded
+# in `signature`/`semantics`, so no caller hardcodes an order.
+#
+# `schedules` uses the matrix's tail names: scalar_remainder (separate tail loop), masked_remainder
+# (masked epilogue), full_mask (every iteration masked), sve_intrinsics (explicit predicated SVE
+# loops, DaCe's SVEVectorization). Tenstorrent Tensix is absent: no C intrinsic path (design.md).
+
+# --- Loop schedules: what each tail strategy is. Legality per ISA lives in [isa.*].schedules;
+# "scalar" is legal everywhere (it is the fallback when nothing vectorizes).
+
+[schedules.scalar]
+title = "Scalar loop"
+description = "No vectorization: one element per iteration, no tail handling. The baseline every speedup is measured against."
+tail = "none"
+gcc = "-fno-tree-vectorize"
+clang = "#pragma clang loop vectorize(disable)"
+
+[schedules.scalar_remainder]
+title = "Vector main loop + scalar remainder"
+description = "The vectorizer's default shape on maskless ISAs: a full-width main loop while i + VL <= N, then a scalar loop for the last N mod VL elements (AVX2, NEON; AVX-512 may also use it instead of masking)."
+tail = "scalar remainder loop after the vector main loop"
+gcc = "--param vect-partial-vector-usage=0 (epilogue vectorization off)"
+clang = "#pragma clang loop vectorize_width(VL) interleave_count(k) (scalar epilogue on maskless ISAs)"
+
+[schedules.masked_remainder]
+title = "Unmasked main loop + masked epilogue"
+description = "AVX-512/SVE shape: the main loop runs unmasked while a whole vector fits; only the final partial iteration is predicated (AVX-512: opmask epilogue; the compiler emits it from vect-partial-vector-usage)."
+tail = "masked epilogue (opmask or predicate) after the unmasked main loop"
+gcc = "--param vect-partial-vector-usage=1 (masked epilogue, AVX-512/SVE hosts)"
+clang = "no masked epilogue: use full_mask on AVX-512 or scalar_remainder elsewhere"
+
+[schedules.full_mask]
+title = "Every iteration masked"
+description = "AVX-512 shape: a single loop where every iteration applies its opmask (prefer-predicate-over-epilogue); no separate epilogue at all. Costs a mask per iteration in the main loop."
+tail = "every iteration predicated, no epilogue"
+gcc = "--param vect-partial-vector-usage=2 (masked loop body)"
+clang = "-prefer-predicate-over-epilogue (AVX-512)"
+
+[schedules.sve_intrinsics]
+title = "Explicit predicated SVE loops"
+description = "SVE shape rendered by DaCe's SVEVectorization (the sve_intrinsics tail): the loop steps by svcntd()/svcntw() and svwhilelt builds the tail predicate every iteration, so there is no remainder loop at all. Loop predicates are named __pg_{param}."
+tail = "predicate every iteration (svwhilelt), runtime vector length, no remainder"
+gcc = "-march=armv8-a+sve with #pragma omp simd (auto SVE), or explicit intrinsics via this skeleton"
+clang = "-march=armv8-a+sve -mllvm -scalable-vectorization=on, or DaCe SVEVectorization (this skeleton)"
+
+[isa.avx2]
+title = "AVX2 + FMA3 (256-bit VEX)"
+vector_bytes = 32
+lanes = { f64 = 4, f32 = 8, i64 = 4, i32 = 8, f16 = 16 }
+mask = false
+schedules = ["scalar", "scalar_remainder"]
+gen_mask = ""
+note = "No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f128) are slow; keep reductions out of inner loops. Mixing SSE and VEX stalls on old targets: vzeroupper after 256-bit code."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.avx2.assists]]
+name = "_mm256_rcp_ps"
+mnemonic = "vrcpps"
+helps = "div"
+note = "12-bit reciprocal estimate, f32 only; Newton refinement for a fast divide (no f64 form on AVX2)"
+
+[[isa.avx2.assists]]
+name = "_mm256_rsqrt_ps"
+mnemonic = "vrsqrtps"
+helps = "sqrt"
+note = "12-bit rsqrt estimate, f32 only; Newton refinement (no f64 form on AVX2)"
+
+[[isa.avx2.assists]]
+name = "_mm256_dp_ps"
+mnemonic = "vdpps"
+helps = "reduce_add"
+note = "dot product: horizontal add of products with an immediate lane mask; useful for short reductions"
+
+[isa.avx2.f64.load]
+intrinsic = "_mm256_loadu_pd"
+mnemonic = "vmovupd"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..3"
+
+[isa.avx2.f64.store]
+intrinsic = "_mm256_storeu_pd"
+mnemonic = "vmovupd"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j], j = 0..3"
+
+[isa.avx2.f64.broadcast]
+intrinsic = "_mm256_set1_pd"
+mnemonic = "vbroadcastsd"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..3"
+
+[isa.avx2.f64.add]
+intrinsic = "_mm256_add_pd"
+mnemonic = "vaddpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.avx2.f64.sub]
+intrinsic = "_mm256_sub_pd"
+mnemonic = "vsubpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.avx2.f64.mul]
+intrinsic = "_mm256_mul_pd"
+mnemonic = "vmulpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.avx2.f64.div]
+intrinsic = "_mm256_div_pd"
+mnemonic = "vdivpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+note = "slow (~13 cycles); hoist out of inner loops when the divisor is loop-invariant"
+
+[isa.avx2.f64.fma]
+intrinsic = "_mm256_fmadd_pd"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j]"
+note = "Intel order: products first, accumulator last; never write it from another ISA's memory"
+
+[isa.avx2.f64.reduce_add]
+mnemonic = "vextractf128 + vaddpd + vunpckhpd + vaddsd"
+signature = "(v) -> s"
+semantics = "s = sum of the 4 lanes of v"
+recipe = ["_mm256_castpd256_pd128", "_mm256_extractf128_pd", "_mm_add_pd", "_mm_unpackhi_pd", "_mm_add_sd", "_mm_cvtsd_f64"]
+note = "no single intrinsic: add the 128-bit halves, then horizontal; lanes 0..3 -> lane 0 -> scalar"
+
+[isa.avx2.f64.zero]
+intrinsic = "_mm256_setzero_pd"
+mnemonic = "vxorpd"
+signature = "() -> v"
+semantics = "v[j] = 0.0"
+
+[isa.avx2.f32.load]
+intrinsic = "_mm256_loadu_ps"
+mnemonic = "vmovups"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..7"
+
+[isa.avx2.f32.store]
+intrinsic = "_mm256_storeu_ps"
+mnemonic = "vmovups"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j], j = 0..7"
+
+[isa.avx2.f32.broadcast]
+intrinsic = "_mm256_set1_ps"
+mnemonic = "vbroadcastss"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..7"
+
+[isa.avx2.f32.add]
+intrinsic = "_mm256_add_ps"
+mnemonic = "vaddps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.avx2.f32.sub]
+intrinsic = "_mm256_sub_ps"
+mnemonic = "vsubps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.avx2.f32.mul]
+intrinsic = "_mm256_mul_ps"
+mnemonic = "vmulps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.avx2.f32.div]
+intrinsic = "_mm256_div_ps"
+mnemonic = "vdivps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+note = "slow; hoist out of inner loops when the divisor is loop-invariant"
+
+[isa.avx2.f32.fma]
+intrinsic = "_mm256_fmadd_ps"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j]"
+note = "Intel order: products first, accumulator last"
+
+[isa.avx2.f32.reduce_add]
+mnemonic = "vextractf128 + vaddps + vmovshdup + vmovhlps + vaddss"
+signature = "(v) -> s"
+semantics = "s = sum of the 8 lanes of v"
+recipe = ["_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_add_ps", "_mm_movehdup_ps", "_mm_movehl_ps", "_mm_add_ss", "_mm_cvtss_f32"]
+note = "no single intrinsic: add the 128-bit halves, then horizontal; lanes 0..7 -> lane 0 -> scalar"
+
+[isa.avx2.f32.zero]
+intrinsic = "_mm256_setzero_ps"
+mnemonic = "vxorps"
+signature = "() -> v"
+semantics = "v[j] = 0.0f"
+
+[isa.avx512]
+embedded_broadcast = true
+title = "AVX-512F (512-bit EVEX, opmask k0..k7)"
+vector_bytes = 64
+lanes = { f64 = 8, f32 = 16, i64 = 8, i32 = 16, f16 = 32 }
+mask = true
+schedules = ["scalar", "scalar_remainder", "masked_remainder", "full_mask"]
+gen_mask = "_mm512_cmplt_epu{64,32}_mask(iota, set1(N - i))"
+note = "The only x86 target with predication: masked tail forms take a leading __mmask8/16. avx512_256 (the matrix's -mprefer-vector-width=256) is this ISA at 256 bits: same intrinsics, half the lanes. Downclocking risk on some cores is why the width is a sweep knob. EVEX extras: embedded rounding, SAE, embedded broadcast {1to8}."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.avx512.assists]]
+name = "_mm512_scalef_pd"
+mnemonic = "vscalefpd"
+helps = "exp"
+note = "2^k scaling, the ldexp of the exp k-split: exp(x) = 2^k * exp(r) in one instruction"
+
+[[isa.avx512.assists]]
+name = "_mm512_getexp_pd"
+mnemonic = "vgetexppd"
+helps = "exp"
+note = "extracts each lane's unbiased exponent (frexp's e); range-reduction and scaling decompositions"
+
+[[isa.avx512.assists]]
+name = "_mm512_getmant_pd"
+mnemonic = "vgetmantpd"
+helps = "exp"
+note = "extracts normalized mantissas (frexp's m); pairs with getexp"
+
+[[isa.avx512.assists]]
+name = "_mm512_reduce_pd"
+mnemonic = "vreducepd"
+helps = "sin"
+note = "argument reduction by a multiple of imm8 - folds pi/2-multiple reduction into one instruction (sin/cos)"
+
+[[isa.avx512.assists]]
+name = "_mm512_fixupimm_pd"
+mnemonic = "vfixupimmpd"
+helps = "exp"
+note = "patches special-case lanes (NaN/Inf/denormal) per an immediate table; SVML's transcendentals use it"
+
+[[isa.avx512.assists]]
+name = "_mm512_range_pd"
+mnemonic = "vrangepd"
+helps = "min"
+note = "restricted-range min/max with immediate-supplied bounds"
+
+[[isa.avx512.assists]]
+name = "_mm512_rcp14_pd"
+mnemonic = "vrcp14pd"
+helps = "div"
+note = "14-bit reciprocal estimate; one or two Newton steps (x*(2 - d*x)) give a fast divide"
+
+[[isa.avx512.assists]]
+name = "_mm512_rsqrt14_pd"
+mnemonic = "vrsqrt14pd"
+helps = "sqrt"
+note = "14-bit rsqrt estimate; Newton refinement gives a fast reciprocal square root"
+
+[[isa.avx512.assists]]
+name = "_mm512_fpclass_pd_mask"
+mnemonic = "vfpclasspd"
+helps = "exp"
+note = "classifies lanes (NaN/Inf/zero/denormal) into an opmask; the finite-input guard for fast-math tiers"
+
+[isa.avx512.f64.load]
+intrinsic = "_mm512_loadu_pd"
+masked = "_mm512_maskz_loadu_pd(k, p)"
+mnemonic = "vmovupd"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..7"
+
+[isa.avx512.f64.store]
+intrinsic = "_mm512_storeu_pd"
+masked = "_mm512_mask_storeu_pd(p, k, v)"
+mnemonic = "vmovupd"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j] for active lanes j"
+
+[isa.avx512.f64.broadcast]
+intrinsic = "_mm512_set1_pd"
+mnemonic = "vbroadcastsd"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..7"
+note = "EVEX embedded broadcast {1to8} folds a broadcast into an arithmetic operand"
+
+[isa.avx512.f64.add]
+intrinsic = "_mm512_add_pd"
+masked = "_mm512_mask_add_pd(src, k, a, b)"
+mnemonic = "vaddpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.avx512.f64.sub]
+intrinsic = "_mm512_sub_pd"
+masked = "_mm512_mask_sub_pd(src, k, a, b)"
+mnemonic = "vsubpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.avx512.f64.mul]
+intrinsic = "_mm512_mul_pd"
+masked = "_mm512_mask_mul_pd(src, k, a, b)"
+mnemonic = "vmulpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.avx512.f64.div]
+intrinsic = "_mm512_div_pd"
+masked = "_mm512_mask_div_pd(src, k, a, b)"
+mnemonic = "vdivpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+
+[isa.avx512.f64.fma]
+intrinsic = "_mm512_fmadd_pd"
+masked = "_mm512_mask_fmadd_pd(a, k, b, c)"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j]"
+note = "Intel order: products first, accumulator last"
+
+[isa.avx512.f64.reduce_add]
+intrinsic = "_mm512_reduce_add_pd"
+mnemonic = "vextractf64x4 + vaddpd + ..."
+signature = "(v) -> s"
+semantics = "s = sum of the 8 lanes of v"
+note = "header composite, not one instruction: shuffle-add chain the compiler expands"
+
+[isa.avx512.f64.zero]
+intrinsic = "_mm512_setzero_pd"
+mnemonic = "vxorpd"
+signature = "() -> v"
+semantics = "v[j] = 0.0"
+
+[isa.avx512.f64.gen_mask]
+intrinsic = "_mm512_cmplt_epu64_mask"
+mnemonic = "vpcmpuq"
+signature = "(iota, n) -> k"
+semantics = "k bit j set iff iota[j] < n, with iota = _mm512_setr_epi64(0..7), n = N - i"
+note = "the standardized gen_mask: element i+offset active iff offset < N - i"
+
+[isa.avx512.f32.load]
+intrinsic = "_mm512_loadu_ps"
+masked = "_mm512_maskz_loadu_ps(k, p)"
+mnemonic = "vmovups"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..15"
+
+[isa.avx512.f32.store]
+intrinsic = "_mm512_storeu_ps"
+masked = "_mm512_mask_storeu_ps(p, k, v)"
+mnemonic = "vmovups"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j] for active lanes j"
+
+[isa.avx512.f32.broadcast]
+intrinsic = "_mm512_set1_ps"
+mnemonic = "vbroadcastss"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..15"
+note = "EVEX embedded broadcast {1to16} folds a broadcast into an arithmetic operand"
+
+[isa.avx512.f32.add]
+intrinsic = "_mm512_add_ps"
+masked = "_mm512_mask_add_ps(src, k, a, b)"
+mnemonic = "vaddps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.avx512.f32.sub]
+intrinsic = "_mm512_sub_ps"
+masked = "_mm512_mask_sub_ps(src, k, a, b)"
+mnemonic = "vsubps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.avx512.f32.mul]
+intrinsic = "_mm512_mul_ps"
+masked = "_mm512_mask_mul_ps(src, k, a, b)"
+mnemonic = "vmulps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.avx512.f32.div]
+intrinsic = "_mm512_div_ps"
+masked = "_mm512_mask_div_ps(src, k, a, b)"
+mnemonic = "vdivps"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+
+[isa.avx512.f32.fma]
+intrinsic = "_mm512_fmadd_ps"
+masked = "_mm512_mask_fmadd_ps(a, k, b, c)"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j]"
+note = "Intel order: products first, accumulator last"
+
+[isa.avx512.f32.reduce_add]
+intrinsic = "_mm512_reduce_add_ps"
+mnemonic = "vextractf32x8 + vaddps + ..."
+signature = "(v) -> s"
+semantics = "s = sum of the 16 lanes of v"
+note = "header composite, not one instruction: shuffle-add chain the compiler expands"
+
+[isa.avx512.f32.zero]
+intrinsic = "_mm512_setzero_ps"
+mnemonic = "vxorps"
+signature = "() -> v"
+semantics = "v[j] = 0.0f"
+
+[isa.avx512.f32.gen_mask]
+intrinsic = "_mm512_cmplt_epu32_mask"
+mnemonic = "vpcmpud"
+signature = "(iota, n) -> k"
+semantics = "k bit j set iff iota[j] < n, with iota = _mm512_setr_epi32(0..15), n = N - i"
+note = "the standardized gen_mask: element i+offset active iff offset < N - i"
+
+[isa.neon]
+title = "Arm NEON / AdvSIMD (fixed 128-bit)"
+vector_bytes = 16
+lanes = { f64 = 2, f32 = 4, i64 = 2, i32 = 4, f16 = 8 }
+mask = false
+schedules = ["scalar", "scalar_remainder"]
+gen_mask = ""
+note = "AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. NEON and SVE coexist on one core; gcc --param=aarch64-autovec-preference and clang -mllvm -scalable-vectorization=off gate which the auto-vectorizer prefers. fma availability: vfmaq_f64 (ACLE __ARM_FEATURE_FMA)."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.neon.assists]]
+name = "vrecpeq_f64"
+mnemonic = "frecpe"
+helps = "div"
+note = "reciprocal estimate; refine with vrecpsq for a fast divide"
+
+[[isa.neon.assists]]
+name = "vrsqrteq_f64"
+mnemonic = "frsqrte"
+helps = "sqrt"
+note = "rsqrt estimate; refine for a fast reciprocal square root"
+
+[[isa.neon.assists]]
+name = "vrecpsq_f64"
+mnemonic = "frecps"
+helps = "div"
+note = "the Newton refinement step for vrecpeq"
+
+[[isa.neon.assists]]
+name = "vld2q_f64"
+mnemonic = "ld2"
+helps = "load"
+note = "structure load: deinterleaves an AoS pair (vld3/vld4 for 3- and 4-wide) - the SoA idiom for stencil kernels"
+
+[isa.neon.f64.load]
+intrinsic = "vld1q_f64"
+mnemonic = "ld1"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..1"
+
+[isa.neon.f64.store]
+intrinsic = "vst1q_f64"
+mnemonic = "st1"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j], j = 0..1"
+
+[isa.neon.f64.broadcast]
+intrinsic = "vdupq_n_f64"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..1"
+
+[isa.neon.f64.add]
+intrinsic = "vaddq_f64"
+mnemonic = "fadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.neon.f64.sub]
+intrinsic = "vsubq_f64"
+mnemonic = "fsub"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.neon.f64.mul]
+intrinsic = "vmulq_f64"
+mnemonic = "fmul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.neon.f64.div]
+intrinsic = "vdivq_f64"
+mnemonic = "fdiv"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+
+[isa.neon.f64.fma]
+intrinsic = "vfmaq_f64"
+mnemonic = "fmla"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j] + b[j]*c[j]"
+note = "operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd"
+
+[isa.neon.f64.reduce_add]
+mnemonic = "faddp + fmov"
+signature = "(v) -> s"
+semantics = "s = sum of the 2 lanes of v"
+recipe = ["vpaddq_f64", "vgetq_lane_f64"]
+note = "pairwise add (v, v), then extract lane 0: s = vpaddq(v, v)[0]"
+
+[isa.neon.f64.zero]
+intrinsic = "vdupq_n_f64"
+mnemonic = "movi"
+signature = "(0.0) -> v"
+semantics = "v[j] = 0.0"
+
+[isa.neon.f32.load]
+intrinsic = "vld1q_f32"
+mnemonic = "ld1"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], j = 0..3"
+
+[isa.neon.f32.store]
+intrinsic = "vst1q_f32"
+mnemonic = "st1"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j], j = 0..3"
+
+[isa.neon.f32.broadcast]
+intrinsic = "vdupq_n_f32"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s, j = 0..3"
+
+[isa.neon.f32.add]
+intrinsic = "vaddq_f32"
+mnemonic = "fadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j]"
+
+[isa.neon.f32.sub]
+intrinsic = "vsubq_f32"
+mnemonic = "fsub"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j]"
+
+[isa.neon.f32.mul]
+intrinsic = "vmulq_f32"
+mnemonic = "fmul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j]"
+
+[isa.neon.f32.div]
+intrinsic = "vdivq_f32"
+mnemonic = "fdiv"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] / b[j]"
+
+[isa.neon.f32.fma]
+intrinsic = "vfmaq_f32"
+mnemonic = "fmla"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j] + b[j]*c[j]"
+note = "operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd"
+
+[isa.neon.f32.reduce_add]
+intrinsic = "vaddvq_f32"
+mnemonic = "faddp"
+signature = "(v) -> s"
+semantics = "s = sum of the 4 lanes of v"
+note = "single horizontal-add instruction"
+
+[isa.neon.f32.zero]
+intrinsic = "vdupq_n_f32"
+mnemonic = "movi"
+signature = "(0.0f) -> v"
+semantics = "v[j] = 0.0f"
+
+[isa.sve]
+title = "Arm SVE (scalable vectors, predicated)"
+vector_bytes = 0
+lanes = { f64 = 0, f32 = 0, i64 = 0, i32 = 0, f16 = 0 }
+mask = true
+schedules = ["scalar", "sve_intrinsics"]
+gen_mask = "svwhilelt_b{64,32}_u64(i, N)"
+note = "Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) and known only at runtime via svcntd()/svcntw() — lanes 0 here mean 'runtime length'. Everything is predicated: every op takes a leading svbool_t pg plus an activity-policy suffix _x (don't-care, fastest), _z (inactive lanes zeroed), _m (inactive lanes from a source operand). The predicate subsumes every tail schedule: no remainder loop. Host flag: -march=armv8-a+sve."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.sve.assists]]
+name = "svexpa_f64"
+mnemonic = "fexpa"
+helps = "exp"
+note = "the hardware 2^(I/64) table with the exponent field replaced (ACLE SVE 6.16.30): split k*64+j, EXPA yields 2^k*2^(j/64) and a short polynomial finishes - the sub-1-ulp exp building block"
+
+[[isa.sve.assists]]
+name = "svscale_f64_x"
+mnemonic = "fscale"
+helps = "exp"
+note = "ldexp-style scaling by 2^floor(n): the 2^k of the exp k-split, predicated"
+
+[[isa.sve.assists]]
+name = "svlogb_f64_x"
+mnemonic = "flogb"
+helps = "exp"
+note = "extracts each lane's exponent (frexp's e), predicated"
+
+[[isa.sve.assists]]
+name = "svrecpe_f64"
+mnemonic = "frecpe"
+helps = "div"
+note = "reciprocal estimate; refine with svrecps (Newton step) for a fast divide"
+
+[[isa.sve.assists]]
+name = "svrsqrte_f64"
+mnemonic = "frsqrte"
+helps = "sqrt"
+note = "rsqrt estimate; refine with the frsqrts step for a fast reciprocal square root"
+
+[[isa.sve.assists]]
+name = "svrecps_f64"
+mnemonic = "frecps"
+helps = "div"
+note = "the Newton refinement step for svrecpe: r' = r*(2 - d*r) in one instruction"
+
+[isa.sve.f64.load]
+intrinsic = "svld1_f64"
+mnemonic = "ld1d"
+signature = "(pg, p) -> v"
+semantics = "v[j] = p[j] for active lanes j"
+
+[isa.sve.f64.store]
+intrinsic = "svst1_f64"
+mnemonic = "st1d"
+signature = "(pg, p, v) -> void"
+semantics = "p[j] = v[j] for active lanes j"
+
+[isa.sve.f64.broadcast]
+intrinsic = "svdup_f64"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s for every lane j"
+
+[isa.sve.f64.add]
+intrinsic = "svadd_f64_x"
+mnemonic = "fadd"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] + b[j] for active lanes j"
+note = "_x policy: fully rewritten values; use _z to zero inactive lanes, _m to merge"
+
+[isa.sve.f64.sub]
+intrinsic = "svsub_f64_x"
+mnemonic = "fsub"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] - b[j] for active lanes j"
+
+[isa.sve.f64.mul]
+intrinsic = "svmul_f64_x"
+mnemonic = "fmul"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] * b[j] for active lanes j"
+
+[isa.sve.f64.div]
+intrinsic = "svdiv_f64_x"
+mnemonic = "fdiv"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] / b[j] for active lanes j"
+
+[isa.sve.f64.fma]
+intrinsic = "svmla_f64_x"
+mnemonic = "fmla"
+signature = "(pg, add, m1, m2) -> v"
+semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
+note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
+
+[isa.sve.f64.reduce_add]
+intrinsic = "svaddv_f64"
+mnemonic = "faddv"
+signature = "(pg, v) -> s"
+semantics = "s = sum of the active lanes of v"
+note = "cleanest horizontal add of all targets"
+
+[isa.sve.f64.zero]
+intrinsic = "svdup_f64"
+mnemonic = "mov"
+signature = "(0.0) -> v"
+semantics = "v[j] = 0.0 for every lane j"
+
+[isa.sve.f64.gen_mask]
+intrinsic = "svwhilelt_b64_u64"
+mnemonic = "whilelt"
+signature = "(i, N) -> pg"
+semantics = "lane j active iff i + j < N"
+note = "the standardized gen_mask; the loop steps by svcntd() and never needs a remainder loop"
+
+[isa.sve.f32.load]
+intrinsic = "svld1_f32"
+mnemonic = "ld1w"
+signature = "(pg, p) -> v"
+semantics = "v[j] = p[j] for active lanes j"
+
+[isa.sve.f32.store]
+intrinsic = "svst1_f32"
+mnemonic = "st1w"
+signature = "(pg, p, v) -> void"
+semantics = "p[j] = v[j] for active lanes j"
+
+[isa.sve.f32.broadcast]
+intrinsic = "svdup_f32"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s for every lane j"
+
+[isa.sve.f32.add]
+intrinsic = "svadd_f32_x"
+mnemonic = "fadd"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] + b[j] for active lanes j"
+note = "_x policy: fully rewritten values; use _z to zero inactive lanes, _m to merge"
+
+[isa.sve.f32.sub]
+intrinsic = "svsub_f32_x"
+mnemonic = "fsub"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] - b[j] for active lanes j"
+
+[isa.sve.f32.mul]
+intrinsic = "svmul_f32_x"
+mnemonic = "fmul"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] * b[j] for active lanes j"
+
+[isa.sve.f32.div]
+intrinsic = "svdiv_f32_x"
+mnemonic = "fdiv"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] / b[j] for active lanes j"
+
+[isa.sve.f32.fma]
+intrinsic = "svmla_f32_x"
+mnemonic = "fmla"
+signature = "(pg, add, m1, m2) -> v"
+semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
+note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
+
+[isa.sve.f32.reduce_add]
+intrinsic = "svaddv_f32"
+mnemonic = "faddv"
+signature = "(pg, v) -> s"
+semantics = "s = sum of the active lanes of v"
+
+[isa.sve.f32.zero]
+intrinsic = "svdup_f32"
+mnemonic = "mov"
+signature = "(0.0f) -> v"
+semantics = "v[j] = 0.0f for every lane j"
+
+[isa.sve.f32.gen_mask]
+intrinsic = "svwhilelt_b32_u64"
+mnemonic = "whilelt"
+signature = "(i, N) -> pg"
+semantics = "lane j active iff i + j < N"
+note = "the standardized gen_mask; the loop steps by svcntw() and never needs a remainder loop"
+
+
+
+# --- Transcendentals (exp/sin/cos): no native instruction on the covered ISAs. Each entry lists
+# polynomial tiers from [approx] (measured ULP, Horner recipes in abstract-op steps) and the
+# vector math library call per veclib (libmvec names verified by nm on glibc 2.43; SLEEF names
+# per sleef.org/x86.xhtml and sleef.org/aarch64.xhtml).
+[isa.avx2.f64.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { libmvec = "_ZGVdN4v_exp", svml = "_mm256_exp_pd", sleef = "Sleef_expd4_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.avx2.f64.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { libmvec = "_ZGVdN4v_sin", svml = "_mm256_sin_pd", sleef = "Sleef_sind4_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx2.f64.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { libmvec = "_ZGVdN4v_cos", svml = "_mm256_cos_pd", sleef = "Sleef_cosd4_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx2.f32.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { libmvec = "_ZGVdN8v_expf", svml = "_mm256_exp_ps", sleef = "Sleef_expf8_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.avx2.f32.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { libmvec = "_ZGVdN8v_sinf", svml = "_mm256_sin_ps", sleef = "Sleef_sinf8_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx2.f32.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { libmvec = "_ZGVdN8v_cosf", svml = "_mm256_cos_ps", sleef = "Sleef_cosf8_u10" }
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx512.f64.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { libmvec = "_ZGVeN8v_exp", svml = "_mm512_exp_pd", sleef = "Sleef_expd8_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.avx512.f64.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { libmvec = "_ZGVeN8v_sin", svml = "_mm512_sin_pd", sleef = "Sleef_sind8_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx512.f64.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { libmvec = "_ZGVeN8v_cos", svml = "_mm512_cos_pd", sleef = "Sleef_cosd8_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx512.f32.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { libmvec = "_ZGVeN16v_expf", svml = "_mm512_exp_ps", sleef = "Sleef_expf16_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.avx512.f32.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { libmvec = "_ZGVeN16v_sinf", svml = "_mm512_sin_ps", sleef = "Sleef_sinf16_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.avx512.f32.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { libmvec = "_ZGVeN16v_cosf", svml = "_mm512_cos_ps", sleef = "Sleef_cosf16_u10avx512f" }
+note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD folds pi/2-multiple argument reduction into one instruction, VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.neon.f64.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { sleef = "Sleef_expd2_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.neon.f64.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { sleef = "Sleef_sind2_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.neon.f64.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { sleef = "Sleef_cosd2_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.neon.f32.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = { sleef = "Sleef_expf4_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.neon.f32.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = { sleef = "Sleef_sinf4_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.neon.f32.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = { sleef = "Sleef_cosf4_u10" }
+note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.sve.f64.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.sve.f64.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.sve.f64.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.sve.f32.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+
+[isa.sve.f32.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+[isa.sve.f32.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+libraries = {  }
+note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: split k*64+j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+
+# --- Polynomial approximation tiers ([approx]): measured against double-precision
+# libm on dense grids; error_ulp = max |approx - ref| / spacing(max(|ref|, 1.0)) - ULP at function
+# scale, floored so function zeros (cos(pi/2)) stay finite. Taylor tiers use exact Taylor coefficients;
+# the quad/cheb tiers are Chebyshev fits (near-minimax) on the reduced domain. The floor of the metric
+# is the reference's own 0.5 ulp - higher degrees do not measure better without a wider reference.
+[approx.sin-taylor7]
+op = "sin"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 1.568986e-04
+error_ulp = 7.066085e+11
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(-0.0001984126984126984, t, 0.008333333333333333)",
+  "p = fma(p, t, -0.16666666666666666)",
+  "s = fma(mul(x, t), p, x)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.sin-taylor9]
+op = "sin"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 3.542584e-06
+error_ulp = 1.595438e+10
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(2.7557319223985893e-06, t, -0.0001984126984126984)",
+  "p = fma(p, t, 0.008333333333333333)",
+  "p = fma(p, t, -0.16666666666666666)",
+  "s = fma(mul(x, t), p, x)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.sin-taylor11]
+op = "sin"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 5.625895e-08
+error_ulp = 2.533678e+08
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(-2.505210838544172e-08, t, 2.7557319223985893e-06)",
+  "p = fma(p, t, -0.0001984126984126984)",
+  "p = fma(p, t, 0.008333333333333333)",
+  "p = fma(p, t, -0.16666666666666666)",
+  "s = fma(mul(x, t), p, x)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.sin-quad-cheb9]
+op = "sin"
+domain = "|x| <= pi/4 after quadrant (mod pi/2) reduction"
+error_abs = 6.885270e-12
+error_ulp = 3.100850e+04
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(2.7173474601211545e-06, t, -0.00019839169723550524)",
+  "p = fma(p, t, 0.008333328480625443)",
+  "p = fma(p, t, -0.16666666623931767)",
+  "p = fma(p, t, 0.999999999991219)",
+  "s = mul(x, p)",
+]
+note = "Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
+
+[approx.sin-quad-cheb13]
+op = "sin"
+domain = "|x| <= pi/4 after quadrant (mod pi/2) reduction"
+error_abs = 1.887379e-15
+error_ulp = 8.500000e+00
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(1.779654317759725e-10, t, -2.5085949024166185e-08)",
+  "p = fma(p, t, 2.7557559627039636e-06)",
+  "p = fma(p, t, -0.00019841270630842274)",
+  "p = fma(p, t, 0.008333333334519494)",
+  "p = fma(p, t, -0.1666666666667311)",
+  "p = fma(p, t, 1.0000000000000024)",
+  "s = mul(x, p)",
+]
+note = "Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
+
+[approx.cos-taylor6]
+op = "cos"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 8.945230e-04
+error_ulp = 4.028573e+12
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(-0.001388888888888889, t, 0.041666666666666664)",
+  "p = fma(p, t, -0.5)",
+  "c = fma(p, t, 1.0)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.cos-taylor8]
+op = "cos"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 2.473728e-05
+error_ulp = 1.114068e+11
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(2.48015873015873e-05, t, -0.001388888888888889)",
+  "p = fma(p, t, 0.041666666666666664)",
+  "p = fma(p, t, -0.5)",
+  "c = fma(p, t, 1.0)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.cos-taylor10]
+op = "cos"
+domain = "|x| <= pi/2 after Cody-Waite reduction"
+error_abs = 4.647660e-07
+error_ulp = 2.093120e+09
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(-2.755731922398589e-07, t, 2.48015873015873e-05)",
+  "p = fma(p, t, -0.001388888888888889)",
+  "p = fma(p, t, 0.041666666666666664)",
+  "p = fma(p, t, -0.5)",
+  "c = fma(p, t, 1.0)",
+]
+note = "plain Taylor: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.cos-quad-cheb8]
+op = "cos"
+domain = "|x| <= pi/4 after quadrant (mod pi/2) reduction"
+error_abs = 9.642331e-11
+error_ulp = 4.342520e+05
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(2.4379853622539965e-05, t, -0.0013886582374563101)",
+  "p = fma(p, t, 0.04166661338080217)",
+  "p = fma(p, t, -0.49999999530797495)",
+  "p = fma(p, t, 0.9999999999035767)",
+  "c = p",
+]
+note = "Chebyshev-fit near-minimax on the quadrant"
+
+[approx.cos-quad-cheb12]
+op = "cos"
+domain = "|x| <= pi/4 after quadrant (mod pi/2) reduction"
+error_abs = 3.552714e-15
+error_ulp = 1.600000e+01
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(2.075686512301728e-09, t, -2.755754941168432e-07)",
+  "p = fma(p, t, 2.4801594359371055e-05)",
+  "p = fma(p, t, -0.0013888888919297226)",
+  "p = fma(p, t, 0.041666666667141194)",
+  "p = fma(p, t, -0.5000000000000183)",
+  "p = fma(p, t, 1.0000000000000024)",
+  "c = p",
+]
+note = "Chebyshev-fit near-minimax on the quadrant"
+
+[approx.exp-taylor5]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 2.531332e-06
+error_ulp = 1.140010e+10
+recipe = [
+  "p = fma(0.008333333333333333, x, 0.041666666666666664)",
+  "p = fma(p, x, 0.16666666666666666)",
+  "p = fma(p, x, 0.5)",
+  "p = fma(p, x, 1.0)",
+  "e = fma(p, x, 1.0)",
+]
+note = "range-reduce with k = round(x/ln2); a plain split loses accuracy for large |x| (hi/lo ln2 needed)"
+
+[approx.exp-taylor7]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 5.368203e-09
+error_ulp = 2.417624e+07
+recipe = [
+  "p = fma(0.0001984126984126984, x, 0.001388888888888889)",
+  "p = fma(p, x, 0.008333333333333333)",
+  "p = fma(p, x, 0.041666666666666664)",
+  "p = fma(p, x, 0.16666666666666666)",
+  "p = fma(p, x, 0.5)",
+  "p = fma(p, x, 1.0)",
+  "e = fma(p, x, 1.0)",
+]
+note = "range-reduce with k = round(x/ln2); a plain split loses accuracy for large |x| (hi/lo ln2 needed)"
+
+[approx.exp-taylor9]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 7.112977e-12
+error_ulp = 3.203400e+04
+recipe = [
+  "p = fma(2.7557319223985893e-06, x, 2.48015873015873e-05)",
+  "p = fma(p, x, 0.0001984126984126984)",
+  "p = fma(p, x, 0.001388888888888889)",
+  "p = fma(p, x, 0.008333333333333333)",
+  "p = fma(p, x, 0.041666666666666664)",
+  "p = fma(p, x, 0.16666666666666666)",
+  "p = fma(p, x, 0.5)",
+  "p = fma(p, x, 1.0)",
+  "e = fma(p, x, 1.0)",
+]
+note = "range-reduce with k = round(x/ln2); a plain split loses accuracy for large |x| (hi/lo ln2 needed)"
+
+[approx.exp-cheb7]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 1.051585e-10
+error_ulp = 4.735920e+05
+recipe = [
+  "p = fma(0.00019911475068801679, x, 0.0013944595309953014)",
+  "p = fma(p, x, 0.008333274273953764)",
+  "p = fma(p, x, 0.041666280414681296)",
+  "p = fma(p, x, 0.1666666684860883)",
+  "p = fma(p, x, 0.5000000084377764)",
+  "p = fma(p, x, 0.9999999999850977)",
+  "p = fma(p, x, 0.9999999999718296)",
+  "e = p",
+]
+note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+
+[approx.exp-cheb9]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 4.907186e-14
+error_ulp = 2.210000e+02
+recipe = [
+  "p = fma(2.7621924093449325e-06, x, 2.4880480101392753e-05)",
+  "p = fma(p, x, 0.00019841220780010156)",
+  "p = fma(p, x, 0.0013888810368452474)",
+  "p = fma(p, x, 0.008333333340513734)",
+  "p = fma(p, x, 0.041666666983188175)",
+  "p = fma(p, x, 0.16666666666690777)",
+  "p = fma(p, x, 0.4999999999955776)",
+  "p = fma(p, x, 0.999999999999999)",
+  "p = fma(p, x, 0.9999999999999974)",
+  "e = p",
+]
+note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+
+[approx.exp-cheb11]
+op = "exp"
+domain = "|x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after"
+error_abs = 1.487699e-14
+error_ulp = 6.700000e+01
+recipe = [
+  "p = fma(1.844358816003227e-08, x, 2.602575079151341e-07)",
+  "p = fma(p, x, 2.758190600711796e-06)",
+  "p = fma(p, x, 2.480636400388668e-05)",
+  "p = fma(p, x, 0.0001984123562888061)",
+  "p = fma(p, x, 0.0013888883712549222)",
+  "p = fma(p, x, 0.008333333355674174)",
+  "p = fma(p, x, 0.041666666689645776)",
+  "p = fma(p, x, 0.16666666666597701)",
+  "p = fma(p, x, 0.49999999999964856)",
+  "p = fma(p, x, 1.0000000000000089)",
+  "p = fma(p, x, 0.9999999999999883)",
+  "e = p",
+]
+note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+
+
+
+# --- sqrt/min/max/abs/neg/select/mod/gather/scatter under f64/f32; and/or/shl/shr/mod/land/lor
+# under i64/i32; the f16 arithmetic subset. Where the hardware lacks an op the entry is a
+# recipe over the intrinsics that provide it (the table's fallback story): FP abs/neg are
+# AND/XOR sign-mask recipes on x86, scatter is a store+scalar recipe before AVX-512, NEON
+# gathers lane-wise, and AVX2 has no f16 arithmetic at all - it converts through f32.
+[isa.avx2.f64.sqrt]
+intrinsic = "_mm256_sqrt_pd"
+mnemonic = "vsqrtpd"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.avx2.f64.min]
+intrinsic = "_mm256_min_pd"
+mnemonic = "vminpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN (minNum semantics)"
+
+[isa.avx2.f64.max]
+intrinsic = "_mm256_max_pd"
+mnemonic = "vmaxpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN (minNum semantics)"
+
+[isa.avx2.f64.abs]
+mnemonic = "vandpd"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_and_pd"]
+note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as integer bits"
+
+[isa.avx2.f64.neg]
+mnemonic = "vxorpd"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_xor_pd"]
+note = "no native FP neg: XOR with the sign bit (0x8000...) as integer bits"
+
+[isa.avx2.f64.select]
+intrinsic = "_mm256_blendv_pd"
+mnemonic = "vblendvpd"
+signature = "(a, b, mask) -> v"
+semantics = "v[j] = signbit(mask[j]) ? b[j] : a[j]"
+note = "operand-order trap: mask is LAST and it picks b; blendv tests the mask's SIGN BIT, not ==1 - feed it compare results (all-ones/all-zeros), x86 calls this op blend"
+
+[isa.avx2.f64.mod]
+mnemonic = "vdivpd+vroundpd+vfnmadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["_mm256_div_pd", "_mm256_round_pd", "_mm256_fnmadd_pd"]
+note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs"
+
+[isa.avx2.f64.gather]
+intrinsic = "_mm256_i64gather_pd"
+mnemonic = "vgatherqpd"
+signature = "(base, idx, scale) -> v"
+semantics = "v[j] = base[idx[j]]"
+note = "slow on AMD Zen1/2 (microcoded): affine indices want a plain load"
+
+[isa.avx2.f64.scatter]
+mnemonic = "storeu+scalar"
+signature = "(base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j]"
+recipe = ["no vector scatter before AVX-512: _mm256_storeu_pd(v) to a scratch buffer, then scalar per-lane stores; restructure to gather-on-load where possible"]
+
+[isa.avx2.f32.sqrt]
+intrinsic = "_mm256_sqrt_ps"
+mnemonic = "vsqrtps"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.avx2.f32.min]
+intrinsic = "_mm256_min_ps"
+mnemonic = "vminps"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN (minNum semantics)"
+
+[isa.avx2.f32.max]
+intrinsic = "_mm256_max_ps"
+mnemonic = "vmaxps"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN (minNum semantics)"
+
+[isa.avx2.f32.abs]
+mnemonic = "vandps"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_and_ps"]
+note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as integer bits"
+
+[isa.avx2.f32.neg]
+mnemonic = "vxorps"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_xor_ps"]
+note = "no native FP neg: XOR with the sign bit (0x8000...) as integer bits"
+
+[isa.avx2.f32.select]
+intrinsic = "_mm256_blendv_ps"
+mnemonic = "vblendvps"
+signature = "(a, b, mask) -> v"
+semantics = "v[j] = signbit(mask[j]) ? b[j] : a[j]"
+note = "operand-order trap: mask is LAST and it picks b; blendv tests the mask's SIGN BIT, not ==1 - feed it compare results (all-ones/all-zeros), x86 calls this op blend"
+
+[isa.avx2.f32.mod]
+mnemonic = "vdivps+vroundps+vfnmadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["_mm256_div_ps", "_mm256_round_ps", "_mm256_fnmadd_ps"]
+note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs"
+
+[isa.avx2.f32.gather]
+intrinsic = "_mm256_i32gather_ps"
+mnemonic = "vgatherdps"
+signature = "(base, idx, scale) -> v"
+semantics = "v[j] = base[idx[j]]"
+note = "32-bit indices; slow on AMD Zen1/2"
+
+[isa.avx2.f32.scatter]
+mnemonic = "storeu+scalar"
+signature = "(base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j]"
+recipe = ["no vector scatter before AVX-512: _mm256_storeu_ps(v) to a scratch buffer, then scalar per-lane stores"]
+
+[isa.avx512.f64.sqrt]
+intrinsic = "_mm512_sqrt_pd"
+masked = "_mm512_mask_sqrt_pd"
+mnemonic = "vsqrtpd"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.avx512.f64.min]
+intrinsic = "_mm512_min_pd"
+masked = "_mm512_mask_min_pd"
+mnemonic = "vminpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN"
+
+[isa.avx512.f64.max]
+intrinsic = "_mm512_max_pd"
+masked = "_mm512_mask_max_pd"
+mnemonic = "vmaxpd"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN"
+
+[isa.avx512.f64.abs]
+mnemonic = "vpandq"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm512_and_si512"]
+note = "no native FP abs: AND (viewed as integers) with 0x7fff...; _mm512_castpd_si512/_mm512_castsi512_pd are macros, not functions"
+
+[isa.avx512.f64.neg]
+mnemonic = "vpxorq"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm512_xor_si512"]
+note = "no native FP neg: XOR (viewed as integers) with the sign bit; the casts are macros"
+
+[isa.avx512.f64.select]
+intrinsic = "_mm512_mask_blend_pd"
+mnemonic = "vblendmpd"
+signature = "(k, a, b) -> v"
+semantics = "v[j] = k[j] ? b[j] : a[j]"
+note = "operand-order trap: mask is FIRST and picks b - the opposite surface from AVX2 blendv; x86 calls this op blend"
+
+[isa.avx512.f64.mod]
+mnemonic = "vdivpd+vrndscalepd+vfnmadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["_mm512_div_pd", "_mm512_roundscale_pd", "_mm512_fnmadd_pd"]
+note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b"
+
+[isa.avx512.f64.gather]
+intrinsic = "_mm512_i64gather_pd"
+masked = "_mm512_mask_i64gather_pd(src, k, idx, base, 8)"
+mnemonic = "vgatherqpd"
+signature = "(idx, base, scale) -> v"
+semantics = "v[j] = base[idx[j]]"
+note = "operand-order trap: AVX-512 gathers take (index, base), AVX2 took (base, index)"
+
+[isa.avx512.f64.scatter]
+intrinsic = "_mm512_i64scatter_pd"
+masked = "_mm512_mask_i64scatter_pd(base, k, idx, v, 8)"
+mnemonic = "vscatterqpd"
+signature = "(base, idx, v, scale) -> void"
+semantics = "base[idx[j]] = v[j]"
+
+[isa.avx512.f32.sqrt]
+intrinsic = "_mm512_sqrt_ps"
+masked = "_mm512_mask_sqrt_ps"
+mnemonic = "vsqrtps"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.avx512.f32.min]
+intrinsic = "_mm512_min_ps"
+masked = "_mm512_mask_min_ps"
+mnemonic = "vminps"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN"
+
+[isa.avx512.f32.max]
+intrinsic = "_mm512_max_ps"
+masked = "_mm512_mask_max_ps"
+mnemonic = "vmaxps"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN"
+
+[isa.avx512.f32.abs]
+mnemonic = "vpandd"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm512_and_si512"]
+note = "no native FP abs: AND (viewed as integers) with 0x7fff...; _mm512_castpd_si512/_mm512_castsi512_pd are macros, not functions"
+
+[isa.avx512.f32.neg]
+mnemonic = "vpxord"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm512_xor_si512"]
+note = "no native FP neg: XOR (viewed as integers) with the sign bit; the casts are macros"
+
+[isa.avx512.f32.select]
+intrinsic = "_mm512_mask_blend_ps"
+mnemonic = "vblendmps"
+signature = "(k, a, b) -> v"
+semantics = "v[j] = k[j] ? b[j] : a[j]"
+note = "operand-order trap: mask is FIRST and picks b - the opposite surface from AVX2 blendv; x86 calls this op blend"
+
+[isa.avx512.f32.mod]
+mnemonic = "vdivps+vrndscaleps+vfnmadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["_mm512_div_ps", "_mm512_roundscale_ps", "_mm512_fnmadd_ps"]
+note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b"
+
+[isa.avx512.f32.gather]
+intrinsic = "_mm512_i32gather_ps"
+masked = "_mm512_mask_i32gather_ps(src, k, idx, base, 4)"
+mnemonic = "vgatherdps"
+signature = "(idx, base, scale) -> v"
+semantics = "v[j] = base[idx[j]]"
+note = "32-bit indices; operand order (index, base)"
+
+[isa.avx512.f32.scatter]
+intrinsic = "_mm512_i32scatter_ps"
+masked = "_mm512_mask_i32scatter_ps(base, k, idx, v, 4)"
+mnemonic = "vscatterdps"
+signature = "(base, idx, v, scale) -> void"
+semantics = "base[idx[j]] = v[j]"
+
+[isa.neon.f64.sqrt]
+intrinsic = "vsqrtq_f64"
+mnemonic = "fsqrt"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.neon.f64.min]
+intrinsic = "vminq_f64"
+mnemonic = "fmin"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "NEON fmin/fmax implement the IEEE minNum NaN rules"
+
+[isa.neon.f64.max]
+intrinsic = "vmaxq_f64"
+mnemonic = "fmax"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+
+[isa.neon.f64.abs]
+intrinsic = "vabsq_f64"
+mnemonic = "fabs"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+note = "native on NEON, unlike x86 where abs is an AND-mask recipe"
+
+[isa.neon.f64.neg]
+intrinsic = "vnegq_f64"
+mnemonic = "fneg"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+note = "native on NEON, unlike x86 where neg is an XOR-mask recipe"
+
+[isa.neon.f64.select]
+intrinsic = "vbslq_f64"
+mnemonic = "bsl"
+signature = "(mask, t, f) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
+
+[isa.neon.f64.mod]
+mnemonic = "fdiv+frintz+fmls"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["vdivq_f64", "vrndq_f64", "vfmsq_f64"]
+note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b"
+
+[isa.neon.f64.gather]
+mnemonic = "ldr+ins"
+signature = "(base, idx) -> v"
+semantics = "v[j] = base[idx[j]]"
+recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+
+[isa.neon.f64.scatter]
+mnemonic = "str+ext"
+signature = "(base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j]"
+recipe = ["per-lane scalar stores via vst1q_lane_f64(v, base + idx[j], j)"]
+
+[isa.neon.f32.sqrt]
+intrinsic = "vsqrtq_f32"
+mnemonic = "fsqrt"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.neon.f32.min]
+intrinsic = "vminq_f32"
+mnemonic = "fmin"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "NEON fmin/fmax implement the IEEE minNum NaN rules"
+
+[isa.neon.f32.max]
+intrinsic = "vmaxq_f32"
+mnemonic = "fmax"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+
+[isa.neon.f32.abs]
+intrinsic = "vabsq_f32"
+mnemonic = "fabs"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+note = "native on NEON, unlike x86 where abs is an AND-mask recipe"
+
+[isa.neon.f32.neg]
+intrinsic = "vnegq_f32"
+mnemonic = "fneg"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+note = "native on NEON, unlike x86 where neg is an XOR-mask recipe"
+
+[isa.neon.f32.select]
+intrinsic = "vbslq_f32"
+mnemonic = "bsl"
+signature = "(mask, t, f) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
+
+[isa.neon.f32.mod]
+mnemonic = "fdiv+frintz+fmls"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["vdivq_f32", "vrndq_f32", "vfmsq_f32"]
+note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b"
+
+[isa.neon.f32.gather]
+mnemonic = "ldr+ins"
+signature = "(base, idx) -> v"
+semantics = "v[j] = base[idx[j]]"
+recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+
+[isa.neon.f32.scatter]
+mnemonic = "str+ext"
+signature = "(base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j]"
+recipe = ["per-lane scalar stores via vst1q_lane_f32(v, base + idx[j], j)"]
+
+[isa.sve.f64.sqrt]
+intrinsic = "svsqrt_f64_x"
+mnemonic = "fsqrt"
+signature = "(pg, v) -> v"
+semantics = "v[j] = sqrt(x[j]) for active lanes"
+
+[isa.sve.f64.min]
+intrinsic = "svmin_f64_x"
+mnemonic = "fmin"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]) for active lanes"
+note = "svmin_num_f64_x is the IEEE minNum NaN variant"
+
+[isa.sve.f64.max]
+intrinsic = "svmax_f64_x"
+mnemonic = "fmax"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]) for active lanes"
+
+[isa.sve.f64.abs]
+intrinsic = "svabs_f64_x"
+mnemonic = "fabs"
+signature = "(pg, v) -> v"
+semantics = "v[j] = |x[j]| for active lanes"
+note = "native, unlike x86"
+
+[isa.sve.f64.neg]
+intrinsic = "svneg_f64_x"
+mnemonic = "fneg"
+signature = "(pg, v) -> v"
+semantics = "v[j] = -x[j] for active lanes"
+note = "native, unlike x86"
+
+[isa.sve.f64.select]
+intrinsic = "svsel_f64"
+mnemonic = "sel"
+signature = "(pg, t, f) -> v"
+semantics = "v[j] = pg[j] ? t[j] : f[j]"
+note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
+
+[isa.sve.f64.mod]
+mnemonic = "fdiv+frintz+fmls"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
+note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
+
+[isa.sve.f64.gather]
+intrinsic = "svld1_gather_s64index_f64"
+mnemonic = "ld1d (gather)"
+signature = "(pg, base, idx) -> v"
+semantics = "v[j] = base[idx[j]] for active lanes"
+note = "first-faulting svldff1_gather_... variants exist for speculative access"
+
+[isa.sve.f64.scatter]
+intrinsic = "svst1_scatter_u64index_f64"
+mnemonic = "st1d (scatter)"
+signature = "(pg, base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j] for active lanes"
+
+[isa.sve.f32.sqrt]
+intrinsic = "svsqrt_f32_x"
+mnemonic = "fsqrt"
+signature = "(pg, v) -> v"
+semantics = "v[j] = sqrt(x[j]) for active lanes"
+
+[isa.sve.f32.min]
+intrinsic = "svmin_f32_x"
+mnemonic = "fmin"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]) for active lanes"
+note = "svmin_num_f32_x is the IEEE minNum NaN variant"
+
+[isa.sve.f32.max]
+intrinsic = "svmax_f32_x"
+mnemonic = "fmax"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]) for active lanes"
+
+[isa.sve.f32.abs]
+intrinsic = "svabs_f32_x"
+mnemonic = "fabs"
+signature = "(pg, v) -> v"
+semantics = "v[j] = |x[j]| for active lanes"
+note = "native, unlike x86"
+
+[isa.sve.f32.neg]
+intrinsic = "svneg_f32_x"
+mnemonic = "fneg"
+signature = "(pg, v) -> v"
+semantics = "v[j] = -x[j] for active lanes"
+note = "native, unlike x86"
+
+[isa.sve.f32.select]
+intrinsic = "svsel_f32"
+mnemonic = "sel"
+signature = "(pg, t, f) -> v"
+semantics = "v[j] = pg[j] ? t[j] : f[j]"
+note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
+
+[isa.sve.f32.mod]
+mnemonic = "fdiv+frintz+fmls"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] % b[j] (fmod: sign of a)"
+recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
+note = "no FRINT in SVE: q = trunc(a/b) by converting to integer and back, r = a - q*b"
+
+[isa.sve.f32.gather]
+intrinsic = "svld1_gather_s32index_f32"
+mnemonic = "ld1w (gather)"
+signature = "(pg, base, idx) -> v"
+semantics = "v[j] = base[idx[j]] for active lanes"
+note = "first-faulting svldff1_gather_... variants exist for speculative access"
+
+[isa.sve.f32.scatter]
+intrinsic = "svst1_scatter_u32index_f32"
+mnemonic = "st1w (scatter)"
+signature = "(pg, base, idx, v) -> void"
+semantics = "base[idx[j]] = v[j] for active lanes"
+
+[isa.avx2.f16.load]
+intrinsic = "_mm256_loadu_si256"
+mnemonic = "vmovdqu"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], 16 x f16 stored as integers"
+note = "AVX2 has no f16 arithmetic (F16C converts only): load as integers, convert per half"
+
+[isa.avx2.f16.store]
+intrinsic = "_mm256_storeu_si256"
+mnemonic = "vmovdqu"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j], as integers"
+
+[isa.avx2.f16.broadcast]
+intrinsic = "_mm256_set1_epi16"
+mnemonic = "vpbroadcastw"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx2.f16.add]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = add(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.sub]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = sub(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_sub_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.mul]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = mul(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_mul_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.div]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = div(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_div_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.fma]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j]*b[j] + c[j] in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.sqrt]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_sqrt_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.min]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_min_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.max]
+mnemonic = "vcvtph2ps+op+vcvtps2ph"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]) in f16, computed via f32"
+recipe = ["_mm256_cvtph_ps", "_mm256_max_ps", "_mm256_cvtps_ph"]
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+
+[isa.avx2.f16.abs]
+mnemonic = "vpand"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm256_set1_epi16", "_mm256_and_si256"]
+note = "sign-mask AND works directly on the f16 bits - no conversion"
+
+[isa.avx2.f16.neg]
+mnemonic = "vpxor"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm256_set1_epi16", "_mm256_xor_si256"]
+note = "sign-bit XOR on the f16 bits"
+
+[isa.avx2.f16.select]
+mnemonic = "vpand+vpandn+vpor"
+signature = "(mask, t, f) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+recipe = ["_mm256_and_si256", "_mm256_andnot_si256", "_mm256_or_si256"]
+note = "bit select on the f16 bits: (t & mask) | (f & ~mask), mask = all-ones/0 lanes"
+
+[isa.avx512.f16.add]
+intrinsic = "_mm512_add_ph"
+masked = "_mm512_mask_add_ph"
+mnemonic = "vaddph"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] add b[j]"
+note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
+
+[isa.avx512.f16.sub]
+intrinsic = "_mm512_sub_ph"
+masked = "_mm512_mask_sub_ph"
+mnemonic = "vsubph"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] sub b[j]"
+note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
+
+[isa.avx512.f16.mul]
+intrinsic = "_mm512_mul_ph"
+masked = "_mm512_mask_mul_ph"
+mnemonic = "vmulph"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] mul b[j]"
+note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
+
+[isa.avx512.f16.div]
+intrinsic = "_mm512_div_ph"
+masked = "_mm512_mask_div_ph"
+mnemonic = "vdivph"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] div b[j]"
+note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
+
+[isa.avx512.f16.fma]
+intrinsic = "_mm512_fmadd_ph"
+masked = "_mm512_mask_fmadd_ph"
+mnemonic = "vfmadd"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j] fma b[j]"
+note = "AVX512-FP16 (Sapphire Rapids+); accumulator order for fma is products-last like the other x86 fmadds"
+
+[isa.avx512.f16.sqrt]
+intrinsic = "_mm512_sqrt_ph"
+masked = "_mm512_mask_sqrt_ph"
+mnemonic = "vsqrtph"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.avx512.f16.min]
+intrinsic = "_mm512_min_ph"
+masked = "_mm512_mask_min_ph"
+mnemonic = "vminph"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+
+[isa.avx512.f16.max]
+intrinsic = "_mm512_max_ph"
+masked = "_mm512_mask_max_ph"
+mnemonic = "vmaxph"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+
+[isa.avx512.f16.load]
+intrinsic = "_mm512_loadu_ph"
+masked = "_mm512_maskz_loadu_epi16 (cast via _mm512_castsi512_ph)"
+mnemonic = "vmovdqu16"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], 32 lanes"
+
+[isa.avx512.f16.store]
+intrinsic = "_mm512_storeu_ph"
+masked = "_mm512_mask_storeu_epi16 (cast via _mm512_castph_si512)"
+mnemonic = "vmovdqu16"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j] for active lanes"
+
+[isa.avx512.f16.broadcast]
+intrinsic = "_mm512_set1_ph"
+mnemonic = "vpbroadcastw"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx512.f16.abs]
+mnemonic = "vpandq"
+signature = "(v) -> v"
+semantics = "v[j] = |x[j]|"
+recipe = ["_mm512_and_si512"]
+note = "no FP16 abs: AND (as integers) with 0x7fff; casts are macros"
+
+[isa.avx512.f16.neg]
+mnemonic = "vpxorq"
+signature = "(v) -> v"
+semantics = "v[j] = -x[j]"
+recipe = ["_mm512_xor_si512"]
+note = "no FP16 neg: XOR (as integers) with 0x8000"
+
+[isa.avx512.f16.select]
+intrinsic = "_mm512_mask_blend_ph"
+mnemonic = "vblendmph"
+signature = "(k, a, b) -> v"
+semantics = "v[j] = k[j] ? b[j] : a[j]"
+note = "mask first, picks b - same surface as the f64 form"
+
+[isa.neon.f16.add]
+intrinsic = "vaddq_f16"
+mnemonic = "fadd"
+signature = "(a, b) -> v"
+semantics = "v[j] = add(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.sub]
+intrinsic = "vsubq_f16"
+mnemonic = "fsub"
+signature = "(a, b) -> v"
+semantics = "v[j] = sub(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.mul]
+intrinsic = "vmulq_f16"
+mnemonic = "fmul"
+signature = "(a, b) -> v"
+semantics = "v[j] = mul(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.div]
+intrinsic = "vdivq_f16"
+mnemonic = "fdiv"
+signature = "(a, b) -> v"
+semantics = "v[j] = div(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.sqrt]
+intrinsic = "vsqrtq_f16"
+mnemonic = "fsqrt"
+signature = "(v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.min]
+intrinsic = "vminq_f16"
+mnemonic = "fmin"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.max]
+intrinsic = "vmaxq_f16"
+mnemonic = "fmax"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.abs]
+intrinsic = "vabsq_f16"
+mnemonic = "fabs"
+signature = "(v) -> v"
+semantics = "v[j] = abs(x[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.neg]
+intrinsic = "vnegq_f16"
+mnemonic = "fneg"
+signature = "(v) -> v"
+semantics = "v[j] = neg(x[j])"
+note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+
+[isa.neon.f16.fma]
+intrinsic = "vfmaq_f16"
+mnemonic = "fmla"
+signature = "(a, b, c) -> v"
+semantics = "v[j] = a[j] + b[j]*c[j]"
+note = "accumulator FIRST, like every NEON fma"
+
+[isa.neon.f16.load]
+intrinsic = "vld1q_f16"
+mnemonic = "ld1"
+signature = "(p) -> v"
+semantics = "v[j] = p[j], 8 lanes"
+
+[isa.neon.f16.store]
+intrinsic = "vst1q_f16"
+mnemonic = "st1"
+signature = "(p, v) -> void"
+semantics = "p[j] = v[j]"
+
+[isa.neon.f16.broadcast]
+intrinsic = "vdupq_n_f16"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.neon.f16.select]
+intrinsic = "vbslq_f16"
+mnemonic = "bsl"
+signature = "(mask, t, f) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+note = "mask first, all-ones lanes pick t"
+
+[isa.sve.f16.add]
+intrinsic = "svadd_f16_x"
+mnemonic = "add"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] add b[j] for active lanes"
+
+[isa.sve.f16.sub]
+intrinsic = "svsub_f16_x"
+mnemonic = "sub"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] sub b[j] for active lanes"
+
+[isa.sve.f16.mul]
+intrinsic = "svmul_f16_x"
+mnemonic = "mul"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] mul b[j] for active lanes"
+
+[isa.sve.f16.div]
+intrinsic = "svdiv_f16_x"
+mnemonic = "div"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] div b[j] for active lanes"
+
+[isa.sve.f16.fma]
+intrinsic = "svmla_f16_x"
+mnemonic = "fmla"
+signature = "(pg, add, m1, m2) -> v"
+semantics = "v[j] = add[j] + m1[j]*m2[j]"
+note = "accumulator FIRST, like every SVE fma"
+
+[isa.sve.f16.sqrt]
+intrinsic = "svsqrt_f16_x"
+mnemonic = "fsqrt"
+signature = "(pg, v) -> v"
+semantics = "v[j] = sqrt(x[j])"
+
+[isa.sve.f16.min]
+intrinsic = "svmin_f16_x"
+mnemonic = "fmin"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = min(a[j], b[j])"
+
+[isa.sve.f16.max]
+intrinsic = "svmax_f16_x"
+mnemonic = "fmax"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = max(a[j], b[j])"
+
+[isa.sve.f16.abs]
+intrinsic = "svabs_f16_x"
+mnemonic = "fabs"
+signature = "(pg, v) -> v"
+semantics = "v[j] = |x[j]|"
+
+[isa.sve.f16.neg]
+intrinsic = "svneg_f16_x"
+mnemonic = "fneg"
+signature = "(pg, v) -> v"
+semantics = "v[j] = -x[j]"
+
+[isa.sve.f16.load]
+intrinsic = "svld1_f16"
+mnemonic = "ld1h"
+signature = "(pg, p) -> v"
+semantics = "v[j] = p[j] for active lanes"
+
+[isa.sve.f16.store]
+intrinsic = "svst1_f16"
+mnemonic = "st1h"
+signature = "(pg, p, v) -> void"
+semantics = "p[j] = v[j] for active lanes"
+
+[isa.sve.f16.broadcast]
+intrinsic = "svdup_f16"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.sve.f16.select]
+intrinsic = "svsel_f16"
+mnemonic = "sel"
+signature = "(pg, t, f) -> v"
+semantics = "v[j] = pg[j] ? t[j] : f[j]"
+
+
+[isa.avx2.i64.and]
+intrinsic = "_mm256_and_si256"
+mnemonic = "vpand"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.avx2.i64.or]
+intrinsic = "_mm256_or_si256"
+mnemonic = "vpor"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.avx2.i64.shl]
+intrinsic = "_mm256_sllv_epi64"
+mnemonic = "vpsllvq"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.avx2.i64.shr]
+intrinsic = "_mm256_srlv_epi64"
+mnemonic = "vpsrlvq"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+
+[isa.avx2.i64.land]
+mnemonic = "vpcmpeq+vpandn+vpand"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
+recipe = ["_mm256_cmpeq_epi64", "_mm256_andnot_si256", "_mm256_and_si256"]
+note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
+
+[isa.avx2.i64.lor]
+mnemonic = "vpcmpeq+vpand+vpandn"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
+recipe = ["_mm256_cmpeq_epi64", "_mm256_and_si256", "_mm256_andnot_si256"]
+
+[isa.avx2.i64.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.avx2.i32.and]
+intrinsic = "_mm256_and_si256"
+mnemonic = "vpand"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.avx2.i32.or]
+intrinsic = "_mm256_or_si256"
+mnemonic = "vpor"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.avx2.i32.shl]
+intrinsic = "_mm256_sllv_epi32"
+mnemonic = "vpsllvd"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.avx2.i32.shr]
+intrinsic = "_mm256_srlv_epi32"
+mnemonic = "vpsrlvd"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+
+[isa.avx2.i32.land]
+mnemonic = "vpcmpeq+vpandn+vpand"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
+recipe = ["_mm256_cmpeq_epi32", "_mm256_andnot_si256", "_mm256_and_si256"]
+note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
+
+[isa.avx2.i32.lor]
+mnemonic = "vpcmpeq+vpand+vpandn"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
+recipe = ["_mm256_cmpeq_epi32", "_mm256_and_si256", "_mm256_andnot_si256"]
+
+[isa.avx2.i32.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.avx512.i64.and]
+intrinsic = "_mm512_and_si512"
+mnemonic = "vpandq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.avx512.i64.or]
+intrinsic = "_mm512_or_si512"
+mnemonic = "vporq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.avx512.i64.shl]
+intrinsic = "_mm512_sllv_epi64"
+mnemonic = "vpsllvq"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.avx512.i64.shr]
+intrinsic = "_mm512_srlv_epi64"
+mnemonic = "vpsrlvq"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+
+[isa.avx512.i64.land]
+intrinsic = "_kand_mask8"
+mnemonic = "kandb"
+signature = "(ka, kb) -> k"
+semantics = "k = ka && kb, on compare masks"
+note = "operates on __mmask8 compare results; per-lane 0/1 needs an extra mask-to-vector convert"
+
+[isa.avx512.i64.lor]
+intrinsic = "_kor_mask8"
+mnemonic = "korb"
+signature = "(ka, kb) -> k"
+semantics = "k = ka || kb, on compare masks"
+
+[isa.avx512.i64.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.avx512.i32.and]
+intrinsic = "_mm512_and_si512"
+mnemonic = "vpandd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.avx512.i32.or]
+intrinsic = "_mm512_or_si512"
+mnemonic = "vpord"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.avx512.i32.shl]
+intrinsic = "_mm512_sllv_epi32"
+mnemonic = "vpsllvd"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.avx512.i32.shr]
+intrinsic = "_mm512_srlv_epi32"
+mnemonic = "vpsrlvd"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+
+[isa.avx512.i32.land]
+intrinsic = "_mm512_kand"
+mnemonic = "kandw"
+signature = "(ka, kb) -> k"
+semantics = "k = ka && kb, on compare masks"
+note = "_kand_mask16 is a macro alias for _mm512_kand in clang"
+
+[isa.avx512.i32.lor]
+intrinsic = "_mm512_kor"
+mnemonic = "korw"
+signature = "(ka, kb) -> k"
+semantics = "k = ka || kb, on compare masks"
+
+[isa.avx512.i32.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.neon.i64.and]
+intrinsic = "vandq_u64"
+mnemonic = "and"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.neon.i64.or]
+intrinsic = "vorrq_u64"
+mnemonic = "orr"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.neon.i64.shl]
+intrinsic = "vshlq_u64"
+mnemonic = "ushl"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.neon.i64.shr]
+intrinsic = "vshlq_u64"
+mnemonic = "ushl"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector"
+
+[isa.neon.i64.land]
+mnemonic = "cmeqz+eor+and"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
+recipe = ["vceqzq_u64", "veorq_u64", "vandq_u64"]
+note = "NEON has no vmvn on 64-bit lanes: complement with veorq against all-ones"
+
+[isa.neon.i64.lor]
+mnemonic = "cmeqz+and+eor"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
+recipe = ["vceqzq_u64", "vandq_u64", "veorq_u64"]
+
+[isa.neon.i64.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.neon.i32.and]
+intrinsic = "vandq_u32"
+mnemonic = "and"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] & b[j]"
+
+[isa.neon.i32.or]
+intrinsic = "vorrq_u32"
+mnemonic = "orr"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] | b[j]"
+
+[isa.neon.i32.shl]
+intrinsic = "vshlq_u32"
+mnemonic = "ushl"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+
+[isa.neon.i32.shr]
+intrinsic = "vshlq_u32"
+mnemonic = "ushl"
+signature = "(a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical"
+note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector"
+
+[isa.neon.i32.land]
+mnemonic = "cmeqz+mvn+and"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
+recipe = ["vceqzq_u32", "vmvnq_u32", "vandq_u32"]
+
+[isa.neon.i32.lor]
+mnemonic = "cmeqz+and+mvn"
+signature = "(a, b) -> v"
+semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
+recipe = ["vceqzq_u32", "vandq_u32", "vmvnq_u32"]
+
+[isa.neon.i32.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.sve.i64.and]
+intrinsic = "svand_u64_x"
+mnemonic = "and"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] & b[j] for active lanes"
+
+[isa.sve.i64.or]
+intrinsic = "svorr_u64_x"
+mnemonic = "orr"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] | b[j] for active lanes"
+
+[isa.sve.i64.shl]
+intrinsic = "svlsl_u64_x"
+mnemonic = "lsl"
+signature = "(pg, a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j] for active lanes"
+
+[isa.sve.i64.shr]
+intrinsic = "svlsr_u64_x"
+mnemonic = "lsr"
+signature = "(pg, a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical, for active lanes"
+
+[isa.sve.i64.land]
+mnemonic = "cmpne+and_b"
+signature = "(pg, a, b) -> pg"
+semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
+recipe = ["svcmpne_u64", "svand_b_z"]
+note = "yields a predicate; svsel turns it into 0/1 lanes"
+
+[isa.sve.i64.lor]
+mnemonic = "cmpne+orr_b"
+signature = "(pg, a, b) -> pg"
+semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
+recipe = ["svcmpne_u64", "svorr_b_z"]
+
+[isa.sve.i64.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]
+
+[isa.sve.i32.and]
+intrinsic = "svand_u32_x"
+mnemonic = "and"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] & b[j] for active lanes"
+
+[isa.sve.i32.or]
+intrinsic = "svorr_u32_x"
+mnemonic = "orr"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] | b[j] for active lanes"
+
+[isa.sve.i32.shl]
+intrinsic = "svlsl_u32_x"
+mnemonic = "lsl"
+signature = "(pg, a, counts) -> v"
+semantics = "v[j] = a[j] << counts[j] for active lanes"
+
+[isa.sve.i32.shr]
+intrinsic = "svlsr_u32_x"
+mnemonic = "lsr"
+signature = "(pg, a, counts) -> v"
+semantics = "v[j] = a[j] >> counts[j], logical, for active lanes"
+
+[isa.sve.i32.land]
+mnemonic = "cmpne+and_b"
+signature = "(pg, a, b) -> pg"
+semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
+recipe = ["svcmpne_u32", "svand_b_z"]
+note = "yields a predicate; svsel turns it into 0/1 lanes"
+
+[isa.sve.i32.lor]
+mnemonic = "cmpne+orr_b"
+signature = "(pg, a, b) -> pg"
+semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
+recipe = ["svcmpne_u32", "svorr_b_z"]
+
+[isa.sve.i32.mod]
+mnemonic = "sdiv+mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
+recipe = ["no vector remainder: divide scalar per lane, or double division while |a| < 2^53", "r = a - q * b"]

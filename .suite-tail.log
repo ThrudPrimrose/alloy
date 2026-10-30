@@ -1,0 +1,96 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0 -- /home/primrose/Work/alloy/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/primrose/Work/alloy
+configfile: pyproject.toml
+plugins: xdist-3.8.0, platformdirs-4.12.4, anyio-4.15.1
+collecting ... collected 91 items
+
+tests/test_report.py::test_a_scope_lists_its_k_fastest_correct_variants_against_its_baseline Fatal Python error: Aborted
+
+Current thread 0x00007d7b007d0780 [python] (most recent call first):
+  File "<frozen importlib._bootstrap>", line 491 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 1061 in exec_module
+  File "<frozen importlib._bootstrap>", line 938 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1342 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1371 in _find_and_load
+  File "<frozen importlib._bootstrap>", line 491 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1434 in _handle_fromlist
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/dace/frontend/python/preprocessing.py", line 1651 in mpi4py_is_usable
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/dace/frontend/python/preprocessing.py", line 1841 in preprocess_dace_program
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/dace/frontend/python/parser.py", line 1067 in _generate_pdp
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/dace/frontend/python/parser.py", line 641 in _parse
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/dace/frontend/python/parser.py", line 386 in to_sdfg
+  File "/home/primrose/Work/alloy/tests/helpers.py", line 33 in outlined
+  File "/home/primrose/Work/alloy/tests/test_report.py", line 53 in scope_and_builds
+  File "/home/primrose/Work/alloy/tests/test_report.py", line 80 in test_a_scope_lists_its_k_fastest_correct_variants_against_its_baseline
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/python.py", line 167 in pytest_pyfunc_call
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/python.py", line 1707 in runtest
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 184 in pytest_runtest_call
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 250 in <lambda>
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 361 in from_call
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 249 in call_and_report
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 139 in runtestprotocol
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 118 in pytest_runtest_protocol
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/main.py", line 408 in pytest_runtestloop
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/main.py", line 384 in _main
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/main.py", line 330 in wrap_session
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/main.py", line 377 in pytest_cmdline_main
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py", line 229 in _main
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py", line 253 in _console_main
+  File "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/pytest/__main__.py", line 9 in <module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 203 in _run_module_as_main
+
+Current thread's C stack trace (most recent call first):
+  Binary file ".venv/bin/python", at _Py_DumpStack+0x30 [0x4b3430]
+  Binary file ".venv/bin/python" [0x5395db]
+  Binary file ".venv/bin/python" [0x5394a7]
+  Binary file "/usr/lib/x86_64-linux-gnu/libc.so.6", at +0x45cb0 [0x7d7b00445cb0]
+  Binary file ".venv/bin/python" [0x539390]
+  Binary file "/usr/lib/x86_64-linux-gnu/libc.so.6", at +0x45cb0 [0x7d7b00445cb0]
+  Binary file "/usr/lib/x86_64-linux-gnu/libc.so.6", at +0xac802 [0x7d7b004ac802]
+  Binary file "/usr/lib/x86_64-linux-gnu/libc.so.6", at +0xa039c [0x7d7b004a039c]
+  Binary file "/usr/lib/x86_64-linux-gnu/libc.so.6", at poll+0x1e [0x7d7b00527c0e]
+  Binary file "/usr/lib/x86_64-linux-gnu/libxcb.so.1", at +0xd150 [0x7d7ad3ed3150]
+  Binary file "/usr/lib/x86_64-linux-gnu/libxcb.so.1", at xcb_connect_to_fd+0x30e [0x7d7ad3ed6bde]
+  Binary file "/usr/lib/x86_64-linux-gnu/libxcb.so.1", at xcb_connect_to_display_with_auth_info+0x9b3 [0x7d7ad3ed76d3]
+  Binary file "/usr/lib/x86_64-linux-gnu/libX11.so.6", at _XConnectXCB+0x1ba [0x7d7aca99c5aa]
+  Binary file "/usr/lib/x86_64-linux-gnu/libX11.so.6", at XOpenDisplay+0xb6 [0x7d7aca98bd96]
+  Binary file "/usr/lib/x86_64-linux-gnu/hwloc/hwloc_gl.so", at +0x14e3 [0x7d7b006264e3]
+  Binary file "/usr/lib/x86_64-linux-gnu/libhwloc.so.15", at +0x971e [0x7d7afe7e371e]
+  Binary file "/usr/lib/x86_64-linux-gnu/libhwloc.so.15", at hwloc_topology_load+0x11c4 [0x7d7afe7ec934]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at opal_hwloc_base_get_topology+0x3ec [0x7d7acce9e58c]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at +0xec58d [0x7d7acce7e58d]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at mca_base_framework_components_open+0xb2 [0x7d7accdcbc62]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at +0xe845f [0x7d7acce7a45f]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at mca_base_framework_open+0x9d [0x7d7accdcc7fd]
+  Binary file "/usr/lib/x86_64-linux-gnu/libopen-pal.so.80", at mca_base_framework_open+0x9d [0x7d7accdcc7fd]
+  Binary file "/usr/lib/x86_64-linux-gnu/libmpi.so", at +0x970ec [0x7d7acd2970ec]
+  Binary file "/usr/lib/x86_64-linux-gnu/libmpi.so", at ompi_mpi_instance_init+0x74 [0x7d7acd297ed4]
+  Binary file "/usr/lib/x86_64-linux-gnu/libmpi.so", at ompi_mpi_init+0x80 [0x7d7acd28eda0]
+  Binary file "/usr/lib/x86_64-linux-gnu/libmpi.so", at PMPI_Init_thread+0xdf [0x7d7acd2c3a8f]
+  Binary file "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/mpi4py/MPI.openmpi.cpython-314-x86_64-linux-gnu.so", at +0x459d2 [0x7d7acc8a79d2]
+  Binary file "/home/primrose/Work/alloy/.venv/lib/python3.14/site-packages/mpi4py/MPI.openmpi.cpython-314-x86_64-linux-gnu.so", at +0x46245 [0x7d7acc8a8245]
+  Binary file ".venv/bin/python", at PyModule_ExecDef+0x8f [0x1b3b98f]
+  Binary file ".venv/bin/python" [0x1be4a0b]
+  Binary file ".venv/bin/python" [0x1a27643]
+  <truncated rest of calls>
+
+Extension modules: numpy._core._multiarray_umath, numpy.linalg._umath_linalg, yaml._yaml, mpi4py.MPI (total: 4)
+exit=124

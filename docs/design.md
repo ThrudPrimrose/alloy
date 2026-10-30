@@ -127,7 +127,7 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
 
 ## Speculative mode
 
-Status: not built. Picks one candidate per scope from the builds alone, without timing; the pick is still verified.
+Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope from the builds alone, without timing; the pick is still verified.
 
 - FP level (shared with NestForge's defaults, owner decision 2026-10-26): a scope with a reduction or scan gets
   `contract`, never `reassoc`; without one, `fast` when the inputs are declared finite, else `noerrno`. A failed
@@ -141,6 +141,58 @@ Status: not built. Picks one candidate per scope from the builds alone, without 
 - Rendering and knobs: chosen from build signals (vectorized loops from remarks, packed vector instruction share,
   spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
   the timed winner.
+
+## ISA lookup: the agent's math ISA
+
+Status: built (`alloy/isa/`). DaCe's auto-vectorization hands an agent intrinsic-level code (today the explicit
+SVE loops of `tails.sve_intrinsics`, DaCe's `SVEVectorization` rendered by CPF; compiler-vectorized builds carry
+the same math as vector instructions in their objects). To keep optimizing from there the agent reasons in a
+machine abstract math ISA — `load, store, broadcast, +, -, *, /, fma, lanewise reduction (vector to scalar),
+gen_mask, zero` — and looks up the spelling per target, instead of reading ISA manuals.
+
+- `alloy/isa/ops.py` holds the abstract op set (the vocabulary); `alloy/isa/intrinsics.toml` spells every op per
+  ISA (avx2, avx512, neon, sve; `avx512_256` resolves to avx512 as a width knob) and dtype (f64, f32): the C
+  intrinsic, the assembly mnemonic, the signature, the lane semantics, the masked variant where the ISA has one,
+  and a recipe where no single intrinsic exists (AVX2/NEON lane reductions). Operand-order traps (NEON/SVE fma
+  take the accumulator first, Intel last) are recorded in the table so no caller hardcodes an order.
+- Both directions: `lookup(isa, op, dtype)` for writing vector code; `reverse(name)` maps an intrinsic or a
+  disassembler mnemonic (including `vfmadd231pd`-style family forms and EVEX dot suffixes) back to the math —
+  the same mnemonics `predict.py` scores. CLI: `python -m alloy.isa lookup|reverse|ops|isas|schedule`.
+- Transcendentals (`exp`, `sin`, `cos`) have no native instruction on the covered ISAs. Each entry lists
+  polynomial tiers from the shared `[approx]` section — Horner recipes in abstract-op steps with ULP error
+  measured against libm (Taylor ladders plus Chebyshev near-minimax on the reduced domain; ULP at function
+  scale, floored at `ulp(1.0)`) — and the vector math library call per veclib. The libmvec names are
+  verified against the host's `libmvec.so` (`nm -D`, glibc 2.43), SLEEF names per sleef.org; both reverse
+  to the op. Accuracy insight encoded in the tiers: range reduction dominates (hi/lo π/2 and ln2
+  constants), plain Taylor cannot reach low ULP at any practical degree, and sub-1-ulp exp needs a
+  2^(j/64) table — which is exactly SVE's `svexpa` instruction (ACLE SVE 6.16.30); AVX-512 assists with
+  `vreducepd` (argument reduction) and `vscalefpd` (2^k scaling).
+- The arithmetic core extends to `sqrt, min, max, abs, neg, select (blend), gather, scatter, mod` on
+  f64/f32; `and, or, shl, shr, land, lor` and integer `mod` live under the new i64/i32 dtypes; f16 is
+  optional per ISA (native AVX-512 FP16 / NEON Armv8.2 / SVE). Where hardware lacks an op the entry is a
+  recipe over the intrinsics that provide it — x86 FP abs/neg are sign-mask AND/XOR, scatter before
+  AVX-512 is a scratch store plus scalar stores, NEON gathers lane-wise, integer mod divides scalar per
+  lane, and AVX2 f16 arithmetic converts through f32 (bitwise f16 ops work directly on the storage).
+  Recipes are the table's fallback story: an agent never needs a manual to know what to substitute.
+  A scalar operand of a binary op is broadcast (free as an EVEX embedded broadcast on AVX-512, an
+  explicit `set1`/`vdup`/`svdup` elsewhere).
+- Tenstorrent Tensix is deliberately absent: no C intrinsic path (design decision 2026-10-26, recorded
+  `unsupported`); lane reduction has no direct analogue there anyway.
+- The schedule axis: `[schedules]` metadata (five loop shapes from scalar to explicit predicated SVE),
+  legality per ISA with reasons, compile-and-run-verified C skeletons composed from the table entries
+  (`alloy/isa/schedules.py` — the seed of the schedule->vector-schedule translator), and the
+  compiler-vectorizer spellings (gcc's `vect-partial-vector-usage` ladder, clang's pragmas; clang has no
+  masked epilogue, and the table says so instead of inventing a flag).
+- Nothing is returned unverified: `validate.py` compiles and runs a small kernel for every
+  host-executable entry (fallback recipes are hand-coded, not auto-translated) and re-measures every
+  polynomial tier against libm; a failure attaches the candidate spellings instead of endorsing a wrong
+  answer. When emission is impossible, `hints.py` answers with a text reason, a do-it-yourself
+  instruction, and per-tasklet hints (classified tasklets mapped to their spellings and verdicts).
+- Every spelling is verified against the clang resource headers in CI (`tests/test_isa*.py`, 282 tests);
+  the table is checked-in data, regenerated per clang version when ops are added, not parsed from ISA
+  PDFs. The agent-facing rule (encoded in `skills/alloy/`): candidates report first, generated pages,
+  this lookup for spelling and schedules, per-target ESSENTIALS sheets for context, itemized PDFs
+  last, never end-to-end.
 
 ## Bench experiments: dace+alloy
 

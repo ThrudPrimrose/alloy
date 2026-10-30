@@ -32,6 +32,17 @@ Layout:
   resolves and checks the OpenMP runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from scope archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
+- `alloy/isa/`: the machine abstract math ISA (`ops.py`: load, store, gather, scatter, broadcast, +, -, *, /, %,
+  fma, sqrt, min, max, abs, neg, select, lanewise reduction, integer & / << >> && ||, gen_mask, zero, and the
+  transcendentals exp/sin/cos) spelled per ISA and dtype — f64/f32 everywhere, f16 where the hardware has it
+  (AVX2 emulates through f32), i64/i32 for the integer ops — with fallback recipes where an op has no native
+  instruction. `intrinsics.toml` is verified against the clang resource headers; both lookup directions;
+  `python -m alloy.isa lookup|reverse|validate|skeleton|ops|isas|schedule`. `validate.py` checks
+  every spelling with a compiled kernel (or a tier re-measurement) before an agent sees it;
+  `hints.py` builds the do-it-yourself response from a scope's tasklets when emission fails;
+  `schedules.py` emits compile-and-run-verified C skeletons per loop schedule, with the compiler
+  flags that ask gcc/clang for the same shape.
+  This is the bridge between DaCe's auto-vectorized intrinsic code and the math an agent reasons in.
 - `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
   `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,
   flag and option is in `alloy/configuration_matrix.toml`, validated by the pydantic models of

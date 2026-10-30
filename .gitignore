@@ -31,3 +31,4 @@ htmlcov/
 
 # Claude Code local state (agent worktrees)
 .claude/
+.suite-final.log
