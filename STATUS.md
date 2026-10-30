@@ -34,6 +34,15 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 12 — 2026-10-30 (latent-bug sweep)
+
+Full-review fixes, all with regression tests (289 total): masked-variant reverse names with trailing
+spaces lost (the f16 masked loads/stores carried cast notes); `_flags()` now parses aarch64
+`Features:` so host_can_run works on ARM; honest message for entries without a compiled validator;
+f32 mod/reduce_add tolerances got real single-precision slack (the old values passed by luck of the
+fixed inputs); `hints._uses` checks the whole memlet tree for the summing write-conflict (real DaCe
+reductions park the WCR on the map exit's edge).
+
 ### Snapshot 11 — 2026-10-30 (review round 2: assists, one namespace, skill polish)
 
 - The ISA survey's hardware assists are now queryable table data: 22 `[[isa.*.assists]]` rows
