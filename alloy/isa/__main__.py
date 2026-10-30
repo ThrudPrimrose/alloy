@@ -47,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     skeleton_p.add_argument("isa")
     skeleton_p.add_argument("schedule")
     skeleton_p.add_argument("dtype")
+    skeleton_p.add_argument(
+        "--verify", action="store_true", help="compile and run the skeleton against a scalar reference"
+    )
 
     args = parser.parse_args(argv)
     table = load()
@@ -66,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "schedule":
             _print_schedule(table, args.isa)
         elif args.command == "skeleton":
-            _print_skeleton(table, args.isa, args.schedule, args.dtype)
+            _print_skeleton(table, args.isa, args.schedule, args.dtype, args.verify)
     except KeyError as exc:
         print(f"alloy.isa: {exc.args[0]}", file=sys.stderr)
         return 2
@@ -192,11 +195,16 @@ def _print_schedule(table, isa: str) -> None:
             print(f"      clang: {info.clang}")
 
 
-def _print_skeleton(table, isa: str, schedule: str, dtype: str) -> None:
+def _print_skeleton(table, isa: str, schedule: str, dtype: str, verify: bool = False) -> None:
     from alloy.isa.schedules import skeleton  # noqa: PLC0415
+    from alloy.isa.schedules import verify as verify_skeleton
 
     try:
         print(skeleton(table, isa, schedule, dtype))
+        if verify:
+            verdict = verify_skeleton(isa, schedule, dtype, table)
+            mark = "verified" if verdict.ok else ("unverified" if verdict.ok is None else "FAILED")
+            print(f"// {mark}: {verdict.basis}; {verdict.detail}")
     except KeyError as exc:
         raise KeyError(exc.args[0]) from None
 

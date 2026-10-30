@@ -8,7 +8,7 @@ axpy expression, the loop shape comes from here."""
 
 from alloy.isa.table import DTYPES, Table, load
 
-__all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton"]
+__all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
 #: Every schedule the table knows, most conservative first.
 SCHEDULES = ("scalar", "scalar_remainder", "masked_remainder", "full_mask", "sve_intrinsics")
@@ -170,3 +170,43 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
         f"void axpy(int64_t N, {s} a, const {s} *X, const {s} *Y, {s} *C) {{\n"
         f"{body}\n}}"
     )
+
+
+_DRIVER = """
+#include <stdio.h>
+#include <math.h>
+int main(void) {{
+  int N = 19; {ctype} a = 1.5{fsuffix};
+  {ctype} X[19], Y[19], C[19];
+  for (int i = 0; i < N; i++) {{ X[i] = ({ctype})(0.5 + 0.1 * i); Y[i] = ({ctype})(1.0 + 0.25 * i); C[i] = 0; }}
+  axpy(N, a, X, Y, C);
+  double maxrel = 0;
+  for (int i = 0; i < N; i++) {{
+    double ref = (double)a * (double)X[i] + (double)Y[i];
+    double d = fabs((double)C[i] - ref);
+    double m = fabs(ref) > 1 ? fabs(ref) : 1;
+    if (d / m > maxrel) maxrel = d / m;
+  }}
+  printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
+  return 0;
+}}"""
+
+
+def verify(isa: str, schedule: str, dtype: str, table: Table | None = None):
+    """Compile and run a skeleton against the scalar reference: the same numerical gate as for table
+    entries, applied to the composed loop shape. ``ok is None`` when this host cannot execute it."""
+    from alloy.isa.validate import Verdict, _c_flags, _compile_run, host_can_run  # noqa: PLC0415
+
+    table = table or load()
+    why = legal(isa, schedule, table)
+    if why:
+        raise KeyError(f"{isa}/{schedule}/{dtype}: {why}")
+    if not host_can_run(isa, dtype):
+        return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
+    ctype = _C_TYPE[dtype]
+    fsuffix = "" if dtype == "f64" else "f"
+    source = skeleton(table, isa, schedule, dtype) + _DRIVER.format(ctype=ctype, fsuffix=fsuffix)
+    rel = _compile_run(source, _c_flags(isa, dtype))
+    tol = 1e-5  # fma vs mul+add rounding
+    ok = rel <= tol
+    return Verdict(ok, "compiled skeleton", f"max rel err {rel:.3e} vs tolerance {tol:.3e}")

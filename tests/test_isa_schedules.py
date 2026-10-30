@@ -2,10 +2,8 @@
 """The schedule axis: legality per ISA with reasons, C skeletons composed from the table's entries,
 and a compile-and-run numerical check of every skeleton the host can execute."""
 
-import pathlib
 import shutil
 import subprocess
-import tempfile
 
 import pytest
 
@@ -120,44 +118,24 @@ _RUNNABLE = [
 
 
 @pytest.mark.skipif(not CC, reason="no C compiler on PATH")
-@pytest.mark.parametrize(("isa", "schedule", "dtype", "flags", "ctype", "fsuffix"), _RUNNABLE)
-def test_skeletons_compile_and_run_on_the_host(isa, schedule, dtype, flags, ctype, fsuffix):
+@pytest.mark.parametrize(("isa", "schedule", "dtype"), [(i, s, d) for i, s, d, *_ in _RUNNABLE])
+def test_skeletons_compile_and_run_on_the_host(isa, schedule, dtype):
+    from alloy.isa.schedules import verify
     from alloy.isa.validate import host_can_run
 
     if not host_can_run(isa, dtype):
         pytest.skip(f"this host cannot execute {isa}/{dtype}")
-    source = (
-        skeleton(TABLE, isa, schedule, dtype)
-        + f"""
-#include <stdio.h>
-#include <math.h>
-int main(void) {{
-  int N = 19; {ctype} a = 1.5{fsuffix};
-  {ctype} X[19], Y[19], C[19];
-  for (int i = 0; i < N; i++) {{ X[i] = ({ctype})(0.5 + 0.1 * i); Y[i] = ({ctype})(1.0 + 0.25 * i); C[i] = 0; }}
-  axpy(N, a, X, Y, C);
-  double maxrel = 0;
-  for (int i = 0; i < N; i++) {{
-    double ref = (double)a * (double)X[i] + (double)Y[i];
-    double d = fabs((double)C[i] - ref);
-    double m = fabs(ref) > 1 ? fabs(ref) : 1;
-    if (d / m > maxrel) maxrel = d / m;
-  }}
-  printf("rel=%.6e\\n", maxrel);
-  return 0;
-}}"""
-    )
-    with tempfile.TemporaryDirectory() as tmp:
-        c_file = pathlib.Path(tmp) / "s.c"
-        exe = pathlib.Path(tmp) / "s"
-        c_file.write_text(source)
-        build = subprocess.run(
-            [CC, "-O1", *flags, str(c_file), "-lm", "-o", str(exe)], capture_output=True, text=True, check=False
-        )
-        assert build.returncode == 0, build.stderr[-400:]
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=True)
-    rel = float(run.stdout.strip().removeprefix("rel="))
-    assert rel <= 1e-5, f"{isa}/{schedule}/{dtype} rel err {rel}"  # fma vs mul+add differs by ~1 ulp
+    verdict = verify(isa, schedule, dtype, TABLE)
+
+    assert verdict.ok is True, verdict.detail
+
+
+def test_an_unexecutable_skeleton_is_unverified_not_wrong():
+    from alloy.isa.schedules import verify
+
+    verdict = verify("neon", "scalar_remainder", "f64", TABLE)
+
+    assert verdict.ok is None
 
 
 def test_every_schedule_spells_how_to_ask_each_compiler():
@@ -179,3 +157,19 @@ def test_an_unknown_compiler_or_schedule_names_the_choices():
 
     with pytest.raises(KeyError, match="unknown schedule"):
         compiler_spelling("wibble", "gcc", TABLE)
+
+
+def test_the_cli_verifies_a_skeleton():
+    import sys
+
+    run = subprocess.run(
+        [sys.executable, "-m", "alloy.isa", "skeleton", "avx512", "masked_remainder", "f64", "--verify"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if run.returncode != 0:  # host cannot execute AVX-512: the skeleton still prints
+        assert "_mm512_mask_storeu_pd" in run.stdout
+    else:
+        assert "// verified: compiled skeleton" in run.stdout

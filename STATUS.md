@@ -34,6 +34,18 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 10 — 2026-10-30 (skeleton self-verification)
+
+- `schedules.verify(isa, schedule, dtype)` compiles and runs a skeleton against the scalar reference
+  — the same numerical gate as table entries, applied to composed loop shapes; `skeleton --verify`
+  exposes it. Closes the review's gap 2 (skeletons now self-validate at emission time, not only in
+  tests). 284 tests.
+- Review round (snapshot 9): both skills and the docs brought current with the code; review gap 1
+  (nothing calls `advice()` yet — the emission paths must adopt the failure body) stays open.
+- Full-suite stall root-caused: a fork-server child hangs (pytest idle waiting on a
+  `multiprocessing.fork` pid) in the test_report/test_timing region; faulthandler-armed tail rerun in
+  flight to name the exact test.
+
 ### Snapshot 9 — 2026-10-30 (full review: skills and docs brought current)
 
 - `skills/alloy`: frontmatter now names the whole op set, schedules, and the validation gate (was the
