@@ -178,10 +178,21 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   explicit `set1`/`vdup`/`svdup` elsewhere).
 - Tenstorrent Tensix is deliberately absent: no C intrinsic path (design decision 2026-10-26, recorded
   `unsupported`); lane reduction has no direct analogue there anyway.
-- Every spelling is verified against the clang resource headers in CI (`tests/test_isa.py`); the table is
-  checked-in data, regenerated per clang version when ops are added, not parsed from ISA PDFs. The agent-facing
-  rule (encoded in `skills/alloy/`): candidates report first, this lookup for spelling, per-target ESSENTIALS
-  sheets for context, itemized PDFs last, never end-to-end.
+- The schedule axis: `[schedules]` metadata (five loop shapes from scalar to explicit predicated SVE),
+  legality per ISA with reasons, compile-and-run-verified C skeletons composed from the table entries
+  (`alloy/isa/schedules.py` — the seed of the schedule->vector-schedule translator), and the
+  compiler-vectorizer spellings (gcc's `vect-partial-vector-usage` ladder, clang's pragmas; clang has no
+  masked epilogue, and the table says so instead of inventing a flag).
+- Nothing is returned unverified: `validate.py` compiles and runs a small kernel for every
+  host-executable entry (fallback recipes are hand-coded, not auto-translated) and re-measures every
+  polynomial tier against libm; a failure attaches the candidate spellings instead of endorsing a wrong
+  answer. When emission is impossible, `hints.py` answers with a text reason, a do-it-yourself
+  instruction, and per-tasklet hints (classified tasklets mapped to their spellings and verdicts).
+- Every spelling is verified against the clang resource headers in CI (`tests/test_isa*.py`, 282 tests);
+  the table is checked-in data, regenerated per clang version when ops are added, not parsed from ISA
+  PDFs. The agent-facing rule (encoded in `skills/alloy/`): candidates report first, generated pages,
+  this lookup for spelling and schedules, per-target ESSENTIALS sheets for context, itemized PDFs
+  last, never end-to-end.
 
 ## Bench experiments: dace+alloy
 

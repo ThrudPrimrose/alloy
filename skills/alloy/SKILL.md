@@ -1,7 +1,7 @@
 ---
 name: alloy
-description: "Alloy: DaCe's per-scope codegen backend, and the machine abstract math ISA (load, store, broadcast, +, -, *, /, fma, lanewise reduction, gen_mask) that maps auto-vectorized intrinsics back to math. Use when optimizing a kernel Alloy/DaCe vectorized, when reading vector intrinsic code or SIMD disassembly, or when you need the correct intrinsic spelling for avx2/avx512/neon/sve."
-when: "you work on an HPCAgent-Bench kernel through Alloy or DaCe's extended backend, or you face vector intrinsic code / vectorized loops (source or disassembly) on x86 or AArch64 and need the spelling, the operand order, or the math an instruction computes"
+description: "Alloy: DaCe's per-scope codegen backend, the machine abstract math ISA (+ - * / %, fma, sqrt, min/max/abs/neg, select, gather/scatter, lanewise reduction, integer bitwise/shift/logical, exp/sin/cos) for avx2/avx512/neon/sve, loop schedules with verified C skeletons, and a numerical validation gate. Use when optimizing a kernel Alloy/DaCe vectorized, when reading vector intrinsic code or SIMD disassembly, when choosing a vector loop schedule, or when you need a spelling, an operand order, or the math an instruction computes."
+when: "you work on an HPCAgent-Bench kernel through Alloy or DaCe's extended backend, or you face vector intrinsic code / vectorized loops (source or disassembly) on x86 or AArch64 and need the spelling, the operand order, the loop schedule, or the math an instruction computes — or Alloy answers a request with a failure body and you must do it yourself"
 ---
 
 # Alloy + the machine abstract math ISA
@@ -74,10 +74,44 @@ the output lists potentially relevant spellings (same op on other dtypes/ISAs, t
 instead of endorsing a wrong answer. `unverified:` marks ISAs the host cannot execute (NEON/SVE on x86)
 — unverified is never reported as correct.
 
-- ISAs: `avx2`, `avx512` (also `avx512_256` = same intrinsics at 256 bits), `neon`, `sve`. Dtypes: `f64`, `f32`.
+- ISAs: `avx2`, `avx512` (also `avx512_256` = same intrinsics at 256 bits), `neon`, `sve`. Dtypes:
+  `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the integer ops.
 - `reverse` accepts C intrinsics (`_mm512_add_pd`), recipe steps, and disassembler mnemonics as printed
   (`vaddpd`, `vfmadd231pd`, `fmla`, `ld1d`, `vaddpd.z`). Use it to read a build's disassembly back into math:
   `llvm-objdump -d <archive>` → mnemonics → `reverse` → the loop's dataflow.
+
+## Loop schedules: pick the tail, get the skeleton
+
+Five schedules, each legal only where the hardware allows (the `schedule <isa>` command says why not):
+
+- `scalar` — no vectorization, the baseline. `-fno-tree-vectorize` / `#pragma clang loop vectorize(disable)`.
+- `scalar_remainder` — vector main loop + scalar tail loop; the only shape on maskless AVX2/NEON.
+  gcc `--param vect-partial-vector-usage=0`; clang `#pragma clang loop vectorize_width(VL) interleave_count(k)`.
+- `masked_remainder` — unmasked main loop + masked epilogue (AVX-512 opmask). gcc `=1`; clang has
+  **no masked epilogue** — use `full_mask` on AVX-512 or `scalar_remainder` elsewhere.
+- `full_mask` — every iteration predicated, no epilogue (AVX-512). gcc `=2`; clang
+  `-prefer-predicate-over-epilogue`.
+- `sve_intrinsics` — explicit predicated SVE loops (`svwhilelt` every iteration, runtime `svcntd()`
+  step, no remainder); what DaCe's `SVEVectorization` renders.
+
+```bash
+python -m alloy.isa schedule avx512      # per-schedule LEGAL/refused matrix with reasons
+python -m alloy.isa skeleton avx2 scalar_remainder f64   # the canonical axpy C, ready to edit
+```
+
+`skeleton` composes the loop from the table's own entries, so operand-order traps hold by
+construction; every skeleton the host can execute is compile-and-run verified in the test suite.
+The vector body is the canonical `C[i] = a*X[i] + Y[i]` — swap the expression for your kernel's.
+
+## When the answer is no: the do-it-yourself body
+
+If Alloy cannot emit or validate what you asked for, the response is a failure body, not silence:
+
+1. **Reason** — one line, what failed and why.
+2. **Do it yourself** — hand-write the C with intrinsics (this skill's pages, `lookup`, `validate`).
+3. **Hints from your tasklets** — every Python tasklet in the scope, classified (elementwise /
+   reduction / libm) and mapped to the relevant spellings for your ISA and dtype, each carrying its
+   trap and its `verified` / `unverified` / `FAILED` status (`alloy/isa/hints.py: advice()`).
 
 ```bash
 python -m alloy.isa lookup sve fma f64

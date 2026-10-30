@@ -34,6 +34,19 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 9 — 2026-10-30 (full review: skills and docs brought current)
+
+- `skills/alloy`: frontmatter now names the whole op set, schedules, and the validation gate (was the
+  snapshot-1 list); added the Loop schedules section (five shapes, compiler spellings, skeletons) and
+  the "when the answer is no" section describing the do-it-yourself failure body; the dtypes line now
+  covers f16/i64/i32.
+- `skills/alloy-isa-gen`: the pipeline diagram lists every consumer (CLI, validate, schedules, hints,
+  render); new "Adding a schedule" section; new gotchas (-mavx512dq for k-mask intrinsics, 32-bit
+  gather index lanes, clang's missing masked epilogue as the honest-refusal precedent); the check
+  command covers all four test files.
+- README, design.md, STATUS: stale CLI lists and test counts fixed; design.md records the schedule
+  axis, the validation gate, and the hints response.
+
 ### Snapshot 8 — 2026-10-30 (the compiler-vectorizer route of the schedule axis)
 
 - Every schedule now spells how to ask gcc and clang for it (data in `[schedules]`, from
@@ -168,7 +181,7 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ```bash
 cd alloy && uv sync --extra dev
-pytest tests/test_isa.py -q        # the ISA layer (186 tests)
+pytest tests/test_isa*.py -q       # the ISA layer (282 tests: table, validation, hints, schedules)
 ruff check alloy/ tests/test_isa.py
 python -m alloy.isa lookup sve fma f64
 python -m alloy.isa reverse vfmadd231pd

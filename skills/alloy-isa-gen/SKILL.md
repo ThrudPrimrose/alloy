@@ -17,10 +17,11 @@ workflow for changing the table.
 source facts (clang headers / ESSENTIALS / itemized PDFs)
         |  verify every spelling
         v
-ops.py (abstract op)  +  intrinsics.toml (spelling, traps, recipes, tiers)
-        |  table.py invariants + tests/test_isa.py
+ops.py (abstract op)  +  intrinsics.toml (spelling, traps, recipes, tiers, schedules)
+        |  table.py invariants + tests/test_isa*.py (header, kernels, tiers, schedules)
         v
-render.py -> skills/alloy/isa/*.md  ->  mirror to ~/.kimi-code/skills/alloy/
+consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
+        · hints.py (do-it-yourself advice) · render.py -> skills/alloy/isa/*.md
 ```
 
 ## Adding an op (the workflow)
@@ -43,11 +44,21 @@ render.py -> skills/alloy/isa/*.md  ->  mirror to ~/.kimi-code/skills/alloy/
    intrinsics (or pseudo steps, when even those don't exist) that provides it. See the existing
    patterns: x86 FP abs/neg (sign-mask AND/XOR), AVX2 scatter (scratch store + scalar), fmod
    (div+trunc+fnmadd), AVX2 f16 (cvtph_ps → f32 op → cvtps_ph).
-5. **Run the checks**: `pytest tests/test_isa.py tests/test_isa_validate.py -q` (header verification
-   of every identifier-shaped spelling; compiled-kernel validation of every entry the host can
-   execute; tier re-measurement; round-trips; invariants) and `ruff check alloy/ tests/test_isa*.py`.
-6. **Regenerate the pages**: `python -m alloy.isa.render`, then mirror the skill:
-   `cp -r skills/alloy/ ~/.kimi-code/skills/`.
+5. **Run the checks**: `pytest tests/test_isa*.py -q` (header verification of every identifier-shaped
+   spelling; compiled-kernel validation of every entry the host can execute; tier re-measurement;
+   skeleton compile-and-run; round-trips; invariants) and `ruff check alloy/ tests/test_isa*.py`.
+6. **Regenerate the pages**: `python -m alloy.isa.render`, then mirror the skills:
+   `cp skills/alloy/SKILL.md ~/.kimi-code/skills/alloy/ && cp -r skills/alloy/isa ~/.kimi-code/skills/alloy/`.
+
+## Adding a schedule
+
+Schedules are `[schedules.<name>]` tables (title, description, tail strategy, gcc/clang spellings),
+cross-referenced by every ISA's `schedules` list — `_checked` rejects an offer with no metadata. The
+skeleton emitter (`schedules.py`) composes C loop shapes from the table entries, so a new schedule
+needs: the metadata block, the legality lists on the ISAs that offer it, and an emitter branch.
+Keep `legal()`'s reasons true: a refusal must say whether the blocker is predication or the offer
+list. When the schedule has no compiler spelling (clang's missing masked epilogue is the precedent),
+say so in the `clang` field — an honest refusal beats a wrong flag.
 
 ## Gotchas already paid for
 
@@ -65,6 +76,10 @@ render.py -> skills/alloy/isa/*.md  ->  mirror to ~/.kimi-code/skills/alloy/
   regex tolerates it; your grep should too (`\bname\b`).
 - **Operand-order traps** (fma accumulator first on NEON/SVE, last on Intel; select/blend's three
   surfaces; AVX-512 gather `(idx, base)` vs AVX2 `(base, idx)`) go in `signature`/`semantics`/`note`.
+- **Flag needs travel with spellings**: the AVX-512 k-mask intrinsics (`_kand_mask8`) need
+  `-mavx512dq`, not just `-mavx512f`; f32 gathers/scatters index in 32-bit lanes — a 64-bit index
+  vector reads every other dword; clang has no masked-epilogue form, so `masked_remainder`'s clang
+  spelling is an honest refusal, not a flag.
 - **Dtypes**: float ops live under `f64`/`f32` (required, full coverage), `f16` optional (arithmetic
   subset), integer ops under `i64`/`i32`. `_checked` enforces this — read its errors as the spec.
 - **Transcendentals**: no `intrinsic`/`recipe` on the entry; tiers are `[approx.<name>]` tables with
