@@ -544,6 +544,7 @@ def evaluate_tier(tier, n: int = N_TIER):
         raise ValueError(f"{tier}: cannot parse the domain")
     x = np.linspace(span[0], span[1], n)
     env: dict[str, object] = {"x": x}
+    name = "x"
     for step in tier.recipe:
         name, _, rhs = step.strip().partition(" = ")
         env[name.strip()] = _eval_expr(rhs, env)
@@ -614,7 +615,10 @@ def _library_kernel(call: str, op: str, dtype: str) -> str:
     s = "double" if dtype == "f64" else "float"
     fn = {"sin": "sin", "cos": "cos", "exp": "exp"}[op]
     suffix = "" if dtype == "f64" else "f"
-    lanes = int(re.search(r"N(\d+)v_", call).group(1))
+    width = re.search(r"N(\d+)v_", call)
+    if width is None:
+        raise ValueError(f"{call}: not a vector ABI name")
+    lanes = int(width.group(1))
     vec = {
         ("f64", 2): "__m128d",
         ("f64", 4): "__m256d",

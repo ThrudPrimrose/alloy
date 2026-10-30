@@ -97,7 +97,7 @@ def _print_entry(table, isa: str, op: str, dtype: str) -> None:
     if abstract is None:
         raise KeyError(f"{op!r}: unknown op (one of: {', '.join(OPS)})")
     lanes = target.lanes[dtype] or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
-    if isa in ALIASES:
+    if isa in ALIASES and isinstance(lanes, int):
         lanes //= 2
     print(f"{isa}/{dtype}/{op}: {abstract.semantics}  ({lanes} lanes)")
     if isa in ALIASES:

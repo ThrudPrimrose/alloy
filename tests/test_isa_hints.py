@@ -118,7 +118,7 @@ def _integer_sdfg():
     sdfg.add_array("c", [8], dace.int64)
     state = sdfg.add_state()
     entry, exit_ = state.add_map("m", dict(i="0:8"))
-    node = state.add_tasklet("mask", {"x", "y"}, {"z"}, "z = x & y")
+    node = state.add_tasklet("mask", dict.fromkeys(("x", "y")), {"z"}, "z = x & y")
     a, b, c = state.add_access("a"), state.add_access("b"), state.add_access("c")
     state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(b, entry, node, dst_conn="y", memlet=dace.Memlet("b[i]"))

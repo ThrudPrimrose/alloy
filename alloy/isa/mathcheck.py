@@ -28,6 +28,7 @@ CROSS = {"neon": "armv8.2-a", "sve": "armv8.2-a+sve"}
 HEADERS = {"avx2": "immintrin.h", "avx512": "immintrin.h", "neon": "arm_neon.h", "sve": "arm_sve.h"}
 
 DRIVER = """
+#define _GNU_SOURCE
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>

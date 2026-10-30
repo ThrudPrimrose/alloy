@@ -170,8 +170,11 @@ class Renderer:
         self.count += 1
         return expand(self.ops[op], self.fields, args)
 
-    def constant(self, node: ast.expr) -> str:
-        value = node.value if isinstance(node, ast.Constant) else -node.operand.value
+    def constant(self, node: ast.Constant | ast.UnaryOp) -> str:
+        operand = node.operand if isinstance(node, ast.UnaryOp) else node
+        if not isinstance(operand, ast.Constant) or not isinstance(operand.value, int | float):
+            raise ValueError(f"{ast.unparse(node)}: not a numeric literal")
+        value = -operand.value if isinstance(node, ast.UnaryOp) else operand.value
         if isinstance(value, int):
             return self.call("seti", f"{value}LL" if self.dtype == "f64" else str(value))
         return self.call("set", literal(value, self.dtype))
@@ -179,8 +182,10 @@ class Renderer:
     def expr(self, node: ast.expr) -> str:
         if isinstance(node, ast.Name):
             return node.id
-        if isinstance(node, ast.Constant) or isinstance(node, ast.UnaryOp):
+        if isinstance(node, ast.Constant | ast.UnaryOp):
             return self.constant(node)
+        if not isinstance(node, ast.Call):
+            raise ValueError(f"{ast.unparse(node)}: not a primitive call")
         name = ast.unparse(node.func)
         if name == "set":
             return self.expr(node.args[0])
@@ -192,7 +197,7 @@ class Renderer:
                 value = self.call("fma", value, at, self.expr(coefficient))
             return value
         if name in SHIFTS:
-            return self.call(name, self.expr(node.args[0]), str(node.args[1].value))
+            return self.call(name, self.expr(node.args[0]), ast.unparse(node.args[1]))
         return self.call(name, *(self.expr(arg) for arg in node.args))
 
     def type_of(self, node: ast.expr) -> str:
@@ -209,8 +214,10 @@ def cold_path(k: Kernel, r: Renderer) -> list[str]:
     """Lanes outside the guard recompute through scalar libm; the only branch of a ``strict`` kernel."""
     c, n = r.fields["c"], r.fields["lanes"]
     arrays = ", ".join(f"{name}s[{n}]" for name in [*k.args, "v", "bad"])
-    libm = k.fn + ("f" if k.dtype == "f32" else "")
+    suffix = "f" if k.dtype == "f32" else ""
     call = ", ".join(f"{name}s[j]" for name in k.args)
+    # exp10 needs _GNU_SOURCE, which a kernel cannot define after the file's first include.
+    scalar = f"pow{suffix}({literal(10.0, k.dtype)}, {call})" if k.fn == "exp10" else f"{k.fn}{suffix}({call})"
     one, zero = r.call("set", literal(1.0, k.dtype)), r.call("set", literal(0.0, k.dtype))
     stores = [f"        {r.call('store', f'{name}s', name)};" for name in k.args]
     return [
@@ -220,7 +227,7 @@ def cold_path(k: Kernel, r: Renderer) -> list[str]:
         f"        {r.call('store', 'vs', k.result)};",
         f"        {r.call('store', 'bads', r.call('select', k.guard, zero, one))};",
         "        for (int j = 0; j < (int)" + n + "; j++)",
-        f"            if (bads[j] != 0) vs[j] = {libm}({call});",
+        f"            if (bads[j] != 0) vs[j] = {scalar};",
         f"        {k.result} = {r.call('load', 'vs')};",
         "    }",
     ]

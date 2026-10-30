@@ -383,7 +383,8 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
     approx = TypeAdapter(dict[str, Approx]).validate_python(data.get("approx", {}))
     schedules = TypeAdapter(dict[str, ScheduleInfo]).validate_python(data.get("schedules", {}))
     isas_map = _checked(parsed, approx, schedules, path)
-    return Table(isas_map, approx, schedules, *_hits(isas_map), _assist_hits(isas_map))
+    by_intrinsic, by_mnemonic, by_part = _hits(isas_map)
+    return Table(isas_map, approx, schedules, by_intrinsic, by_mnemonic, by_part, _assist_hits(isas_map))
 
 
 def isas(table: Table | None = None) -> tuple[str, ...]:
