@@ -213,14 +213,15 @@ reductions park the WCR on the map exit's edge).
    table route), NEON `vld2/3/4` structure loads, `cvt` family, f16 gen_mask (epi16 iota).
 7. **Latency/throughput columns**: llvm-mca per CPU on the hot mnemonics (plan's generator step);
    table hooks (mnemonics) are in place.
-8. **Commit + CI**: nothing is committed yet; commit the ISA layer, add clang to CI so the header
-   verification test runs there.
+8. **CI**: add clang to CI so the header verification test runs there.
+9. **Math kernels**: emission never picks a level (`fp_level` + `finite_inputs` should); NEON and SVE kernels only
+   cross-compile; `strict` is 1-3 ulp, not below 1; `pow` relaxed reaches 509 ulp.
 
 ## Verification quick reference
 
 ```bash
 cd alloy && uv sync --extra dev
-pytest tests/test_isa*.py -q       # the ISA layer (282 tests: table, validation, hints, schedules)
+pytest tests/test_isa*.py -q       # the ISA layer (794 tests: table, validation, hints, schedules, kernels)
 ruff check alloy/ tests/test_isa.py
 python -m alloy.isa lookup sve fma f64
 python -m alloy.isa reverse vfmadd231pd
