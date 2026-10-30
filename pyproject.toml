@@ -37,7 +37,7 @@ alloy = "alloy.hb_plugin"
 include = ["alloy*"]
 
 [tool.setuptools.package-data]
-alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml"]
+alloy = ["configuration_matrix.toml", "hb_plugin/plugin.toml", "isa/intrinsics.toml"]
 
 [tool.uv]
 conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],
