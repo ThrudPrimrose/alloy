@@ -40,6 +40,9 @@ consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
      end-to-end read.
 3. **Record traps in `note`** (operand order, sign-bit vs boolean masks, argument order swaps) — the
    table is where traps live, so no caller hardcodes them.
+   **Assists** (single intrinsics that help an op without being one — `vscalefpd`, `svexpa`,
+   `vrecpeq`) go in `[[isa.<isa>.assists]]` rows (`name`, `mnemonic`, `helps`, `note`); they are
+   reverse-lookup only (`python -m alloy.isa assist <name>`), never abstract ops.
 4. **Hardware missing the op → write a `recipe`**, the fallback story: the smallest sequence of real
    intrinsics (or pseudo steps, when even those don't exist) that provides it. See the existing
    patterns: x86 FP abs/neg (sign-mask AND/XOR), AVX2 scatter (scratch store + scalar), fmod

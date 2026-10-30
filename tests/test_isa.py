@@ -429,3 +429,35 @@ def test_the_skill_pages_render_from_the_table(tmp_path):
     trans = (tmp_path / "transcendentals.md").read_text()
     assert "sin-quad-cheb13" in trans
     assert "_ZGVcN4v_sin" in trans
+
+
+def test_the_assists_reverse_by_name_and_mnemonic():
+    (hit,) = TABLE.assist("svexpa_f64")
+
+    assert hit.isa == "sve" and hit.assist.helps == "exp"
+
+    by_mnemonic = TABLE.assist("fexpa")
+    assert [h.assist.name for h in by_mnemonic] == ["svexpa_f64"]
+    assert {h.isa for h in TABLE.assist("frecps")} == {"sve", "neon"}
+
+
+def test_every_assist_spelling_exists_in_the_clang_headers():
+    include = _clang_include()
+    if include is None:
+        pytest.skip("no clang resource headers on this host")
+    blob = _header_blob()
+    missing = [
+        assist.name
+        for isa in TABLE.isas.values()
+        for assist in isa.assists
+        if not re.search(rf"\b{re.escape(assist.name)}\s*\(", blob)
+    ]
+    assert not missing
+
+
+def test_the_cli_names_an_assist():
+    run = _cli("assist", "vscalefpd")
+
+    assert run.returncode == 0
+    assert "_mm512_scalef_pd" in run.stdout
+    assert "helps exp" in run.stdout

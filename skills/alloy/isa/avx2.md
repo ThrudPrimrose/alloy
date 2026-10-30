@@ -110,6 +110,14 @@ No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f
 | `lor` | recipe: _mm256_cmpeq_epi32 -> _mm256_and_si256 -> _mm256_andnot_si256 | `vpcmpeq+vpand+vpandn` | `(a, b) -> v` | — |
 | `mod` | recipe: no vector remainder: divide scalar per lane, or double division while |a| < 2^53 -> r = a - q * b | `sdiv+mul` | `(a, b) -> v` | — |
 
+## Hardware assists
+
+| intrinsic | mnemonic | helps | note |
+|---|---|---|---|
+| `_mm256_rcp_ps` | `vrcpps` | div | 12-bit reciprocal estimate, f32 only; Newton refinement for a fast divide (no f64 form on AVX2) |
+| `_mm256_rsqrt_ps` | `vrsqrtps` | sqrt | 12-bit rsqrt estimate, f32 only; Newton refinement (no f64 form on AVX2) |
+| `_mm256_dp_ps` | `vdpps` | reduce_add | dot product: horizontal add of products with an immediate lane mask; useful for short reductions |
+
 ## Traps
 
 - **select** (f64): operand-order trap: mask is LAST and it picks b; blendv tests the mask's SIGN BIT, not ==1 - feed it compare results (all-ones/all-zeros), x86 calls this op blend

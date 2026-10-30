@@ -68,6 +68,10 @@ def render_isa(table: Table, isa_name: str) -> str:
         entries = getattr(isa, dtype, {})
         if entries:
             lines += _dtype_section(isa_name, dtype, entries)
+    if isa.assists:
+        lines += ["## Hardware assists", "", "| intrinsic | mnemonic | helps | note |", "|---|---|---|---|"]
+        lines += [f"| `{a.name}` | `{a.mnemonic}` | {a.helps} | {a.note} |" for a in isa.assists]
+        lines.append("")
     traps = [
         (op, dtype, entry)
         for dtype in ALL_DTYPES

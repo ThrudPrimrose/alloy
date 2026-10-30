@@ -34,6 +34,18 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 11 — 2026-10-30 (review round 2: assists, one namespace, skill polish)
+
+- The ISA survey's hardware assists are now queryable table data: 22 `[[isa.*.assists]]` rows
+  (AVX-512 scalef/getexp/getmant/reduce/fixupimm/range/rcp14/rsqrt14/fpclass; SVE expa/scale/logb/
+  recpe/rsqrte/recps; NEON recpe/rsqrte/recps/ld2; AVX2 rcp/rsqrt/dp), each with mnemonic, the op it
+  helps, and a note. Reverse-lookup only: `python -m alloy.isa assist <name>`; listed on the per-ISA
+  pages. AVX512ER (Phi-only vexp2pd/rcp28) deliberately absent.
+- `alloy.isa` is now one namespace: `validate`, `skeleton`, `advice`, `tasklet_hints`,
+  `compiler_spelling`, `legal` all import from the package (every module stays dace-free at import).
+- Skills polished: the `assist` command documented in the agent skill; the maintainer skill gains the
+  assists workflow. 287 tests.
+
 ### Snapshot 10 — 2026-10-30 (skeleton self-verification)
 
 - `schedules.verify(isa, schedule, dtype)` compiles and runs a skeleton against the scalar reference

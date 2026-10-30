@@ -32,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     reverse_p.add_argument("name")
 
+    assist_p = commands.add_parser("assist", help="a hardware assist: assist _mm512_scalef_pd | svexpa_f64 | vrcpps")
+    assist_p.add_argument("name")
+
     validate_p = commands.add_parser(
         "validate", help="run the numerical gate: everything the host can execute, or one entry"
     )
@@ -60,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _verify(table, args.isa, args.op, args.dtype)
         elif args.command == "reverse":
             _print_hits(table, args.name)
+        elif args.command == "assist":
+            _print_assists(table, args.name)
         elif args.command == "validate":
             return _validate_cmd(table, args)
         elif args.command == "ops":
@@ -163,6 +168,16 @@ def _print_hits(table, name: str) -> None:
         print(f"{name} = {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail})")
         if hit.entry.semantics:
             print(f"  {hit.entry.semantics}")
+
+
+def _print_assists(table, name: str) -> None:
+    hits = table.assist(name)
+    if not hits:
+        raise KeyError(f"{name!r}: neither an assist intrinsic nor an assist mnemonic in the table")
+    for hit in hits:
+        a = hit.assist
+        print(f"{name} = {a.name} on {hit.isa}: helps {a.helps} ({a.mnemonic})")
+        print(f"  {a.note}")
 
 
 def _print_ops() -> None:

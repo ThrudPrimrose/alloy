@@ -58,12 +58,19 @@ exceeds the polynomial error beyond a few multiples of π. Native assists: AVX-5
 hardware 2^(I/64) table, the sub-1-ulp exp building block (ACLE SVE 6.16.30) — plus `svscale`/`svlogb`.
 Sub-1-ulp exp otherwise needs a 64-entry 2^(j/64) table (which is exactly what SVE's EXPA is).
 
+**Assists are queryable too**: single intrinsics that help an op without being one — AVX-512
+`vscalefpd`/`vgetexppd`/`vreducepd`/`vrcp14pd`, SVE `svexpa`/`fscale`/`frecpe`, NEON `vrecpeq`,
+AVX2 `vrcpps`. `python -m alloy.isa assist svexpa_f64` (or the mnemonic) names what it helps and
+how; the per-ISA pages list them.
+
 ## Lookup (cheap tool calls, no manuals)
 
 ```bash
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute
+python -m alloy.isa skeleton <isa> <schedule> <dtype> [--verify]   # the C loop shape, ready to edit
+python -m alloy.isa assist <name>               # hardware assists: _mm512_scalef_pd | svexpa_f64 | vrcpps
 python -m alloy.isa ops | isas | schedule <isa>
 ```
 

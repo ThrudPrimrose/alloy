@@ -112,6 +112,17 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `lor` | recipe: svcmpne_u32 -> svorr_b_z | `cmpne+orr_b` | `(pg, a, b) -> pg` | — |
 | `mod` | recipe: no vector remainder: divide scalar per lane, or double division while |a| < 2^53 -> r = a - q * b | `sdiv+mul` | `(a, b) -> v` | — |
 
+## Hardware assists
+
+| intrinsic | mnemonic | helps | note |
+|---|---|---|---|
+| `svexpa_f64` | `fexpa` | exp | the hardware 2^(I/64) table with the exponent field replaced (ACLE SVE 6.16.30): split k*64+j, EXPA yields 2^k*2^(j/64) and a short polynomial finishes - the sub-1-ulp exp building block |
+| `svscale_f64_x` | `fscale` | exp | ldexp-style scaling by 2^floor(n): the 2^k of the exp k-split, predicated |
+| `svlogb_f64_x` | `flogb` | exp | extracts each lane's exponent (frexp's e), predicated |
+| `svrecpe_f64` | `frecpe` | div | reciprocal estimate; refine with svrecps (Newton step) for a fast divide |
+| `svrsqrte_f64` | `frsqrte` | sqrt | rsqrt estimate; refine with the frsqrts step for a fast reciprocal square root |
+| `svrecps_f64` | `frecps` | div | the Newton refinement step for svrecpe: r' = r*(2 - d*r) in one instruction |
+
 ## Traps
 
 - **fma** (f64): operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd

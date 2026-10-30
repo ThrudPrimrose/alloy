@@ -110,6 +110,15 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `lor` | recipe: vceqzq_u32 -> vandq_u32 -> vmvnq_u32 | `cmeqz+and+mvn` | `(a, b) -> v` | — |
 | `mod` | recipe: no vector remainder: divide scalar per lane, or double division while |a| < 2^53 -> r = a - q * b | `sdiv+mul` | `(a, b) -> v` | — |
 
+## Hardware assists
+
+| intrinsic | mnemonic | helps | note |
+|---|---|---|---|
+| `vrecpeq_f64` | `frecpe` | div | reciprocal estimate; refine with vrecpsq for a fast divide |
+| `vrsqrteq_f64` | `frsqrte` | sqrt | rsqrt estimate; refine for a fast reciprocal square root |
+| `vrecpsq_f64` | `frecps` | div | the Newton refinement step for vrecpeq |
+| `vld2q_f64` | `ld2` | load | structure load: deinterleaves an AoS pair (vld3/vld4 for 3- and 4-wide) - the SoA idiom for stencil kernels |
+
 ## Traps
 
 - **fma** (f64): operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd

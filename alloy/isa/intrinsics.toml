@@ -56,6 +56,25 @@ schedules = ["scalar", "scalar_remainder"]
 gen_mask = ""
 note = "No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f128) are slow; keep reductions out of inner loops. Mixing SSE and VEX stalls on old targets: vzeroupper after 256-bit code."
 
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.avx2.assists]]
+name = "_mm256_rcp_ps"
+mnemonic = "vrcpps"
+helps = "div"
+note = "12-bit reciprocal estimate, f32 only; Newton refinement for a fast divide (no f64 form on AVX2)"
+
+[[isa.avx2.assists]]
+name = "_mm256_rsqrt_ps"
+mnemonic = "vrsqrtps"
+helps = "sqrt"
+note = "12-bit rsqrt estimate, f32 only; Newton refinement (no f64 form on AVX2)"
+
+[[isa.avx2.assists]]
+name = "_mm256_dp_ps"
+mnemonic = "vdpps"
+helps = "reduce_add"
+note = "dot product: horizontal add of products with an immediate lane mask; useful for short reductions"
+
 [isa.avx2.f64.load]
 intrinsic = "_mm256_loadu_pd"
 mnemonic = "vmovupd"
@@ -191,6 +210,61 @@ mask = true
 schedules = ["scalar", "scalar_remainder", "masked_remainder", "full_mask"]
 gen_mask = "_mm512_cmplt_epu{64,32}_mask(iota, set1(N - i))"
 note = "The only x86 target with predication: masked tail forms take a leading __mmask8/16. avx512_256 (the matrix's -mprefer-vector-width=256) is this ISA at 256 bits: same intrinsics, half the lanes. Downclocking risk on some cores is why the width is a sweep knob. EVEX extras: embedded rounding, SAE, embedded broadcast {1to8}."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.avx512.assists]]
+name = "_mm512_scalef_pd"
+mnemonic = "vscalefpd"
+helps = "exp"
+note = "2^k scaling, the ldexp of the exp k-split: exp(x) = 2^k * exp(r) in one instruction"
+
+[[isa.avx512.assists]]
+name = "_mm512_getexp_pd"
+mnemonic = "vgetexppd"
+helps = "exp"
+note = "extracts each lane's unbiased exponent (frexp's e); range-reduction and scaling decompositions"
+
+[[isa.avx512.assists]]
+name = "_mm512_getmant_pd"
+mnemonic = "vgetmantpd"
+helps = "exp"
+note = "extracts normalized mantissas (frexp's m); pairs with getexp"
+
+[[isa.avx512.assists]]
+name = "_mm512_reduce_pd"
+mnemonic = "vreducepd"
+helps = "sin"
+note = "argument reduction by a multiple of imm8 - folds pi/2-multiple reduction into one instruction (sin/cos)"
+
+[[isa.avx512.assists]]
+name = "_mm512_fixupimm_pd"
+mnemonic = "vfixupimmpd"
+helps = "exp"
+note = "patches special-case lanes (NaN/Inf/denormal) per an immediate table; SVML's transcendentals use it"
+
+[[isa.avx512.assists]]
+name = "_mm512_range_pd"
+mnemonic = "vrangepd"
+helps = "min"
+note = "restricted-range min/max with immediate-supplied bounds"
+
+[[isa.avx512.assists]]
+name = "_mm512_rcp14_pd"
+mnemonic = "vrcp14pd"
+helps = "div"
+note = "14-bit reciprocal estimate; one or two Newton steps (x*(2 - d*x)) give a fast divide"
+
+[[isa.avx512.assists]]
+name = "_mm512_rsqrt14_pd"
+mnemonic = "vrsqrt14pd"
+helps = "sqrt"
+note = "14-bit rsqrt estimate; Newton refinement gives a fast reciprocal square root"
+
+[[isa.avx512.assists]]
+name = "_mm512_fpclass_pd_mask"
+mnemonic = "vfpclasspd"
+helps = "exp"
+note = "classifies lanes (NaN/Inf/zero/denormal) into an opmask; the finite-input guard for fast-math tiers"
 
 [isa.avx512.f64.load]
 intrinsic = "_mm512_loadu_pd"
@@ -355,6 +429,31 @@ schedules = ["scalar", "scalar_remainder"]
 gen_mask = ""
 note = "AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. NEON and SVE coexist on one core; gcc --param=aarch64-autovec-preference and clang -mllvm -scalable-vectorization=off gate which the auto-vectorizer prefers. fma availability: vfmaq_f64 (ACLE __ARM_FEATURE_FMA)."
 
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.neon.assists]]
+name = "vrecpeq_f64"
+mnemonic = "frecpe"
+helps = "div"
+note = "reciprocal estimate; refine with vrecpsq for a fast divide"
+
+[[isa.neon.assists]]
+name = "vrsqrteq_f64"
+mnemonic = "frsqrte"
+helps = "sqrt"
+note = "rsqrt estimate; refine for a fast reciprocal square root"
+
+[[isa.neon.assists]]
+name = "vrecpsq_f64"
+mnemonic = "frecps"
+helps = "div"
+note = "the Newton refinement step for vrecpeq"
+
+[[isa.neon.assists]]
+name = "vld2q_f64"
+mnemonic = "ld2"
+helps = "load"
+note = "structure load: deinterleaves an AoS pair (vld3/vld4 for 3- and 4-wide) - the SoA idiom for stencil kernels"
+
 [isa.neon.f64.load]
 intrinsic = "vld1q_f64"
 mnemonic = "ld1"
@@ -487,6 +586,43 @@ mask = true
 schedules = ["scalar", "sve_intrinsics"]
 gen_mask = "svwhilelt_b{64,32}_u64(i, N)"
 note = "Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) and known only at runtime via svcntd()/svcntw() — lanes 0 here mean 'runtime length'. Everything is predicated: every op takes a leading svbool_t pg plus an activity-policy suffix _x (don't-care, fastest), _z (inactive lanes zeroed), _m (inactive lanes from a source operand). The predicate subsumes every tail schedule: no remainder loop. Host flag: -march=armv8-a+sve."
+
+# Hardware assists from the ISA survey (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.sve.assists]]
+name = "svexpa_f64"
+mnemonic = "fexpa"
+helps = "exp"
+note = "the hardware 2^(I/64) table with the exponent field replaced (ACLE SVE 6.16.30): split k*64+j, EXPA yields 2^k*2^(j/64) and a short polynomial finishes - the sub-1-ulp exp building block"
+
+[[isa.sve.assists]]
+name = "svscale_f64_x"
+mnemonic = "fscale"
+helps = "exp"
+note = "ldexp-style scaling by 2^floor(n): the 2^k of the exp k-split, predicated"
+
+[[isa.sve.assists]]
+name = "svlogb_f64_x"
+mnemonic = "flogb"
+helps = "exp"
+note = "extracts each lane's exponent (frexp's e), predicated"
+
+[[isa.sve.assists]]
+name = "svrecpe_f64"
+mnemonic = "frecpe"
+helps = "div"
+note = "reciprocal estimate; refine with svrecps (Newton step) for a fast divide"
+
+[[isa.sve.assists]]
+name = "svrsqrte_f64"
+mnemonic = "frsqrte"
+helps = "sqrt"
+note = "rsqrt estimate; refine with the frsqrts step for a fast reciprocal square root"
+
+[[isa.sve.assists]]
+name = "svrecps_f64"
+mnemonic = "frecps"
+helps = "div"
+note = "the Newton refinement step for svrecpe: r' = r*(2 - d*r) in one instruction"
 
 [isa.sve.f64.load]
 intrinsic = "svld1_f64"

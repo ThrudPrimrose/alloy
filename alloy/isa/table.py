@@ -31,6 +31,8 @@ __all__ = [
     "INT_OPS",
     "DEFAULT_PATH",
     "Approx",
+    "Assist",
+    "AssistHit",
     "Entry",
     "ScheduleInfo",
     "Hit",
@@ -109,6 +111,18 @@ class Approx:
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)
+class Assist:
+    """A hardware assist the survey surfaced but that is not an abstract op: a single intrinsic that
+    helps implement one (the `helps` op — exp, sin, cos, div, sqrt, min, max, or load), with the
+    assembly mnemonic for reading disassembly and a note on what it does."""
+
+    name: str
+    mnemonic: str
+    helps: str
+    note: str
+
+
+@dataclass(slots=True, frozen=True, config=TABLE)
 class ScheduleInfo:
     """One loop schedule: what it is and how it handles the tail (the vectorizer knob it maps to in
     the matrix's ``[tails]``; ``scalar`` and ``scalar_remainder`` keep the remainder a scalar loop,
@@ -144,6 +158,15 @@ class Isa:
     i32: dict[str, Entry] = dataclasses.field(default_factory=dict)
     f16: dict[str, Entry] = dataclasses.field(default_factory=dict)
     embedded_broadcast: bool = False
+    assists: tuple[Assist, ...] = ()
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class AssistHit:
+    """One reverse-lookup match over the assists: ``name`` is ``assist`` on ``isa``."""
+
+    isa: str
+    assist: Assist
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -168,6 +191,7 @@ class Table:
     schedule_info: dict[str, ScheduleInfo]
     by_intrinsic: dict[str, tuple[Hit, ...]]
     by_mnemonic: dict[str, tuple[Hit, ...]]
+    by_assist: dict[str, tuple[AssistHit, ...]]
 
     def isa(self, name: str) -> Isa:
         """``name``'s ISA (aliases resolved), or ``KeyError`` naming the known ISAs."""
@@ -209,6 +233,21 @@ class Table:
             mnemonic, dtype = "vf" + m.group(1), "f64" if m.group(2) == "pd" else "f32"
             return tuple(h for h in self.by_mnemonic.get(mnemonic, ()) if h.dtype == dtype)
         return self.by_mnemonic.get(token, ())
+
+    def assist(self, name: str) -> tuple[AssistHit, ...]:
+        """Every assist an intrinsic or mnemonic names (e.g. ``_mm512_scalef_pd``, ``svexpa_f64``,
+        ``vreducepd``), or an empty tuple."""
+        return self.by_assist.get(name.strip().split(maxsplit=1)[0], ())
+
+
+def _assist_hits(isas: dict[str, Isa]) -> dict[str, tuple[AssistHit, ...]]:
+    """The reverse index over the assists, by intrinsic name and by mnemonic."""
+    index: dict[str, list[AssistHit]] = {}
+    for isa_name, isa in isas.items():
+        for assist in isa.assists:
+            index.setdefault(assist.name, []).append(AssistHit(isa_name, assist))
+            index.setdefault(assist.mnemonic, []).append(AssistHit(isa_name, assist))
+    return {key: tuple(hits) for key, hits in index.items()}
 
 
 def _hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], dict[str, tuple[Hit, ...]]]:
@@ -314,8 +353,8 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
     approx = TypeAdapter(dict[str, Approx]).validate_python(data.get("approx", {}))
     schedules = TypeAdapter(dict[str, ScheduleInfo]).validate_python(data.get("schedules", {}))
     isas_map = _checked(parsed, approx, schedules, path)
-    by_intrinsic, by_intrinsic_m = _hits(isas_map)
-    return Table(isas_map, approx, schedules, by_intrinsic, by_intrinsic_m)
+    by_intrinsic, by_mnemonic = _hits(isas_map)
+    return Table(isas_map, approx, schedules, by_intrinsic, by_mnemonic, _assist_hits(isas_map))
 
 
 def isas(table: Table | None = None) -> tuple[str, ...]:
