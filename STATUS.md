@@ -34,6 +34,17 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Snapshots
 
+### Snapshot 8 — 2026-10-30 (the compiler-vectorizer route of the schedule axis)
+
+- Every schedule now spells how to ask gcc and clang for it (data in `[schedules]`, from
+  design.md): scalar `-fno-tree-vectorize` / `vectorize(disable)`; scalar_remainder gcc
+  `--param vect-partial-vector-usage=0`, clang `#pragma clang loop vectorize_width(VL)
+  interleave_count(k)`; masked_remainder gcc `=1` (masked epilogue), clang honestly "no masked
+  epilogue: use full_mask or scalar_remainder"; full_mask gcc `=2`, clang
+  `-prefer-predicate-over-epilogue`; sve_intrinsics `-march=armv8-a+sve` (+ `-mllvm
+  -scalable-vectorization=on` for clang) or this skeleton. API `compiler_spelling(schedule,
+  compiler)`; `schedule <isa>` and the per-ISA pages show them. 26 schedule tests (282 total).
+
 ### Snapshot 7 — 2026-10-30 (the schedule axis)
 
 - Schedules are first-class: `[schedules]` metadata in the table (title, description, tail strategy),

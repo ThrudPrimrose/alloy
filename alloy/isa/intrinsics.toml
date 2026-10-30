@@ -16,26 +16,36 @@
 title = "Scalar loop"
 description = "No vectorization: one element per iteration, no tail handling. The baseline every speedup is measured against."
 tail = "none"
+gcc = "-fno-tree-vectorize"
+clang = "#pragma clang loop vectorize(disable)"
 
 [schedules.scalar_remainder]
 title = "Vector main loop + scalar remainder"
 description = "The vectorizer's default shape on maskless ISAs: a full-width main loop while i + VL <= N, then a scalar loop for the last N mod VL elements (AVX2, NEON; AVX-512 may also use it instead of masking)."
 tail = "scalar remainder loop after the vector main loop"
+gcc = "--param vect-partial-vector-usage=0 (epilogue vectorization off)"
+clang = "#pragma clang loop vectorize_width(VL) interleave_count(k) (scalar epilogue on maskless ISAs)"
 
 [schedules.masked_remainder]
 title = "Unmasked main loop + masked epilogue"
 description = "AVX-512/SVE shape: the main loop runs unmasked while a whole vector fits; only the final partial iteration is predicated (AVX-512: opmask epilogue; the compiler emits it from vect-partial-vector-usage)."
 tail = "masked epilogue (opmask or predicate) after the unmasked main loop"
+gcc = "--param vect-partial-vector-usage=1 (masked epilogue, AVX-512/SVE hosts)"
+clang = "no masked epilogue: use full_mask on AVX-512 or scalar_remainder elsewhere"
 
 [schedules.full_mask]
 title = "Every iteration masked"
 description = "AVX-512 shape: a single loop where every iteration applies its opmask (prefer-predicate-over-epilogue); no separate epilogue at all. Costs a mask per iteration in the main loop."
 tail = "every iteration predicated, no epilogue"
+gcc = "--param vect-partial-vector-usage=2 (masked loop body)"
+clang = "-prefer-predicate-over-epilogue (AVX-512)"
 
 [schedules.sve_intrinsics]
 title = "Explicit predicated SVE loops"
 description = "SVE shape rendered by DaCe's SVEVectorization (the sve_intrinsics tail): the loop steps by svcntd()/svcntw() and svwhilelt builds the tail predicate every iteration, so there is no remainder loop at all. Loop predicates are named __pg_{param}."
 tail = "predicate every iteration (svwhilelt), runtime vector length, no remainder"
+gcc = "-march=armv8-a+sve with #pragma omp simd (auto SVE), or explicit intrinsics via this skeleton"
+clang = "-march=armv8-a+sve -mllvm -scalable-vectorization=on, or DaCe SVEVectorization (this skeleton)"
 
 [isa.avx2]
 title = "AVX2 + FMA3 (256-bit VEX)"

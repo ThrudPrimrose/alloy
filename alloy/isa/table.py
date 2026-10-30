@@ -118,6 +118,8 @@ class ScheduleInfo:
     title: str
     description: str
     tail: str
+    gcc: str = ""
+    clang: str = ""
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)

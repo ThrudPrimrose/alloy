@@ -4,6 +4,13 @@ Vector bytes: 32; lanes: f64: 4, f32: 8, f16: 16, i64: 4, i32: 8; no predication
 
 Legal schedules: scalar, scalar_remainder. gen_mask: unsupported (no predication).
 
+- **scalar** (Scalar loop): No vectorization: one element per iteration, no tail handling. The baseline every speedup is measured against. Tail: none.
+  - gcc: -fno-tree-vectorize
+  - clang: #pragma clang loop vectorize(disable)
+- **scalar_remainder** (Vector main loop + scalar remainder): The vectorizer's default shape on maskless ISAs: a full-width main loop while i + VL <= N, then a scalar loop for the last N mod VL elements (AVX2, NEON; AVX-512 may also use it instead of masking). Tail: scalar remainder loop after the vector main loop.
+  - gcc: --param vect-partial-vector-usage=0 (epilogue vectorization off)
+  - clang: #pragma clang loop vectorize_width(VL) interleave_count(k) (scalar epilogue on maskless ISAs)
+
 No predication: every tail is a remainder loop. Cross-lane ops (vhaddpd, vperm2f128) are slow; keep reductions out of inner loops. Mixing SSE and VEX stalls on old targets: vzeroupper after 256-bit code.
 
 ### f64

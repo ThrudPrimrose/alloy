@@ -158,3 +158,24 @@ int main(void) {{
         run = subprocess.run([str(exe)], capture_output=True, text=True, check=True)
     rel = float(run.stdout.strip().removeprefix("rel="))
     assert rel <= 1e-5, f"{isa}/{schedule}/{dtype} rel err {rel}"  # fma vs mul+add differs by ~1 ulp
+
+
+def test_every_schedule_spells_how_to_ask_each_compiler():
+    from alloy.isa.schedules import compiler_spelling
+
+    assert compiler_spelling("scalar", "gcc", TABLE) == "-fno-tree-vectorize"
+    assert "vect-partial-vector-usage=0" in compiler_spelling("scalar_remainder", "gcc", TABLE)
+    assert "vect-partial-vector-usage=1" in compiler_spelling("masked_remainder", "gcc", TABLE)
+    assert "vect-partial-vector-usage=2" in compiler_spelling("full_mask", "gcc", TABLE)
+    assert "no masked epilogue" in compiler_spelling("masked_remainder", "clang", TABLE)
+    assert "vectorize_width" in compiler_spelling("scalar_remainder", "clang", TABLE)
+    assert "armv8-a+sve" in compiler_spelling("sve_intrinsics", "gcc", TABLE)
+
+
+def test_an_unknown_compiler_or_schedule_names_the_choices():
+    import pytest
+
+    from alloy.isa.schedules import compiler_spelling
+
+    with pytest.raises(KeyError, match="unknown schedule"):
+        compiler_spelling("wibble", "gcc", TABLE)

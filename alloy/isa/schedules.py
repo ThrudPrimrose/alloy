@@ -8,7 +8,7 @@ axpy expression, the loop shape comes from here."""
 
 from alloy.isa.table import DTYPES, Table, load
 
-__all__ = ["SCHEDULES", "legal", "skeleton"]
+__all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton"]
 
 #: Every schedule the table knows, most conservative first.
 SCHEDULES = ("scalar", "scalar_remainder", "masked_remainder", "full_mask", "sve_intrinsics")
@@ -28,6 +28,18 @@ def legal(isa: str, schedule: str, table: Table | None = None) -> str:
     if schedule in ("masked_remainder", "full_mask") and not target.mask:
         return f"{isa} has no predication ({info.tail})"
     return f"{schedule} is not offered on {isa} (legal there: {', '.join(target.schedules)})"
+
+
+def compiler_spelling(schedule: str, compiler: str, table: Table | None = None) -> str:
+    """How to ask ``compiler`` (gcc, clang) for this schedule: flags and/or pragma. Raises KeyError
+    for an unknown schedule or a compiler the table has no spelling for."""
+    table = table or load()
+    if schedule not in table.schedule_info:
+        raise KeyError(f"{schedule!r}: unknown schedule (one of: {', '.join(table.schedule_info)})")
+    spelling = getattr(table.schedule_info[schedule], compiler, "")
+    if not spelling:
+        raise KeyError(f"{schedule}: no {compiler!r} spelling (one of: gcc, clang)")
+    return spelling
 
 
 def _family(isa: str) -> str:

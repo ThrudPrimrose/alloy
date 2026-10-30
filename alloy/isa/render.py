@@ -49,6 +49,14 @@ def render_isa(table: Table, isa_name: str) -> str:
         f"Legal schedules: {', '.join(isa.schedules)}. gen_mask: {isa.gen_mask or 'unsupported (no predication)'}.",
         "",
     ]
+    for name in isa.schedules:
+        info = table.schedule_info[name]
+        lines.append(f"- **{name}** ({info.title}): {info.description} Tail: {info.tail}.")
+        if info.gcc:
+            lines.append(f"  - gcc: {info.gcc}")
+        if info.clang:
+            lines.append(f"  - clang: {info.clang}")
+    lines.append("")
     if isa.embedded_broadcast:
         lines += [
             "A scalar operand fuses into any arithmetic instruction as an EVEX embedded broadcast "

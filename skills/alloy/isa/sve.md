@@ -4,6 +4,13 @@ Vector bytes: length-agnostic; lanes: f64: runtime, f32: runtime, f16: runtime, 
 
 Legal schedules: scalar, sve_intrinsics. gen_mask: svwhilelt_b{64,32}_u64(i, N).
 
+- **scalar** (Scalar loop): No vectorization: one element per iteration, no tail handling. The baseline every speedup is measured against. Tail: none.
+  - gcc: -fno-tree-vectorize
+  - clang: #pragma clang loop vectorize(disable)
+- **sve_intrinsics** (Explicit predicated SVE loops): SVE shape rendered by DaCe's SVEVectorization (the sve_intrinsics tail): the loop steps by svcntd()/svcntw() and svwhilelt builds the tail predicate every iteration, so there is no remainder loop at all. Loop predicates are named __pg_{param}. Tail: predicate every iteration (svwhilelt), runtime vector length, no remainder.
+  - gcc: -march=armv8-a+sve with #pragma omp simd (auto SVE), or explicit intrinsics via this skeleton
+  - clang: -march=armv8-a+sve -mllvm -scalable-vectorization=on, or DaCe SVEVectorization (this skeleton)
+
 Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) and known only at runtime via svcntd()/svcntw() — lanes 0 here mean 'runtime length'. Everything is predicated: every op takes a leading svbool_t pg plus an activity-policy suffix _x (don't-care, fastest), _z (inactive lanes zeroed), _m (inactive lanes from a source operand). The predicate subsumes every tail schedule: no remainder loop. Host flag: -march=armv8-a+sve.
 
 ### f64

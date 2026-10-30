@@ -186,6 +186,10 @@ def _print_schedule(table, isa: str) -> None:
         mark = "LEGAL" if not why else f"refused: {why}"
         print(f"  {name}: {info.title} — {info.tail}  [{mark}]")
         print(f"      {info.description}")
+        if info.gcc:
+            print(f"      gcc:   {info.gcc}")
+        if info.clang:
+            print(f"      clang: {info.clang}")
 
 
 def _print_skeleton(table, isa: str, schedule: str, dtype: str) -> None:
