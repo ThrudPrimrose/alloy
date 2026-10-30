@@ -180,6 +180,12 @@ order; anything hardware lacks is a `recipe` over the intrinsics that provide it
 
 ## Open tasks
 
+0. **Full-suite MPI hang — FIXED 2026-10-30**: every `@dace.program` parse calls DaCe's
+   `mpi4py_is_usable`, which runs `from mpi4py import MPI` — that dlopens libmpi and MPI_Inits a
+   *singleton* job, whose bring-up stalls on a box without an MPI launcher (nondeterministic import
+   race; killed three full-suite runs at different points). Fix in `tests/conftest.py`: no alloy test
+   uses MPI, so the import is blocked (`sys.modules.setdefault("mpi4py", None)`) and the probe
+   answers False. Worth an upstream DaCe report (the probe could avoid MPI_Init).
 1. **Vector-schedule translator** (`alloy/vector/`, plan work item 3): schedule → vector schedule
    (clang/gcc vectorizer pragmas, SVE explicit loops), remark/asm verification, tail shapes =
    DaCe RemainderStrategy names. Makes the polynomial tiers and recipes emittable, not just readable.
