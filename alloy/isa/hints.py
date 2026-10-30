@@ -124,8 +124,12 @@ def _uses(sdfg) -> list[OpUse]:
         reduces = False
         if isinstance(state, dace.SDFGState):
             for edge in state.out_edges(node):
-                if edge.data.wcr is not None and "+" in str(edge.data.wcr):
+                # the summing write-conflict may sit on this edge or anywhere up its memlet tree
+                # (e.g. only on the enclosing map exit's edge); check the whole path
+                tree = {id(e): e for e in [edge, *state.memlet_tree(edge)]}.values()
+                if any(e.data.wcr is not None and "+" in str(e.data.wcr) for e in tree):
                     reduces = True
+                    break
         if {"mul", "add"} <= ops or {"mul", "sub"} <= ops:
             ops.add("fma")  # contractable pair: name the fused form too
         ordered = tuple(op for op in _ORDER if op in ops)

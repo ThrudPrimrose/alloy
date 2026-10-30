@@ -461,3 +461,27 @@ def test_the_cli_names_an_assist():
     assert run.returncode == 0
     assert "_mm512_scalef_pd" in run.stdout
     assert "helps exp" in run.stdout
+
+
+def test_masked_variant_names_reverse_without_their_notes():
+    """The f16 masked variants carry a cast note after the name; the index must key the bare name."""
+    (hit,) = reverse("_mm512_maskz_loadu_epi16", TABLE)
+
+    assert (hit.isa, hit.dtype, hit.op, hit.via) == ("avx512", "f16", "load", "masked")
+
+
+def test_masked_variant_names_exist_in_the_clang_headers():
+    include = _clang_include()
+    if include is None:
+        pytest.skip("no clang resource headers on this host")
+    blob = _header_blob()
+    missing = []
+    for isa in TABLE.isas.values():
+        for dtype in ALL_DTYPES:
+            for entry in getattr(isa, dtype).values():
+                if not entry.masked:
+                    continue
+                name = entry.masked.split("(", 1)[0].split(maxsplit=1)[0]
+                if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
+                    missing.append(name)
+    assert not missing

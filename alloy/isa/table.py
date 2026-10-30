@@ -260,7 +260,7 @@ def _hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], dict[str, t
                 if entry.intrinsic:
                     by_intrinsic.setdefault(entry.intrinsic, []).append(Hit(isa_name, dtype, op, entry, "intrinsic"))
                 if entry.masked:
-                    name = entry.masked.split("(", 1)[0]
+                    name = entry.masked.split("(", 1)[0].split(maxsplit=1)[0]
                     by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "masked"))
                 for step in entry.recipe:
                     by_intrinsic.setdefault(step, []).append(Hit(isa_name, dtype, op, entry, "recipe"))

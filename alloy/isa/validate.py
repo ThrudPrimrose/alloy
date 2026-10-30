@@ -83,11 +83,19 @@ class Verdict:
 
 
 def _flags() -> frozenset[str]:
+    """The host's CPU feature flags — x86 ``flags`` or aarch64 ``Features`` lines."""
     try:
-        text = pathlib.Path("/proc/cpuinfo").read_text(errors="ignore")
+        lines = pathlib.Path("/proc/cpuinfo").read_text(errors="ignore").splitlines()
     except OSError:
         return frozenset()
-    return frozenset(text.split("flags\t\t: ")[-1].split())
+    wanted = ("flags", "features")
+    return frozenset(
+        flag
+        for line in lines
+        for key, _, rest in (line.partition(":"),)
+        if key.strip().lower() in wanted
+        for flag in rest.split()
+    )
 
 
 def host_can_run(isa: str, dtype: str) -> bool:
@@ -702,12 +710,14 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
     source = kernel_c(isa, dtype, op)
     if source is None:
-        return Verdict(None, "no executable form on this ISA (checked where the host can run it)")
+        return Verdict(None, "no compiled validator for this entry yet (the table spelling is still in force)")
     try:
         rel = _compile_run(source, _c_flags(isa, dtype))
     except RuntimeError as exc:
         return Verdict(False, "compiled kernel", str(exc), candidates_for(isa, op, dtype, table))
     tol = TOL_F16 if dtype == "f16" else TOL.get(op, 0.0)
+    if dtype == "f32" and op in ("mod", "reduce_add"):
+        tol = max(tol, 1e-5)  # single-precision arithmetic vs the double reference
     ok = rel <= tol
     detail = f"max rel err {rel:.3e} vs tolerance {tol:.3e}"
     return Verdict(ok, "compiled kernel", detail, candidates_for(isa, op, dtype, table) if not ok else ())
