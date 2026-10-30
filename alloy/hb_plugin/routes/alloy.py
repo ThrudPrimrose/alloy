@@ -7,6 +7,9 @@ import concurrent.futures
 import multiprocessing
 import pathlib
 import shutil
+import subprocess
+import sys
+from collections.abc import Mapping
 from http import HTTPMethod, HTTPStatus
 
 from hpcagent_bench.harness.judge_wire import JudgeAnswer, JudgeError
@@ -20,15 +23,37 @@ from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
 from alloy.report import Mode
 
 ROUTE = "alloy"
+#: The route of the ``alloy_isa`` tool: a table query, outside the modes and the device slot.
+ISA = "isa"
+ISA_COMMANDS = frozenset({"lookup", "reverse", "assist", "kernel", "schedule", "skeleton", "ops", "isas"})
+ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels
 
 
 class AlloyAnswer(JudgeAnswer):
     result: CodegenAnswer
 
 
+class IsaAnswer(JudgeAnswer):
+    result: str
+
+
+def isa_query(judge: Judge, body: Mapping[str, object]) -> None:
+    """``python -m alloy.isa``, in a process of its own: the judge's threads share stdout. Exit code 3 is an answer."""
+    command, arguments = body.get("command"), body.get("arguments") or []
+    if command not in ISA_COMMANDS or not isinstance(arguments, list):
+        return judge.reply(HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: no query {command!r}"))
+    argv = [sys.executable, "-m", "alloy.isa", str(command), *(str(a) for a in arguments)]
+    run = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=ISA_TIMEOUT)
+    if run.returncode not in (0, 3):
+        return judge.reply(HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: {run.stderr.strip()}"))
+    return judge.reply(HTTPStatus.OK, IsaAnswer(result=run.stdout + run.stderr))
+
+
 @route(ROUTE, methods=(HTTPMethod.POST,))
 def serve(judge: Judge, request: RouteRequest) -> None:
     spelled = request.parts[1] if len(request.parts) > 1 else ""
+    if spelled == ISA:
+        return isa_query(judge, request.body)
     if spelled not in {mode.value for mode in Mode}:
         error = f"no Alloy mode {spelled!r}; modes: {sorted(mode.value for mode in Mode)}"
         return judge.reply(HTTPStatus.NOT_FOUND, JudgeError(error=error))

@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from alloy.isa.ops import OPS
 from alloy.isa.table import ALIASES, ALL_DTYPES, DTYPES, INT_DTYPES, SPELLED, Entry, Hit, Table, load
@@ -416,6 +417,8 @@ def _inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
     """Kernel inputs. Floats are not dyadic, so rounding is exercised, and alternate in sign except for
     sqrt. Integers alternate in sign, so an arithmetic shift cannot pass for a logical one, and land/lor
     get every zero / non-zero combination."""
+    a: list[int] | list[float]
+    b: list[int] | list[float]
     if dtype in INT_DTYPES:
         logical = op in ("land", "lor")
         a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) for j in range(lanes)]
@@ -575,10 +578,15 @@ def _eval_expr(expr: str, env: dict[str, object]):
         else:
             cur += ch
     parts.append(cur)
-    values = [_eval_expr(part, env) for part in parts]
-    return {"mul": np.multiply, "add": np.add, "sub": np.subtract, "div": np.divide, "fma": lambda p, q, r: p * q + r}[
-        fn.strip()
-    ](*values)
+    values: list[Any] = [_eval_expr(part, env) for part in parts]
+    steps: dict[str, Any] = {
+        "mul": np.multiply,
+        "add": np.add,
+        "sub": np.subtract,
+        "div": np.divide,
+        "fma": lambda p, q, r: p * q + r,
+    }
+    return steps[fn.strip()](*values)
 
 
 def _is_number(text: str) -> bool:

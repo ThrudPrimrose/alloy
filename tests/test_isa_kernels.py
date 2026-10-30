@@ -11,8 +11,8 @@ import pytest
 
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
-from alloy.isa.mathcheck import measure, validate_kernel
-from alloy.isa.mathkernels import LEVELS, functions, kernel, kernels_for, libraries, render, spelled
+from alloy.isa.mathcheck import Measured, measure, validate_kernel
+from alloy.isa.mathkernels import LEVELS, Kernel, functions, kernel, kernels_for, libraries, render, spelled
 from alloy.isa.validate import host_can_run
 
 ALL = [(fn, dtype, level) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS]
@@ -42,6 +42,12 @@ def test_a_kernel_builds_for_the_arm_targets(fn, dtype, level, isa):
     assert verdict.detail in ("builds", "no cross compiler")
 
 
+def measured(k: Kernel, samples: int, flags: tuple[str, ...] = ()) -> Measured:
+    seen = measure(k, host_isa(), samples, flags)
+    assert seen is not None
+    return seen
+
+
 def host_isa() -> str:
     for isa in ("avx512", "avx2"):
         if host_can_run(isa, "f64"):
@@ -54,7 +60,7 @@ def test_a_wrong_coefficient_fails_the_gate():
     body = tuple(line.replace("0.5", "0.51") if line.startswith("p = ") else line for line in k.body)
     assert body != k.body
 
-    seen = measure(dataclasses.replace(k, body=body), host_isa(), 1 << 12)
+    seen = measured(dataclasses.replace(k, body=body), 1 << 12)
 
     assert seen.ulp > 1000 * k.error_ulp
 
@@ -63,7 +69,7 @@ def test_a_wrong_coefficient_fails_the_gate():
 def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn):
     k = kernel(fn, "f64", "strict")
 
-    seen = measure(dataclasses.replace(k, guard=""), host_isa(), 1 << 10)
+    seen = measured(dataclasses.replace(k, guard=""), 1 << 10)
 
     assert seen.special > 0
 
@@ -101,7 +107,7 @@ def test_log1p_refuses_fast_math_at_every_level():
 def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn):
     k = kernel(fn, "f64", "relaxed")
 
-    seen = measure(k, host_isa(), 1 << 14, ("-ffast-math",))
+    seen = measured(k, 1 << 14, ("-ffast-math",))
 
     assert seen.ulp <= 3 * k.error_ulp
 

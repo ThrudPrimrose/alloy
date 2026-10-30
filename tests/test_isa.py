@@ -338,7 +338,9 @@ def test_the_committed_libmvec_names_exist_in_the_host_library():
         for dtype in DTYPES:
             for op in TRANSCENDENTALS:
                 call = getattr(TABLE.isas[isa], dtype)[op].libraries.get("libmvec")
-                assert call in _libmvec_symbols(), f"{call} not in this host's libmvec"
+                symbols = _libmvec_symbols()
+                assert symbols is not None
+                assert call in symbols, f"{call} not in this host's libmvec"
 
 
 def _cli(*args: str) -> subprocess.CompletedProcess:

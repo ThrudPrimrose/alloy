@@ -208,7 +208,7 @@ def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] 
         (folder / "k.c").write_text(unit)
         (folder / "d.c").write_text(main)
         machine = _c_flags(isa, k.dtype)
-        cc = _compiler()
+        cc = str(_compiler())
         for command in (
             [cc, "-O2", *flags, *machine, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")],
             [cc, "-O2", str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")],

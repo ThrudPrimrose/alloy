@@ -26,7 +26,7 @@ from alloy.heuristics.predict import Prediction, Predictions
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 4
+SCHEMA = 5
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -119,6 +119,7 @@ class ScopeRecord:
     pruned: dict[str, str]
     baseline: Time | None
     top: tuple[Variant, ...]
+    advice: str = ""
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -261,6 +262,7 @@ def scope_record(
     matrix: Matrix,
     k: int,
     scores: dict[str, Prediction] | None = None,
+    advice: str = "",
 ) -> ScopeRecord:
     scores = scores or {}
     dropped: dict[str, int] = {}
@@ -286,6 +288,7 @@ def scope_record(
             variant(rep, b, rank, verdicts.get(b.name), timing, matrix, scores.get(b.name))
             for rank, b in enumerate(top, start=1)
         ),
+        advice=advice,
     )
 
 
@@ -381,6 +384,7 @@ def assemble(
     top_k: int = TOP_K,
     predicted: Predictions | None = None,
     picked: dict[str, str] | None = None,
+    advice: dict[str, str] | None = None,
 ) -> Report:
     """The report of one run: speculative when it carries predictions and no timing, else profile."""
     verdicts = verification.verdicts if verification else {}
@@ -392,6 +396,7 @@ def assemble(
             matrix,
             top_k,
             (predicted or {}).get(rep.scope.symbol),
+            (advice or {}).get(rep.scope.symbol, ""),
         )
         for rep in reports
     )
@@ -466,6 +471,7 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         "|---|---|---|---|---|---|---|---|---|---|---|",
         *(variant_row(v) for v in s.top),
         "",
+        *([f"### Do it yourself: {s.symbol}", "", s.advice, ""] if s.advice else []),
     ]
 
 
@@ -522,10 +528,11 @@ def write(
     top_k: int = TOP_K,
     predicted: Predictions | None = None,
     picked: dict[str, str] | None = None,
+    advice: dict[str, str] | None = None,
 ) -> Report:
     """Write ``report.json`` and ``report.md`` (rendered from it), with a copy of the matrix that produced them."""
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    r = assemble(program, reports, matrix, verification, timing, commands, top_k, predicted, picked)
+    r = assemble(program, reports, matrix, verification, timing, commands, top_k, predicted, picked, advice)
     (out / "report.json").write_text(dumped_json(r))
     (out / "report.md").write_text(markdown(r, matrix))
     return r

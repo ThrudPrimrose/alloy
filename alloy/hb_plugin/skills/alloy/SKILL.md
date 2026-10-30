@@ -16,6 +16,7 @@ One call (`alloy_profile` or `alloy_speculative`, whichever your setup offers) a
   flags (`scopes` lists them). Keep `-ffast-math` on a scope's compile line, never on the link line: linked, it
   switches the whole process to flush-to-zero, which changes every other scope's results and can fail
   verification.
+- `advice`: for each scope Alloy left short, why, and the intrinsics its tasklets need on this machine.
 - `report`: the program tree, every scope's candidates (language, compiler, ISA, FP mode, layout knobs) and the
   top ones ranked by measured time (profile) or by prediction (speculative).
 
@@ -28,4 +29,21 @@ How to use it:
    vectorization, is.
 3. Edit that scope's translation unit (or swap in another candidate's source from the report), change its compile
    line in the `Makefile` if a different compiler or flag set ranked better, run `make`, and `score` again.
+   A scope in `advice` is the first place to look.
 4. Submit the best library you measured.
+
+## Writing intrinsics with `alloy_isa`
+
+Ask `alloy_isa` instead of recalling a spelling; every answer is checked on this machine.
+
+- `command="kernel", arguments=["avx512", "sin", "f64"]`: `sin`, `cos`, `tan`, `exp`, `exp2`, `exp10`, `expm1`, `log`
+  (`ln`), `log2`, `log10`, `log1p`, `pow`, `atan`, `asin`, `acos`, `sinh`, `cosh`, `tanh` as C functions to paste
+  into the scope, replacing the library call. Each level lists its measured ulp and contract:
+  - `strict` matches libm on every input through one cold branch. It is a compile error under `-ffast-math`.
+  - `relaxed` has no branch and needs finite inputs in its stated range.
+  - `fast` trades about half the digits for speed. Use it where a tolerance allows.
+  A kernel pays off in a loop with other work: the gain is the call and its spills.
+- `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps.
+- `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction computes.
+- `command="skeleton", arguments=["avx512", "<schedule>", "f64"]`: a loop in a legal schedule; `command="schedule",
+  arguments=["avx512"]` lists the schedules.

@@ -119,7 +119,8 @@ If Alloy cannot emit or validate what you asked for, the response is a failure b
 2. **Do it yourself** — hand-write the C with intrinsics (this skill's pages, `lookup`, `validate`).
 3. **Hints from your tasklets** — every Python tasklet in the scope, classified (elementwise /
    reduction / libm) and mapped to the relevant spellings for your ISA and dtype, each carrying its
-   trap and its `verified` / `unverified` / `FAILED` status (`alloy/isa/hints.py: advice()`).
+   trap and its `verified` / `unverified` / `FAILED` status (`alloy/isa/hints.py: advice()`). A run puts this text
+   in `report.md` under "Do it yourself" and in the tool answer's `advice`, per scope (`alloy/guidance.py`).
 
 ```bash
 python -m alloy.isa lookup sve fma f64

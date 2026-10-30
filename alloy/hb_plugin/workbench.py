@@ -68,6 +68,8 @@ class CodegenAnswer(pydantic.BaseModel):
     make: str
     scopes: tuple[ScopeChoice, ...]
     report: str
+    #: Scope symbol -> why Alloy left it short and how to finish it by hand, with the target's intrinsics.
+    advice: dict[str, str] = {}
 
 
 def bench_entry(linker: Linker, plan: Best, winners: dict[str, Build], spec: BenchSpec, precision: Precision) -> str:
@@ -98,7 +100,8 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     out = pathlib.Path(request.folder)
     result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode)
     if result.best is None or not result.winners:
-        raise RuntimeError(f"{spec.short_name}: Alloy picked no build for any scope (nothing was verified)")
+        hints = "\n\n".join((result.advice or {}).values())
+        raise ValueError(f"{spec.short_name}: Alloy picked no build for any scope (nothing was verified)\n\n{hints}")
     linker, best = Linker(result.program, matrix, out), out / "best"
     workspace = bench_entry(linker, result.best, result.winners, spec, request.precision)
     subprocess.run(["make", "-C", str(best), "-B"], check=True, capture_output=True, text=True)
@@ -115,4 +118,5 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
             for s in result.best.scopes
         ),
         report=report[:REPORT_CHARS],
+        advice=result.advice or {},
     )

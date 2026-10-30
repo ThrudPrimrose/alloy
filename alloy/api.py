@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import dace
 
-from alloy import configuration_matrix, machine, report
+from alloy import configuration_matrix, guidance, machine, report
 from alloy.backend import sweep
 from alloy.backend.build import Build
 from alloy.backend.sweep import ScopeReport
@@ -38,6 +38,8 @@ class Result:
     predictions: Predictions | None = None
     #: The build linked for each scope (empty when nothing was linked).
     winners: dict[str, Build] | None = None
+    #: Do-it-yourself text for the scopes Alloy left short (:func:`guidance.guidance`).
+    advice: dict[str, str] | None = None
 
 
 def test_cases(program: Program, manifest: Manifest | None, iterations: int) -> verify.Cases | None:
@@ -112,5 +114,18 @@ def generate(
         linker = Linker(program, matrix, out)
         best = linker.write_best(winners)
         commands = linker.commands(best)
-    report.write(program, reports, matrix, out, verification, timings, commands, predicted=predicted, picked=picked)
-    return Result(program, reports, verification, timings, best, out / "report.md", predicted, winners)
+    verdicts = verification.verdicts if verification else {}
+    advice = guidance.guidance(reports, verdicts, winners, matrix.host_isas(machine.cpu_flags()))
+    report.write(
+        program,
+        reports,
+        matrix,
+        out,
+        verification,
+        timings,
+        commands,
+        predicted=predicted,
+        picked=picked,
+        advice=advice,
+    )
+    return Result(program, reports, verification, timings, best, out / "report.md", predicted, winners, advice)

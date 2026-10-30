@@ -2,7 +2,7 @@
 """The Alloy tools on the agent side: each a thin ``POST /alloy/<mode>`` (Alloy and DaCe live in the judge)."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import pydantic
 from hpcagent_agent.tools import http_json
@@ -22,6 +22,24 @@ MODES = {
 }
 
 
+class IsaArgs(pydantic.BaseModel):
+    """One ``python -m alloy.isa`` query, run in the judge where the table and a compiler live."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    command: Literal["lookup", "reverse", "assist", "kernel", "schedule", "skeleton", "ops", "isas"]
+    arguments: list[str] = pydantic.Field(
+        default_factory=list, description='e.g. ["avx512", "sin", "f64"] for kernel, ["vfmadd231pd"] for reverse'
+    )
+
+
+ISA = (
+    "The intrinsics reference: `kernel` returns sin, exp, log, pow and more as C intrinsics at strict, relaxed and "
+    "fast levels; `lookup` spells an op for an ISA and dtype; `reverse` names what an intrinsic or mnemonic computes; "
+    "`skeleton` gives a loop in a legal schedule. Every answer is checked on this machine before it is returned."
+)
+
+
 #: Both modes write a fresh folder and library in the shared folder and touch nothing else; a repeat gives the same.
 HINTS = Hints(read_only=False, destructive=False, idempotent=True, open_world=False)
 
@@ -37,3 +55,12 @@ for mode, description in MODES.items():
     name = f"alloy_{mode}"
     spec = Spec(description, NoArgs, f"- `{name}` -- {description}", HINTS)
     tool(spec=spec, core=False, name=name)(poster(mode))
+
+
+def isa_query(payload: dict[str, Any]) -> dict[str, Any]:
+    return http_json.post_judge("/alloy/isa", payload)
+
+
+#: A query writes nothing and a repeat gives the same answer.
+ISA_HINTS = Hints(read_only=True, destructive=False, idempotent=True, open_world=False)
+tool(spec=Spec(ISA, IsaArgs, f"- `alloy_isa` -- {ISA}", ISA_HINTS), core=False, name="alloy_isa")(isa_query)

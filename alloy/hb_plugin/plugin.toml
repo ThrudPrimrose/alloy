@@ -15,19 +15,19 @@ optimizers = ["dace_cpu_canon_alloy_stub", "dace_cpu_canon_alloy_speculative"]
 kernels = ["tsvc_2_vpv", "atax"]
 language = "c"
 
-# Alloy for an LLM agent: one tool each, both described by the alloy skill page; prompt/overlay.yaml says what Alloy
+# Alloy for an LLM agent: one mode tool each plus the intrinsics reference, all described by the alloy skill page; prompt/overlay.yaml says what Alloy
 # does after both prompts' intro and starts the agent's end-to-end steps from Alloy's library.
 [packets.alloy-profile]
 name = "Alloy (profile)"
 skills = ["alloy"]
-tools = ["alloy_profile"]
+tools = ["alloy_profile", "alloy_isa"]
 overlays = ["alloy:prompt/overlay.yaml"]
 env = { JUDGE_INPUT_MODE = "any" }  # the tool hands back a library, submitted as is
 
 [packets.alloy-speculative]
 extends = "alloy-profile"
 name = "Alloy (speculative)"
-tools = ["alloy_speculative"]
+tools = ["alloy_speculative", "alloy_isa"]
 
 [flavors.alloy_profile]
 name = "Alloy profile"

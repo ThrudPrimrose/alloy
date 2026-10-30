@@ -6,6 +6,7 @@ import dataclasses
 import importlib
 import math
 import shutil
+from typing import Any
 
 import pytest
 
@@ -153,7 +154,7 @@ def test_every_recorded_tier_error_reproduces_within_slack(name):
 def test_a_tampered_tier_fails_the_gate():
     """A transcription error in a coefficient must not reproduce the recorded error."""
     held = TABLE.approx["sin-quad-cheb13"]
-    TABLE.approx["sin-quad-cheb13"] = BAD
+    TABLE.approx["sin-quad-cheb13"] = BAD  # type: ignore[assignment]
     try:
         verdict = validate_tier("sin-quad-cheb13", TABLE)
     finally:
@@ -214,13 +215,14 @@ def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
     """The kernel runs the table's own spelling, so a mapping that compiles but computes otherwise is caught."""
     target = TABLE.isas["avx2"]
     entries = {**getattr(target, dtype), op: dataclasses.replace(getattr(target, dtype)[op], intrinsic=wrong)}
-    broken = dataclasses.replace(TABLE, isas={**TABLE.isas, "avx2": dataclasses.replace(target, **{dtype: entries})})
+    fields: dict[str, Any] = {dtype: entries}
+    broken = dataclasses.replace(TABLE, isas={**TABLE.isas, "avx2": dataclasses.replace(target, **fields)})
     assert validate("avx2", op, dtype, broken).ok is False
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
 def test_a_nan_result_fails_the_gate_rather_than_comparing_false():
-    source = kernel_c("avx2", "f64", "add", TABLE).replace(
+    source = str(kernel_c("avx2", "f64", "add", TABLE)).replace(
         "__m256d vr = _mm256_add_pd(va, vb);", "__m256d vr = _mm256_div_pd(_mm256_setzero_pd(), _mm256_setzero_pd());"
     )
     assert math.isnan(_compile_run(source, _c_flags("avx2", "f64")))

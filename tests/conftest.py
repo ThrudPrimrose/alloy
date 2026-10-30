@@ -8,7 +8,7 @@ import sys
 # singleton job; on a box without an MPI launcher that bring-up can stall and hang the run (seen as
 # a parse stuck in preprocess_dace_program). Make the probe answer "no MPI": the import then raises
 # ImportError, which the probe catches and reports as unavailable.
-sys.modules.setdefault("mpi4py", None)
+sys.modules.setdefault("mpi4py", None)  # type: ignore[arg-type]
 
 from alloy import machine
 
