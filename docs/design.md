@@ -56,6 +56,7 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
 - FP levels:
   - `strict`
   - `contract` (FMA)
+  - `reciprocal`: `contract` with `-freciprocal-math` (`x / c` becomes `x * (1 / c)`).
   - `noerrno` (`-fno-math-errno -fno-trapping-math`)
   - `reassoc`: only for scopes with a reduction or scan.
   - `fast`: never when inputs can be NaN or Inf.
@@ -63,8 +64,8 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   the runtime flags replaced by `-fopenmp-simd` (nvc spells nothing), so `simd` constructs keep their meaning and every
   other directive is dropped. A scope with no region compiles to the default's object and drops out as its duplicate; an
   object that still calls the runtime is a failed build naming the call, as the team such a call counts is gone with
-  its region. It is verified and timed like any other candidate. Speculative mode never scores or picks it: nothing
-  measured it, and the model spreads a scope's loops over the cores.
+  its region. It is verified and timed like any other candidate. A scope with no reduction also tries `reciprocal`
+  without a region. Speculative mode ranks serial builds only at a size known to run (Speculative mode, below).
 - Loop tail (`[tails]`): `scalar_remainder`, `masked_remainder` (masked epilogue) and `full_mask` (every
   iteration masked) as compiler flags (gcc `--param=vect-partial-vector-usage=0/1/2`, clang
   `-prefer-predicate-over-epilogue`, which has no masked epilogue), the masked ones only on an ISA with masks the host
@@ -78,7 +79,8 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   - no compiler vectorized a loop: no ISA or tail cell (explicit SVE loops stay);
   - every innermost trip count a constant multiple of an ISA's lanes x 4 (clang's interleave): no tail on that ISA;
     SVE's length is unknown at compile time, so never there;
-  - an FP level only where it has something to rewrite: contract needs a multiply feeding an add, noerrno a libm or
+  - an FP level only where it has something to rewrite: contract needs a multiply feeding an add, reciprocal a
+    division, noerrno a libm or
     sqrt call, reassoc a reduction, fast any of those or a division or min/max.
   - A candidate whose object (and vector library) duplicates an earlier one is built but not verified or timed.
   - Open: compiler remarks (`-Rpass-missed`, `-fopt-info-vec-all`) choosing the next candidates, e.g. an aliasing
@@ -159,6 +161,10 @@ Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope fro
 - `predict.choose`: among the correct distinct builds at or below that level, those within 2% of the fewest predicted
   cycles per element; of those the default level's, then the first in sweep order. Without any correct build the
   default build ships.
+- Size: `SDFG.compile` passes no size, so a pick follows the running size only when something states it:
+  `running=` on `api.generate` or `dace_backend.compile`, or a program with no free symbol (constants included). A
+  manifest's presets say what may run, not what will. A size left open ranks OpenMP builds at the roofline sizes and
+  keeps a serial build out.
 - `-ffast-math` stays on the scope's compile, never on the link line: gcc then links `crtfastmath.o`, which sets
   FTZ/DAZ for the whole process, `strict` scopes included.
 
@@ -264,7 +270,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
 
 ## Report format
 
-Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 6, pydantic, refused on an
+Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 7, pydantic, refused on an
 unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
 
 0. The vectorization options: every ISA x loop tail, with the compilers that build it on this host or why none can.
@@ -293,6 +299,12 @@ Modes (`api.generate(..., mode=)`):
     non-stack memory operations move / (element bytes x distinct accesses)), plus a fixed cost per hot call
     (vector math in a vector loop, every call in a scalar one); weighted by each source loop's iterations at the
     preset sizes over the scope's largest map's, spread over the physical cores.
+  - Regions, at a running size only (`heuristics/load.py`): the SDFG gives one call's regions and worksharing loops
+    (enclosing loops multiply them) and its elements. A build whose object calls OpenMP pays a fixed cost per region
+    (`predict.REGION_NS`) and shares its elements among the cores or its map's iterations, whichever is fewer; any
+    other build runs on one core at that core's share of the bandwidth. Serial then wins below
+    `region / (cycles per element * (1 - 1 / cores))` elements per region. A branch, a jump or an unknown library
+    node leaves the size undecided.
   - Memory: the source loops' bytes per element over main-memory bandwidth (cycles at the maximum clock), once the
     scope's arrays fill more than half the largest cache. Bandwidth (`machine.memory_bandwidth`): the installed
     modules' peak from a saved `dmidecode -t 17` (`$ALLOY_MEMORY_DEVICES`, default

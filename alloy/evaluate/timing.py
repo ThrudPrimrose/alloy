@@ -9,7 +9,7 @@ import math
 import pathlib
 import statistics
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -100,14 +100,19 @@ def median_ci(samples: list[float]) -> tuple[float, float, float]:
 MAX_GROWTH = 1 << 24
 
 
-def footprint(sdfg: dace.SDFG, sizes: Parameters) -> int:
-    """Bytes of the containers of ``sdfg`` whose size ``sizes`` decides, transients included."""
+def bytes_at(containers: Iterable[dace.data.Data], sizes: Parameters) -> int:
+    """Bytes of those of ``containers`` whose size ``sizes`` decides."""
     numeric: dict[dace.symbol | str, int | float] = {n: v for n, v in sizes.items() if isinstance(v, int | float)}
     return sum(
         int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes
-        for d in sdfg.arrays.values()
+        for d in containers
         if {str(s) for s in dace.symbolic.pystr_to_symbolic(str(d.total_size)).free_symbols} <= numeric.keys()
     )
+
+
+def footprint(sdfg: dace.SDFG, sizes: Parameters) -> int:
+    """Bytes of the containers of ``sdfg`` whose size ``sizes`` decides, transients included."""
+    return bytes_at(sdfg.arrays.values(), sizes)
 
 
 def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: float, cap: float) -> dict[str, int]:

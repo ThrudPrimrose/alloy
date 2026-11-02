@@ -38,6 +38,12 @@ def roots(x: dace.float64[N], y: dace.float64[N]):
         y[i] = np.sqrt(x[i]) / x[i]
 
 
+@dace.program
+def divides(x: dace.float64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[i] = x[i] / 3.0
+
+
 def only_scope(program: dace.program) -> scopes.Scope:
     (scope,) = scopes.outline(program.to_sdfg(), MATRIX.libm_calls).scopes
     return scope
@@ -100,8 +106,15 @@ def test_fp_levels_are_pruned_where_they_have_nothing_to_rewrite():
 
     assert lone_multiply["fp contract"] == "no multiply feeds an add"
     assert lone_multiply["fp noerrno"] == "no libm or sqrt call"
+    assert lone_multiply["fp reciprocal"] == "no division"
     assert lone_multiply["fp fast"] == "nothing fast-math rewrites"
     assert "fp contract" not in multiply_add and "fp fast" not in multiply_add
+
+
+def test_a_division_keeps_the_reciprocal_level_with_and_without_a_region():
+    sut = pruned_reasons(only_scope(divides), vectorized=1)
+
+    assert "fp reciprocal" not in sut and "serial, fp reciprocal" not in sut
 
 
 def test_a_compilers_default_build_is_never_pruned():

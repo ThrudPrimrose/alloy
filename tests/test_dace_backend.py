@@ -17,7 +17,7 @@ from dace.codegen import compiler
 from dace.config import set_temporary
 from dace.sdfg import nodes
 
-from alloy import api, configuration_matrix, dace_backend, machine
+from alloy import api, configuration_matrix, dace_backend, machine, report
 from alloy.configuration_matrix import Matrix
 from alloy.frontend import scopes
 from alloy.frontend.inputs import Manifest
@@ -91,6 +91,20 @@ def built_outputs(matrix: Matrix, out: pathlib.Path) -> np.ndarray:
 
 
 @pytest.mark.gcc
+def test_a_program_declared_small_links_its_serial_build_and_computes_what_dace_computes(tmp_path):
+    sdfg = scale_sdfg()
+    sdfg.build_folder = str(tmp_path / "alloy_build")
+
+    sut = dace_backend.compile(sdfg, matrix=gcc_only(tmp_path), out=tmp_path / "alloy", running={"N": 16})
+
+    assert sut is not None
+    assert "serial" in report.load(tmp_path / "alloy" / "report.json").verdict.chosen[scope_symbol(sdfg)]
+    reference = scale_sdfg()
+    reference.build_folder = str(tmp_path / "dace_build")
+    assert np.array_equal(outputs(sut), outputs(reference.compile()))
+
+
+@pytest.mark.gcc
 def test_a_second_compile_of_the_same_program_loads_the_first_build(tmp_path):
     matrix, out = gcc_only(tmp_path), tmp_path / "alloy"
     expected = built_outputs(matrix, out)
@@ -108,7 +122,7 @@ def test_the_program_links_the_build_alloy_picked(tmp_path, monkeypatch):
     sdfg_file, out, matrix = tmp_path / "program.sdfg", tmp_path / "alloy", gcc_only(tmp_path)
     load_program(f"{REDUCTIONS}:scale").to_sdfg().save(str(sdfg_file))
     job = tmp_path / "job.pickle"
-    job.write_bytes(pickle.dumps((sdfg_file, None, Mode.SPECULATIVE, matrix, out, False)))
+    job.write_bytes(pickle.dumps((sdfg_file, None, Mode.SPECULATIVE, matrix, out, False, None)))
     generate = api.generate
 
     def wrong_pick(*args: Any, **kwargs: Any) -> api.Result:
@@ -159,8 +173,9 @@ def key_of(
     manifest: Manifest | None = None,
     mode: Mode = Mode.SPECULATIVE,
     finite_inputs: bool = False,
+    running: dict[str, int] | None = None,
 ) -> str:
-    return dace_backend.build_key(sdfg, manifest, mode, matrix, finite_inputs)
+    return dace_backend.build_key(sdfg, manifest, mode, matrix, finite_inputs, running)
 
 
 def scale_sdfg() -> dace.SDFG:
@@ -210,6 +225,7 @@ def test_the_build_key_changes_with_what_the_caller_declares():
 
     assert key_of(scale_sdfg(), finite_inputs=True) != plain
     assert key_of(scale_sdfg(), mode=Mode.PROFILE) != plain
+    assert key_of(scale_sdfg(), running={"N": 16}) != plain
 
 
 def test_the_build_key_changes_with_a_compilers_version(tmp_path, monkeypatch):
