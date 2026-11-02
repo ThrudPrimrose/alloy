@@ -46,7 +46,7 @@ elsewhere (`embedded_broadcast = true` marks the ISAs that fuse).
 
 - **tiers** — Horner recipes in abstract-op steps (`fma`/`mul` with inline coefficients) with their error
   measured against libm in units of 2^-52: plain Taylor rungs (bad: sin-taylor7 ≈ 7e11 on [-π/2, π/2]) and
-  Chebyshev tiers on the reduced domain (sin-quad-cheb13 ≈ 8.5). `kernel` gives better polynomials.
+  Chebyshev tiers on the reduced domain (sin-quad-cheb13 ≈ 0.5). `kernel` gives whole functions, reduction included.
 - **libraries** — the vector math call per veclib (glibc libmvec `_ZGVdN4v_sin`, SVML `__svml_sin4`,
   SLEEF `Sleef_sind4_u10avx2`). `reverse` knows every name `kernel` prints, so `call __svml_sin4` or
   `_ZGVdN4v_sin` in disassembly maps back to `sin`.
@@ -77,12 +77,14 @@ python -m alloy.isa assist <name>               # hardware assists: _mm512_scale
 python -m alloy.isa ops | isas | schedule <isa>
 ```
 
-A `lookup` of an intrinsic or recipe on an x86 row this host runs is **numerically checked before it is
-returned**: a small compiled kernel runs the spelling against a scalar reference, and transcendental tiers are
-re-measured against libm. The check covers the intrinsic in its signature's operand order, or the recipe's names,
-not the masked form, mnemonic or note. The output ends in `verified:`; on failure nothing is printed to stdout, the exit code is 3, and stderr lists
-potentially relevant spellings. `unverified:` marks what cannot run here (NEON and SVE rows, or a missing ISA or
-compiler); `reverse`, `assist` and `schedule` answers are not checked at all.
+A `lookup` of an intrinsic or recipe this host can run is **numerically checked before it is returned**: a small
+compiled kernel runs the spelling against a scalar reference, and transcendental tiers are re-measured against libm.
+`host` says what runs here; NEON and SVE run under `qemu-aarch64` when that and `aarch64-linux-gnu-gcc` are on PATH.
+The check covers the intrinsic in its signature's operand order, or a recipe's `code` as written, not the masked form,
+mnemonic or note. A recipe prints that `code`: C on the operands of its `signature`, statements and then the result,
+so copy it rather than rebuilding the order from the step names. The output ends in `verified:`; on failure nothing is
+printed to stdout, the exit code is 3, and stderr lists potentially relevant spellings. `unverified:` marks what did
+not run here, even if it compiled for its target; `reverse`, `assist` and `schedule` answers are not checked at all.
 
 - ISAs: `avx2`, `avx512`, `neon`, `sve`. `avx512_256` is a compiler width knob: `kernel` maps it to AVX2 and
   `lookup` refuses it, because explicit `_mm512_*` intrinsics stay 512-bit. Dtypes: `f64`/`f32` everywhere, `f16`

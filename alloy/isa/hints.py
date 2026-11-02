@@ -217,7 +217,7 @@ def op_spelling(
     if entry.intrinsic:
         spelling = entry.intrinsic
     elif entry.recipe:
-        spelling = "recipe: " + " -> ".join(entry.recipe)
+        spelling = "recipe: " + "; ".join(entry.code)
     elif entry.approximations:
         libraries = ", ".join(f"{k} {v}" for k, v in entry.libraries.items()) or "a vector math library"
         spelling = f"{kernel_summary(isa, dtype, op, recommended)}; or call {libraries}"

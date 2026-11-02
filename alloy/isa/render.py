@@ -30,7 +30,7 @@ def entry_row(op: str, entry: Entry) -> str:
         spelling = f"`{entry.intrinsic}`"
         mnemonic = f"`{entry.mnemonic}`"
     else:
-        spelling = cell(f"recipe: {' -> '.join(entry.recipe)}")
+        spelling = cell(f"recipe: {'; '.join(f'`{line}`' for line in entry.code)}")
         mnemonic = f"`{entry.mnemonic}`"
     masked = f"`{entry.masked}`" if entry.masked else "—"
     signature = f"`{entry.signature}`" if entry.signature else "—"
@@ -161,8 +161,8 @@ def render_transcendentals(table: Table) -> str:
         "# Transcendentals — polynomial tiers with measured ULP (generated, do not edit)",
         "",
         "Error in units of 2^-52 at function scale: max \\|approx - ref\\| / spacing(max(\\|ref\\|, 1.0)) against "
-        "double-precision libm on dense grids, so real f64 ulp is 2x to 2.7x larger on the good tiers and f32 rows "
-        "get the same f64 figures. `kernel` gives better polynomials with true ulp. Recipes are Horner schemes in "
+        "double-precision libm on dense grids, so real f64 ulp is up to 2.7x larger and f32 rows get the same f64 "
+        "figures. A tier holds on a reduced domain only: `kernel` gives whole functions with true ulp. Recipes are Horner schemes in "
         "abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations.",
         "",
         "| tier | op | domain | error (ulp) | error (abs) |",

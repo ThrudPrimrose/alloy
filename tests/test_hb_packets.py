@@ -181,6 +181,13 @@ def test_the_isa_tool_answers_a_lookup():
     assert "_mm256_add_pd" in str(sut.answer)
 
 
+def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy():
+    sut = isa_call("lookup", ["avx2", "mod", "f64", "--no-verify"])
+
+    assert sut.code == HTTPStatus.OK
+    assert "_mm256_fnmadd_pd(q, b, a)" in str(sut.answer)
+
+
 def test_the_isa_tool_refuses_a_query_it_does_not_serve():
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
 

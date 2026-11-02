@@ -7,7 +7,7 @@ schedule->vector-schedule translator (plan work item 3): emitting a different bo
 axpy expression, the loop shape comes from here."""
 
 from alloy.isa.table import ALIASES, DTYPES, Table, load
-from alloy.isa.validate import REPORT_ERROR, Verdict, c_flags, compile_run, host_can_run, track_error
+from alloy.isa.validate import REPORT_ERROR, Verdict, c_flags, compile_run, emulated, host_can_run, track_error
 
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
@@ -216,7 +216,8 @@ def verify(isa: str, schedule: str, dtype: str, table: Table | None = None) -> V
     why = legal(isa, schedule, table)
     if why:
         raise KeyError(f"{isa}/{schedule}/{dtype}: {why}")
-    if not host_can_run(isa, dtype):
+    emulator = None if host_can_run(isa, dtype) else emulated(isa)
+    if emulator is None and not host_can_run(isa, dtype):
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
     ctype = C_TYPE[dtype]
     fsuffix = "" if dtype == "f64" else "f"
@@ -224,7 +225,7 @@ def verify(isa: str, schedule: str, dtype: str, table: Table | None = None) -> V
     driver = DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=track, report=REPORT_ERROR)
     source = skeleton(table, isa, schedule, dtype) + driver
     try:
-        rel = compile_run(source, c_flags(isa, dtype))
+        rel = compile_run(source, c_flags(isa, dtype), (), emulator)
     except RuntimeError as exc:
         return Verdict(False, "compiled skeleton", str(exc))
     tol = SKELETON_TOL[dtype]

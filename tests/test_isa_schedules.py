@@ -130,12 +130,27 @@ def test_skeletons_compile_and_run_on_the_host(isa, schedule, dtype):
     assert verdict.ok is True, verdict.detail
 
 
-def test_an_unexecutable_skeleton_is_unverified_not_wrong():
+def test_an_unexecutable_skeleton_is_unverified_not_wrong(monkeypatch):
     from alloy.isa.schedules import verify
+
+    monkeypatch.setattr("alloy.isa.schedules.emulated", lambda isa: None)
 
     verdict = verify("neon", "scalar_remainder", "f64", TABLE)
 
     assert verdict.ok is None
+
+
+@pytest.mark.parametrize(
+    ("isa", "schedule", "dtype"),
+    [("neon", "scalar_remainder", "f64"), ("sve", "sve_intrinsics", "f64"), ("sve", "full_mask", "f32")],
+)
+def test_an_arm_skeleton_runs_under_qemu_when_the_host_has_it(isa, schedule, dtype):
+    from alloy.isa.schedules import verify
+    from alloy.isa.validate import emulated
+
+    verdict = verify(isa, schedule, dtype, TABLE)
+
+    assert verdict.ok is (True if emulated(isa) else None), verdict.detail
 
 
 def test_every_schedule_spells_how_to_ask_each_compiler():

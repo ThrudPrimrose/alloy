@@ -27,7 +27,7 @@ from alloy.isa.mathkernels import kernel as find
 from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
 from alloy.isa.table import ALL_DTYPES, FMA_FORM, Hit, Table, masked_form, normalized, suggestion
-from alloy.isa.validate import Verdict, host_can_run, validate, validate_all
+from alloy.isa.validate import Verdict, emulated, host_can_run, validate, validate_all
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,6 +135,8 @@ def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
         print(f"  intrinsic: {entry.intrinsic}{entry.signature}")
     elif entry.recipe:
         print(f"  recipe (no single intrinsic): {' -> '.join(entry.recipe)}")
+        print(f"  operands:  {entry.signature}")
+        print("  code:      " + ";\n             ".join(entry.code))
     if entry.masked:
         print(f"  masked:    {entry.masked}")
     if entry.mnemonic:
@@ -322,6 +324,9 @@ def print_host(table: Table) -> None:
     print(f"host: {platform.machine()}")
     for name, isa in table.isas.items():
         runs = [dtype for dtype in ALL_DTYPES if isa.entries(dtype) and host_can_run(name, dtype)]
+        if not runs and emulated(name):
+            print(f"  {name}: runs under qemu")
+            continue
         print(f"  {name}: {'runs ' + ' '.join(runs) if runs else 'does not run here; answers stay unverified'}")
 
 

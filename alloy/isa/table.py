@@ -74,14 +74,18 @@ SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_
 SVE_POLICY = re.compile(r"^(sv\w+)_[mz]$")
 AVX512_MASKED = re.compile(r"^(_mm\d*)_(?:maskz|mask3)_(\w+)$")
 
+#: AND, OR and a left shift are the same on signed lanes: the unsigned spelling of an i64/i32 row's intrinsic.
+UNSIGNED_BITWISE = re.compile(r"^(vandq|vorrq|vshlq|svand|svorr)_u(\d+)(_x)?$")
+
 LANE_BYTES = {"f64": 8, "f32": 4, "f16": 2, "i64": 8, "i32": 4}
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Entry:
     """One op spelling: the intrinsic or a composite ``recipe``, the ``mnemonic`` (``observed``: others compilers
-    print), and a ``note`` for the traps. A transcendental has neither intrinsic nor recipe: ``approximations`` keys
-    :attr:`Table.approx` and ``libraries`` gives the vector math call per veclib."""
+    print), and a ``note`` for the traps. ``code`` is what a recipe's names cannot say, the order: C on the operands of
+    ``signature``, statements and then the result. A transcendental has neither intrinsic nor recipe:
+    ``approximations`` keys :attr:`Table.approx` and ``libraries`` gives the vector math call per veclib."""
 
     mnemonic: str = ""
     intrinsic: str = ""
@@ -90,6 +94,7 @@ class Entry:
     signature: str = ""
     semantics: str = ""
     recipe: Strings = ()
+    code: Strings = ()
     note: str = ""
     approximations: Strings = ()
     libraries: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -209,7 +214,9 @@ class Table:
         """Every ``(isa, op, dtype)`` an intrinsic, recipe step, library call or mnemonic spells, or an empty tuple.
         A mnemonic takes any letter case, operands and an EVEX ``.z``; one step of a composite matches the composite."""
         token = normalized(name)
-        if hits := self.by_intrinsic.get(token) or self.by_intrinsic.get(masked_form(token)):
+        hits = self.by_intrinsic.get(token) or self.by_intrinsic.get(masked_form(token), ())
+        signed = UNSIGNED_BITWISE.sub(r"\1_s\2\3", masked_form(token))
+        if hits := hits if signed == token else hits + self.by_intrinsic.get(signed, ()):
             return hits
         token = token.lower()
         if (m := FMA_FORM.match(token)) is not None:
@@ -319,6 +326,11 @@ def checked_spelling(where: str, entry: Entry) -> None:
         raise ValueError(f"{where} sets exactly one of intrinsic, recipe")
     if not entry.mnemonic:
         raise ValueError(f"{where} has no mnemonic")
+    if bool(entry.recipe) != bool(entry.code):
+        raise ValueError(f"{where} needs code exactly on a recipe")
+    code = " ".join(entry.code)
+    if unspelled := [name for step in entry.recipe for name in SPELLED.findall(step) if name not in code]:
+        raise ValueError(f"{where}: the code never calls {unspelled}")
 
 
 def checked_entry(where: str, op: str, entry: Entry, integer: bool, isa: Isa, approx: dict[str, Approx]) -> None:

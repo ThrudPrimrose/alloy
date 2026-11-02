@@ -311,3 +311,44 @@ def test_clang_keeps_a_strict_kernel_exact_under_associative_math():
     k = kernel("sin", "f64", "strict")
 
     assert "#pragma clang fp reassociate(off)" in render(k, "avx2").source
+
+
+def strict_value(fn: str, dtype: str, args: tuple[float, ...], tmp_path: pathlib.Path) -> float:
+    """One strict kernel on ``args`` in every lane, as a program built like the agent's own."""
+    k = kernel(fn, dtype, "strict")
+    r = Renderer("avx2", dtype)
+    c = r.fields["c"]
+    loads = ", ".join(r.call("load", f"{name}s") for name in k.args)
+    arrays = "".join(
+        f"{c} {name}s[16]; for (int j = 0; j < 16; j++) {name}s[j] = {v!r};\n"
+        for name, v in zip(k.args, args, strict=True)
+    )
+    source = tmp_path / "k.c"
+    source.write_text(
+        f"#include <immintrin.h>\n#include <math.h>\n#include <stdio.h>\n{render(k, 'avx2').source}\n"
+        f"int main(void) {{ {arrays} {c} out[16]; {r.call('store', 'out', f'{k.name}({loads})')};\n"
+        'printf("%a", (double)out[0]); }\n'
+    )
+    flags = c_flags("avx2", dtype)
+    subprocess.run([str(c_compiler()), "-O2", *flags, str(source), "-lm", "-o", str(tmp_path / "k")], check=True)
+    return float.fromhex(subprocess.run([str(tmp_path / "k")], capture_output=True, text=True, check=True).stdout)
+
+
+@pytest.mark.skipif(not host_can_run("avx2", "f64"), reason="needs AVX2")
+@pytest.mark.parametrize(
+    "fn, dtype, args, exact",
+    [
+        ("cos", "f32", (0.0,), 1.0),
+        ("cos", "f32", (-0.0,), 1.0),
+        ("cos", "f32", (1e-5,), 1.0),
+        ("cos", "f64", (0.0,), 1.0),
+        ("cos", "f64", (1e-9,), 1.0),
+        ("pow", "f64", (3.0, 1.0), 3.0),
+        ("pow", "f32", (3.0, 1.0), 3.0),
+    ],
+)
+def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dtype, args, exact, tmp_path):
+    """One ulp below 1 or 3 casts to 0 or 2: the listed ulp bound does not excuse these points."""
+    sut = strict_value(fn, dtype, args, tmp_path)
+
+    assert sut == exact

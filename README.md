@@ -40,8 +40,9 @@ Layout:
   transcendentals exp/sin/cos) spelled per ISA and dtype — f64/f32 everywhere, f16 where the hardware has it
   (AVX2 emulates through f32), i64/i32 for the integer ops — with fallback recipes where an op has no native
   instruction. `intrinsics.toml` is verified against the clang resource headers; both lookup directions;
-  `python -m alloy.isa host|lookup|reverse|assist|kernel|validate|skeleton|ops|isas|schedule`. `validate.py` checks
-  a row's intrinsic or recipe with a compiled kernel on x86 hosts, or re-measures its tier, before an agent sees it;
+  `python -m alloy.isa host|lookup|reverse|assist|kernel|validate|skeleton|ops|isas|schedule`. `validate.py` runs
+  a row's intrinsic or recipe in a compiled kernel, natively or under `qemu-aarch64` when that is on PATH, or re-measures
+  its tier, before an agent sees it; a row that did not run stays `unverified`, however it compiled;
   `hints.py` builds the do-it-yourself response from a scope's tasklets when emission fails;
   `schedules.py` emits compile-and-run-verified C skeletons per loop schedule, with the compiler
   flags that ask gcc/clang for the same shape.
@@ -77,9 +78,10 @@ the code), `backend/sweep` and `build` (render and compile), `evaluate/verify` (
   when the factor cannot change the object. The prune reason goes in the report, so an axis that looks useless shows up
   there.
 - **An ISA row.** Add `[isa.<isa>.<dtype>.<op>]` to `alloy/isa/intrinsics.toml`, with the spelling checked against the
-  compiler's headers. A new op also goes in `OPS` in `alloy/isa/ops.py`, which holds the math, never a spelling. Run
-  `python -m alloy.isa validate`: a row an x86 host can run is compiled and executed before an agent sees it, and the
-  rest stay `unverified`. Do not mark a row verified by hand.
+  compiler's headers; a composite needs a `recipe` and the `code` that states its operand order. A new op also goes in
+  `OPS` in `alloy/isa/ops.py`, which holds the math, never a spelling. Run `python -m alloy.isa validate`: a row is
+  compiled and executed natively, or under `qemu-aarch64` when that and `aarch64-linux-gnu-gcc` are on PATH. A row that
+  only cross-compiled stays `unverified`. Do not mark a row verified by hand.
 - **A math kernel.** `alloy/isa/mathkernels.py` and `helpers/mathfit.py`, which fits the coefficients. State the level
   (`strict`, `relaxed`, `fast`) and re-measure the ulp bound the row cites.
 - **A verification rule.** `alloy/evaluate/verify.py`. A candidate is judged by its outputs on fuzzed inputs against the

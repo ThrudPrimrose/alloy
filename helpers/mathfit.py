@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Maintainer tool: fits the polynomials and writes ``mathkernels.toml`` (``python helpers/mathfit.py``).
+"""Maintainer tool: fits the polynomials and writes ``mathkernels.toml`` (``python helpers/mathfit.py``), or the
+Chebyshev tiers of ``intrinsics.toml`` (``python helpers/mathfit.py tiers``).
 
 A program is written once per function family and parameterized by dtype and level. Coefficients are Chebyshev
 interpolants in high precision, rounded to the lane type. Each kernel is then measured on this host and the worst
@@ -8,13 +9,17 @@ error across the x86 ISAs is recorded; the gate in tests/test_isa_kernels.py re-
 import concurrent.futures
 import json
 import math
+import re
 import struct
 import sys
+from collections.abc import Callable
 
 import mpmath as mp
 
 from alloy.isa.mathcheck import measure
 from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, Grid, Kernel
+from alloy.isa.table import DEFAULT_PATH, load
+from alloy.isa.validate import tier_error
 
 mp.mp.dps = 200
 
@@ -29,6 +34,8 @@ EXP_MAX = {"f64": 700.0, "f32": 87.0}
 TRIG_MAX = {"f64": 1048576.0, "f32": 8192.0}
 #: |y*log(x)| the double-word strict pow keeps accurate.
 POW_MAX = {"f64": 64.0, "f32": 32.0}
+#: Largest |x| whose cos rounds to 1 in the lane.
+COS_ONE = {"f64": 2.0**-28, "f32": 2.0**-13}
 
 DEGREES = {  # function -> dtype -> polynomial degree per level (strict, relaxed, fast)
     "sin": {"f64": (8, 7, 4), "f32": (4, 3, 2)},
@@ -156,7 +163,8 @@ def program_cos(dtype: str, level: str) -> dict:
     body += [f"f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), {SIGN_SHIFT[dtype]})))"]
     out = {"args": ("x",), "grids": trig_grids(dtype, level), "contract": trig_contract(dtype)}
     if level == "strict":
-        return {**out, **strict_guard(f"le(abs(x), {fmt(TRIG_MAX[dtype])})"), "body": body, "result": "f"}
+        body += [f"v = select(le(abs(x), {fmt(COS_ONE[dtype])}), 1.0, f)"]
+        return {**out, **strict_guard(f"le(abs(x), {fmt(TRIG_MAX[dtype])})"), "body": body, "result": "v"}
     return {**out, "body": body, "result": "f"}
 
 
@@ -490,7 +498,7 @@ def program_pow(dtype: str, level: str) -> dict:
             "ee = fms(y, ph, big2)",
             "cor = add(ee, mul(y, pl))",
         ]
-        body = [*core[:-1], *double_log, *tail, f"v = fma({e}, cor, {e})"]
+        body = [*core[:-1], *double_log, *tail, f"p = fma({e}, cor, {e})", "v = select(eq(y, 1.0), x, p)"]
         guard = f"mand({positive('x', dtype)}, le(abs(big2), {fmt(limit)}))"
         return {**out, **strict_guard(guard), "body": body, "result": "v"}
     body = [*core, f"lg = add(mul(n, {fmt(hi)}), add(f, sub(mul(n, {fmt(lo)}), lo)))", "big2 = mul(y, lg)", *tail]
@@ -579,7 +587,71 @@ def toml_float(value: float) -> str:
     return repr(float(value)) if "." in repr(float(value)) or "e" in repr(float(value)) else f"{value}.0"
 
 
+def sinc(t):
+    """sin(x)/x as a function of t = x*x, which the quadrant tiers' Horner runs in."""
+    return mp.sin(mp.sqrt(t)) / mp.sqrt(t)
+
+
+def cos_of_root(t):
+    return mp.cos(mp.sqrt(t))
+
+
+#: The tiers named Chebyshev: what each fits, on which interval, to which degree of its Horner variable.
+CHEBYSHEV_TIERS: dict[str, tuple[Callable, mp.mpf, mp.mpf, int]] = {
+    "sin-quad-cheb9": (sinc, mp.mpf(0), (mp.pi / 4) ** 2, 4),
+    "sin-quad-cheb13": (sinc, mp.mpf(0), (mp.pi / 4) ** 2, 6),
+    "cos-quad-cheb8": (cos_of_root, mp.mpf(0), (mp.pi / 4) ** 2, 4),
+    "cos-quad-cheb12": (cos_of_root, mp.mpf(0), (mp.pi / 4) ** 2, 6),
+    "exp-cheb7": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 7),
+    "exp-cheb9": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 9),
+    "exp-cheb11": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 11),
+}
+LITERAL = re.compile(r"-?\d+\.\d+(?:e[-+]?\d+)?")
+
+
+def refit_block(block: str, values: list[float]) -> str:
+    """A tier's TOML with its coefficients replaced, highest power first as the recipe's Horner reads them."""
+    head, recipe = block.split("recipe = [", 1)
+    if len(LITERAL.findall(recipe)) != len(values):
+        raise ValueError(f"{head}: {len(values)} coefficients for {recipe}")
+    pending = iter(reversed(values))
+    return f"{head}recipe = [{LITERAL.sub(lambda _: fmt(next(pending)), recipe)}"
+
+
+def recorded(block: str, ulp: float, abs_err: float) -> str:
+    block = re.sub(r"error_ulp = \S+", f"error_ulp = {ulp:.6e}", block)
+    return re.sub(r"error_abs = \S+", f"error_abs = {abs_err:.6e}", block)
+
+
+def tier_block(text: str, name: str) -> str:
+    match = re.search(rf"^\[approx\.{name}\]\n.*?\n\n", text, re.MULTILINE | re.DOTALL)
+    if match is None:
+        raise ValueError(f"no [approx.{name}] in {DEFAULT_PATH}")
+    return match.group(0)
+
+
+def refit_tiers() -> int:
+    """Rewrite the Chebyshev tiers' coefficients, then measure each and record what it holds."""
+    text = DEFAULT_PATH.read_text(encoding="utf-8")
+    for name, (target, lo, hi, degree) in CHEBYSHEV_TIERS.items():
+        block = tier_block(text, name)
+        text = text.replace(block, refit_block(block, fit(target, lo, hi, degree, "f64")))
+    DEFAULT_PATH.write_text(text, encoding="utf-8")
+    load.cache_clear()
+    table = load()
+    for name in CHEBYSHEV_TIERS:
+        ulp, abs_err = tier_error(table.approx[name])
+        block = tier_block(text, name)
+        text = text.replace(block, recorded(block, ulp, abs_err))
+        print(f"{name:18} {ulp:10.4g} units of 2^-52  abs {abs_err:9.3g}")
+    DEFAULT_PATH.write_text(text, encoding="utf-8")
+    load.cache_clear()
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv == ["tiers"]:
+        return refit_tiers()
     only = argv or list(PROGRAMS)
     kernels = [build(fn, dtype, level) for fn in only for dtype in ("f64", "f32") for level in LEVELS]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
