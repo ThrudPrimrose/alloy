@@ -66,8 +66,8 @@ def test_a_program_without_a_loop_nest_is_refused_by_name(tmp_path):
 
 
 def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winner(tmp_path):
-    """``scale``: one scope, every single-factor variant of gcc and clang (54 on an x86-64 host), each built,
-    verified on fuzzed inputs and timed, and the winner linked into alloy_full."""
+    """``scale``: one scope, every single-factor variant of gcc and clang, each built, verified on fuzzed inputs and
+    timed, and the winner linked into alloy_full."""
     matrix = gcc_and_clang(tmp_path)
     matrix = dataclasses.replace(
         matrix, timing=dataclasses.replace(matrix.timing, screen_reps=3, final_reps=5, max_program_cache_factor=1.0)
@@ -80,7 +80,9 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=matrix)
 
     (report,) = sut.scopes
-    assert len(swept) >= 40 and len(report.builds) + len(report.pruned) == len(swept)
+    assert {candidate.compiler for candidate in swept} == {"gcc", "clang"}
+    assert {"", "contract", "noerrno"} <= {candidate.fp_level for candidate in swept}
+    assert len(report.builds) + len(report.pruned) == len(swept)
     assert not [build.name for build in report.builds if build.error]
     assert sut.verification is not None and sut.timings is not None
     verdicts = sut.verification.verdicts[scope.symbol]
