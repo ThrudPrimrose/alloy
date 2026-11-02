@@ -24,23 +24,20 @@ from alloy.heuristics import fission
 REMARK_LINE = re.compile(r":\d+:\d+: (?:remark|optimized|missed|note): (.*?)(?: \[-R[^\]]+\])?$")
 #: nvc's -Minfo lines carry no file name: ``     25, Generated vector simd code for the loop``.
 NVHPC_REMARK = re.compile(r"^\s+\d+, (.*)$")
-#: A masked loop: an AVX-512 opmask operand (``{%k1}``) or an SVE loop predicate (``whilelo``, ``whilelt``). Every SVE
-#: instruction names a governing predicate (``p7/m``), all-true under ``ptrue`` in an unmasked loop, so those don't count.
+#: A masked loop: an AVX-512 opmask operand or an SVE loop predicate; every SVE instruction names a predicate, so that
+#: alone does not count.
 MASKED_OPERAND = re.compile(r"\{%k[1-7]\}|\bwhile(?:lo|lt|le|ls)\b")
 
 
 @dataclass(slots=True, frozen=True)
 class Remarks:
-    """Vectorizer outcome of one compile: loops vectorized, and the distinct reasons loops were not."""
-
     vectorized: int
     missed: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True)
 class Build:
-    """One compiled candidate. ``source`` is its code variant (``variants/v<k>``, shared by every candidate rendered
-    alike); ``duplicate_of`` names an earlier candidate with a byte-identical object."""
+    """One compiled candidate; ``duplicate_of`` names an earlier one with a byte-identical object."""
 
     candidate: Candidate
     name: str
@@ -52,7 +49,6 @@ class Build:
     remarks: Remarks
     error: str = ""
     duplicate_of: str = ""
-    #: Instructions of the object that run under a mask (:data:`MASKED_OPERAND`).
     masked_ops: int = 0
 
 
@@ -154,8 +150,7 @@ def rendered_or_error(scope: Scope, candidate: Candidate, matrix: Matrix) -> str
 def write_source(
     scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, renders: dict[RenderKey, pathlib.Path]
 ) -> pathlib.Path:
-    """``candidate``'s code variant, ``folder/variants/v<k>.<suffix>``, rendered and written the first time its key
-    appears; ``renders`` maps each key seen so far to its file, so ``k`` counts variants in order of appearance."""
+    """``candidate``'s code variant, rendered and written the first time its key appears in ``renders``."""
     key = candidate.variant_key(matrix)
     if key not in renders:
         variants = folder / "variants"

@@ -29,8 +29,7 @@ class Draw:
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)
 class Manifest:
-    """A manifest as the bench reads it (``raw`` YAML, ``spec``), its output arguments and the dtype inputs are drawn
-    at. ``spec``'s annotation resolves in :func:`load`, after the bench is imported."""
+    """A manifest as the bench reads it; ``spec``'s annotation resolves in :func:`load`, after the bench is imported."""
 
     path: pathlib.Path
     raw: dict[str, Any]
@@ -87,8 +86,7 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
 
 
 def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
-    """Inputs at fixed ``sizes``: a corpus kernel's through the bench's dispatch (its own ``initialize`` if any),
-    else the auto-initializer."""
+    """Inputs at fixed ``sizes``: through the bench's dispatch for a corpus kernel, else the auto-initializer."""
     from hpcagent_bench import paths
     from hpcagent_bench.categories import Preset
     from hpcagent_bench.frameworks.benchmark import Benchmark

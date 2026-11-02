@@ -1,6 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy's optimizer flavor: it tunes the SDFG of the extended column's DaCe pipeline and delivers the library the
-judge grades."""
+"""Alloy's optimizer flavors: they tune a DaCe pipeline's SDFG and deliver the library the judge grades."""
 
 from hpcagent_agent.tools import http_json
 from hpcagent_bench.harness.envelope import Submission
@@ -11,8 +10,7 @@ __all__ = ["AlloyProfileOptimizer", "AlloySpeculativeOptimizer", "AlloyToolStub"
 
 
 class AlloyProfileOptimizer(FlavorOptimizer):
-    """Alloy's profile mode: candidates verified locally and timed by the judge via ``/profile``, the chosen one
-    scored."""
+    """Profile mode: candidates verified locally, timed by the judge, the chosen one scored."""
 
     __slots__ = ()
 
@@ -23,8 +21,7 @@ class AlloyProfileOptimizer(FlavorOptimizer):
 
 
 class AlloySpeculativeOptimizer(FlavorOptimizer):
-    """Alloy's speculative mode: every scope's predicted pick (heuristics, llvm-mca, roofline), verified locally and
-    never timed, the selection scored once."""
+    """Speculative mode: every scope's predicted pick, verified locally and never timed, scored once."""
 
     __slots__ = ()
 
@@ -35,8 +32,7 @@ class AlloySpeculativeOptimizer(FlavorOptimizer):
 
 
 class AlloyToolStub(FlavorOptimizer):
-    """``alloy_stub``: the benchmark's CI stand-in for an LLM agent on the ``alloy-speculative`` packet. It calls the
-    packet's tool (``POST /alloy/speculative`` under the episode's identity) once and returns the library it built."""
+    """``alloy_stub``: CI's stand-in for an agent, calling the ``alloy-speculative`` tool once."""
 
     __slots__ = ()
 

@@ -2,10 +2,8 @@
 """What the ``alloy_profile`` and ``alloy_speculative`` agent tools get back: Alloy on the episode's kernel after the
 bench's canonical (CPF) pipeline, as plain C/C++ an agent can read, edit and rebuild without DaCe.
 
-Under ``folder``: ``report.md`` (every scope's candidates, the top ones ranked by time or prediction), and ``best/``
-with one translation unit per scope (``scopes/<symbol>.<ext>``, the chosen candidate's source), the program entry in
-the bench's C ABI (``program.c``, CPF calling the scopes) and a ``Makefile`` that compiles each scope with its own
-compiler and flags and links ``lib<program>.so``. The library is built here, so it can be submitted as it is."""
+Under ``folder``: ``report.md``, and ``best/`` with one translation unit per scope, the program entry in the bench's C
+ABI (``program.c``), a ``Makefile`` compiling each scope with its own compiler and flags, and the library it built."""
 
 import pathlib
 import shlex
@@ -32,8 +30,6 @@ REPORT_CHARS = 20_000
 
 
 class CodegenRequest(pydantic.BaseModel):
-    """One tool call: the kernel, the mode, the graded precision and the folder the answer is written into."""
-
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 
     kernel: str

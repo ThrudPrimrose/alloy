@@ -120,8 +120,7 @@ def cut_level(b: Body) -> int:
 
 def cuts(sdfg: dace.SDFG, registers: int) -> tuple[Cut, ...]:
     """The default work/depth cut of every flat top-level map whose body keeps more values live than ``registers``:
-    the code nodes up to :func:`cut_level`. Splitting a map the vectorizer misses or whose loop spills, read from a
-    build's feedback, is not done yet."""
+    the code nodes up to :func:`cut_level`."""
     out = []
     for index, state in enumerate(sdfg.states()):
         for entry in flat_maps(state):

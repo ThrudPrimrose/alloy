@@ -77,7 +77,7 @@ MAX_WAVES = {"gfx9": 8, "gfx10": 16, "gfx11": 16, "gfx12": 16}
 
 @dataclass(frozen=True, slots=True)
 class Usage:
-    """What the device compiler reports for one kernel; ``waves`` is HIP's own occupancy (waves per SIMD)."""
+    """What the device compiler reports for one kernel; ``waves`` is HIP's own occupancy."""
 
     registers: int
     spill_bytes: int
@@ -251,8 +251,7 @@ class DeviceMap:
 
 
 def identified(pipeline: Pipeline, dialect: str) -> dict[int, DeviceMap]:
-    """Every device map by ordinal, found by running the pipeline with one :data:`PROBE_THREADS` size per ordinal, in
-    batches until a batch finds no map; its default block is the one the pipeline picks at the same place."""
+    """Every device map by ordinal, found by running the pipeline with one :data:`PROBE_THREADS` size per ordinal."""
     defaults = [tuple(entry.map.gpu_block_size or (0, 0, 0)) for entry in device_maps(pipeline({}))]
     found: dict[int, DeviceMap] = {}
     first = 0
