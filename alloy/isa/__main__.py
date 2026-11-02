@@ -212,32 +212,42 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
     return status
 
 
-def validate_command(table: Table, args: argparse.Namespace) -> int:
-    """The ``validate`` subcommand: one entry, or every entry the host can run plus every tier."""
-    if args.isa or args.op or args.dtype:
-        if not (args.isa and args.op and args.dtype):
-            print("alloy.isa: validate takes either no arguments or isa op dtype", file=sys.stderr)
-            return 2
-        verdict = validate(args.isa, args.op, args.dtype, table)
-        mark = "PASS" if verdict.ok else ("SKIP" if verdict.ok is None else "FAIL")
-        print(f"{mark} {args.isa}/{args.dtype}/{args.op}: {verdict.basis}; {verdict.detail}")
-        for hit in verdict.candidates:
-            print(f"  candidate: {hit.op} on {hit.isa}/{hit.dtype} ({hit.via})")
-        return 0 if verdict.ok is not False else 3
+def validate_one(table: Table, isa: str, op: str, dtype: str) -> int:
+    """``validate isa op dtype``."""
+    verdict = validate(isa, op, dtype, table)
+    mark = "PASS" if verdict.ok else ("SKIP" if verdict.ok is None else "FAIL")
+    print(f"{mark} {isa}/{dtype}/{op}: {verdict.basis}; {verdict.detail}")
+    for hit in verdict.candidates:
+        print(f"  candidate: {hit.op} on {hit.isa}/{hit.dtype} ({hit.via})")
+    return 0 if verdict.ok is not False else 3
+
+
+def validate_everything(table: Table) -> int:
+    """Every entry the host can run, every tier and every kernel."""
     results = validate_all(table)
     if platform.machine() in ("x86_64", "aarch64"):
         results += validate_kernels()
     failed = [(ident, v) for ident, v in results if v.ok is False]
-    skipped = [(ident, v) for ident, v in results if v.ok is None]
-    for ident, verdict in results:
-        if verdict.ok is False:
-            print(f"FAIL {ident}: {verdict.detail}")
+    skipped = sum(1 for _, v in results if v.ok is None)
+    for ident, verdict in failed:
+        print(f"FAIL {ident}: {verdict.detail}")
+    ran = len(results) - skipped
     print(
-        f"validated {len(results) - len(skipped)} entries, tiers and kernels on this host: "
-        f"{len(results) - len(skipped) - len(failed)} passed, {len(failed)} failed, "
-        f"{len(skipped)} not verifiable here"
+        f"validated {ran} entries, tiers and kernels on this host: {ran - len(failed)} passed, {len(failed)} failed, "
+        f"{skipped} not verifiable here"
     )
     return 3 if failed else 0
+
+
+def validate_command(table: Table, args: argparse.Namespace) -> int:
+    """The ``validate`` subcommand: one entry, or everything."""
+    given = (args.isa, args.op, args.dtype)
+    if all(given):
+        return validate_one(table, args.isa, args.op, args.dtype)
+    if any(given):
+        print("alloy.isa: validate takes either no arguments or isa op dtype", file=sys.stderr)
+        return 2
+    return validate_everything(table)
 
 
 def operand_rule(token: str) -> str:

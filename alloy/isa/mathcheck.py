@@ -5,7 +5,6 @@
 
 import concurrent.futures
 import dataclasses
-import math
 import pathlib
 import platform
 import re
@@ -13,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 
-from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, literal, render
+from alloy.isa.mathkernels import LEVELS, Grid, Kernel, Renderer, functions, kernel, literal, render
 from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, c_compiler, c_flags, host_can_run
 
 __all__ = ["Measured", "compiles", "measure", "validate_kernel", "validate_kernels"]
@@ -145,36 +144,39 @@ class Measured:
     special: int
 
 
-def number(value: float) -> str:
-    if math.isnan(value):
-        return "NAN"
-    if math.isinf(value):
-        return "INFINITY" if value > 0 else "-INFINITY"
-    return repr(float(value))
+def reference(k: Kernel) -> str:
+    """The wider libm call ``k`` is measured against."""
+    wide, cast = ("l", "(long double)") if k.dtype == "f64" else ("", "(double)")
+    arguments = ", ".join(f"{cast}{name}s[j]" for name in k.args)
+    return f"(ref_t){k.fn}{wide}({arguments})"
+
+
+def clip(k: Kernel) -> str:
+    """For ``pow``: keep y*log(x) inside the exponent's range."""
+    if len(k.args) != 2:
+        return ""
+    limit = 700.0 if k.dtype == "f64" else 87.0
+    logarithm = "double l = fabs((double)ys[j] * log((double)xs[j]));"
+    return f"            {{ {logarithm} if (l > {limit}) ys[j] = (lane)((double)ys[j] * {limit} / l); }}"
+
+
+def grid_line(g: Grid) -> str:
+    bounds = (literal(g.lo, "f64"), literal(g.hi, "f64"), KINDS[g.kind], literal(g.ylo, "f64"), literal(g.yhi, "f64"))
+    return f"    sweep({', '.join(map(str, bounds))});"
+
+
+def filled(template: str, holes: dict[str, str]) -> str:
+    for key, value in holes.items():
+        template = template.replace(f"@{key}@", value)
+    return template
 
 
 def driver(k: Kernel, isa: str, samples: int) -> tuple[str, str]:
     """The C sources of ``k`` for ``isa``: the kernel unit, then the driver."""
     r = Renderer(isa, k.dtype)
     f64 = k.dtype == "f64"
-    binary = len(k.args) == 2
-    loads = [r.call("load", name + "s") for name in k.args]
-    call = f"    {r.call('store', 'vs', f'{k.name}({", ".join(loads)})')};"
-    wide = "l" if f64 else ""
-    cast = "(long double)" if f64 else "(double)"
-    arguments = [f"{cast}{name}s[j]" for name in k.args]
+    computed = f"{k.name}({', '.join(r.call('load', f'{name}s') for name in k.args)})"
     scalar_args = ", ".join(f"{name}s[j]" for name in k.args)
-    grids = "\n".join(
-        f"    sweep({number(g.lo)}, {number(g.hi)}, {KINDS[g.kind]}, {number(g.ylo)}, {number(g.yhi)});"
-        for g in k.grids
-    )
-    clip = ""
-    if binary:  # keep y*log(x) inside the exponent's range
-        limit = 700.0 if f64 else 87.0
-        clip = (
-            f"            {{ double l = fabs((double)ys[j] * log((double)xs[j]));"
-            f" if (l > {limit}) ys[j] = (lane)((double)ys[j] * {limit} / l); }}"
-        )
     holes = {
         "HEADER": HEADERS[isa],
         "C": r.fields["c"],
@@ -182,27 +184,16 @@ def driver(k: Kernel, isa: str, samples: int) -> tuple[str, str]:
         "KERNEL": render(k, isa).source,
         "LANES": r.fields["lanes"],
         "SUFFIX": "" if f64 else "f",
-        "CALL": call,
+        "CALL": f"    {r.call('store', 'vs', computed)};",
         "SAMPLES": str(samples),
-        "CLIP": clip,
-        "REF": f"(ref_t){k.fn}{wide}({', '.join(arguments)})",
-        "GRIDS": grids,
-        "SPECIALS": ", ".join(literal_of(v, k.dtype) for v in k.specials or (0.0,)),
-        "ARGS2": str(max(len(k.specials), 1)) if binary else "1",
+        "CLIP": clip(k),
+        "REF": reference(k),
+        "GRIDS": "\n".join(grid_line(g) for g in k.grids),
+        "SPECIALS": ", ".join(literal(v, k.dtype) for v in k.specials or (0.0,)),
+        "ARGS2": str(max(len(k.specials), 1)) if len(k.args) == 2 else "1",
         "SCALAR": f"{k.fn}{'' if f64 else 'f'}({scalar_args})" if k.guard or k.specials else "vs[j]",
     }
-    filled = []
-    for source in (UNIT, DRIVER):
-        for key, value in holes.items():
-            source = source.replace(f"@{key}@", value)
-        filled.append(source)
-    return filled[0], filled[1]
-
-
-def literal_of(value: float, dtype: str) -> str:
-    if math.isnan(value):
-        return "NAN"
-    return literal(value, dtype)
+    return filled(UNIT, holes), filled(DRIVER, holes)
 
 
 def emulated(isa: str) -> tuple[str, list[str], list[str]] | None:
@@ -211,6 +202,12 @@ def emulated(isa: str) -> tuple[str, list[str], list[str]] | None:
     if isa not in CROSS or platform.machine() == "aarch64" or cc is None or qemu is None:
         return None
     return cc, [f"-march={CROSS[isa]}", "-static"], [qemu, "-cpu", f"max,sve{SVE_BITS}=on"]
+
+
+def built(command: list[str], k: Kernel, isa: str) -> None:
+    done = subprocess.run(command, capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
+    if done.returncode != 0:
+        raise RuntimeError(f"{k.name} on {isa} does not build: {done.stderr.strip()[:600]}")
 
 
 def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] = ()) -> Measured | None:
@@ -226,13 +223,8 @@ def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] 
         cc, machine, launcher = arm or (str(c_compiler()), c_flags(isa, k.dtype), [])
         link = [flag for flag in machine if flag == "-static"]
         unit_flags = [flag for flag in machine if flag != "-static"]
-        for command in (
-            [cc, "-O2", *flags, *unit_flags, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")],
-            [cc, "-O2", *link, str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")],
-        ):
-            build = subprocess.run(command, capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
-            if build.returncode != 0:
-                raise RuntimeError(f"{k.name} on {isa} does not build: {build.stderr.strip()[:600]}")
+        built([cc, "-O2", *flags, *unit_flags, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")], k, isa)
+        built([cc, "-O2", *link, str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")], k, isa)
         exe = folder / "k"
         run = subprocess.run(
             [*launcher, str(exe)], capture_output=True, text=True, check=False, timeout=EMULATED_TIMEOUT
@@ -244,25 +236,17 @@ def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] 
     return Measured(float(ulp), float(abs_err), float(x), float(y), int(special))
 
 
-def compiles(k: Kernel, isa: str) -> bool | None:
-    """Whether ``k`` compiles for an aarch64 ``isa`` under the cross compiler; None without one."""
+def compiles(k: Kernel, isa: str) -> bool:
+    """Whether a cross compiler is there to take ``k`` for an aarch64 ``isa``; it raises when ``k`` does not build."""
     cc = "cc" if platform.machine() == "aarch64" else "aarch64-linux-gnu-gcc"
     if shutil.which(cc) is None:
-        return None
+        return False
     source = f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n"
     with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
         c_file = pathlib.Path(tmp) / "k.c"
         c_file.write_text(source)
-        build = subprocess.run(
-            [cc, "-O1", f"-march={CROSS[isa]}", "-Werror=implicit-function-declaration", "-c", str(c_file)]
-            + ["-o", str(pathlib.Path(tmp) / "k.o")],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=COMPILE_TIMEOUT,
-        )
-    if build.returncode != 0:
-        raise RuntimeError(f"{k.name} on {isa} does not build: {build.stderr.strip()[:600]}")
+        flags = [f"-march={CROSS[isa]}", "-Werror=implicit-function-declaration"]
+        built([cc, "-O1", *flags, "-c", str(c_file), "-o", str(pathlib.Path(tmp) / "k.o")], k, isa)
     return True
 
 
@@ -271,9 +255,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
     k = kernel(fn, dtype, level)
     try:
         if isa in CROSS and emulated(isa) is None and not host_can_run(isa, dtype):
-            built = compiles(k, isa)
-            basis = "cross-compiled, never run"
-            return Verdict(None, basis, "no cross compiler") if built is None else Verdict(None, basis, "builds")
+            return Verdict(None, "cross-compiled, never run", "builds" if compiles(k, isa) else "no cross compiler")
         seen = measure(k, isa, samples)
     except (RuntimeError, subprocess.TimeoutExpired) as exc:
         return Verdict(False, "kernel build", str(exc))
@@ -289,10 +271,10 @@ def judged(k: Kernel, seen: Measured, basis: str) -> Verdict:
     return Verdict(ok, basis, f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}){specials}")
 
 
-def validate_kernels(isas: tuple[str, ...] = ("avx2", "avx512", "neon", "sve")) -> list[tuple[str, Verdict]]:
+def validate_kernels() -> list[tuple[str, Verdict]]:
     """Every kernel on every ISA; (id, verdict) pairs."""
     ids = [
-        (fn, dtype, level, isa) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS for isa in isas
+        (fn, dtype, level, isa) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS for isa in HEADERS
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         verdicts = list(pool.map(lambda key: validate_kernel(*key), ids))
