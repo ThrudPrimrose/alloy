@@ -94,7 +94,7 @@ def limit_memory(share: float, threads: int) -> None:
     soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
     limit = int(share * available_memory()) + CHILD_BASELINE_BYTES + threads * openmp_stack_bytes()
     caps = [cap for cap in (soft, hard) if cap != resource.RLIM_INFINITY]
-    limit = min(limit, *caps)
+    limit = min([limit, *caps])
     resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
 
 

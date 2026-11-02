@@ -78,8 +78,8 @@ def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], s
     # library brings in reads this child's settings.
     os.sched_setaffinity(0, cpus)
     os.environ.update(openmp_env(cpus))
-    machine.limit_memory(share, len(cpus))
     try:
+        machine.limit_memory(share, len(cpus))
         conn.send(target(*args))
     except Exception:  # a crash is a value: the caller reports why, not an exit code
         conn.send("raised: " + "".join(traceback.format_exc().splitlines(keepends=True)[-6:]))

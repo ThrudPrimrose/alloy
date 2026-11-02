@@ -233,3 +233,8 @@ def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
     sut = verify.reference_from(cases, runs)
 
     assert sut.nondeterministic == frozenset({"x"})
+
+
+def test_a_child_starts_under_any_data_limit_of_its_parent():
+    """``limit_memory`` runs first in every child: with no limit set at all it must still set one."""
+    assert verify.in_child(int, (), machine.core_slots()[0], 1.0) == 0
