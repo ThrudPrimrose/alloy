@@ -70,7 +70,7 @@ p = fma(p, t, 0.999999999991219)
 s = mul(x, p)
 ```
 
-Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total
+Chebyshev fit on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total
 
 ### sin-quad-cheb13
 
@@ -85,7 +85,7 @@ p = fma(p, t, 1.0000000000000024)
 s = mul(x, p)
 ```
 
-Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total
+Chebyshev fit on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total
 
 ### cos-taylor6
 
@@ -134,7 +134,7 @@ p = fma(p, t, 0.9999999999035767)
 c = p
 ```
 
-Chebyshev-fit near-minimax on the quadrant
+Chebyshev fit on the quadrant
 
 ### cos-quad-cheb12
 
@@ -149,7 +149,7 @@ p = fma(p, t, 1.0000000000000024)
 c = p
 ```
 
-Chebyshev-fit near-minimax on the quadrant
+Chebyshev fit on the quadrant
 
 ### exp-taylor5
 
@@ -206,7 +206,7 @@ p = fma(p, x, 0.9999999999718296)
 e = p
 ```
 
-Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
+Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
 
 ### exp-cheb9
 
@@ -223,7 +223,7 @@ p = fma(p, x, 0.9999999999999974)
 e = p
 ```
 
-Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
+Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
 
 ### exp-cheb11
 
@@ -242,33 +242,33 @@ p = fma(p, x, 0.9999999999999883)
 e = p
 ```
 
-Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
+Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
 
 ## Vector math library calls
 
 | ISA | dtype | op | libmvec | SVML | SLEEF |
 |---|---|---|---|---|---|
-| avx2 | f64 | exp | `_ZGVdN4v_exp` | `_mm256_exp_pd` | `Sleef_expd4_u10` |
-| avx2 | f64 | sin | `_ZGVdN4v_sin` | `_mm256_sin_pd` | `Sleef_sind4_u10` |
-| avx2 | f64 | cos | `_ZGVdN4v_cos` | `_mm256_cos_pd` | `Sleef_cosd4_u10` |
-| avx2 | f32 | exp | `_ZGVdN8v_expf` | `_mm256_exp_ps` | `Sleef_expf8_u10` |
-| avx2 | f32 | sin | `_ZGVdN8v_sinf` | `_mm256_sin_ps` | `Sleef_sinf8_u10` |
-| avx2 | f32 | cos | `_ZGVdN8v_cosf` | `_mm256_cos_ps` | `Sleef_cosf8_u10` |
-| avx512 | f64 | exp | `_ZGVeN8v_exp` | `_mm512_exp_pd` | `Sleef_expd8_u10avx512f` |
-| avx512 | f64 | sin | `_ZGVeN8v_sin` | `_mm512_sin_pd` | `Sleef_sind8_u10avx512f` |
-| avx512 | f64 | cos | `_ZGVeN8v_cos` | `_mm512_cos_pd` | `Sleef_cosd8_u10avx512f` |
-| avx512 | f32 | exp | `_ZGVeN16v_expf` | `_mm512_exp_ps` | `Sleef_expf16_u10avx512f` |
-| avx512 | f32 | sin | `_ZGVeN16v_sinf` | `_mm512_sin_ps` | `Sleef_sinf16_u10avx512f` |
-| avx512 | f32 | cos | `_ZGVeN16v_cosf` | `_mm512_cos_ps` | `Sleef_cosf16_u10avx512f` |
-| neon | f64 | exp | `—` | `—` | `Sleef_expd2_u10` |
-| neon | f64 | sin | `—` | `—` | `Sleef_sind2_u10` |
-| neon | f64 | cos | `—` | `—` | `Sleef_cosd2_u10` |
-| neon | f32 | exp | `—` | `—` | `Sleef_expf4_u10` |
-| neon | f32 | sin | `—` | `—` | `Sleef_sinf4_u10` |
-| neon | f32 | cos | `—` | `—` | `Sleef_cosf4_u10` |
-| sve | f64 | exp | `—` | `—` | `—` |
-| sve | f64 | sin | `—` | `—` | `—` |
-| sve | f64 | cos | `—` | `—` | `—` |
-| sve | f32 | exp | `—` | `—` | `—` |
-| sve | f32 | sin | `—` | `—` | `—` |
-| sve | f32 | cos | `—` | `—` | `—` |
+| avx2 | f64 | exp | `_ZGVdN4v_exp` | `__svml_exp4` | `Sleef_expd4_u10avx2` |
+| avx2 | f64 | sin | `_ZGVdN4v_sin` | `__svml_sin4` | `Sleef_sind4_u10avx2` |
+| avx2 | f64 | cos | `_ZGVdN4v_cos` | `__svml_cos4` | `Sleef_cosd4_u10avx2` |
+| avx2 | f32 | exp | `_ZGVdN8v_expf` | `__svml_expf8` | `Sleef_expf8_u10avx2` |
+| avx2 | f32 | sin | `_ZGVdN8v_sinf` | `__svml_sinf8` | `Sleef_sinf8_u10avx2` |
+| avx2 | f32 | cos | `_ZGVdN8v_cosf` | `__svml_cosf8` | `Sleef_cosf8_u10avx2` |
+| avx512 | f64 | exp | `_ZGVeN8v_exp` | `__svml_exp8` | `Sleef_expd8_u10avx512f` |
+| avx512 | f64 | sin | `_ZGVeN8v_sin` | `__svml_sin8` | `Sleef_sind8_u10avx512f` |
+| avx512 | f64 | cos | `_ZGVeN8v_cos` | `__svml_cos8` | `Sleef_cosd8_u10avx512f` |
+| avx512 | f32 | exp | `_ZGVeN16v_expf` | `__svml_expf16` | `Sleef_expf16_u10avx512f` |
+| avx512 | f32 | sin | `_ZGVeN16v_sinf` | `__svml_sinf16` | `Sleef_sinf16_u10avx512f` |
+| avx512 | f32 | cos | `_ZGVeN16v_cosf` | `__svml_cosf16` | `Sleef_cosf16_u10avx512f` |
+| neon | f64 | exp | `_ZGVnN2v_exp` | `—` | `Sleef_expd2_u10` |
+| neon | f64 | sin | `_ZGVnN2v_sin` | `—` | `Sleef_sind2_u10` |
+| neon | f64 | cos | `_ZGVnN2v_cos` | `—` | `Sleef_cosd2_u10` |
+| neon | f32 | exp | `_ZGVnN4v_expf` | `—` | `Sleef_expf4_u10` |
+| neon | f32 | sin | `_ZGVnN4v_sinf` | `—` | `Sleef_sinf4_u10` |
+| neon | f32 | cos | `_ZGVnN4v_cosf` | `—` | `Sleef_cosf4_u10` |
+| sve | f64 | exp | `_ZGVsMxv_exp` | `—` | `—` |
+| sve | f64 | sin | `_ZGVsMxv_sin` | `—` | `—` |
+| sve | f64 | cos | `_ZGVsMxv_cos` | `—` | `—` |
+| sve | f32 | exp | `_ZGVsMxv_expf` | `—` | `—` |
+| sve | f32 | sin | `_ZGVsMxv_sinf` | `—` | `—` |
+| sve | f32 | cos | `_ZGVsMxv_cosf` | `—` | `—` |

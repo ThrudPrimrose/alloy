@@ -40,7 +40,6 @@ __all__ = [
     "Isa",
     "SPELLED",
     "Table",
-    "isas",
     "load",
     "lookup",
     "reverse",
