@@ -8,8 +8,12 @@ import subprocess
 from dace.frontend.python.parser import DaceProgram
 
 from alloy import configuration_matrix
+from alloy.backend.build import Build, compile_source, deduplicated, write_source
+from alloy.backend.candidates import Candidate
+from alloy.configuration_matrix import Matrix
 from alloy.evaluate import verify
 from alloy.frontend import inputs, scopes
+from alloy.frontend.scopes import Scope
 
 EXAMPLES = pathlib.Path(__file__).parent.parent / "examples"
 EXAMPLE = EXAMPLES / "two_scopes.py"
@@ -109,3 +113,8 @@ def handwritten_archive(tmp: pathlib.Path, scope: scopes.Scope, body: str) -> pa
     subprocess.run(["gcc", "-O2", "-fPIC", "-c", str(source), "-o", str(obj)], check=True)
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
     return archive
+
+
+def build(scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
+    """Render, compile and archive one candidate, as a sweep does for many."""
+    return deduplicated(compile_source(write_source(scope, candidate, matrix, folder, {}), candidate, matrix), seen)

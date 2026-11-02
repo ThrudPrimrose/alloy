@@ -8,8 +8,10 @@ import multiprocessing
 import os
 import pathlib
 import queue
+import traceback
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Any, Literal, Self
 
@@ -19,7 +21,6 @@ import sympy
 from dace.codegen.exceptions import CompilationError
 
 from alloy import machine
-from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
@@ -59,6 +60,9 @@ class Verdict:
 #: Seconds one program call may take before its child is killed and the candidate reported as crashed.
 CALL_TIMEOUT_S = 600
 
+#: Seconds a child that sent nothing may take to exit before it is killed.
+JOIN_GRACE_S = 5
+
 #: One program call's outputs by name, or a string describing how its child died.
 Outcome = dict[str, np.ndarray] | str
 
@@ -75,7 +79,10 @@ def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], s
     os.sched_setaffinity(0, cpus)
     os.environ.update(openmp_env(cpus))
     machine.limit_memory(share, len(cpus))
-    conn.send(target(*args))
+    try:
+        conn.send(target(*args))
+    except Exception:  # a crash is a value: the caller reports why, not an exit code
+        conn.send("raised: " + "".join(traceback.format_exc().splitlines(keepends=True)[-6:]))
 
 
 def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) -> dict[str, np.ndarray]:
@@ -83,8 +90,24 @@ def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) ->
 
     # an array that crossed the process boundary may arrive as a view on the pickle buffer, which dace refuses
     args = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
-    compiler.load_precompiled_sdfg(folder)(**args)
-    return {name: np.asarray(args[name]).copy() for name in outputs}
+    program = compiler.load_precompiled_sdfg(folder)
+    returned = program(**args)
+    return bound_outputs(outputs, args, returned, program.sdfg.arglist())
+
+
+def bound_outputs(
+    outputs: tuple[str, ...], args: dict[str, Any], returned: Any, declared: dict[str, Any]
+) -> dict[str, np.ndarray]:
+    """Each output's value: the argument the program writes, or, for a name it does not declare, its next return
+    value in order. A manifest may name a returned output, and its buffer in the draw is then never written."""
+    values = iter(returned if isinstance(returned, tuple | list) else () if returned is None else (returned,))
+    result = {}
+    for name in outputs:
+        value = args[name] if name in declared else next(values, None)
+        if value is None:
+            raise ValueError(f"output {name}: neither an argument of the program nor one of its return values")
+        result[name] = np.array(value, copy=True)
+    return result
 
 
 def child_context() -> Any:
@@ -116,7 +139,7 @@ def in_child(
             result = receive.recv()
         except EOFError:  # the child died before sending: the exit code below says how
             result = None
-    child.join(timeout=timeout)
+    child.join(timeout=JOIN_GRACE_S if result is None else timeout)
     if child.is_alive():
         child.kill()
         child.join()
@@ -171,18 +194,26 @@ def accumulation_length(program: Program, sizes: dict[str, int]) -> int:
     lengths = []
     for r in program.scopes:
         length = sympy.sympify(r.accumulation_length).subs(list(subs.items()))
-        if length.free_symbols:
+        # a runtime bound has no size: the largest extent bounds it, the safe side of the floor
+        if length.free_symbols and not sizes:
             raise ValueError(f"{r.symbol}: accumulation length {r.accumulation_length} needs {length.free_symbols}")
+        length = length.subs([(s, max(int(v) for v in sizes.values())) for s in length.free_symbols])
         lengths.append(int(length))
     return max(lengths)
 
 
+def canonical_bytes(values: np.ndarray) -> bytes:
+    """The bytes of ``values`` with every NaN one pattern, so -0.0 differs from 0.0 and NaN payloads do not count."""
+    if not np.issubdtype(values.dtype, np.inexact):
+        return values.tobytes()
+    return np.where(np.isnan(values), 0, values).tobytes()
+
+
 def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str) -> Verdict:
-    """``exact``: bit-identical. ``band``: HPCAgent-Bench's per-precision band with its eps_acc*sqrt(l) floor, at the
-    kernel's ``datatype``, else (an integer kernel's float output) at the output's own; an integer or boolean output
-    has no rounding, so it is always compared bit-identical."""
+    """``exact``: bit-identical, any NaN equal to any NaN. ``band``: HPCAgent-Bench's per-precision band with its
+    eps_acc*sqrt(l) floor at ``datatype``; an integer or boolean output has no rounding, so it is always exact."""
     if tolerance == "exact" or not np.issubdtype(ref.dtype, np.inexact):
-        same = np.array_equal(ref, val, equal_nan=np.issubdtype(ref.dtype, np.inexact))
+        same = ref.shape == val.shape and canonical_bytes(ref) == canonical_bytes(val)
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
     require_bench()
     from hpcagent_bench.frameworks.utilities import compare_arrays  # noqa: PLC0415
@@ -193,10 +224,7 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
         tolerance_band,
     )
 
-    try:
-        precision = precision_from_datatype(datatype)
-    except ValueError:
-        precision = precision_from_datatype(ref.dtype.name)
+    precision = precision_from_datatype(datatype)
     band = tolerance_band(precision)
     try:
         ok, err, detail = compare_arrays(
@@ -274,8 +302,10 @@ def verify(
 ) -> Verification:
     """A verdict for every built candidate. Candidates' programs build in parallel builder processes and run in
     parallel children as each is built; a duplicate object is judged on its original's outputs at its own FP level."""
+    if not cases.draws or not cases.outputs:
+        raise ValueError("verification needs at least one draw and one output")
     linker = Linker(program, matrix, out)
-    reference = {rep.scope.symbol: reference_archive(rep) for rep in reports}
+    reference = {rep.scope.symbol: built(rep.builds[0]) for rep in reports}
     ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_candidates)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
@@ -283,22 +313,26 @@ def verify(
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
         programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
-        building: dict[Future[pathlib.Path], tuple[str, str]] = {}
+        building: dict[Future[pathlib.Path], tuple[str, str, tuple[Any, ...]]] = {}
         for rep in reports:
             for b in rep.builds[1:]:  # the first build is the reference, already running
                 if b.error or b.archive is None or b.duplicate_of:
                     continue
                 selection = {**reference, rep.scope.symbol: b.archive}
                 tag, candidates = f"{rep.scope.symbol}_{b.name}", ref_candidates | {b.candidate}
-                building[builders.submit(linked_program, linker, selection, tag, candidates)] = (
-                    rep.scope.symbol,
-                    b.name,
-                )
+                job = (selection, tag, candidates)
+                building[builders.submit(linker.compile, *job)] = (rep.scope.symbol, b.name, job)
         for done in as_completed(building):
-            key = building[done]
+            symbol, name, job = building[done]
+            key = symbol, name
             try:
-                compiled = done.result()
-            except (CompilationError, RuntimeError, OSError) as exc:  # link failure, or a library that won't load
+                compiled = rebuilt(linker, job) if isinstance(done.exception(), BrokenProcessPool) else done.result()
+            except (
+                CompilationError,
+                RuntimeError,
+                OSError,
+                LookupError,
+            ) as exc:  # link failure, or an unloadable library
                 pending[key] = Verdict("link_error", detail=str(exc)[-2000:])
                 continue
             programs[key] = compiled
@@ -332,13 +366,7 @@ def judge_scope(
     return mine
 
 
-def linked_program(
-    linker: Linker, selection: dict[str, pathlib.Path], tag: str, candidates: frozenset[Candidate]
-) -> pathlib.Path:
-    """The program linking ``selection``, built in a builder process (:func:`verify`)."""
-    return linker.compile(selection, tag, candidates)
-
-
-def reference_archive(rep: ScopeReport) -> pathlib.Path:
-    """The scope's first built candidate: the matrix default (first language, first compiler, every default)."""
-    return built(rep.builds[0])
+def rebuilt(linker: Linker, job: tuple[Any, ...]) -> pathlib.Path:
+    """``job`` alone in a fresh builder: a dead builder fails every pending future, not only its own."""
+    with ProcessPoolExecutor(1) as builder:
+        return builder.submit(linker.compile, *job).result()

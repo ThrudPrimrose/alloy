@@ -41,14 +41,16 @@ def largest_cache_bytes() -> int:
                 raise ValueError(f"{index}/size: {size!r} is not in KiB")
             key = ((index / "level").read_text().strip(), (index / "shared_cpu_list").read_text().strip())
             sizes[key] = int(size[:-1]) * 1024
-    top = max(level for level, _ in sizes)
-    return sum(size for (level, _), size in sizes.items() if level == top)
+    if not sizes:
+        raise RuntimeError("/sys/devices/system/cpu/cpu*/cache lists no cache")
+    top = max(level for level, unused in sizes)
+    return sum(size for (level, unused), size in sizes.items() if level == top)
 
 
 def cpu_flags() -> frozenset[str]:
     """The CPU feature flags ``/proc/cpuinfo`` lists: ``flags`` on x86, ``Features`` on aarch64 (first core's line)."""
     for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
-        key, _, value = line.partition(":")
+        key, unused, value = line.partition(":")
         if key.strip() in ("flags", "Features"):
             return frozenset(value.split())
     raise RuntimeError("/proc/cpuinfo lists no CPU flags")
@@ -66,9 +68,14 @@ def available_memory() -> int:
 TIMING_COPIES = 8
 
 
+#: Data segment of a child before any work: DaCe, NumPy and their threaded libraries.
+CHILD_BASELINE_BYTES = 1 << 30
+
+
 def timing_memory_cap() -> int:
-    """Bytes one timed program may touch: the available memory over :data:`TIMING_COPIES`."""
-    return available_memory() // TIMING_COPIES
+    """Bytes one timed program may touch: what fits the :data:`TIMING_COPIES` copies alive at once, and a verifying
+    child's share of memory (each core slot holds one child, about three copies of the program)."""
+    return min(available_memory() // TIMING_COPIES, available_memory() // (len(core_slots()) * 3))
 
 
 def openmp_stack_bytes() -> int:
@@ -84,9 +91,10 @@ def openmp_stack_bytes() -> int:
 def limit_memory(share: float, threads: int) -> None:
     """Cap this process and its children (``RLIMIT_DATA``) at ``share`` of the available memory plus the stacks of
     ``threads`` OpenMP workers, so an oversized run fails instead of exhausting the machine. Never raises a cap."""
-    _, hard = resource.getrlimit(resource.RLIMIT_DATA)
-    limit = int(share * available_memory()) + threads * openmp_stack_bytes()
-    limit = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
+    soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
+    limit = int(share * available_memory()) + CHILD_BASELINE_BYTES + threads * openmp_stack_bytes()
+    caps = [cap for cap in (soft, hard) if cap != resource.RLIM_INFINITY]
+    limit = min(limit, *caps)
     resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
 
 

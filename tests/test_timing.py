@@ -3,13 +3,20 @@ import dataclasses
 import math
 
 from alloy import machine
-from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import timing, verify
 from alloy.evaluate.link import Linker
 from alloy.frontend import inputs
-from helpers import MATRIX, ROW_SUM_MANIFEST, SCALE_MANIFEST, handwritten_archive, program_and_cases, write_manifest
+from helpers import (
+    MATRIX,
+    ROW_SUM_MANIFEST,
+    SCALE_MANIFEST,
+    build,
+    handwritten_archive,
+    program_and_cases,
+    write_manifest,
+)
 
 # fewer reps, and programs capped at 4x the largest cache (production: 16x), so a scope that touches one vector of
 # row_sum does not grow its matrix past what three parallel test workers leave each child

@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import re
 
+import dace
 import numpy as np
 import pytest
 from hpcagent_bench import paths
@@ -39,3 +40,32 @@ def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_t
         match=re.escape(f"{path}: not a valid Manifest:\n  datatype: Input should be a valid string, got 64"),
     ):
         inputs.load(path, f"{REDUCTIONS}:scale", datatype=64)  # type: ignore[arg-type]
+
+
+def test_a_derived_boolean_argument_takes_both_truth_values():
+    sdfg = dace.SDFG("flags")
+    sdfg.add_array("mask", [1000], dace.bool_)
+
+    sut = inputs.derived_draw(sdfg, 0)
+
+    assert 0 < np.count_nonzero(sut.values["mask"]) < 1000
+
+
+def test_a_derived_complex_argument_has_an_imaginary_part():
+    sdfg = dace.SDFG("waves")
+    sdfg.add_array("z", [8], dace.complex128)
+
+    sut = inputs.derived_draw(sdfg, 0)
+
+    assert np.all(sut.values["z"].imag != 0)
+
+
+def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap():
+    sdfg = dace.SDFG("indexed")
+    sdfg.add_array("a", ["N"], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_state().add_tasklet("t", {}, {}, "x = K", dace.Language.CPP)
+
+    sut = inputs.domain_gap(sdfg)
+
+    assert "K" in sut

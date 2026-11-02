@@ -14,8 +14,8 @@ from alloy.isa import load
 from alloy.isa.validate import (
     Verdict,
     c_flags,
-    compile_run,
     candidates_for,
+    compile_run,
     host_can_run,
     kernel_c,
     unexercised,

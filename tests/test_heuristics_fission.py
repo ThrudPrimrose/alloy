@@ -18,11 +18,10 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation import helpers
 
 from alloy import machine
-from alloy.backend.build import build
 from alloy.backend.candidates import Candidate, flips
 from alloy.frontend import scopes
 from alloy.heuristics import fission, predict
-from helpers import MATRIX, load_program
+from helpers import MATRIX, build, load_program
 
 N = dace.symbol("N")
 #: Values ``wide`` keeps live at once: more than any host's vector registers (32 at most).
@@ -155,8 +154,8 @@ def test_a_scope_with_a_cut_gets_one_fissioned_rendering_per_compiler_in_a_varia
 @pytest.mark.gcc
 def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_widens(tmp_path):
     scope = only_scope(wide(tmp_path))
-    plain = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
-    cut = build(scope, Candidate("c", "gcc", fission=True), MATRIX, tmp_path, {})
+    plain = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "plain", {})
+    cut = build(scope, Candidate("c", "gcc", fission=True), MATRIX, tmp_path / "cut", {})
     beyond = {"N": 64 * machine.largest_cache_bytes() // 8}
 
     split = fission.fissioned(scope.sdfg)  # how many pieces follows the host's vector registers

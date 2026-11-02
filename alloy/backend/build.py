@@ -97,17 +97,17 @@ def masked_ops(obj: pathlib.Path) -> int:
 
 def parse_remarks(log: str, source: pathlib.Path) -> Remarks:
     """Count vectorized loops and collect missed reasons from a compiler's diagnostics about ``source``."""
-    vectorized, missed = 0, []
+    vectorized, missed = set(), []
     for line in log.splitlines():
         match = REMARK_LINE.search(line) if source.name in line else NVHPC_REMARK.match(line)
         if match is None:
             continue
         text = match.group(1)
         if "loop vectorized" in text or "vectorized loop" in text or "Generated vector" in text:
-            vectorized += 1
+            vectorized.add(line.partition(": ")[0])
         elif "not vectorized" in text or "couldn't vectorize" in text:
             missed.append(text.strip())
-    return Remarks(vectorized=vectorized, missed=tuple(dict.fromkeys(missed)))
+    return Remarks(vectorized=len(vectorized), missed=tuple(dict.fromkeys(missed)))
 
 
 def code_hash(obj: pathlib.Path) -> str:
@@ -135,7 +135,7 @@ def rendered_or_error(scope: Scope, candidate: Candidate, matrix: Matrix) -> str
     over a call SVE has no instruction for): the candidate is a failed build that names its cause."""
     try:
         return render(scope, candidate, matrix)
-    except NotImplementedError as err:
+    except (NotImplementedError, RuntimeError, ValueError) as err:
         reason = " ".join(str(err).split())
         return f"#error alloy: {candidate.note} cannot be rendered: {reason}\n"
 
@@ -149,8 +149,11 @@ def write_source(
     if key not in renders:
         variants = folder / "variants"
         variants.mkdir(parents=True, exist_ok=True)
-        source = variants / f"v{len(renders)}.{matrix.languages[candidate.language].suffix}"
-        source.write_text(rendered_or_error(scope, candidate, matrix))
+        text = rendered_or_error(scope, candidate, matrix)
+        same = next((path for path in renders.values() if path.read_text() == text), None)
+        source = same or variants / f"v{len(renders)}.{matrix.languages[candidate.language].suffix}"
+        if same is None:
+            source.write_text(text)
         renders[key] = source
     return renders[key]
 
@@ -183,9 +186,3 @@ def deduplicated(built: Build, seen: dict[str, str]) -> Build:
         return built
     first = seen.setdefault(f"{built.object_hash}+{built.candidate.veclib}", built.name)
     return built if first == built.name else replace(built, duplicate_of=first)
-
-
-def build(scope: Scope, candidate: Candidate, matrix: Matrix, folder: pathlib.Path, seen: dict[str, str]) -> Build:
-    """Render, compile and archive ``candidate``. ``seen`` maps object hashes to the first candidate that
-    produced them, so a duplicate keeps its record but points at the original."""
-    return deduplicated(compile_source(write_source(scope, candidate, matrix, folder, {}), candidate, matrix), seen)

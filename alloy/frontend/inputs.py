@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True, frozen=True)
 class Draw:
-    """One fuzz iteration: the sizes and every input array/scalar by name."""
+    """One fuzz iteration: the manifest's parameters as drawn (sizes and physics) and every input by name."""
 
-    sizes: dict[str, int]
+    sizes: dict[str, Any]
     values: dict[str, Any]
 
 
@@ -70,8 +70,8 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
 
 
 def draw(manifest: Manifest, iteration: int) -> Draw:
-    """Sizes from the ``fuzzed`` ranges (capped for correctness), then inputs from the bench initializer, both seeded
-    by ``iteration``."""
+    """Parameters from the ``fuzzed`` ranges (capped for correctness), then inputs from the bench initializer, both
+    seeded by ``iteration``. A parameter stays as drawn: truncating ``dt=0.05`` would switch whole terms off."""
     from hpcagent_bench import fuzz  # noqa: PLC0415
 
     spec = manifest.spec
@@ -83,15 +83,10 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
         size_cap=fuzz.correctness_size_cap(),
         config_names=spec.config_names,
     )
-    ints: dict[str, int] = {}
-    for name, value in sizes.items():
-        if not isinstance(value, int | float):
-            raise TypeError(f"{manifest.path}: parameter {name} drew {value!r}, not a size")
-        ints[name] = int(value)
-    return at(manifest, ints, iteration)
+    return at(manifest, dict(sizes), iteration)
 
 
-def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
+def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
     """Inputs at fixed ``sizes``: a corpus kernel's through the bench's dispatch (its own ``initialize`` if any),
     else the auto-initializer."""
     from hpcagent_bench import paths  # noqa: PLC0415
@@ -107,7 +102,8 @@ def at(manifest: Manifest, sizes: dict[str, int], seed: int = 0) -> Draw:
         data = Benchmark(spec.short_name).get_data(
             preset=Preset.FUZZED, datatype=manifest.datatype, input_seed=seed, params_override=sizes
         )
-        return Draw(sizes=sizes, values={name: data[name] for name in spec.init.output_args})
+        names = dict.fromkeys((*spec.init.output_args, *(name for name in spec.output_args if name in data)))
+        return Draw(sizes=sizes, values={name: data[name] for name in names})
     if spec.init.func_name:
         raise ValueError(f"{manifest.path}: a custom {spec.init.func_name}() is only called for a corpus kernel")
     values = auto_initialize(
@@ -141,6 +137,7 @@ def largest_array(manifest: Manifest, sdfg: dace.SDFG) -> int:
             int(dace.symbolic.evaluate(d.total_size, {**sizes}))
             for sizes in presets(manifest)
             for d in sdfg.arrays.values()
+            if {str(s) for s in dace.symbolic.pystr_to_symbolic(str(d.total_size)).free_symbols} <= sizes.keys()
         ),
         default=0,
     )
@@ -148,7 +145,25 @@ def largest_array(manifest: Manifest, sdfg: dace.SDFG) -> int:
 
 #: Calls defined on only part of the reals: an input that may reach one has a domain only a manifest states.
 DOMAIN_CALLS = frozenset(
-    {"sqrt", "log", "log2", "log10", "log1p", "pow", "asin", "acos", "acosh", "atanh", "lgamma", "tgamma", "fmod"}
+    {
+        "sqrt",
+        "log",
+        "log2",
+        "log10",
+        "log1p",
+        "pow",
+        "asin",
+        "acos",
+        "acosh",
+        "atanh",
+        "lgamma",
+        "tgamma",
+        "fmod",
+        "py_mod",
+        "PyMod",
+        "FtnMod",
+        "CMod",
+    }
 )
 #: Sizes of the derived draws: odd, so a vector loop has a remainder, and different per draw.
 DERIVED_SIZES = (37, 61)
@@ -181,7 +196,21 @@ def domain_gap(sdfg: dace.SDFG) -> str:
     integers = [
         name for name, desc in data_arguments(sdfg).items() if np.issubdtype(desc.dtype.as_numpy_dtype(), np.integer)
     ]
-    return f"integer argument {integers[0]}" if integers else ""
+    if integers:
+        return f"integer argument {integers[0]}"
+    plain = {str(e) for d in sdfg.arrays.values() if not d.transient for e in d.shape}
+    loose = sorted(str(s) for s in sdfg.free_symbols if str(s) not in plain)
+    return f"symbol {loose[0]} is no array extent" if loose else ""
+
+
+def drawn_values(rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dtype, array: bool) -> Any:
+    """Uniform values in [0, 1) at ``dtype``: both truth values for booleans, both parts for complex numbers."""
+    drawn = rng.random(shape)
+    if dtype == np.bool_:
+        drawn = drawn < 0.5
+    elif np.issubdtype(dtype, np.complexfloating):
+        drawn = drawn + 1j * rng.random(shape)
+    return np.asarray(drawn).astype(dtype) if array else dtype.type(drawn)
 
 
 def derived_draw(sdfg: dace.SDFG, iteration: int) -> Draw:
@@ -195,6 +224,5 @@ def derived_draw(sdfg: dace.SDFG, iteration: int) -> Draw:
     for name, desc in data_arguments(sdfg).items():
         dtype = desc.dtype.as_numpy_dtype()
         shape = tuple(int(dace.symbolic.evaluate(s, numeric)) for s in desc.shape)
-        drawn = rng.random(shape) if isinstance(desc, dace.data.Array) else rng.random()
-        values[name] = np.asarray(drawn).astype(dtype) if isinstance(desc, dace.data.Array) else dtype.type(drawn)
+        values[name] = drawn_values(rng, shape, dtype, isinstance(desc, dace.data.Array))
     return Draw(sizes=sizes, values=values)

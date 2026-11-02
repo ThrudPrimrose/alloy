@@ -8,12 +8,11 @@ import numpy as np
 import pytest
 from dace.codegen import cpf
 
-from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Best, Linker, built, execution_order
 from alloy.frontend import scopes
 from alloy.records import dumped_json, validated_json
-from helpers import MATRIX, REDUCTIONS, load_program, outlined, scope_with
+from helpers import MATRIX, REDUCTIONS, build, load_program, outlined, scope_with
 
 
 def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program(tmp_path):

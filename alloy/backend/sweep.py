@@ -22,6 +22,15 @@ class ScopeReport:
     pruned: tuple[prune.Pruned, ...] = ()
 
 
+def reference_first(builds: list[Build]) -> list[Build]:
+    """``builds`` with the first that compiled in front: it is the reference every other candidate is judged against
+    (a C++ tasklet cannot render in the C default, and the C++ builds then carry the scope)."""
+    index = next((i for i, b in enumerate(builds) if b.archive is not None), None)
+    if index is None:
+        raise RuntimeError(f"no candidate built: {builds[0].error if builds else 'empty sweep'}")
+    return [builds[index], *builds[:index], *builds[index + 1 :]]
+
+
 def run(
     program: Program,
     matrix: Matrix,
@@ -54,5 +63,7 @@ def run(
             later = dict(zip(rest, built(rest), strict=True))
             seen: dict[str, str] = {}
             ordered = [first.get(c) or later[c] for c in candidates if c in first or c in later]
-            reports.append(ScopeReport(scope, tuple(deduplicated(b, seen) for b in ordered), tuple(pruned)))
+            reports.append(
+                ScopeReport(scope, tuple(deduplicated(b, seen) for b in reference_first(ordered)), tuple(pruned))
+            )
     return reports

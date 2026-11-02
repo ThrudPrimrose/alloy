@@ -209,7 +209,7 @@ class Linker:
     def commands(self, plan: Best) -> Commands:
         """The argv of every compile and of the link that ``best/Makefile`` runs."""
         library = f"lib{self.program.sdfg.name}.so"
-        usable, _ = self.matrix.usable_compilers()
+        usable = self.matrix.usable_compilers()[0]
         frame = next(comp.executables["c"] for comp in usable.values() if "c" in comp.executables)
         frame_flags = [self.matrix.languages["c"].std, "-O3", "-fPIC", "-shared"]
         compiles = {r.symbol: (r.compiler, *r.flags, "-c", r.source, "-o", f"{r.symbol}.o") for r in plan.scopes}

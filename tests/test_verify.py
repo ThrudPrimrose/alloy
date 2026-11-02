@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 from alloy import machine
-from alloy.backend.build import build
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import link, verify
@@ -15,6 +14,7 @@ from helpers import (
     REDUCTIONS,
     ROW_SUM_MANIFEST,
     SCALE_MANIFEST,
+    build,
     handwritten_archive,
     outlined,
     program_and_cases,
@@ -132,7 +132,7 @@ def reserve(count: int) -> int:
 def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine():
     sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0], verify.slot_share())
 
-    assert sut == "exit code 1"
+    assert sut.startswith("raised:") and "Unable to allocate" in sut
 
 
 def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path):
@@ -176,6 +176,33 @@ def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatyp
 
     same = verify.compare("band", index, index.copy(), 8, "int64")
     off = verify.compare("band", index, index + 1, 8, "int64")
-    value = verify.compare("band", np.ones(8), np.ones(8), 8, "int64")
+    value = verify.compare("band", np.ones(8), np.ones(8), 8, "float64")
 
     assert same.status == "exact" and off.status == "fail" and value.status == "pass"
+
+
+def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_buffer():
+    args = {"out": np.zeros(3)}
+    returned = np.array([1.0, 2.0, 3.0])
+
+    sut = verify.bound_outputs(("out",), args, returned, {"a": None, "__return": None})
+
+    np.testing.assert_array_equal(sut["out"], returned)
+
+
+def test_an_output_nothing_supplies_is_refused():
+    with pytest.raises(ValueError, match="out"):
+        verify.bound_outputs(("out",), {"out": np.zeros(3)}, None, {"a": None})
+
+
+def test_exact_tells_a_signed_zero_apart_but_not_two_nans():
+    plus, minus = np.array([0.0, np.nan]), np.array([-0.0, -np.nan])
+
+    assert verify.compare("exact", plus, minus, 1, "float64").status == "fail"
+    assert verify.compare("exact", plus, plus.copy(), 1, "float64").status == "exact"
+    assert verify.compare("exact", np.array([np.nan]), np.array([-np.nan]), 1, "float64").status == "exact"
+
+
+def test_verification_refuses_an_empty_draw_list():
+    with pytest.raises(ValueError, match="at least one draw"):
+        verify.verify(outlined(), MATRIX, [], verify.Cases([], ("a",)), pathlib.Path("."))

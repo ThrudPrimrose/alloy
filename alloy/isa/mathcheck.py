@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, literal, render
-from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, c_flags, c_compiler, host_can_run
+from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, c_compiler, c_flags, host_can_run
 
 __all__ = ["Measured", "compiles", "measure", "validate_kernel", "validate_kernels"]
 

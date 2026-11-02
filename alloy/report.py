@@ -508,7 +508,7 @@ def markdown(r: Report, matrix: Matrix) -> str:
         note = "Nondeterministic outputs (differ between reference runs, always compared by band)"
         lines += [f"{note}: {', '.join(r.nondeterministic_outputs)}", ""]
     lines += [f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
-    _, skipped = matrix.usable_compilers()
+    skipped = matrix.usable_compilers()[1]
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
     lines += [""] if skipped else []
     lines += vectorization_lines(r.vectorization)

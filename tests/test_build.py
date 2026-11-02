@@ -7,10 +7,10 @@ import pytest
 
 from alloy import configuration_matrix
 from alloy.backend import sweep
-from alloy.backend.build import build, masked_lines, parse_remarks
+from alloy.backend.build import masked_lines, parse_remarks
 from alloy.backend.candidates import Candidate
 from alloy.frontend import scopes
-from helpers import MATRIX, gcc_only, outlined, scope_with, variant
+from helpers import MATRIX, build, gcc_only, outlined, scope_with, variant
 
 N = dace.symbol("N")
 

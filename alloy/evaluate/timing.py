@@ -94,11 +94,18 @@ def median_ci(samples: list[float]) -> tuple[float, float, float]:
     return statistics.median(s), s[low - 1], s[high - 1]
 
 
+#: The most a size is scaled; past it a goal counts as unreachable.
+MAX_GROWTH = 1 << 24
+
+
 def footprint(sdfg: dace.SDFG, sizes: Parameters) -> int:
-    """Bytes of the non-transient containers of ``sdfg`` at ``sizes``."""
-    arrays = [d for d in sdfg.arrays.values() if not d.transient]
+    """Bytes of the containers of ``sdfg`` whose size ``sizes`` decides, transients included."""
     numeric: dict[dace.symbol | str, int | float] = {n: v for n, v in sizes.items() if isinstance(v, int | float)}
-    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in arrays)
+    return sum(
+        int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes
+        for d in sdfg.arrays.values()
+        if {str(s) for s in dace.symbolic.pystr_to_symbolic(str(d.total_size)).free_symbols} <= numeric.keys()
+    )
 
 
 def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: float, cap: float) -> dict[str, int]:
@@ -116,12 +123,15 @@ def sized(sdfg: dace.SDFG, program: dace.SDFG, base: dict[str, int], target: flo
         low, high = 0.0, 1.0
         while footprint(g, scaled(high)) < goal:
             high *= 2
+            if high > MAX_GROWTH:  # the extents do not reach this goal: it does not bound the factor
+                return math.inf
         for _ in range(40):
             mid = (low + high) / 2
             low, high = (mid, high) if footprint(g, scaled(mid)) < goal else (low, mid)
         return high
 
-    return scaled(min(reaching(sdfg, target), reaching(program, cap)))
+    factor = min(reaching(sdfg, target), reaching(program, cap))
+    return base if math.isinf(factor) else scaled(factor)
 
 
 def stage_sizes(
@@ -175,14 +185,17 @@ def time_arms(folders: list[str], symbol: str, args: dict[str, Any], reps: int) 
 
 def check(arms: Arms, draw: Draw, length: int) -> dict[str, Verdict]:
     """Every arm's outputs on ``draw`` against the first arm's, each in its own child, so a crash is a verdict."""
-    # shortcut: holds every arm's outputs until judged; judge as they complete if arms x outputs nears memory
     with Children() as children:
         pending = {name: children.submit(folder, draw, arms.outputs) for name, folder in arms.folders.items()}
-        first = next(iter(pending.values())).result()
+        first_name = next(iter(pending))
+        first = pending.pop(first_name).result()
         if isinstance(first, str):
-            raise RuntimeError(f"the reference crashed at {draw.sizes}: {first}")  # noqa: TRY004 -- a crash, not a bad type
+            raise RuntimeError(f"the reference crashed at {draw.sizes}: {first}")
         ref = Reference([first], arms.nondeterministic)
-        return {name: judge(arms.tolerances[name], ref, [f.result()], [length]) for name, f in pending.items()}
+        verdicts = {first_name: Verdict("exact")}  # judged against itself a nondeterministic output would fail its band
+        for name in list(pending):  # judged in turn, so each arm's outputs go before the next
+            verdicts[name] = judge(arms.tolerances[name], ref, [pending.pop(name).result()], [length])
+        return verdicts
 
 
 def measure(arms: Arms, draw: Draw, length: int, cpus: tuple[int, ...], reps: int) -> dict[str, Measured]:
@@ -190,13 +203,24 @@ def measure(arms: Arms, draw: Draw, length: int, cpus: tuple[int, ...], reps: in
     verdicts = check(arms, draw, length)
     passing = [name for name in arms.folders if verdicts[name].ok]
     args = {**draw.values, **draw.sizes}
-    # the one child running: the whole memory, and one call's time budget per timed call
-    timeout = CALL_TIMEOUT_S * (reps + 1) * len(passing)
-    times = in_child(time_arms, ([str(arms.folders[n]) for n in passing], arms.symbol, args, reps), cpus, 1.0, timeout)
-    if isinstance(times, str):
-        raise RuntimeError(f"timing {arms.symbol or 'the program'} failed: {times}")  # noqa: TRY004 -- a crash, not a bad type
-    measured = {name: Measured(*median_ci(t), verdicts[name]) for name, t in zip(passing, times, strict=True)}
+    times = timed(arms, passing, args, cpus, reps) if passing else None
+    if isinstance(times, str):  # one arm crashed mid-round: find it, the others keep their times
+        separate = {name: timed(arms, [name], args, cpus, reps) for name in passing}
+        verdicts |= {n: Verdict("crashed", detail=t) for n, t in separate.items() if isinstance(t, str)}
+        if not verdicts[passing[0]].ok:
+            raise RuntimeError(f"timing {arms.symbol or 'the program'} failed: {verdicts[passing[0]].detail}")
+        measured = {n: Measured(*median_ci(t[0]), verdicts[n]) for n, t in separate.items() if not isinstance(t, str)}
+    else:
+        measured = {name: Measured(*median_ci(t), verdicts[name]) for name, t in zip(passing, times or [], strict=True)}
     return {name: measured.get(name, Measured(math.nan, math.nan, math.nan, v)) for name, v in verdicts.items()}
+
+
+def timed(
+    arms: Arms, names: list[str], args: dict[str, Any], cpus: tuple[int, ...], reps: int
+) -> list[list[float]] | str:
+    """``names`` timed together in the one running child: the whole memory, and one call's budget per timed call."""
+    timeout = CALL_TIMEOUT_S * (reps + 1) * len(names)
+    return in_child(time_arms, ([str(arms.folders[n]) for n in names], arms.symbol, args, reps), cpus, 1.0, timeout)
 
 
 def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, manifest: Manifest) -> ScopeTiming:
@@ -226,8 +250,8 @@ def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, man
     keep = [REFERENCE, *ranked[: t.top]]
     top = Arms({n: arms.folders[n] for n in keep}, arms.tolerances, symbol, arms.outputs, arms.nondeterministic)
     final = measure(top, inputs.at(manifest, final_sizes), length(linker, final_sizes), cores, t.final_reps)
-    best = min((n for n in ranked[: t.top] if final[n].verdict.ok), key=lambda n: final[n].median, default=REFERENCE)
-    winner = best if final[best].high < final[REFERENCE].low else REFERENCE
+    clear = [n for n in ranked[: t.top] if final[n].verdict.ok and final[n].high < final[REFERENCE].low]
+    winner = min(clear, key=lambda n: final[n].median, default=REFERENCE)
     return ScopeTiming(screen, final, winner, screen_sizes, final_sizes)
 
 

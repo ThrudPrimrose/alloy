@@ -41,11 +41,13 @@ class Program:
 
 
 def called_names(sdfg: dace.SDFG) -> set[str]:
-    """Every function name a tasklet of ``sdfg`` (nested SDFGs included) calls."""
+    """Every function name a tasklet of ``sdfg`` (nested SDFGs included) calls; a Python ``**`` renders as ``pow``."""
     names: set[str] = set()
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.Tasklet):
             names |= set(CALL_PATTERN.findall(node.code.as_string))
+            if node.language == dace.Language.Python and "**" in node.code.as_string:
+                names.add("pow")
     return names
 
 
@@ -71,6 +73,8 @@ def reduced_extent(
     entry = scope[edge.src]
     while isinstance(entry, nodes.MapEntry):
         for param, rng in zip(entry.map.params, entry.map.range, strict=True):
+            # an inner bound on this parameter (a triangular nest) is largest at the parameter's own last value
+            extent = sympy.sympify(extent).subs(sympy.Symbol(param), rng[1])
             if param not in indexed:
                 extent = extent * sympy.sympify(dace.subsets.Range([rng]).num_elements())
         entry = scope[entry]
