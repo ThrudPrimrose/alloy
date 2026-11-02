@@ -33,7 +33,7 @@ def test_every_schedule_is_described_and_every_isa_offer_is_known():
         ("avx512", "full_mask", True),
         ("avx512", "sve_intrinsics", False),
         ("sve", "sve_intrinsics", True),
-        ("sve", "scalar_remainder", False),
+        ("sve", "scalar_remainder", True),
     ],
 )
 def test_legality_and_the_reason(isa, schedule, offered):
@@ -46,7 +46,7 @@ def test_legality_and_the_reason(isa, schedule, offered):
 
 def test_a_refusal_explains_missing_predication():
     assert "no predication" in legal("avx2", "full_mask", TABLE)
-    assert "not offered" in legal("sve", "scalar_remainder", TABLE)
+    assert "not offered" in legal("avx2", "sve_intrinsics", TABLE)
 
 
 SKELETON_MARKS = [
@@ -84,7 +84,7 @@ SKELETON_MARKS = [
         "f64",
         [
             "i += svcntd()",
-            "svbool_t __pg_i = svwhilelt_b64_u64((uint64_t)i, (uint64_t)N);",
+            "svbool_t __pg_i = svwhilelt_b64_s64(i, N);",
             "svmla_f64_x(__pg_i, svld1_f64(__pg_i, Y + i), svdup_f64(a)",
         ],
     ),
@@ -165,7 +165,7 @@ def test_the_cli_verifies_a_skeleton():
     from alloy.isa.validate import host_can_run
 
     run = subprocess.run(
-        [sys.executable, "-m", "alloy.isa", "skeleton", "avx512", "masked_remainder", "f64", "--verify"],
+        [sys.executable, "-m", "alloy.isa", "skeleton", "avx512", "masked_remainder", "f64"],
         capture_output=True,
         text=True,
         check=False,

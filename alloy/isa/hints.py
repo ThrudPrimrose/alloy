@@ -16,7 +16,7 @@ from alloy.isa.table import DTYPES, Table, load
 __all__ = ["Hint", "OpUse", "Spelling", "advice", "tasklet_hints"]
 
 #: Python binary operators -> abstract op names (only ops the table covers).
-_OP_NAMES: dict[type, str] = {
+OP_NAMES: dict[type, str] = {
     ast.Add: "add",
     ast.Sub: "sub",
     ast.Mult: "mul",
@@ -29,7 +29,7 @@ _OP_NAMES: dict[type, str] = {
 }
 
 #: Function calls a tasklet may make -> abstract op names (sqrt and the transcendentals the table tiers).
-_CALL_NAMES: dict[str, str] = {
+CALL_NAMES: dict[str, str] = {
     "sqrt": "sqrt",
     "fabs": "abs",
     "abs": "abs",
@@ -58,7 +58,7 @@ _CALL_NAMES: dict[str, str] = {
 }
 
 #: Ops a tasklet's arithmetic maps to, in a readable order.
-_ORDER = (
+OP_ORDER = (
     "reduce_add",
     "fma",
     "sin",
@@ -132,7 +132,7 @@ class Hint:
     spellings: tuple[Spelling, ...]
 
 
-def _uses(sdfg) -> list[OpUse]:
+def op_uses(sdfg) -> list[OpUse]:
     """Every tasklet of ``sdfg`` and what it computes, in SDFG order."""
     import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
     from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
@@ -147,8 +147,8 @@ def _uses(sdfg) -> list[OpUse]:
         if node.code.language == dace.Language.Python:
             tree = ast.parse(node.code.as_string)
             for child in ast.walk(tree):
-                if isinstance(child, ast.BinOp) and type(child.op) in _OP_NAMES:
-                    ops.add(_OP_NAMES[type(child.op)])
+                if isinstance(child, ast.BinOp) and type(child.op) in OP_NAMES:
+                    ops.add(OP_NAMES[type(child.op)])
                 elif isinstance(child, ast.UnaryOp) and isinstance(child.op, ast.USub):
                     ops.add("neg")
                 elif isinstance(child, ast.BoolOp):
@@ -157,8 +157,8 @@ def _uses(sdfg) -> list[OpUse]:
                     ops.add("select")
                 elif isinstance(child, ast.Call):
                     name = ast.unparse(child.func).rsplit(".", 1)[-1]
-                    if name in _CALL_NAMES:
-                        ops.add(_CALL_NAMES[name])
+                    if name in CALL_NAMES:
+                        ops.add(CALL_NAMES[name])
                     calls += (name,)
         reduces = False
         if isinstance(state, dace.SDFGState):
@@ -174,12 +174,12 @@ def _uses(sdfg) -> list[OpUse]:
                     break
         if {"mul", "add"} <= ops or {"mul", "sub"} <= ops:
             ops.add("fma")  # contractable pair: name the fused form too
-        ordered = tuple(op for op in _ORDER if op in ops)
+        ordered = tuple(op for op in OP_ORDER if op in ops)
         uses.append(OpUse(node.label, str(node.code.language).split(".")[-1], ordered, calls, reduces))
     return uses
 
 
-def _kind(use: OpUse) -> str:
+def use_kind(use: OpUse) -> str:
     if use.reduces:
         return "reduction"
     if any(op in functions() for op in use.ops):
@@ -187,7 +187,7 @@ def _kind(use: OpUse) -> str:
     return "elementwise"
 
 
-def _spelling(
+def op_spelling(
     table: Table, isa: str, dtype: str, op: str, verdicts: dict[str, bool | None], recommended: str = ""
 ) -> Spelling | None:
     """The target spelling for one abstract op, with its trap and validation verdict, or None when the
@@ -245,18 +245,20 @@ def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None, recomm
     table = table or load()
     verdicts: dict[str, bool | None] = {}
     hints = []
-    for use in _uses(sdfg):
+    for use in op_uses(sdfg):
         ops = ("reduce_add",) + use.ops if use.reduces and "reduce_add" not in use.ops else use.ops
         spellings = tuple(
-            spelling for op in ops if (spelling := _spelling(table, isa, dtype, op, verdicts, recommended)) is not None
+            spelling
+            for op in ops
+            if (spelling := op_spelling(table, isa, dtype, op, verdicts, recommended)) is not None
         )
-        hints.append(Hint(use, _kind(use), spellings))
+        hints.append(Hint(use, use_kind(use), spellings))
     return hints
 
 
 KERNEL_ISAS = ("avx2", "avx512", "neon", "sve")
 
-_VERDICT_WORDS = {
+VERDICT_WORDS = {
     True: "verified on this host",
     False: "FAILED validation — check before use",
     None: "not verifiable on this host",
@@ -284,7 +286,7 @@ def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None, 
         lines.append(f"- tasklet '{use.tasklet}' [{hint.kind}]: {ops}{suffix}")
         for spelling in hint.spellings:
             sig = f" {spelling.signature}" if spelling.signature else ""
-            lines.append(f"    {spelling.op}: {spelling.spelling}{sig}  [{_VERDICT_WORDS[spelling.verified]}]")
+            lines.append(f"    {spelling.op}: {spelling.spelling}{sig}  [{VERDICT_WORDS[spelling.verified]}]")
             if spelling.trap:
                 lines.append(f"      trap: {spelling.trap}")
     return "\n".join(lines)

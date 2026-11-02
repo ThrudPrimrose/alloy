@@ -16,7 +16,7 @@ __all__ = ["render"]
 DEFAULT_OUT = pathlib.Path(__file__).parent.parent.parent / "skills" / "alloy" / "isa"
 
 
-def _entry_row(op: str, entry) -> str:
+def entry_row(op: str, entry) -> str:
     if entry.approximations:
         spelling = f"{len(entry.approximations)} polynomial tiers (see transcendentals.md)"
         mnemonic = "—"
@@ -32,10 +32,10 @@ def _entry_row(op: str, entry) -> str:
     return f"| `{op}` | {spelling} | {mnemonic} | {signature} | {masked} |"
 
 
-def _dtype_section(isa_name: str, dtype: str, entries: dict[str, object]) -> list[str]:
+def dtype_section(isa_name: str, dtype: str, entries: dict[str, object]) -> list[str]:
     title = {"f64": "f64", "f32": "f32", F16: "f16", "i64": "i64 (integer lanes)", "i32": "i32 (integer lanes)"}[dtype]
     lines = [f"### {title}", "", "| op | spelling | mnemonic | signature | masked |", "|---|---|---|---|---|"]
-    lines += [_entry_row(op, entry) for op, entry in entries.items()]
+    lines += [entry_row(op, entry) for op, entry in entries.items()]
     lines.append("")
     return lines
 
@@ -69,7 +69,7 @@ def render_isa(table: Table, isa_name: str) -> str:
     for dtype in ALL_DTYPES:
         entries = getattr(isa, dtype, {})
         if entries:
-            lines += _dtype_section(isa_name, dtype, entries)
+            lines += dtype_section(isa_name, dtype, entries)
     if isa.assists:
         lines += ["## Hardware assists", "", "| intrinsic | mnemonic | helps | note |", "|---|---|---|---|"]
         lines += [f"| `{a.name}` | `{a.mnemonic}` | {a.helps} | {a.note} |" for a in isa.assists]

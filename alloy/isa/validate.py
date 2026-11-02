@@ -82,10 +82,7 @@ class Verdict:
     candidates: tuple[Hit, ...] = ()
 
 
-# ---------------------------------------------------------------- host capabilities
-
-
-def _flags() -> frozenset[str]:
+def host_flags() -> frozenset[str]:
     """The host's CPU feature flags — x86 ``flags`` or aarch64 ``Features`` lines."""
     try:
         lines = pathlib.Path("/proc/cpuinfo").read_text(errors="ignore").splitlines()
@@ -103,7 +100,7 @@ def _flags() -> frozenset[str]:
 
 def host_can_run(isa: str, dtype: str) -> bool:
     """Whether this host compiles AND executes kernels for ``(isa, dtype)``."""
-    flags, machine = _flags(), platform.machine()
+    flags, machine = host_flags(), platform.machine()
     isa = ALIASES.get(isa, isa)
     if machine == "x86_64":
         if isa == "avx2":
@@ -117,15 +114,13 @@ def host_can_run(isa: str, dtype: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------- C kernels (x86)
-
-_X86 = {  # dtype -> (scalar C type, vector type, intrinsic prefix, suffix)
+X86 = {  # dtype -> (scalar C type, vector type, intrinsic prefix, suffix)
     "f64": ("double", "__m256d", "_mm256", "pd"),
     "f32": ("float", "__m256", "_mm256", "ps"),
     "i64": ("int64_t", "__m256i", "_mm256", "epi64"),
     "i32": ("int32_t", "__m256i", "_mm256", "epi32"),
 }
-_X86_512 = {
+X86_512 = {
     "f64": ("double", "__m512d", "_mm512", "pd"),
     "f32": ("float", "__m512", "_mm512", "ps"),
     "i64": ("int64_t", "__m512i", "_mm512", "epi64"),
@@ -136,7 +131,7 @@ _X86_512 = {
 TRACK_ERROR = "double e = d / m;\n    if (isnan(e) || e > maxrel) maxrel = e;"
 
 
-def _c_flags(isa: str, dtype: str) -> list[str]:
+def c_flags(isa: str, dtype: str) -> list[str]:
     isa = ALIASES.get(isa, isa)
     if isa == "neon":
         return []
@@ -147,15 +142,15 @@ def _c_flags(isa: str, dtype: str) -> list[str]:
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
 
 
-def _body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float] | None:
+def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float] | None:
     """The kernel body for ``(isa, dtype, op)``, spelled with the table's own entry so a wrong mapping fails:
     (compute C, scalar-reference C, tolerance), or None when the entry has no executable form here."""
     entry = table.entry(isa, op, dtype)
     if dtype == "f16":
-        return _f16_body(op, entry) if isa == "avx2" else None
+        return f16_body(op, entry) if isa == "avx2" else None
     wide = isa == "avx512"
     lanes = (8 if wide else 4) if dtype in ("f64", "i64") else (16 if wide else 8)
-    s, v, p, sfx = (_X86_512 if wide else _X86)[dtype]
+    s, v, p, sfx = (X86_512 if wide else X86)[dtype]
     fp = dtype in DTYPES
     bits = 512 if wide else 256
     load = table.entry(isa, "load", dtype).intrinsic if fp else f"{p}_loadu_si{bits}"
@@ -170,7 +165,7 @@ def _body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float]
     if op in ("land", "lor"):
         if dtype not in INT_DTYPES:
             return None
-        return _logical(isa, dtype, op, decl, store, entry)
+        return logical_body(isa, dtype, op, decl, store, entry)
     if op == "mod" and dtype in INT_DTYPES:
         # the documented recipe (no vector remainder, r = a - q*b per lane) against libm
         compute = "for (int j = 0; j < VL; j++) out[j] = a[j] - (a[j] / b[j]) * b[j];"
@@ -293,11 +288,11 @@ def _body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float]
     if op not in exprs:
         return None
     compute = f"{v} vr = {exprs[op]};"
-    ref = _scalar_ref(op, dtype)
+    ref = scalar_ref(op, dtype)
     return f"{decl}\n  {compute}\n  {store}", ref, TOL.get(op, 0.0)
 
 
-def _scalar_ref(op: str, dtype: str) -> str:
+def scalar_ref(op: str, dtype: str) -> str:
     if dtype in INT_DTYPES:
         s, u = ("int64_t", "uint64_t") if dtype == "i64" else ("int32_t", "uint32_t")
         refs = {
@@ -325,7 +320,7 @@ def _scalar_ref(op: str, dtype: str) -> str:
     return f"for (int j = 0; j < VL; j++) ref[j] = {refs[op]};"
 
 
-def _logical(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry) -> tuple[str, str, float]:
+def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry) -> tuple[str, str, float]:
     """land/lor, full kernel body: k-register ops on AVX-512, the andnot-of-compares recipe on AVX2."""
     wide = isa == "avx512"
     sym = "&&" if op == "land" else "||"
@@ -353,7 +348,7 @@ def _logical(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry)
     return f"{decl}\n  __m256i vr = {expr};\n  {store}", ref, 0.0
 
 
-def _f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
+def f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
     """AVX2's f16 entries, hand-coded over all 16 lanes: memory ops and the bitwise recipes work on the
     storage, arithmetic converts each 8-lane half to f32 and back. The reference is native _Float16
     arithmetic (gcc >= 12, clang >= 15)."""
@@ -413,7 +408,7 @@ F16_A = (1.0, 0.5, 2.0, 1.5, -0.25, 3.5, -1.25, 0.75, 2.5, -3.0, 0.125, 4.0, -0.
 F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5, -0.75, 1.0, 2.25)
 
 
-def _inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
+def kernel_inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
     """Kernel inputs. Floats are not dyadic, so rounding is exercised, and alternate in sign except for
     sqrt. Integers alternate in sign, so an arithmetic shift cannot pass for a logical one, and land/lor
     get every zero / non-zero combination."""
@@ -432,7 +427,7 @@ def _inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
 def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
     """The full C source for a validation kernel, or None when the entry has no executable form."""
     isa = ALIASES.get(isa, isa)
-    body = _body(isa, dtype, op, table or load()) if isa in ("avx2", "avx512") else None
+    body = kernel_body(isa, dtype, op, table or load()) if isa in ("avx2", "avx512") else None
     if body is None:
         return None
     compute, ref, _tol = body
@@ -470,7 +465,7 @@ int main(void) {{
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
 }}"""
-    a_init, b_init = _inputs(op, dtype, lanes)
+    a_init, b_init = kernel_inputs(op, dtype, lanes)
     idx_init = ", ".join(str((3 * j + 1) % lanes) for j in range(lanes))
     return f"""#include <immintrin.h>
 #include <stdint.h>
@@ -497,13 +492,13 @@ int main(void) {{
 }}"""
 
 
-def _compiler() -> str | None:
+def c_compiler() -> str | None:
     return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 
 
-def _compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> float:
+def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> float:
     """Compile and run a kernel; the rel error it prints. Raises RuntimeError on build/run failure."""
-    cc = _compiler()
+    cc = c_compiler()
     if cc is None:
         raise RuntimeError("no C compiler on PATH")
     with tempfile.TemporaryDirectory(prefix="alloy_verify_") as tmp:
@@ -530,9 +525,6 @@ def _compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> f
     return float(match.group(1))
 
 
-# ---------------------------------------------------------------- tier validation
-
-
 def evaluate_tier(tier, n: int = N_TIER):
     """Evaluate a tier's Horner recipe (abstract-op steps) on its domain; returns (grid, approx)."""
     import numpy as np
@@ -550,16 +542,16 @@ def evaluate_tier(tier, n: int = N_TIER):
     name = "x"
     for step in tier.recipe:
         name, _, rhs = step.strip().partition(" = ")
-        env[name.strip()] = _eval_expr(rhs, env)
+        env[name.strip()] = eval_expr(rhs, env)
     return x, env[name.strip()]
 
 
-def _eval_expr(expr: str, env: dict[str, object]):
+def eval_expr(expr: str, env: dict[str, object]):
     """One recipe expression: a number, a variable, or fn(arg, ...) with arbitrary nesting."""
     import numpy as np
 
     expr = expr.strip()
-    if _is_number(expr):
+    if is_number(expr):
         return float(expr)
     if expr in env:
         return env[expr]
@@ -578,7 +570,7 @@ def _eval_expr(expr: str, env: dict[str, object]):
         else:
             cur += ch
     parts.append(cur)
-    values: list[Any] = [_eval_expr(part, env) for part in parts]
+    values: list[Any] = [eval_expr(part, env) for part in parts]
     steps: dict[str, Any] = {
         "mul": np.multiply,
         "add": np.add,
@@ -589,7 +581,7 @@ def _eval_expr(expr: str, env: dict[str, object]):
     return steps[fn.strip()](*values)
 
 
-def _is_number(text: str) -> bool:
+def is_number(text: str) -> bool:
     try:
         float(text)
     except ValueError:
@@ -614,10 +606,7 @@ def validate_tier(name: str, table: Table | None = None, slack: float = TIER_SLA
     return Verdict(ok, "tier re-measured vs libm", detail)
 
 
-# ---------------------------------------------------------------- library validation
-
-
-def _library_kernel(call: str, op: str, dtype: str) -> str:
+def library_kernel(call: str, op: str, dtype: str) -> str:
     """The glibc vector ABI passes the vector BY VALUE in a register and returns it in a register —
     the N<n> in ``_ZGV?N<n>v_`` names the lane count and picks the vector type."""
     s = "double" if dtype == "f64" else "float"
@@ -656,9 +645,6 @@ int main(void) {{
 }}"""
 
 
-# ---------------------------------------------------------------- candidates and entry validation
-
-
 def candidates_for(isa: str, op: str, dtype: str, table: Table | None = None) -> tuple[Hit, ...]:
     """The potentially relevant spellings for a failed (isa, op, dtype): the same op on the ISA's other
     dtypes and on the other ISAs, plus the reverse-lookup family of the committed intrinsic/mnemonic."""
@@ -684,7 +670,7 @@ def candidates_for(isa: str, op: str, dtype: str, table: Table | None = None) ->
     return tuple(out)
 
 
-def _validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) -> Verdict:
+def validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) -> Verdict:
     """The library call is checked against libm when it is built here; the best tier is always re-measured."""
     best = validate_tier(entry.approximations[-1], table)
     if best.ok is False:
@@ -694,10 +680,10 @@ def _validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry)
         and dtype in DTYPES
         and host_can_run(isa, dtype)
         and (call := entry.libraries.get("libmvec"))
-        and _compiler()
+        and c_compiler()
     ):
         try:
-            rel = _compile_run(_library_kernel(call, op, dtype), _c_flags(isa, dtype), ("-lmvec",))
+            rel = compile_run(library_kernel(call, op, dtype), c_flags(isa, dtype), ("-lmvec",))
         except RuntimeError as exc:
             return Verdict(False, "libmvec kernel", str(exc), candidates_for(isa, op, dtype, table))
         tol = TOL_LIBRARY[dtype]
@@ -724,10 +710,10 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
     table = table or load()
     entry = table.entry(isa, op, dtype)
     if OPS[op].kind == "transcendental":
-        return _validate_transcendental(isa, op, dtype, table, entry)
+        return validate_transcendental(isa, op, dtype, table, entry)
     if not host_can_run(isa, dtype):
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
-    if _compiler() is None:
+    if c_compiler() is None:
         return Verdict(None, "no C compiler on PATH (unverified, not wrong)")
     source = kernel_c(isa, dtype, op, table)
     if source is None:
@@ -735,7 +721,7 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
     if missing := unexercised(entry, source):
         return Verdict(None, f"the validator kernel does not run {', '.join(missing)} (unverified, not wrong)")
     try:
-        rel = _compile_run(source, _c_flags(isa, dtype))
+        rel = compile_run(source, c_flags(isa, dtype))
     except RuntimeError as exc:
         return Verdict(False, "compiled kernel", str(exc), candidates_for(isa, op, dtype, table))
     tol = TOL_F16 if dtype == "f16" else TOL.get(op, 0.0)

@@ -13,8 +13,8 @@ import pytest
 from alloy.isa import load
 from alloy.isa.validate import (
     Verdict,
-    _c_flags,
-    _compile_run,
+    c_flags,
+    compile_run,
     candidates_for,
     host_can_run,
     kernel_c,
@@ -231,7 +231,7 @@ def test_a_nan_result_fails_the_gate_rather_than_comparing_false():
     source = str(kernel_c("avx2", "f64", "add", TABLE)).replace(
         "__m256d vr = _mm256_add_pd(va, vb);", "__m256d vr = _mm256_div_pd(_mm256_setzero_pd(), _mm256_setzero_pd());"
     )
-    assert math.isnan(_compile_run(source, _c_flags("avx2", "f64")))
+    assert math.isnan(compile_run(source, c_flags("avx2", "f64")))
 
 
 def test_a_kernel_that_skips_a_spelling_verifies_nothing():
@@ -252,7 +252,7 @@ def test_an_isa_the_host_lacks_is_unverified_and_not_failed(monkeypatch):
 
 def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch):
     monkeypatch.setattr(validate_module, "host_can_run", lambda isa, dtype: True)
-    monkeypatch.setattr(validate_module, "_compiler", lambda: None)
+    monkeypatch.setattr(validate_module, "c_compiler", lambda: None)
     assert validate("avx2", "add", "f64", TABLE).ok is None
 
 

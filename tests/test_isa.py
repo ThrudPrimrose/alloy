@@ -28,8 +28,8 @@ PINNED = {
     ("sve", "fma", "f32"): ("svmla_f32_x", "add[j] + m1[j]*m2[j]"),
     ("avx512", "gen_mask", "f64"): ("_mm512_cmplt_epu64_mask", "iota[j] < n"),
     ("avx512", "gen_mask", "f32"): ("_mm512_cmplt_epu32_mask", "iota[j] < n"),
-    ("sve", "gen_mask", "f64"): ("svwhilelt_b64_u64", "i + j < N"),
-    ("sve", "gen_mask", "f32"): ("svwhilelt_b32_u64", "i + j < N"),
+    ("sve", "gen_mask", "f64"): ("svwhilelt_b64_s64", "i + j < N"),
+    ("sve", "gen_mask", "f32"): ("svwhilelt_b32_s64", "i + j < N"),
     ("neon", "reduce_add", "f32"): ("vaddvq_f32", "sum of the 4 lanes"),
     ("avx512", "reduce_add", "f64"): ("_mm512_reduce_add_pd", "sum of the 8 lanes"),
     ("sve", "reduce_add", "f64"): ("svaddv_f64", "sum of the active lanes"),
@@ -103,7 +103,10 @@ def test_reverse_maps_an_intrinsic_back_to_the_math():
 def test_reverse_maps_a_mnemonic_to_every_isa_that_uses_it():
     hits = reverse("vaddpd", TABLE)
 
-    assert {(h.isa, h.dtype, h.op) for h in hits} == {("avx2", "f64", "add"), ("avx512", "f64", "add")}
+    assert {(h.isa, h.dtype, h.op) for h in hits if h.via == "mnemonic"} == {
+        ("avx2", "f64", "add"),
+        ("avx512", "f64", "add"),
+    }
 
 
 def test_reverse_normalizes_an_fma_family_form():
@@ -229,8 +232,8 @@ def test_an_integer_op_is_refused_on_a_float_dtype():
 
 
 def test_a_float_op_is_refused_on_an_integer_dtype():
-    with pytest.raises(KeyError, match="float op"):
-        lookup("avx512", "add", "i64", TABLE)
+    with pytest.raises(KeyError, match="float rows are not valid"):
+        lookup("avx512", "exp", "i64", TABLE)
 
 
 def test_unknown_dtype_lists_every_dtype():
@@ -373,7 +376,7 @@ def test_the_cli_lists_approximation_tiers_with_measured_ulp():
     run = _cli("lookup", "avx2", "sin", "f64")
 
     assert run.returncode == 0
-    assert "tier sin-quad-cheb13: 8.5 ulp" in run.stdout
+    assert "tier sin-quad-cheb13: abs error 1.89e-15" in run.stdout
     assert "libmvec: _ZGVdN4v_sin" in run.stdout
 
 

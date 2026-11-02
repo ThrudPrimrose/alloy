@@ -287,6 +287,23 @@ SLEEF_U35 = frozenset("sin cos tan exp2 exp10 log log2 atan asin acos sinh cosh 
 LIBRARY_WIDTH = {"avx2": ("d", "4"), "avx512": ("e", "8")}
 
 
+def library_function(symbol: str) -> tuple[str, str, str] | None:
+    """``(function, library, isa)`` of a vector math library symbol :func:`libraries` names, or ``None``."""
+    return library_symbols().get(symbol)
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def library_symbols() -> dict[str, tuple[str, str, str]]:
+    return {
+        symbol: (fn, library, isa)
+        for fn in functions()
+        for dtype in ("f64", "f32")
+        for isa in LIBRARY_WIDTH
+        for level in LEVELS
+        for library, symbol in libraries(fn, dtype, isa, level).items()
+    }
+
+
 def libraries(fn: str, dtype: str, isa: str, level: str) -> dict[str, str]:
     """The library call matching ``level`` on x86, for a loop that keeps the call: the ``{name: symbol}`` pairs."""
     if isa not in LIBRARY_WIDTH:

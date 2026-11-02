@@ -12,10 +12,22 @@ potentially relevant spellings instead of endorsing a wrong answer. ``--no-verif
 relaxed and a fast C function with measured ULP, for the loop to inline instead of a library call."""
 
 import argparse
+import dataclasses
+import json
 import platform
+import signal
 import sys
+from typing import Any
 
 from alloy.isa import ALIASES, OPS, load
+from alloy.isa.mathcheck import validate_kernel, validate_kernels
+from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
+from alloy.isa.mathkernels import LEVELS, functions, libraries, library_function, render, target_of
+from alloy.isa.mathkernels import kernel as find
+from alloy.isa.schedules import legal, skeleton
+from alloy.isa.schedules import verify as verify_skeleton
+from alloy.isa.table import ALL_DTYPES, FMA_FORM, Hit, Table, masked_form, normalized, suggestion
+from alloy.isa.validate import Verdict, host_can_run, validate, validate_all
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,11 +42,14 @@ def main(argv: list[str] | None = None) -> int:
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
+    lookup_p.add_argument("--level", choices=LEVELS, help="for a math function: one kernel level; default all three")
+    lookup_p.add_argument("--json", action="store_true", help="the row and its verdict as JSON")
 
     reverse_p = commands.add_parser(
         "reverse", help="intrinsic/mnemonic -> op: reverse _mm512_add_pd | vfmadd231pd | fmla | ld1d"
     )
     reverse_p.add_argument("name")
+    reverse_p.add_argument("--json", action="store_true", help="the hits as JSON")
 
     assist_p = commands.add_parser("assist", help="a hardware assist: assist _mm512_scalef_pd | svexpa_f64 | vrcpps")
     assist_p.add_argument("name")
@@ -53,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("--level", choices=("strict", "relaxed", "fast"), help="one level; default all three")
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
+    commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
     commands.add_parser("ops", help="the abstract math ISA")
     commands.add_parser("isas", help="the covered vector ISAs and their machine models")
     schedule_p = commands.add_parser("schedule", help="an ISA's legal loop schedules and gen_mask")
@@ -61,47 +77,60 @@ def main(argv: list[str] | None = None) -> int:
     skeleton_p.add_argument("isa")
     skeleton_p.add_argument("schedule")
     skeleton_p.add_argument("dtype")
-    skeleton_p.add_argument(
-        "--verify", action="store_true", help="compile and run the skeleton against a scalar reference"
-    )
+    skeleton_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
 
     args = parser.parse_args(argv)
+    for field in ("isa", "op", "dtype", "function"):
+        if isinstance(value := vars(args).get(field), str):
+            setattr(args, field, value.lower())
     table = load()
     try:
-        if args.command == "lookup":
-            return _lookup(table, args)
-        elif args.command == "kernel":
-            return _print_kernels(table, args.isa, args.function, args.dtype, args.level, not args.no_verify)
-        elif args.command == "reverse":
-            _print_hits(table, args.name)
-        elif args.command == "assist":
-            _print_assists(table, args.name)
-        elif args.command == "validate":
-            return _validate_cmd(table, args)
-        elif args.command == "ops":
-            _print_ops()
-        elif args.command == "isas":
-            _print_isas(table)
-        elif args.command == "schedule":
-            _print_schedule(table, args.isa)
-        elif args.command == "skeleton":
-            return _print_skeleton(table, args.isa, args.schedule, args.dtype, args.verify)
+        return dispatch(table, args)
     except KeyError as exc:
         print(f"alloy.isa: {exc.args[0]}", file=sys.stderr)
         return 2
+
+
+def dispatch(table: Table, args: argparse.Namespace) -> int:
+    """Run the subcommand; its exit code."""
+    if args.command == "lookup":
+        return lookup_command(table, args)
+    if args.command == "kernel":
+        return print_kernels(table, args.isa, args.function, args.dtype, args.level, not args.no_verify)
+    if args.command == "validate":
+        return validate_command(table, args)
+    if args.command == "skeleton":
+        return print_skeleton(table, args.isa, args.schedule, args.dtype, not args.no_verify)
+    if args.command == "reverse":
+        print_hits(table, args.name, args.json)
+    elif args.command == "assist":
+        print_assists(table, args.name)
+    elif args.command == "host":
+        print_host(table)
+    elif args.command == "ops":
+        print_ops()
+    elif args.command == "isas":
+        print_isas(table)
+    elif args.command == "schedule":
+        print_schedule(table, args.isa)
     return 0
 
 
-def _print_entry(table, isa: str, op: str, dtype: str) -> None:
-    target, entry, abstract = table.isa(isa), table.entry(isa, op, dtype), OPS.get(op)
-    if abstract is None:
-        raise KeyError(f"{op!r}: unknown op (one of: {', '.join(OPS)})")
-    lanes = target.lanes[dtype] or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
-    if isa in ALIASES and isinstance(lanes, int):
-        lanes //= 2
-    print(f"{isa}/{dtype}/{op}: {abstract.semantics}  ({lanes} lanes)")
+def refuse_width_knob(isa: str) -> None:
+    """``avx512_256`` has no spellings: explicit ``_mm512_*`` intrinsics stay 512-bit under the width knob."""
     if isa in ALIASES:
-        print(f"  note:      {isa} is {ALIASES[isa]} under -mprefer-vector-width=256: same source, half the lanes")
+        raise KeyError(f"{isa}: a compiler width knob with no intrinsics of its own; look up {ALIASES[isa]} or avx2")
+
+
+def lanes_of(table: Table, isa: str, dtype: str) -> int | str:
+    """Lanes per vector, or the runtime query on a length-agnostic ISA."""
+    lanes = table.isa(isa).lanes[dtype]
+    return lanes or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
+
+
+def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
+    entry = table.entry(isa, op, dtype)
+    print(f"{isa}/{dtype}/{op}: {entry.semantics or OPS[op].semantics}  ({lanes_of(table, isa, dtype)} lanes)")
     if entry.intrinsic:
         print(f"  intrinsic: {entry.intrinsic}{entry.signature}")
     elif entry.recipe:
@@ -112,37 +141,55 @@ def _print_entry(table, isa: str, op: str, dtype: str) -> None:
         print(f"  mnemonic:  {entry.mnemonic}")
     for key in entry.approximations:
         tier = table.approx[key]
-        print(f"  tier {key}: {tier.error_ulp:.4g} ulp (abs {tier.error_abs:.3g}); {tier.domain}")
+        print(f"  tier {key}: abs error {tier.error_abs:.3g} ({tier.error_ulp:.4g} f64 units of 2^-52); {tier.domain}")
     for library, call in entry.libraries.items():
         print(f"  {library}: {call}")
     if entry.note:
         print(f"  note:      {entry.note}")
 
 
-def _lookup(table, args) -> int:
-    """One op's entry, then its math kernels when it is a function; a function without an entry has only those."""
-    from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES  # noqa: PLC0415
-    from alloy.isa.mathkernels import functions  # noqa: PLC0415
-
+def lookup_command(table: Table, args: argparse.Namespace) -> int:
+    """One op's entry, then its math kernels when it is a function; a function without an entry has only those. The
+    gate runs first, so a failed row is never printed as the answer."""
+    refuse_width_knob(args.isa)
     function = FUNCTION_ALIASES.get(args.op, args.op)
-    status = 0
+    if function not in OPS and function not in functions():
+        raise KeyError(
+            f"{args.op!r}: neither an abstract op nor a math function{suggestion(args.op, [*OPS, *functions()])}"
+        )
     if function in OPS:
-        _print_entry(table, args.isa, function, args.dtype)
-        if not args.no_verify:
-            status = _verify(table, args.isa, function, args.dtype)
+        verdict = None if args.no_verify else validate(args.isa, function, args.dtype, table)
+        if verdict is not None and verdict.ok is False:
+            return report_failure(verdict)
+        if args.json:
+            row = dataclasses.asdict(table.entry(args.isa, function, args.dtype))
+            print(json.dumps({"isa": args.isa, "op": function, "dtype": args.dtype, **row, "verdict": record(verdict)}))
+            return 0
+        print_entry(table, args.isa, function, args.dtype)
+        if verdict is not None:
+            print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}")
     if function in functions():
-        return status or _print_kernels(table, args.isa, function, args.dtype, None, not args.no_verify)
-    if function not in OPS:
-        raise KeyError(f"{args.op!r}: neither an abstract op nor a math function")
-    return status
+        return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
+    return 0
 
 
-def _print_kernels(table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
+def record(verdict: Verdict | None) -> dict[str, Any] | None:
+    """A verdict for ``--json``."""
+    return None if verdict is None else {"ok": verdict.ok, "basis": verdict.basis, "detail": verdict.detail}
+
+
+def report_failure(verdict: Verdict) -> int:
+    """A failed gate on stderr with the candidates it found: exit 3, and no spelling is endorsed."""
+    print(f"WARNING: validation FAILED ({verdict.basis}): {verdict.detail}", file=sys.stderr)
+    print("potentially relevant spellings (not endorsed: check before use):", file=sys.stderr)
+    for hit in verdict.candidates:
+        detail = hit.entry.intrinsic or " -> ".join(hit.entry.recipe[:3])
+        print(f"  {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail})", file=sys.stderr)
+    return 3
+
+
+def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
     """The kernels as C. Exit code 3 when one fails its gate."""
-    from alloy.isa.mathcheck import validate_kernel  # noqa: PLC0415 -- compiles only when verifying
-    from alloy.isa.mathkernels import LEVELS, libraries, render, target_of  # noqa: PLC0415
-    from alloy.isa.mathkernels import kernel as find  # noqa: PLC0415
-
     table.isa(isa)
     target = target_of(isa)
     status = 0
@@ -150,7 +197,8 @@ def _print_kernels(table, isa: str, function: str, dtype: str, level: str | None
         k = find(function, dtype, name)
         spelled = render(k, target)
         branch = "one cold branch to scalar libm" if k.guard else "no branch"
-        print(f"// {name}: {k.error_ulp:.4g} ulp; {spelled.intrinsics} intrinsics; {branch}; contract: {k.contract}")
+        scope = f"any input; vector path for {k.contract}" if name == "strict" else f"contract: {k.contract}"
+        print(f"// {name}: {k.error_ulp:.4g} ulp; {spelled.intrinsics} intrinsics; {branch}; {scope}")
         print(spelled.source)
         for library, call in libraries(function, dtype, target, name).items():
             print(f"// or call {library}: {call}")
@@ -163,30 +211,8 @@ def _print_kernels(table, isa: str, function: str, dtype: str, level: str | None
     return status
 
 
-def _verify(table, isa: str, op: str, dtype: str) -> int:
-    """The numerical gate on a lookup: print the verdict; on failure list the candidates and exit 3."""
-    from alloy.isa.validate import validate  # noqa: PLC0415 -- compiles only when verifying
-
-    verdict = validate(isa, op, dtype, table)
-    if verdict.ok is True:
-        print(f"verified:  {verdict.basis}; {verdict.detail}")
-        return 0
-    if verdict.ok is None:
-        print(f"unverified: {verdict.basis}")
-        return 0
-    print(f"WARNING: validation FAILED ({verdict.basis}): {verdict.detail}", file=sys.stderr)
-    print("potentially relevant spellings (not endorsed — check before use):", file=sys.stderr)
-    for hit in verdict.candidates:
-        detail = hit.entry.intrinsic or " -> ".join(hit.entry.recipe[:3])
-        print(f"  {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail})", file=sys.stderr)
-    return 3
-
-
-def _validate_cmd(table, args) -> int:
+def validate_command(table: Table, args: argparse.Namespace) -> int:
     """The ``validate`` subcommand: one entry, or every entry the host can run plus every tier."""
-    from alloy.isa.mathcheck import validate_kernels  # noqa: PLC0415
-    from alloy.isa.validate import validate, validate_all  # noqa: PLC0415
-
     if args.isa or args.op or args.dtype:
         if not (args.isa and args.op and args.dtype):
             print("alloy.isa: validate takes either no arguments or isa op dtype", file=sys.stderr)
@@ -210,58 +236,102 @@ def _validate_cmd(table, args) -> int:
         f"{len(results) - len(skipped) - len(failed)} passed, {len(failed)} failed, "
         f"{len(skipped)} not verifiable here"
     )
-    return 1 if failed else 0
+    return 3 if failed else 0
 
 
-def _print_hits(table, name: str) -> None:
+def operand_rule(token: str) -> str:
+    """An fma form's formula in Intel operand order: the digits name which registers multiply."""
+    m = FMA_FORM.match(token.lower())
+    if m is None:
+        return ""
+    product, added = {
+        "132": ("dest*src3", "src2"),
+        "213": ("src2*dest", "src3"),
+        "231": ("src2*src3", "dest"),
+    }.get(token.lower()[len(m.group(1)) :][:3], ("a*b", "c"))
+    negated, sign = {"vfmadd": ("", "+"), "vfmsub": ("", "-"), "vfnmadd": ("-", "+"), "vfnmsub": ("-", "-")}[m.group(1)]
+    return f"dest = {negated}{product} {sign} {added}"
+
+
+def hit_text(name: str, hit: Hit) -> str:
+    """One hit's line; a step of a composite never claims the composite's math."""
+    if hit.via == "step":
+        return f"{name} may be one step of {hit.op} on {hit.isa}/{hit.dtype} ({hit.entry.mnemonic})"
+    detail = {
+        "intrinsic": hit.entry.intrinsic,
+        "masked": hit.entry.masked,
+        "recipe": " -> ".join(hit.entry.recipe),
+        "library": name,
+        "mnemonic": hit.entry.mnemonic,
+    }[hit.via]
+    semantics = f"\n  {hit.entry.semantics}" if hit.entry.semantics else ""
+    return f"{name} = {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail}){semantics}"
+
+
+def print_hits(table: Table, name: str, as_json: bool = False) -> None:
     hits = table.reverse(name)
-    if not hits:
-        raise KeyError(f"{name!r}: neither an intrinsic, mnemonic nor library call in the table")
-    for hit in hits:
-        detail = {
-            "intrinsic": hit.entry.intrinsic,
-            "masked": hit.entry.masked,
-            "recipe": " -> ".join(hit.entry.recipe),
-            "library": name,
-            "mnemonic": hit.entry.mnemonic,
-        }.get(hit.via, hit.entry.intrinsic)
-        print(f"{name} = {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail})")
-        if hit.entry.semantics:
-            print(f"  {hit.entry.semantics}")
+    token = normalized(name)
+    if as_json:
+        print(json.dumps([{"isa": h.isa, "dtype": h.dtype, "op": h.op, "via": h.via} for h in hits]))
+        return
+    if hits:
+        if masked_form(token) != token:
+            print(f"{token}: indexed as {masked_form(token)}; the activity policy decides the inactive lanes")
+        if rule := operand_rule(token):
+            print(f"{token}: {rule}")
+        for hit in hits:
+            print(hit_text(name, hit))
+    elif table.assist(name):
+        print_assists(table, name)
+    elif (found := library_function(token)) is not None:
+        print(f"{token} = {found[0]} ({found[1]}) on {found[2]}: a vector math library call")
+    else:
+        known = [*table.by_intrinsic, *table.by_mnemonic, *table.by_assist]
+        raise KeyError(
+            f"{name!r}: neither an intrinsic, mnemonic nor library call in the table{suggestion(token, known)}"
+        )
 
 
-def _print_assists(table, name: str) -> None:
+def print_assists(table: Table, name: str) -> None:
     hits = table.assist(name)
     if not hits:
-        raise KeyError(f"{name!r}: neither an assist intrinsic nor an assist mnemonic in the table")
+        known = [*table.by_assist]
+        raise KeyError(f"{name!r}: neither an assist intrinsic nor an assist mnemonic{suggestion(name, known)}")
     for hit in hits:
         a = hit.assist
         print(f"{name} = {a.name} on {hit.isa}: helps {a.helps} ({a.mnemonic})")
         print(f"  {a.note}")
 
 
-def _print_ops() -> None:
+def print_host(table: Table) -> None:
+    """Which ISA and dtype this host executes; everything else comes back unverified."""
+    print(f"host: {platform.machine()}")
+    for name, isa in table.isas.items():
+        runs = [dtype for dtype in ALL_DTYPES if isa.entries(dtype) and host_can_run(name, dtype)]
+        print(f"  {name}: {'runs ' + ' '.join(runs) if runs else 'does not run here; answers stay unverified'}")
+
+
+def print_ops() -> None:
     for op in OPS.values():
         print(f"{op.name:12} {op.symbol:10} {op.kind:12} -> {op.result:6} {op.semantics}")
 
 
-def _print_isas(table) -> None:
+def print_isas(table: Table) -> None:
     for name, isa in table.isas.items():
         mask = "opmask/predicate" if isa.mask else "no predication"
         print(f"{name:8} {isa.title}  [{mask}; schedules: {', '.join(isa.schedules)}]")
         print(f"  {isa.note}")
 
 
-def _print_schedule(table, isa: str) -> None:
-    from alloy.isa.schedules import legal  # noqa: PLC0415
-
+def print_schedule(table: Table, isa: str) -> None:
     target = table.isa(isa)
+    runnable = host_can_run(isa, "f64")
     print(f"{isa}: {target.title}")
     print(f"  gen_mask:  {target.gen_mask or 'unsupported (no predication)'}")
     print(f"  {target.note}\n")
     for name, info in table.schedule_info.items():
         why = legal(isa, name, table)
-        mark = "LEGAL" if not why else f"refused: {why}"
+        mark = f"refused: {why}" if why else ("LEGAL" if runnable else "LEGAL, not runnable here")
         print(f"  {name}: {info.title} — {info.tail}  [{mark}]")
         print(f"      {info.description}")
         if info.gcc:
@@ -270,10 +340,7 @@ def _print_schedule(table, isa: str) -> None:
             print(f"      clang: {info.clang}")
 
 
-def _print_skeleton(table, isa: str, schedule: str, dtype: str, verify: bool = False) -> int:
-    from alloy.isa.schedules import skeleton  # noqa: PLC0415
-    from alloy.isa.schedules import verify as verify_skeleton
-
+def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bool) -> int:
     print(skeleton(table, isa, schedule, dtype))
     if verify:
         verdict = verify_skeleton(isa, schedule, dtype, table)
@@ -285,4 +352,5 @@ def _print_skeleton(table, isa: str, schedule: str, dtype: str, verify: bool = F
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     sys.exit(main())

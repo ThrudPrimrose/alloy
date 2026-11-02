@@ -7,13 +7,14 @@ schedule->vector-schedule translator (plan work item 3): emitting a different bo
 axpy expression, the loop shape comes from here."""
 
 from alloy.isa.table import ALIASES, DTYPES, Table, load
+from alloy.isa.validate import TRACK_ERROR, Verdict, c_flags, compile_run, host_can_run
 
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
 #: Every schedule the table knows, most conservative first.
 SCHEDULES = ("scalar", "scalar_remainder", "masked_remainder", "full_mask", "sve_intrinsics")
 
-_C_TYPE = {"f64": "double", "f32": "float"}
+C_TYPE = {"f64": "double", "f32": "float"}
 
 
 def legal(isa: str, schedule: str, table: Table | None = None) -> str:
@@ -43,30 +44,28 @@ def compiler_spelling(schedule: str, compiler: str, table: Table | None = None) 
     return spelling
 
 
-def _family(isa: str) -> str:
+def family_of(isa: str) -> str:
     return {"avx2": "x86", "avx512": "x86"}.get(isa, isa)
 
 
-def _apply(template: str, mapping: dict[str, str]) -> str:
+def applied(template: str, mapping: dict[str, str]) -> str:
     """Apply a masked-variant template like "_mm512_maskz_loadu_pd(k, p)" to concrete arguments."""
     name, _, rest = template.partition("(")
     args = [arg.strip() for arg in rest.rstrip(")").split(",")]
     return f"{name}(" + ", ".join(mapping.get(arg, arg) for arg in args) + ")"
 
 
-def _fma_body(table: Table, isa: str, dtype: str, mask: str = "", pg: str = "pg") -> str:
+def fma_body(table: Table, isa: str, dtype: str, mask: str = "", pg: str = "pg") -> str:
     """The axpy vector expression ``a*X + Y`` in the target's operand order (from the table entries).
     ``mask`` is the AVX-512 opmask expression when the load and store are masked."""
-    entry = lambda op: table.entry(isa, op, dtype)  # noqa: E731
-    ld, bc = entry("load"), entry("broadcast")
-    fm = entry("fma")
+    ld, bc, fm = (table.entry(isa, op, dtype) for op in ("load", "broadcast", "fma"))
     if mask and ld.masked:
-        ldx = _apply(ld.masked, {"k": mask, "p": "X + i"})
-        ldy = _apply(ld.masked, {"k": mask, "p": "Y + i"})
+        ldx = applied(ld.masked, {"k": mask, "p": "X + i"})
+        ldy = applied(ld.masked, {"k": mask, "p": "Y + i"})
     else:
         ldx = f"{ld.intrinsic}(X + i)"
         ldy = f"{ld.intrinsic}(Y + i)"
-    family = _family(isa)
+    family = family_of(isa)
     if family == "x86":
         return f"{fm.intrinsic}({bc.intrinsic}(a), {ldx}, {ldy})"
     if family == "neon":
@@ -77,25 +76,25 @@ def _fma_body(table: Table, isa: str, dtype: str, mask: str = "", pg: str = "pg"
     return f"{fm.intrinsic}({pg}, {ldy}, {bc.intrinsic}(a), {ldx})"
 
 
-def _store(table: Table, isa: str, dtype: str, value: str, mask: str = "", pg: str = "pg") -> str:
+def store_of(table: Table, isa: str, dtype: str, value: str, mask: str = "", pg: str = "pg") -> str:
     st = table.entry(isa, "store", dtype)
     if mask and st.masked:
-        return f"{_apply(st.masked, {'p': 'C + i', 'k': mask, 'v': value})};"
-    if _family(isa) == "sve":
+        return f"{applied(st.masked, {'p': 'C + i', 'k': mask, 'v': value})};"
+    if family_of(isa) == "sve":
         return f"{st.intrinsic}({pg}, C + i, {value});"
     return f"{st.intrinsic}(C + i, {value});"
 
 
-def _lanes(table: Table, isa: str, dtype: str) -> tuple[int, str]:
+def lanes_of(table: Table, isa: str, dtype: str) -> tuple[int, str]:
     """Static lanes and the C step expression for a schedule's loop."""
     target = table.isa(isa)
-    if _family(isa) == "sve":
+    if family_of(isa) == "sve":
         return target.lanes[dtype] or 0, "svcntd()" if dtype == "f64" else "svcntw()"
     return target.lanes[dtype], str(target.lanes[dtype])
 
 
-def _scalar_loop(bound: str, indent: str = "") -> str:
-    return f"{indent}for (int64_t i = 0; i < {bound}; i++) {{\n{indent}    C[i] = a * X[i] + Y[i];\n{indent}}}"
+def scalar_loop(bound: str) -> str:
+    return f"for (int64_t i = 0; i < {bound}; i++) {{\n    C[i] = a * X[i] + Y[i];\n}}"
 
 
 def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
@@ -108,80 +107,94 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
     why = legal(isa, schedule, table)
     if why:
         raise KeyError(f"{isa}/{schedule}/{dtype}: {why}")
-    target, family = table.isa(isa), _family(isa)
-    s = _C_TYPE[dtype]
-    lanes, step = _lanes(table, isa, dtype)
+    family = family_of(isa)
+    s = C_TYPE[dtype]
+    lanes, step = lanes_of(table, isa, dtype)
     header = {"x86": "#include <immintrin.h>", "neon": "#include <arm_neon.h>", "sve": "#include <arm_sve.h>"}[family]
-
-    if schedule == "scalar":
-        body = _scalar_loop("N")
-    elif schedule == "scalar_remainder":
-        body = (
-            f"const int64_t n_main = {lanes} * (N / {lanes});\n"
-            f"for (int64_t i = 0; i < n_main; i += {lanes}) {{\n"
-            f"    {_store(table, isa, dtype, _fma_body(table, isa, dtype))}\n"
-            f"}}\n"
-            f"for (int64_t i = n_main; i < N; i++) {{\n"
-            f"    C[i] = a * X[i] + Y[i];\n"
-            f"}}"
-        )
-    elif schedule == "masked_remainder":
-        bits = "64" if dtype == "f64" else "32"
-        cmplt = table.entry(isa, "gen_mask", dtype).intrinsic
-        set1 = f"_mm512_set1_epi{bits}"
-        iota = f"const __m512i iota = _mm512_setr_epi{bits}(" + ", ".join(str(j) for j in range(lanes)) + ");"
-        main = _fma_body(table, isa, dtype)
-        masked = _fma_body(table, isa, dtype, mask="m")
-        body = (
-            f"{iota}\n"
-            f"int64_t i = 0;\n"
-            f"for (; i + {lanes} <= N; i += {lanes}) {{\n"
-            f"    {_store(table, isa, dtype, main)}\n"
-            f"}}\n"
-            f"if (i < N) {{\n"
-            f"    __mmask{lanes} m = {cmplt}(iota, {set1}(N - i));\n"
-            f"    {_store(table, isa, dtype, masked, mask='m')}\n"
-            f"}}"
-        )
-    elif schedule == "full_mask":
-        bits = "64" if dtype == "f64" else "32"
-        cmplt = table.entry(isa, "gen_mask", dtype).intrinsic
-        set1 = f"_mm512_set1_epi{bits}"
-        iota = f"const __m512i iota = _mm512_setr_epi{bits}(" + ", ".join(str(j) for j in range(lanes)) + ");"
-        masked = _fma_body(table, isa, dtype, mask="m")
-        body = (
-            f"{iota}\n"
-            f"for (int64_t i = 0; i < N; i += {lanes}) {{\n"
-            f"    /* clamped: a 32-bit lane cannot hold every N - i */\n"
-            f"    __mmask{lanes} m = {cmplt}(iota, {set1}(N - i < {lanes} ? N - i : {lanes}));\n"
-            f"    {_store(table, isa, dtype, masked, mask='m')}\n"
-            f"}}"
-        )
-    elif schedule == "sve_intrinsics":
-        gen = table.entry(isa, "gen_mask", dtype).intrinsic
-        body = (
-            f"for (uint64_t i = 0; i < (uint64_t)N; i += {step}) {{\n"
-            f"    svbool_t __pg_i = {gen}((uint64_t)i, (uint64_t)N);\n"
-            f"    {_store(table, isa, dtype, _fma_body(table, isa, dtype, pg='__pg_i'), pg='__pg_i')}\n"
-            f"}}"
-        )
-    else:  # pragma: no cover - legal() rejects first
-        raise KeyError(f"unknown schedule {schedule!r}")
+    body = sve_body(table, dtype, schedule, step) if family == "sve" else simd_body(table, isa, dtype, schedule, lanes)
     return (
         f"{header}\n#include <stdint.h>\n\n"
         f"/* {isa}/{dtype}, schedule '{schedule}': {table.schedule_info[schedule].description} */\n"
+        f"/* build: {' '.join(c_flags(isa, dtype)) or 'no target flag'} */\n"
         f"void axpy(int64_t N, {s} a, const {s} *X, const {s} *Y, {s} *C) {{\n"
         f"{body}\n}}"
     )
 
 
-_DRIVER = """
+def mask_setup(table: Table, isa: str, dtype: str, lanes: int, left: str) -> tuple[str, str]:
+    """The iota vector and the mask of the first ``left`` lanes."""
+    bits = "64" if dtype == "f64" else "32"
+    cmplt = table.entry(isa, "gen_mask", dtype).intrinsic
+    iota = f"const __m512i iota = _mm512_setr_epi{bits}(" + ", ".join(str(j) for j in range(lanes)) + ");"
+    return iota, f"__mmask{lanes} m = {cmplt}(iota, _mm512_set1_epi{bits}({left}));"
+
+
+def simd_body(table: Table, isa: str, dtype: str, schedule: str, lanes: int) -> str:
+    """The loop of a fixed-width ISA."""
+    if schedule == "scalar":
+        return scalar_loop("N")
+    masked = store_of(table, isa, dtype, fma_body(table, isa, dtype, mask="m"), mask="m") if table.isa(isa).mask else ""
+    main = store_of(table, isa, dtype, fma_body(table, isa, dtype))
+    if schedule == "scalar_remainder":
+        return (
+            f"const int64_t n_main = {lanes} * (N / {lanes});\n"
+            f"for (int64_t i = 0; i < n_main; i += {lanes}) {{\n"
+            f"    {main}\n"
+            f"}}\n"
+            f"for (int64_t i = n_main; i < N; i++) {{\n"
+            f"    C[i] = a * X[i] + Y[i];\n"
+            f"}}"
+        )
+    if schedule == "masked_remainder":
+        iota, mask = mask_setup(table, isa, dtype, lanes, "N - i")
+        return (
+            f"{iota}\n"
+            f"int64_t i = 0;\n"
+            f"for (; i + {lanes} <= N; i += {lanes}) {{\n"
+            f"    {main}\n"
+            f"}}\n"
+            f"if (i < N) {{\n"
+            f"    {mask}\n"
+            f"    {masked}\n"
+            f"}}"
+        )
+    iota, mask = mask_setup(table, isa, dtype, lanes, f"N - i < {lanes} ? N - i : {lanes}")  # a 32-bit lane truncates
+    return f"{iota}\nfor (int64_t i = 0; i < N; i += {lanes}) {{\n    {mask}\n    {masked}\n}}"
+
+
+def sve_body(table: Table, dtype: str, schedule: str, step: str) -> str:
+    """The loop of SVE: signed, so a negative N runs no iteration, as every other skeleton."""
+    if schedule == "scalar":
+        return scalar_loop("N")
+    gen = table.entry("sve", "gen_mask", dtype).intrinsic
+    every = "svptrue_b64()" if dtype == "f64" else "svptrue_b32()"
+    tail = store_of(table, "sve", dtype, fma_body(table, "sve", dtype, pg="__pg_i"), pg="__pg_i")
+    main = store_of(table, "sve", dtype, fma_body(table, "sve", dtype, pg="pg"), pg="pg")
+    if schedule in ("sve_intrinsics", "full_mask"):
+        return f"for (int64_t i = 0; i < N; i += {step}) {{\n    svbool_t __pg_i = {gen}(i, N);\n    {tail}\n}}"
+    head = (
+        f"const int64_t vl = {step};\n"
+        f"const svbool_t pg = {every};\n"
+        f"int64_t i = 0;\n"
+        f"for (; i + vl <= N; i += vl) {{\n"
+        f"    {main}\n"
+        f"}}\n"
+    )
+    if schedule == "scalar_remainder":
+        return f"{head}for (; i < N; i++) {{\n    C[i] = a * X[i] + Y[i];\n}}"
+    return f"{head}if (i < N) {{\n    svbool_t __pg_i = {gen}(i, N);\n    {tail}\n}}"
+
+
+DRIVER = """
 #include <stdio.h>
 #include <math.h>
 int main(void) {{
   enum {{ MAX_N = 67 }};
   {ctype} a = 1.5{fsuffix}, X[MAX_N + 1], Y[MAX_N + 1], C[MAX_N + 1];
   double maxrel = 0;
+  for (int i = 0; i <= MAX_N; i++) {{ X[i] = 1; Y[i] = 1; C[i] = -7; }}
+  axpy(-1, a, X, Y, C);
+  for (int i = 0; i <= MAX_N; i++) if (C[i] != -7) maxrel = 1;  /* a negative extent runs nothing */
   for (int N = 0; N <= MAX_N; N++) {{
     for (int i = 0; i <= MAX_N; i++) {{ X[i] = ({ctype})(0.5 + 0.1 * i); Y[i] = ({ctype})(1.0 + 0.25 * i); C[i] = -7; }}
     axpy(N, a, X, Y, C);
@@ -200,22 +213,20 @@ int main(void) {{
 SKELETON_TOL = {"f64": 1e-14, "f32": 1e-6}
 
 
-def verify(isa: str, schedule: str, dtype: str, table: Table | None = None):
+def verify(isa: str, schedule: str, dtype: str, table: Table | None = None) -> Verdict:
     """Compile and run a skeleton against the scalar reference: the same numerical gate as for table
     entries, applied to the composed loop shape. ``ok is None`` when this host cannot execute it."""
-    from alloy.isa.validate import TRACK_ERROR, Verdict, _c_flags, _compile_run, host_can_run  # noqa: PLC0415
-
     table = table or load()
     why = legal(isa, schedule, table)
     if why:
         raise KeyError(f"{isa}/{schedule}/{dtype}: {why}")
     if not host_can_run(isa, dtype):
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
-    ctype = _C_TYPE[dtype]
+    ctype = C_TYPE[dtype]
     fsuffix = "" if dtype == "f64" else "f"
-    source = skeleton(table, isa, schedule, dtype) + _DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=TRACK_ERROR)
+    source = skeleton(table, isa, schedule, dtype) + DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=TRACK_ERROR)
     try:
-        rel = _compile_run(source, _c_flags(isa, dtype))
+        rel = compile_run(source, c_flags(isa, dtype))
     except RuntimeError as exc:
         return Verdict(False, "compiled skeleton", str(exc))
     tol = SKELETON_TOL[dtype]

@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, literal, render
-from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, _c_flags, _compiler, host_can_run
+from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, c_flags, c_compiler, host_can_run
 
 __all__ = ["Measured", "compiles", "measure", "validate_kernel", "validate_kernels"]
 
@@ -216,14 +216,14 @@ def emulated(isa: str) -> tuple[str, list[str], list[str]] | None:
 def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] = ()) -> Measured | None:
     """Run ``k`` on this host, under qemu for an aarch64 ``isa``; None when neither can execute ``isa``."""
     arm = emulated(isa)
-    if arm is None and (not host_can_run(isa, k.dtype) or _compiler() is None):
+    if arm is None and (not host_can_run(isa, k.dtype) or c_compiler() is None):
         return None
     with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
         folder = pathlib.Path(tmp)
         unit, main = driver(k, isa, samples)
         (folder / "k.c").write_text(unit)
         (folder / "d.c").write_text(main)
-        cc, machine, launcher = arm or (str(_compiler()), _c_flags(isa, k.dtype), [])
+        cc, machine, launcher = arm or (str(c_compiler()), c_flags(isa, k.dtype), [])
         link = [flag for flag in machine if flag == "-static"]
         unit_flags = [flag for flag in machine if flag != "-static"]
         for command in (
