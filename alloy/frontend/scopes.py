@@ -147,11 +147,12 @@ def distinct_labels(sdfg: dace.SDFG) -> None:
     taken: set[str] = set()
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.Tasklet):
-            base, count = node.label, 0
-            while node.label in taken:
+            label, count = node.label, 0
+            while label in taken:
                 count += 1
-                node.label = f"{base}_{count}"
-            taken.add(node.label)
+                label = f"{node.label}_{count}"
+            taken.add(label)
+            node.label = label  # pyright: ignore[reportAttributeAccessIssue] -- DaCe Property descriptor
 
 
 def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
