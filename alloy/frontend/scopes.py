@@ -92,12 +92,13 @@ def volume(edge: MultiConnectorEdge[dace.Memlet]) -> sympy.Expr:
     return sympy.Integer(1) * sympy.sympify(subset.num_elements())
 
 
-def library_length(state: dace.SDFGState, node: nodes.LibraryNode) -> sympy.Expr:
+def library_length(state: dace.SDFGState, node: nodes.Node) -> sympy.Expr:
     """A reduce's input elements per output element; a scan's whole input (its longest prefix bounds the chain); a BLAS
     sum's longest input extent, which bounds how many products meet in one element."""
     inputs = [e for e in state.in_edges(node) if not e.data.is_empty()]
     if isinstance(node, BLAS_SUM):
-        return sympy.Max(*(sympy.sympify(extent) for e in inputs for extent in e.data.subset.size()))
+        ranges = [e.data.subset for e in inputs if isinstance(e.data.subset, dace.subsets.Range)]
+        return sympy.Max(*(sympy.sympify(extent) for subset in ranges for extent in subset.size()))
     total = volume(inputs[0])
     if isinstance(node, Scan):
         return total
