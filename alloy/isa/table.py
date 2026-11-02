@@ -328,7 +328,7 @@ def entry_hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], ...]:
                     by_mnemonic.setdefault(entry.mnemonic, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
                     for part in dict.fromkeys(mnemonic_parts(entry.mnemonic)):
                         by_part.setdefault(part, []).append(Hit(isa_name, dtype, op, entry, "step"))
-                for name in entry.observed:
+                for name in (n for n in entry.observed if n != entry.mnemonic):
                     by_mnemonic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
     return tuple({key: tuple(hits) for key, hits in index.items()} for index in (by_intrinsic, by_mnemonic, by_part))
 

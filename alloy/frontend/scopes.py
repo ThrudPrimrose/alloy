@@ -5,6 +5,7 @@ ABI."""
 import copy
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import dace
 import sympy
@@ -69,7 +70,7 @@ def reduced_extent(
     subset = edge.data.subset
     assert subset is not None, "only non-empty WCR edges are measured"
     indexed = {str(s) for s in subset.free_symbols}
-    extent: sympy.Expr = sympy.Integer(1)
+    extent: Any = sympy.Integer(1)
     entry = scope[edge.src]
     while isinstance(entry, nodes.MapEntry):
         for param, rng in zip(entry.map.params, entry.map.range, strict=True):

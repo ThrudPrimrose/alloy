@@ -313,8 +313,8 @@ def test_the_taylor_ladder_improves_and_minimax_beats_taylor():
     [
         ("_ZGVdN4v_sin", "avx2", "sin", "f64"),
         ("_ZGVeN16v_expf", "avx512", "exp", "f32"),
-        ("_mm256_cos_pd", "avx2", "cos", "f64"),
-        ("_mm512_exp_pd", "avx512", "exp", "f64"),
+        ("__svml_cos4", "avx2", "cos", "f64"),
+        ("__svml_exp8", "avx512", "exp", "f64"),
         ("Sleef_sind2_u10", "neon", "sin", "f64"),
         ("Sleef_sinf16_u10avx512f", "avx512", "sin", "f32"),
     ],

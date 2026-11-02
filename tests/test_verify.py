@@ -228,7 +228,7 @@ def test_a_nondeterministic_output_is_compared_by_band_even_at_exact():
 
 def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
     cases = verify.Cases([inputs.Draw({}, {})], ("x",))
-    runs = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}, {"x": np.array([1.0])}]]
+    runs: list[list[verify.Outcome]] = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}, {"x": np.array([1.0])}]]
 
     sut = verify.reference_from(cases, runs)
 
