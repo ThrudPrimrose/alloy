@@ -79,8 +79,8 @@ python -m alloy.isa ops | isas | schedule <isa>
 
 A `lookup` of an intrinsic or recipe on an x86 row this host runs is **numerically checked before it is
 returned**: a small compiled kernel runs the spelling against a scalar reference, and transcendental tiers are
-re-measured against libm. The check covers the intrinsic or recipe, not the masked form, mnemonic or note. The
-output ends in `verified:`; on failure nothing is printed to stdout, the exit code is 3, and stderr lists
+re-measured against libm. The check covers the intrinsic in its signature's operand order, or the recipe's names,
+not the masked form, mnemonic or note. The output ends in `verified:`; on failure nothing is printed to stdout, the exit code is 3, and stderr lists
 potentially relevant spellings. `unverified:` marks what cannot run here (NEON and SVE rows, or a missing ISA or
 compiler); `reverse`, `assist` and `schedule` answers are not checked at all.
 

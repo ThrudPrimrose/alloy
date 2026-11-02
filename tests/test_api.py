@@ -1,14 +1,21 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import dataclasses
 import math
+import pathlib
 
 import dace
 import numpy as np
 import pytest
 
 from alloy import api
+from alloy.backend.build import Build
 from alloy.backend.candidates import one_factor_at_a_time
+from alloy.backend.sweep import ScopeReport
+from alloy.evaluate import timing
+from alloy.evaluate.timing import Measured, ProgramTiming, ScopeTiming, Timings
+from alloy.evaluate.verify import Verdict
 from alloy.frontend import inputs, scopes
+from alloy.heuristics import predict
 from alloy.report import Mode
 from helpers import REDUCTIONS, SCALE_MANIFEST, gcc_and_clang, gcc_only, load_program, write_manifest
 
@@ -92,3 +99,77 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     ), "the serial builds are screened like any other candidate"
     full = sut.timings.program.arms["alloy_full"]
     assert full.verdict.ok and math.isfinite(full.median)
+
+
+def last_distinct_build(rep: ScopeReport) -> str:
+    """A candidate the sweep has no other reason to pick: never the reference every default falls back to."""
+    name = next(b.name for b in reversed(rep.builds) if not b.duplicate_of and not b.error and b.archive)
+    assert name != rep.builds[0].name, "the matrix must give the scope a second distinct build"
+    return name
+
+
+def picked(reports: list[ScopeReport], arm: Verdict) -> Timings:
+    """Timings naming each scope's last distinct build, with ``arm`` as alloy-full's verdict."""
+    measured = Measured(1e-3, 1e-3, 1e-3, arm)
+    named = {r.scope.symbol: last_distinct_build(r) for r in reports}
+    scoped = {
+        symbol: ScopeTiming(
+            {timing.REFERENCE: measured, name: measured}, {timing.REFERENCE: measured}, name, {"N": 64}, {"N": 64}
+        )
+        for symbol, name in named.items()
+    }
+    return Timings(scoped, ProgramTiming({"alloy_full": measured, "dace_default": measured}, {"N": 64}))
+
+
+def assert_best_is(sut: api.Result, names: dict[str, str]) -> None:
+    assert sut.winners is not None and sut.best is not None
+    assert {symbol: build.name for symbol, build in sut.winners.items()} == names
+    assert {scope.symbol: scope.candidate for scope in sut.best.scopes} == names
+    folder = sut.report.parent / "best"
+    for scope in sut.best.scopes:
+        winner = sut.winners[scope.symbol]
+        assert (folder / scope.source).read_bytes() == winner.source.read_bytes()
+        assert scope.flags == winner.flags
+
+
+def test_what_best_links_is_the_build_the_speculative_pick_names(tmp_path, monkeypatch):
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+    names: dict[str, str] = {}
+
+    def choose(rep: ScopeReport, *_: object, **__: object) -> Build:
+        names[rep.scope.symbol] = last_distinct_build(rep)
+        return next(b for b in rep.builds if b.name == names[rep.scope.symbol])
+
+    monkeypatch.setattr(predict, "choose", choose)
+    monkeypatch.setattr(predict, "predictions", lambda *_: {})  # measures the machine, and the pick is stubbed
+
+    sut = api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path), mode=Mode.SPECULATIVE)
+
+    assert_best_is(sut, names)
+
+
+def profile_run(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, arm: Verdict) -> tuple[api.Result, list]:
+    """A profile run of ``scale`` whose timing names a winner without timing anything."""
+    manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
+    seen: list[ScopeReport] = []
+
+    def time_program(_: object, reports: list[ScopeReport], *__: object) -> Timings:
+        seen.extend(reports)
+        return picked(reports, arm)
+
+    monkeypatch.setattr(timing, "time_program", time_program)
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+    return api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=gcc_only(tmp_path)), seen
+
+
+def test_what_best_links_is_the_build_the_timing_names(tmp_path, monkeypatch):
+    sut, (rep,) = profile_run(tmp_path, monkeypatch, Verdict("pass"))
+
+    assert_best_is(sut, {rep.scope.symbol: last_distinct_build(rep)})
+
+
+def test_winners_the_whole_program_refuses_give_way_to_the_reference(tmp_path, monkeypatch):
+    """Two scopes each inside the band can compound past it: their combination is what the verdict is about."""
+    sut, (rep,) = profile_run(tmp_path, monkeypatch, Verdict("fail"))
+
+    assert_best_is(sut, {rep.scope.symbol: rep.builds[0].name})

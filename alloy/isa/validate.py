@@ -2,8 +2,8 @@
 """Numerical validation of table entries: the intrinsic or recipe of an x86 row the host runs is checked before a
 lookup returns it, and every other row says unverified. Masked forms, mnemonics and notes are not checked.
 
-An x86 entry the host can execute (AVX2+FMA, AVX-512F+DQ) runs fixed inputs through a small compiled C kernel spelled
-from the row, against a scalar reference and a per-op tolerance; :func:`unexercised` refuses a kernel that skips a
+An x86 entry the host can execute (AVX2+FMA, AVX-512F+DQ) runs fixed inputs, on buffers no vector boundary
+aligns, through a small compiled C kernel calling the row in its signature's operand order, against a scalar reference and a per-op tolerance; :func:`unexercised` refuses a kernel that skips a
 spelling. An approximation tier is re-measured in numpy against libm: the recorded ``error_ulp`` must reproduce within
 a slack, which catches transcription errors in the coefficients. On a failure :func:`candidates_for` names a shortlist.
 
@@ -43,6 +43,10 @@ N_TIER = 2_000_000
 COMPILE_TIMEOUT = 120  # seconds, per compile and per run
 
 VERIFY_LINE = re.compile(r"^ALLOY-VERIFY rel=(\S+)", re.MULTILINE)
+SIGNATURE = re.compile(r"^\(([^)]*)\)")
+#: Ops whose row is one call on the kernel's operands, by the names a ``signature`` gives them.
+CALLED = frozenset({"add", "sub", "mul", "div", "min", "max", "fma", "and", "or", "shl", "shr", "sqrt"})
+CALLED |= {"load", "broadcast", "zero"}
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -112,6 +116,10 @@ def lane_errors(got: str, ref: str) -> str:
   {REPORT_ERROR}"""
 
 
+#: Why a kernel's buffers start one element past a 64-byte boundary, in the source a reader of a failure sees.
+MISALIGNED = "one element past a boundary: an aligned spelling of an unaligned row always faults"
+
+
 def c_flags(isa: str, dtype: str) -> list[str]:
     isa = ALIASES.get(isa, isa)
     if isa == "neon":
@@ -138,7 +146,7 @@ class Frame:
     suffix: str
     cast: str
     masked_load: str
-    store_call: str
+    spill: str
     loads: str
     store: str
 
@@ -151,10 +159,10 @@ def frame(isa: str, dtype: str, table: Table) -> Frame:
     bits = 512 if wide else 256
     scalar, letter, suffix = X86_LANES[dtype]
     vector, prefix = f"__m{bits}{letter}", f"_mm{bits}"
-    load_row = table.entry(isa, "load", dtype)
-    load = load_row.intrinsic if fp else f"{prefix}_loadu_si{bits}"
-    store_call = table.entry(isa, "store", dtype).intrinsic if fp else f"{prefix}_storeu_si{bits}"
+    load_row, store_row = table.entry(isa, "load", dtype), table.entry(isa, "store", dtype)
     cast = "" if fp else f"({vector}*)"
+    loads = {name: called(load_row, {"p": f"{cast}{name}"}) for name in "abc"}
+    out = f"({scalar}*)out" if fp else f"({vector}*)out"
     return Frame(
         wide,
         fp,
@@ -167,9 +175,9 @@ def frame(isa: str, dtype: str, table: Table) -> Frame:
         suffix,
         cast,
         load_row.masked.split("(", 1)[0],
-        store_call,
-        f"{vector} va = {load}({cast}a);\n  {vector} vb = {load}({cast}b);",
-        f"{store_call}(({scalar if fp else vector}*)out, vr);",
+        f"{called(store_row, {'p': 'buf', 'v': 'va'})};",
+        f"{vector} va = {loads['a']};\n  {vector} vb = {loads['b']};\n  {vector} vc = {loads['c']};",
+        f"{called(store_row, {'p': out, 'v': 'vr'})};",
     )
 
 
@@ -200,12 +208,13 @@ def sign_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
 
 
 def select_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
-    compare = f"{k.prefix}_cmp_{k.suffix}"
-    if k.wide:
-        mask, blend = f"__mmask{k.lanes} k = {compare}_mask(va, vb, _CMP_LT_OQ);", f"{entry.intrinsic}(k, vb, va)"
-    else:
-        mask, blend = f"{k.vector} k = {compare}(va, vb, _CMP_LT_OQ);", f"{entry.intrinsic}(vb, va, k)"
-    return k.stored(f"{mask}\n  {k.vector} vr = {blend};"), lane_ref("a[j] < b[j] ? a[j] : b[j]")
+    pick = called(entry, {"a": "va", "b": "vb", "k": "k", "mask": "k"})
+    test = (
+        f"__mmask{k.lanes} k = {k.prefix}_cmp_{k.suffix}_mask"
+        if k.wide
+        else f"{k.vector} k = {k.prefix}_cmp_{k.suffix}"
+    )
+    return k.stored(f"{test}(va, vb, _CMP_LT_OQ);\n  {k.vector} vr = {pick};"), lane_ref("a[j] < b[j] ? b[j] : a[j]")
 
 
 #: AVX2 has no horizontal sum: the row's mnemonics spelled out by hand.
@@ -227,7 +236,7 @@ AVX2_SUM = {
 
 
 def reduce_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
-    compute = f"{k.scalar} r = {entry.intrinsic}(va);\n  out[0] = r;" if k.wide else AVX2_SUM[k.dtype]
+    compute = f"{k.scalar} r = {called(entry, {'v': 'va'})};\n  out[0] = r;" if k.wide else AVX2_SUM[k.dtype]
     return f"{k.loads}\n  {compute}", "for (int j = 0; j < VL; j++) ref[0] += a[j];"
 
 
@@ -239,17 +248,16 @@ def indices(k: Frame) -> str:
 
 
 def gather_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
-    scale = LANE_BYTES[k.dtype]
-    args = f"vi, a, {scale}" if k.wide else f"a, vi, {scale}"
-    return k.stored(f"{indices(k)}\n  {k.vector} vr = {entry.intrinsic}({args});"), lane_ref("a[idx[j]]")
+    pick = called(entry, {"base": "a", "idx": "vi", "scale": str(LANE_BYTES[k.dtype])})
+    return k.stored(f"{indices(k)}\n  {k.vector} vr = {pick};"), lane_ref("a[idx[j]]")
 
 
 def scatter_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     if k.wide:
-        compute = f"{indices(k)}\n  {entry.intrinsic}(out, vi, va, {LANE_BYTES[k.dtype]});"
+        write = called(entry, {"base": "out", "idx": "vi", "v": "va", "scale": str(LANE_BYTES[k.dtype])})
+        compute = f"{indices(k)}\n  {write};"
     else:  # AVX2 has no scatter: the documented fallback, hand-coded
-        store = f"{k.store_call}(buf, va);"
-        compute = f"{k.scalar} buf[VL];\n  {store}\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
+        compute = f"{k.scalar} buf[VL];\n  {k.spill}\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
     ref = "for (int j = 0; j < VL; j++) ref[j] = 0;\nfor (int j = 0; j < VL; j++) ref[idx[j]] = a[j];"
     return f"{k.loads}\n  {compute}", ref
 
@@ -257,9 +265,10 @@ def scatter_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
 def gen_mask_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     width = 8 * LANE_BYTES[k.dtype]
     iota = ", ".join(str(j) for j in range(k.lanes))
+    limit = f"{k.prefix}_set1_epi{width}(n)"
     compute = (
         f"__m512i iota = {k.prefix}_setr_epi{width}({iota});\n  int n = VL - 1;\n"
-        f"  __mmask{k.lanes} k = {entry.intrinsic}(iota, {k.prefix}_set1_epi{width}(n));\n"
+        f"  __mmask{k.lanes} k = {called(entry, {'iota': 'iota', 'n': limit})};\n"
         f"  {k.vector} vr = {k.masked_load}(k, a);"
     )
     return k.stored(compute), lane_ref("j < n ? a[j] : 0")
@@ -284,16 +293,15 @@ FLOAT_BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
     "mod": mod_body,
 }
 
-#: How a kernel calls a one-intrinsic op; an op missing here has no kernel yet (``lt``).
-CALLS = {
-    **dict.fromkeys(("add", "sub", "mul", "div", "min", "max", "and", "or", "shl", "shr"), "{name}(va, vb)"),
-    "fma": "{name}(va, vb, vb)",
-    "sqrt": "{name}(va)",
-    "load": "{name}({cast}a)",
-    "store": "vb",
-    "broadcast": "{name}(a[0])",
-    "zero": "{name}()",
-}
+
+def called(entry: Entry, operands: dict[str, str]) -> str:
+    """``entry``'s intrinsic on ``operands`` in the order its ``signature`` states, so the gate runs the order a reader
+    of the row copies."""
+    match = SIGNATURE.match(entry.signature)
+    names = [name.strip() for name in match.group(1).split(",") if name.strip()] if match else []
+    if match is None or any(name not in operands for name in names):
+        raise ValueError(f"{entry.intrinsic}: the signature {entry.signature!r} names no operands of this op")
+    return f"{entry.intrinsic}({', '.join(operands[name] for name in names)})"
 
 
 def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] | None:
@@ -307,9 +315,14 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
         return logical_body(k, op, entry)
     if op in FLOAT_BODIES:
         return FLOAT_BODIES[op](k, op, entry) if k.fp else None
-    if not entry.intrinsic or op not in CALLS:  # a recipe with no kernel written for it: unverified
+    if not entry.intrinsic:  # a recipe with no kernel written for it: unverified
         return None
-    return k.stored(f"{k.vector} vr = {CALLS[op].format(name=entry.intrinsic, cast=k.cast)};"), scalar_ref(op, dtype)
+    if op == "store":
+        return k.stored(f"{k.vector} vr = vb;"), scalar_ref(op, dtype)
+    if op not in CALLED:
+        return None
+    operands = {"a": "va", "b": "vb", "c": "vc", "v": "va", "counts": "vb", "p": f"{k.cast}a", "s": "a[0]"}
+    return k.stored(f"{k.vector} vr = {called(entry, operands)};"), scalar_ref(op, dtype)
 
 
 def scalar_ref(op: str, dtype: str) -> str:
@@ -338,7 +351,7 @@ def scalar_ref(op: str, dtype: str) -> str:
             "div": "a[j] / b[j]",
             "min": "a[j] < b[j] ? a[j] : b[j]",
             "max": "a[j] > b[j] ? a[j] : b[j]",
-            "fma": f"fma{f}(a[j], b[j], b[j])",
+            "fma": f"fma{f}(a[j], b[j], c[j])",
             "sqrt": f"sqrt{f}(a[j])",
             "load": "a[j]",
             "store": "b[j]",
@@ -356,7 +369,7 @@ def logical_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
         compute = (
             f"__mmask{k.lanes} ka = {cmp}(_mm512_loadu_si512((const __m512i*)a), _mm512_setzero_si512());\n"
             f"  __mmask{k.lanes} kb = {cmp}(_mm512_loadu_si512((const __m512i*)b), _mm512_setzero_si512());\n"
-            f"  unsigned got = {entry.intrinsic}(ka, kb), expect = 0;\n"
+            f"  unsigned got = {called(entry, {'ka': 'ka', 'kb': 'kb'})}, expect = 0;\n"
             f"  for (int j = 0; j < VL; j++) expect |= ((unsigned)(a[j] != 0) {sym} (b[j] != 0)) << j;\n"
             "  out[0] = (got == expect) ? 1 : 0;"
         )
@@ -432,27 +445,28 @@ F16_A = (1.0, 0.5, 2.0, 1.5, -0.25, 3.5, -1.25, 0.75, 2.5, -3.0, 0.125, 4.0, -0.
 F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5, -0.75, 1.0, 2.25)
 
 
-def integer_inputs(op: str, dtype: str, lanes: int) -> tuple[list[int], list[int]]:
+def integer_inputs(op: str, dtype: str, lanes: int) -> tuple[list[int], list[int], list[int]]:
     """Signs alternate, so an arithmetic shift cannot pass for a logical one; land/lor get every zero / non-zero
-    combination."""
+    combination; the operands differ on every lane, so no order of a three-operand op passes for another."""
     logical = op in ("land", "lor")
     high = 1 << 40 if dtype == "i64" and op in ("and", "or", "shl", "shr") else 0  # a bit past lane 32's reach
     a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) + high for j in range(lanes)]
-    return a, [0 if logical and j % 4 < 2 else 1 + j for j in range(lanes)]
+    return a, [0 if logical and j % 4 < 2 else 1 + j for j in range(lanes)], [2 + 5 * j for j in range(lanes)]
 
 
-def float_inputs(op: str, lanes: int) -> tuple[list[float], list[float]]:
-    """Not dyadic, so rounding is exercised; signs alternate except for sqrt."""
+def float_inputs(op: str, lanes: int) -> tuple[list[float], list[float], list[float]]:
+    """Not dyadic, so rounding is exercised; signs alternate except for sqrt; the operands differ on every lane, so no
+    order of fma passes for another."""
     # every third lane is larger than b, so a compare goes both ways and a quotient passes 1
     scale = [10.0 if j % 3 == 2 else 1.0 for j in range(lanes)]
     a = [(0.5371 + 0.3 * j) * scale[j] * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
-    return a, [1.25 + 0.7 * j for j in range(lanes)]
+    return a, [1.25 + 0.7 * j for j in range(lanes)], [0.3171 + 0.9 * j for j in range(lanes)]
 
 
 def f16_source(op: str, compute: str, ref: str) -> str:
     """The C source of an f16 kernel."""
-    h_init = ", ".join(repr(abs(v) if op == "sqrt" else v) for v in F16_A)
-    k_init = ", ".join(map(repr, F16_B))
+    h_init = ", ".join(repr(abs(v) if op == "sqrt" else v) for v in (0.0, *F16_A))
+    k_init = ", ".join(map(repr, (0.0, *F16_B)))
     mk_init = ", ".join("0xffff" if j % 2 == 0 else "0" for j in range(16))
     return f"""#include <immintrin.h>
 #include <stdint.h>
@@ -464,11 +478,13 @@ def f16_source(op: str, compute: str, ref: str) -> str:
 #endif
 #define VL 16
 int main(void) {{
-  _Float16 h[VL] = {{{h_init}}};
-  _Float16 k[VL] = {{{k_init}}};
+  _Alignas(64) _Float16 h_lanes[VL + 1] = {{{h_init}}};
+  _Alignas(64) _Float16 k_lanes[VL + 1] = {{{k_init}}};
+  _Float16 *h = h_lanes + 1, *k = k_lanes + 1;  // {MISALIGNED}
   uint16_t mk[VL] = {{{mk_init}}};
   double ref[VL] = {{0}};
-  uint16_t out16[VL] = {{0}};
+  _Alignas(64) uint16_t out_lanes[VL + 1] = {{0}};
+  uint16_t *out16 = out_lanes + 1;
   {compute}
   {ref}
   {lane_errors("(double)*((_Float16*)&out16[j])", "ref[j]")}"""
@@ -484,7 +500,7 @@ def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str |
     if dtype == "f16":
         return f16_source(op, compute, ref)
     lanes = (512 if isa == "avx512" else 256) // (8 * LANE_BYTES[dtype])
-    a, b = integer_inputs(op, dtype, lanes) if dtype in INT_DTYPES else float_inputs(op, lanes)
+    a, b, c = integer_inputs(op, dtype, lanes) if dtype in INT_DTYPES else float_inputs(op, lanes)
     idx_init = ", ".join(str((3 * j + 1) % lanes) for j in range(lanes))
     s = X86_LANES[dtype][0]
     return f"""#include <immintrin.h>
@@ -493,12 +509,14 @@ def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str |
 #include <math.h>
 #define VL {lanes}
 int main(void) {{
-  {s} a[VL] = {{{", ".join(map(repr, a))}}};
-  {s} b[VL] = {{{", ".join(map(repr, b))}}};
+  _Alignas(64) {s} a_lanes[VL + 1] = {{0, {", ".join(map(repr, a))}}};
+  _Alignas(64) {s} b_lanes[VL + 1] = {{0, {", ".join(map(repr, b))}}};
+  _Alignas(64) {s} c_lanes[VL + 1] = {{0, {", ".join(map(repr, c))}}};
+  _Alignas(64) {s} out_lanes[VL + 1] = {{0}};
+  {s} *a = a_lanes + 1, *b = b_lanes + 1, *c = c_lanes + 1, *out = out_lanes + 1;  // {MISALIGNED}
   int64_t idx[VL] = {{{idx_init}}};
   int32_t idx32[VL] = {{{idx_init}}};
   double ref[VL] = {{0}};
-  {s} out[VL] = {{0}};
   {compute}
   {ref}
   {lane_errors("(double)out[j]", "ref[j]")}"""

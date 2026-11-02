@@ -36,3 +36,10 @@ def running_sum(a: dace.float64[N], out: dace.float64[N]):
 def scale(a: dace.float64[N], out: dace.float64[N]):
     for i in dace.map[0:N]:
         out[i] = 2.0 * a[i]
+
+
+@dace.program
+def scale_prefix(a: dace.float64[N], out: dace.float64[N], count: dace.int64[1]):
+    for i in dace.map[0:N]:
+        out[i] = 2.0 * a[i]
+    count[0] = N // 2

@@ -16,6 +16,10 @@ verified, and the best one per scope is linked. Two products share one core:
      draws derived from the SDFG (every size symbol odd, arguments uniform in [0, 1)) only when any value is valid
      (`inputs.domain_gap`: no `sqrt`/`log`/`pow`/... call, no integer argument that may index); otherwise each
      scope's default build ships. Only the default (64-bit) index width is built, since the real sizes are unknown.
+   - A build stays under `out`. A compile whose `build_key` matches loads it, so a repeated `sdfg()` sweeps once: the
+     key digests the SDFG and its name, mode, declarations, matrix, compiler versions, manifest, Alloy's sources, the
+     DaCe and bench versions, CPU flags, library search paths and DaCe's compiler config. DaCe's `use_cache` skips
+     that check and is not consulted.
    - Profile mode needs a manifest: it times at the declared sizes.
 2. **HPCAgent-Bench tool and skill.** Input: NumPy plus a manifest (DaCe frontend to an SDFG, then 1); the manifest
    gives the value domains, size presets and constraints. C plus a manifest waits for the bench's C-to-NumPy
@@ -114,6 +118,9 @@ distributions) and is compared against the scope's own `strict` build. Each FP l
   reductions and `l` admitting a single lost update. `l` is `Scope.accumulation_length`, derived exactly from the
   SDFG's WCR edges (matmul: K; square matmul: the contracted N; row sum: N; elementwise: 1). When
   `eps_acc * sqrt(l) >= rtol` the bench raises `UngradeableTolerance`; the report shows "ungradeable", never a pass.
+  The manifest's `mismatch_fraction` forgives that share of the elements here, integer outputs included.
+
+Both tests read only the prefix `output_extent` grades, bounded by the reference's value, as the judge does.
 
 ## Timing
 
@@ -273,7 +280,7 @@ the program, DaCe's own default build. Every speedup is over one compiler with o
 Modes (`api.generate(..., mode=)`):
 - `profile`: verified and timed; variants ranked by time.
 - `speculative` (`alloy/heuristics/predict.py`): verified, untimed; each build gets a roofline cost per element.
-  - Loops: the object's innermost loops (backward branches), grouped into source loops by the tasklets their line
+  - Loops: the object's innermost loops (backward branches), grouped into source loops by the maps their line
     tables render (every compiler emits line tables, `[compilers.*] line_tables`; no code change, stripped before
     objects are compared). A main loop and its epilogues are one group; its hot copy handles the most elements per
     iteration. A loop rendering no statement (OpenMP chunking) only counts when none does.

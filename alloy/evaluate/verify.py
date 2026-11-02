@@ -28,17 +28,18 @@ from alloy import machine
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
-from alloy.frontend.inputs import Draw, require_bench
+from alloy.frontend.inputs import Draw, Grading, require_bench
 from alloy.frontend.scopes import Program
 from alloy.records import RECORD
 
 
 @dataclass(slots=True, frozen=True)
 class Cases:
-    """The fuzz draws every candidate runs on, and the program outputs compared."""
+    """The fuzz draws every candidate runs on, the program outputs compared, and how they are graded."""
 
     draws: list[Draw]
     outputs: tuple[str, ...]
+    grading: Grading = Grading()
 
 
 #: How a candidate's outputs compared: bit-identical (``exact``), inside the band (``pass``), outside the band or not
@@ -245,10 +246,14 @@ def canonical_bytes(values: np.ndarray) -> bytes:
     return np.where(np.isnan(values), 0, values).tobytes()
 
 
-def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str) -> Verdict:
+def compare(
+    tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str, mismatch_fraction: float = 0.0
+) -> Verdict:
     """``exact``: bit-identical, any NaN equal to any NaN. ``band``: HPCAgent-Bench's per-precision band with its
-    eps_acc*sqrt(l) floor at ``datatype``; an integer or boolean output has no rounding, so it is always exact."""
-    if tolerance == "exact" or not np.issubdtype(ref.dtype, np.inexact):
+    eps_acc*sqrt(l) floor at ``datatype``, forgiving ``mismatch_fraction`` of the elements; an integer or boolean output
+    has no rounding, so only that fraction can forgive it."""
+    rounds = bool(np.issubdtype(ref.dtype, np.inexact))
+    if tolerance == "exact" or not (rounds or mismatch_fraction):
         same = ref.shape == val.shape and canonical_bytes(ref) == canonical_bytes(val)
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
     require_bench()
@@ -260,11 +265,17 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
         tolerance_band,
     )
 
-    precision = precision_from_datatype(datatype)
+    precision = precision_from_datatype(datatype if rounds else None)  # an integer's own dtype names no band
     band = tolerance_band(precision)
     try:
         ok, err, detail = compare_arrays(
-            ref, val, band.rtol, band.atol, accum_length=length, eps_precision=accumulation_eps(precision)
+            ref,
+            val,
+            band.rtol,
+            band.atol,
+            accum_length=length,
+            eps_precision=accumulation_eps(precision),
+            mismatch_fraction=mismatch_fraction,
         )
     except UngradeableTolerance as exc:
         return Verdict("ungradeable", detail=str(exc))
@@ -281,6 +292,7 @@ REFERENCE_RUNS = 3
 class Reference:
     outputs: list[Outputs]
     nondeterministic: frozenset[str]
+    grading: Grading = Grading()
 
 
 @dataclass(slots=True, frozen=True)
@@ -315,7 +327,14 @@ def reference_from(cases: Cases, per_draw: list[list[Outcome]]) -> Reference:
         first, *rest = itertools.chain.from_iterable(r for r in runs if not isinstance(r, str))
         unstable |= {n for n in cases.outputs for r in rest if not np.array_equal(first[n], r[n], equal_nan=True)}
         outputs.append(first)
-    return Reference(outputs, frozenset(unstable))
+    return Reference(outputs, frozenset(unstable), cases.grading)
+
+
+def graded(grading: Grading, name: str, expected: dict[str, np.ndarray], value: np.ndarray) -> np.ndarray:
+    """The part of output ``name`` that is the answer. The reference's outputs bound it, so an answer cannot shrink
+    its own graded region."""
+    bound = grading.extents.get(name)
+    return value if bound is None else value[: int(expected[bound].reshape(-1)[0])]
 
 
 def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int]) -> Verdict:
@@ -327,7 +346,8 @@ def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int
             return Verdict("crashed", detail=val)
         for result, (name, expected) in itertools.product(val, expected_outputs.items()):
             level = "band" if name in ref.nondeterministic else tolerance
-            verdict = compare(level, expected, result[name], length, str(np.real(expected).dtype))
+            want, got = (graded(ref.grading, name, expected_outputs, v) for v in (expected, result[name]))
+            verdict = compare(level, want, got, length, str(np.real(expected).dtype), ref.grading.mismatch_fraction)
             if not verdict.ok:
                 return Verdict(verdict.status, verdict.error, f"{name}: {verdict.detail}")
             if verdict.status == "pass" and verdict.error >= worst.error:

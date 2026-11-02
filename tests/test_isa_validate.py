@@ -6,11 +6,13 @@ import dataclasses
 import importlib
 import math
 import shutil
+import subprocess
 from typing import Any
 
 import pytest
 
 from alloy.isa import load
+from alloy.isa.table import Table
 from alloy.isa.validate import (
     c_flags,
     candidates_for,
@@ -76,6 +78,26 @@ def test_the_avx512_fmod_recipe_validates():
     verdict = validate("avx512", "mod", "f64", TABLE)
 
     assert verdict.ok is True, verdict.detail
+
+
+@pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
+def test_every_avx512_kernel_builds_whatever_the_host_can_run(dtype, tmp_path):
+    """Every runner checks the spellings and their operand types; only an AVX-512 runner gets to execute them."""
+    assert CC, "the gate needs a C compiler"
+    kernels = {op: kernel_c("avx512", dtype, op, TABLE) for op in TABLE.isas["avx512"].entries(dtype)}
+    sources = {op: source for op, source in kernels.items() if source is not None}
+    assert {"add", "load", "store"} <= sources.keys()
+
+    for op, source in sources.items():
+        unit = tmp_path / f"{op}.c"
+        unit.write_text(source)
+        sut = subprocess.run(
+            [CC, *c_flags("avx512", dtype), "-c", str(unit), "-o", str(unit.with_suffix(".o"))],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert sut.returncode == 0, f"{op}: {sut.stderr}"
 
 
 def test_an_isa_the_host_cannot_run_is_unverified_not_wrong():
@@ -167,6 +189,96 @@ def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
 
     assert sut.ok is False
     assert sut.candidates
+
+
+def with_row(isa: str, dtype: str, op: str, **fields: str) -> Table:
+    """The shipped table with one row changed, as a wrong edit of ``intrinsics.toml`` would."""
+    target = TABLE.isas[isa]
+    entries = {**getattr(target, dtype), op: dataclasses.replace(getattr(target, dtype)[op], **fields)}
+    changed: dict[str, Any] = {dtype: entries}
+    return dataclasses.replace(TABLE, isas={**TABLE.isas, isa: dataclasses.replace(target, **changed)})
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, dtype, aligned",
+    [
+        ("load", "f64", "_mm256_load_pd"),
+        ("load", "f32", "_mm256_load_ps"),
+        ("load", "i64", "_mm256_load_si256"),
+        ("load", "f16", "_mm256_load_si256"),
+        ("store", "f64", "_mm256_store_pd"),
+        ("store", "f32", "_mm256_store_ps"),
+        ("store", "i32", "_mm256_store_si256"),
+        ("store", "f16", "_mm256_store_si256"),
+    ],
+)
+def test_an_aligned_spelling_of_an_unaligned_row_fails_on_any_stack(op, dtype, aligned):
+    """Kernel buffers sit one element past a 64-byte boundary, so an aligned access always faults."""
+    sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, intrinsic=aligned))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
+@pytest.mark.parametrize(
+    "op, dtype, aligned",
+    [("load", "f64", "_mm512_load_pd"), ("store", "f32", "_mm512_store_ps"), ("store", "i64", "_mm512_store_si512")],
+)
+def test_an_aligned_avx512_spelling_of_an_unaligned_row_fails(op, dtype, aligned):
+    sut = validate("avx512", op, dtype, with_row("avx512", dtype, op, intrinsic=aligned))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, dtype, swapped",
+    [
+        ("sub", "f64", "(b, a) -> v"),
+        ("div", "f32", "(b, a) -> v"),
+        ("shl", "i64", "(counts, a) -> v"),
+        ("fma", "f64", "(c, a, b) -> v"),  # the NEON trap: accumulator first
+        ("fma", "f32", "(a, c, b) -> v"),
+        ("select", "f64", "(b, a, mask) -> v"),
+        ("select", "f32", "(b, a, mask) -> v"),
+        ("gather", "f64", "(idx, base, scale) -> v"),
+    ],
+)
+def test_a_signature_in_the_wrong_order_fails_the_gate(op, dtype, swapped):
+    """The kernel calls the row's intrinsic in the order its signature states, not one written beside it."""
+    sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, signature=swapped))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
+@pytest.mark.parametrize(
+    "op, dtype, swapped",
+    [
+        ("select", "f64", "(k, b, a) -> v"),
+        ("gather", "f32", "(base, idx, scale) -> v"),
+        ("scatter", "f64", "(idx, base, v, scale) -> void"),
+    ],
+)
+def test_an_avx512_signature_in_the_wrong_order_fails_the_gate(op, dtype, swapped):
+    sut = validate("avx512", op, dtype, with_row("avx512", dtype, op, signature=swapped))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+def test_a_signature_naming_an_operand_the_op_does_not_have_fails_the_gate():
+    sut = validate("avx2", "add", "f64", with_row("avx2", "f64", "add", signature="(x, y) -> v"))
+
+    assert sut.ok is False
+
+
+def test_the_fma_kernel_tells_all_three_operands_apart():
+    sut = str(kernel_c("avx2", "f64", "fma", TABLE))
+
+    assert "_mm256_fmadd_pd(va, vb, vc)" in sut
+    assert "ref[j] = fma(a[j], b[j], c[j])" in sut
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")

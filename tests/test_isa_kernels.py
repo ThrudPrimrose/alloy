@@ -16,7 +16,7 @@ from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
 from alloy.isa.mathcheck import HEADERS, Measured, emulated, judged, measure, validate_kernel
 from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, kernels_for, libraries, render, spelled
-from alloy.isa.validate import host_can_run
+from alloy.isa.validate import c_compiler, c_flags, host_can_run
 
 ALL = [(fn, dtype, level) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS]
 FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow atan asin acos sinh cosh tanh".split()
@@ -34,6 +34,25 @@ def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn, dtype, level, i
 
     assert verdict.ok is not False, verdict.detail
     assert verdict.ok is True or not host_can_run(isa, dtype)
+
+
+@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+def test_an_avx512_kernel_builds_whatever_the_host_can_run(fn, dtype, level, tmp_path):
+    """A runner without AVX-512 cannot execute these rows above; it can still refuse one that does not compile."""
+    cc = c_compiler()
+    assert cc is not None, "the gate needs a C compiler"
+    unit = tmp_path / "kernel.c"
+    body = render(kernel(fn, dtype, level), "avx512").source
+    unit.write_text(f"#include <math.h>\n#include <{HEADERS['avx512']}>\n{body}\n")
+
+    sut = subprocess.run(
+        [cc, "-O1", *c_flags("avx512", dtype), "-c", str(unit), "-o", str(unit.with_suffix(".o"))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert sut.returncode == 0, sut.stderr
 
 
 @pytest.mark.parametrize("isa", ["neon", "sve"])

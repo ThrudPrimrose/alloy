@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Speculative mode's score: a build's predicted cycles per element of its scope. The innermost loops come from the
-object's disassembly (backward branches), grouped into source loops by the tasklets their source lines render (a
+object's disassembly (backward branches), grouped into source loops by the maps their source lines render (a
 main loop and its epilogues are one group); each group's hot copy costs llvm-mca's cycles on the host CPU over the
 elements one iteration handles (the bytes its memory operations move), and the scope sums its groups weighted by
 their maps' iteration volumes."""
@@ -237,16 +237,18 @@ def mca_cycles(body: str) -> float | None:
 @plain(slots=True, frozen=True)
 class MapFacts:
     """What the innermost map around a tasklet tells the model: array accesses per element (distinct memlets that
-    depend on its last, vectorized, parameter) and the iterations of it and every enclosing map."""
+    depend on its last, vectorized, parameter) and the iterations of it and every enclosing map. ``index`` tells two
+    maps with equal facts apart."""
 
     accesses: int
     volume: sympy.Expr
+    index: int
 
 
 def innermost_maps(sdfg: dace.SDFG) -> dict[str, MapFacts]:
     """Every tasklet label of ``sdfg``'s innermost maps, with its map's facts."""
     out: dict[str, MapFacts] = {}
-    for node, state in sdfg.all_nodes_recursive():
+    for index, (node, state) in enumerate(sdfg.all_nodes_recursive()):
         if not isinstance(node, nodes.MapEntry) or not isinstance(state, dace.SDFGState):
             continue
         inside = state.scope_children()[node]
@@ -262,7 +264,7 @@ def innermost_maps(sdfg: dace.SDFG) -> dict[str, MapFacts]:
         while isinstance(entry, nodes.MapEntry):
             volume *= entry.map.range.num_elements()
             entry = state.entry_node(entry)
-        facts = MapFacts(max(1, len(accessed)), volume)
+        facts = MapFacts(max(1, len(accessed)), volume, index)
         out |= {n.label: facts for n in inside if isinstance(n, nodes.Tasklet)}
     return out
 
@@ -332,11 +334,17 @@ def weight(tasklets: tuple[str, ...], maps: dict[str, MapFacts], sizes: dict[str
     return max(volumes) / total if volumes and total > 0 else 1.0
 
 
+def source_loop(tasklets: tuple[str, ...], maps: dict[str, MapFacts]) -> frozenset[MapFacts] | tuple[str, ...]:
+    """What groups machine loops: the maps their statements render, so a main loop and an epilogue attributed to other
+    lines count once; the statements themselves where no map renders them."""
+    return frozenset(maps[t] for t in tasklets if t in maps) or tasklets
+
+
 def predict(
     build: Build, scope: Scope, sizes: dict[str, int] | None = None, sdfg: dace.SDFG | None = None
 ) -> Prediction | None:
     """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`): per source loop (machine loops
-    grouped by the tasklets their lines render; loops rendering no statement only count when no loop renders one),
+    grouped by the maps their lines render; loops rendering no statement only count when no loop renders one),
     the hot copy's ``(cycles + calls) / elements`` and main-memory bytes, weighted by its maps' iterations at
     ``sizes`` over the scope's largest map's. ``sdfg`` is what the build rendered (the scope's own by default).
     ``None`` without an object or a loop llvm-mca accepts."""
@@ -349,13 +357,14 @@ def predict(
     largest = max(
         (v for f in innermost_maps(scope.sdfg).values() if (v := evaluated(f.volume, sizes)) is not None), default=0.0
     )
-    groups: dict[tuple[str, ...], LoopCost] = {}
+    groups: dict[frozenset[MapFacts] | tuple[str, ...], LoopCost] = {}
     for loop in machine_loops:
         tasklets = tuple(sorted({labels[n] for n in loop.lines if n in labels}))
         cost = loop_cost(loop, tasklets, maps, scope)
-        held = groups.get(tasklets)
+        key = source_loop(tasklets, maps)
+        held = groups.get(key)
         if cost is not None and (held is None or (cost.elements, -cost.cycles) > (held.elements, -held.cycles)):
-            groups[tasklets] = cost
+            groups[key] = cost
     if any(groups) and () in groups:  # a loop rendering no statement (OpenMP chunking) next to the loops that do
         del groups[()]
     if not groups:

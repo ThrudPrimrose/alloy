@@ -22,6 +22,7 @@ from hpcagent_bench.harness import tools
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.judge_wire import GradeAnswer, JudgeAnswer
 from hpcagent_bench.harness.routes import ROUTES, RouteRequest
+from hpcagent_bench.harness.sandbox import AGENT_FOLDERS_LOG, AgentFolderLine
 from hpcagent_bench.harness.service import ServiceConfig, make_server
 
 KERNEL = "tsvc_2_vpv"
@@ -96,6 +97,40 @@ def test_the_speculative_tool_answers_c_sources_a_makefile_and_a_library_the_jud
         assert (folder / scope["source"]).is_file()
         assert scope["compiler"] in (folder / "Makefile").read_text()
     assert "## " in str(result["report"]), "the report's sections come back"
+    grade = graded(judge_url, result)
+    assert grade.build_ok is True and grade.correct is True, grade.detail
+
+
+def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_its_tool_built(
+    judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An LLM run gives each episode a folder through the run's folder log: the judge refuses a path outside it."""
+    run, agent = tmp_path / "run", tmp_path / "agent-0"
+    run.mkdir()
+    agent.mkdir()
+    line = AgentFolderLine(episode_id="e1", folder=agent.name)
+    (run / AGENT_FOLDERS_LOG).write_text(line.model_dump_json() + "\n")
+    monkeypatch.setenv("RUN_DIR", str(run))
+    monkeypatch.setenv("HPCAGENT_BENCH_EPISODE_ID", "e1")
+
+    sut = call("speculative", tmp_path, monkeypatch)
+
+    assert sut.code == HTTPStatus.OK, sut.answer
+    result = sut.answer["result"]
+    assert isinstance(result, dict)
+    assert pathlib.Path(str(result["library"])).is_relative_to(agent)
+    grade = graded(judge_url, result)
+    assert grade.build_ok is True and grade.correct is True, grade.detail
+
+
+def test_the_profile_tool_answers_a_library_the_judge_grades_correct(
+    judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sut = call("profile", tmp_path, monkeypatch)
+
+    assert sut.code == HTTPStatus.OK, sut.answer
+    result = sut.answer["result"]
+    assert isinstance(result, dict)
     grade = graded(judge_url, result)
     assert grade.build_ok is True and grade.correct is True, grade.detail
 

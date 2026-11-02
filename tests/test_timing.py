@@ -111,6 +111,23 @@ def test_alloy_full_links_every_scope_winner_and_matches_dace_default(tmp_path):
     assert all(r.winner in r.final for r in timings.scopes.values())
 
 
+def test_alloy_full_runs_the_build_each_scope_timing_named(tmp_path, monkeypatch):
+    """The named winner is wrong on purpose: only a program that really links it can fail."""
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    (scope,) = program.scopes
+    good = build(scope, Candidate("c", "gcc"), FEW_REPS, tmp_path / "good", {})
+    wrong = handwritten_archive(tmp_path, scope, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
+    report = ScopeReport(scope, (good, dataclasses.replace(good, name="wrong", archive=wrong, object_hash="wrong")))
+    verification = verify.verify(program, FEW_REPS, [report], cases, tmp_path / "out")
+    winner = timing.ScopeTiming({}, {}, "wrong", {"N": 64}, {"N": 64})
+    monkeypatch.setattr(timing, "time_scope", lambda *_: winner)
+    manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
+
+    sut = timing.time_program(Linker(program, FEW_REPS, tmp_path / "out"), [report], verification, manifest)
+
+    assert sut.program.arms["alloy_full"].verdict.status == "fail"
+
+
 def measured(median: float, spread: float = 0.1, status: str = "pass") -> timing.Measured:
     return timing.Measured(median, median - spread, median + spread, verify.Verdict(status))  # type: ignore[arg-type]
 

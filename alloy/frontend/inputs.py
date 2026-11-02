@@ -4,7 +4,7 @@ the bench's fuzzer and initializer; a manifest outside the corpus names its kern
 
 import importlib.util
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import dace
@@ -27,6 +27,15 @@ class Draw:
     sizes: dict[str, Any]
     values: dict[str, Any]
     threads: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class Grading:
+    """What the bench's judge leaves out of an answer: ``extents`` maps an output to the output whose value bounds its
+    graded prefix, ``mismatch_fraction`` is the share of an output's elements that may lie outside the band."""
+
+    extents: dict[str, str] = field(default_factory=dict[str, str])
+    mismatch_fraction: float = 0.0
 
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)
@@ -68,6 +77,11 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     # cast: pydantic expects its internal dataclass protocol, which the decorator does not declare
     pydantic.dataclasses.rebuild_dataclass(cast("Any", Manifest), _types_namespace={"BenchSpec": BenchSpec})
     return constructed(Manifest, path, path=path, raw=raw, spec=spec, outputs=spec.output_args, datatype=datatype)
+
+
+def grading(manifest: Manifest) -> Grading:
+    """How the judge grades ``manifest``'s outputs."""
+    return Grading(dict(manifest.spec.output_extent), float(manifest.spec.mismatch_fraction or 0.0))
 
 
 def draw(manifest: Manifest, iteration: int) -> Draw:

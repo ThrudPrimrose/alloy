@@ -218,24 +218,28 @@ def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_pa
     assert "inside an SVE map" in sut.source.read_text()
 
 
-def compiled_asm(tmp_path, source: str, level: str) -> str:
+def compiled_asm(tmp_path, source: str, compiler: str, level: str) -> str:
     unit = tmp_path / f"{level}.c"
     unit.write_text(source)
-    flags = [*MATRIX.compilers["gcc"].fp[level], "-O3", "-mavx2", "-mfma", "-S", "-o", "-", str(unit)]
-    return subprocess.run(["gcc", *flags], capture_output=True, text=True, check=True).stdout
+    flags = [*MATRIX.compilers[compiler].fp[level], "-O3", "-mavx2", "-mfma", "-S", "-o", "-", str(unit)]
+    executable = MATRIX.compilers[compiler].executables["c"]
+    return subprocess.run([executable, *flags], capture_output=True, text=True, check=True).stdout
 
 
-@pytest.mark.gcc
+COMPILERS = [pytest.param("gcc", marks=pytest.mark.gcc), pytest.param("clang", marks=pytest.mark.clang)]
+
+
+@pytest.mark.parametrize("compiler", COMPILERS)
 @pytest.mark.parametrize(("level", "fused"), [("strict", False), ("contract", True)])
-def test_only_a_contracting_level_fuses_a_product_into_its_sum(level, fused, tmp_path):
+def test_only_a_contracting_level_fuses_a_product_into_its_sum(compiler, level, fused, tmp_path):
     source = "void f(int n, double *a, double *b, double *c) { for (int i = 0; i < n; i++) c[i] += a[i] * b[i]; }"
 
-    assert ("vfmadd" in compiled_asm(tmp_path, source, level)) is fused
+    assert ("vfmadd" in compiled_asm(tmp_path, source, compiler, level)) is fused
 
 
-@pytest.mark.gcc
+@pytest.mark.parametrize("compiler", COMPILERS)
 @pytest.mark.parametrize(("level", "packed"), [("strict", False), ("reassoc", True)])
-def test_only_a_reassociating_level_vectorizes_a_sum(level, packed, tmp_path):
+def test_only_a_reassociating_level_vectorizes_a_sum(compiler, level, packed, tmp_path):
     source = "double f(int n, double *a) { double s = 0; for (int i = 0; i < n; i++) s += a[i]; return s; }"
 
-    assert ("vaddpd" in compiled_asm(tmp_path, source, level)) is packed
+    assert ("vaddpd" in compiled_asm(tmp_path, source, compiler, level)) is packed

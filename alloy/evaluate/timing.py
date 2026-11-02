@@ -4,6 +4,7 @@ against DaCe's default CPU codegen. The arms of one comparison run in one child 
 forward and reversed order, at sizes that keep the working set out of cache (``docs/design.md``, Timing)."""
 
 import ctypes
+import dataclasses
 import math
 import pathlib
 import statistics
@@ -31,7 +32,7 @@ from alloy.evaluate.verify import (
     judge,
 )
 from alloy.frontend import inputs
-from alloy.frontend.inputs import Draw, Manifest
+from alloy.frontend.inputs import Draw, Grading, Manifest
 from alloy.records import RECORD, Parameters
 
 REFERENCE = "reference"
@@ -84,6 +85,7 @@ class Arms:
     symbol: str
     outputs: tuple[str, ...]
     nondeterministic: frozenset[str]
+    grading: Grading
 
 
 def median_ci(samples: list[float]) -> tuple[float, float, float]:
@@ -191,7 +193,7 @@ def check(arms: Arms, draw: Draw, length: int) -> dict[str, Verdict]:
         first = pending.pop(first_name).result()
         if isinstance(first, str):
             raise RuntimeError(f"the reference crashed at {draw.sizes}: {first}")
-        ref = Reference([first[0]], arms.nondeterministic)
+        ref = Reference([first[0]], arms.nondeterministic, arms.grading)
         verdicts = {first_name: Verdict("exact")}  # judged against itself a nondeterministic output would fail its band
         for name in list(pending):  # judged in turn, so each arm's outputs go before the next
             verdicts[name] = judge(arms.tolerances[name], ref, [pending.pop(name).result()], [length])
@@ -238,6 +240,7 @@ def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, man
         symbol,
         manifest.outputs,
         verification.nondeterministic,
+        inputs.grading(manifest),
     )
     t, cores = matrix.timing, machine.physical_cores()
     original, cap = linker.program.original, t.max_program_cache_factor
@@ -248,7 +251,7 @@ def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, man
     )
     ranked = sorted((n for n in screen if n != REFERENCE and screen[n].verdict.ok), key=lambda n: screen[n].median)
     keep = [REFERENCE, *ranked[: t.top]]
-    top = Arms({n: arms.folders[n] for n in keep}, arms.tolerances, symbol, arms.outputs, arms.nondeterministic)
+    top = dataclasses.replace(arms, folders={n: arms.folders[n] for n in keep})
     final = measure(top, inputs.at(manifest, final_sizes), length(linker, final_sizes), cores, t.final_reps)
     return ScopeTiming(screen, final, winner_of(final, ranked[: t.top]), screen_sizes, final_sizes)
 
@@ -275,6 +278,7 @@ def time_program(linker: Linker, reports: list[ScopeReport], verification: Verif
         "",
         manifest.outputs,
         frozenset(manifest.outputs),  # alloy-full mixes FP levels per scope: compare every output by band
+        inputs.grading(manifest),
     )
     t, original = linker.matrix.timing, linker.program.original
     sizes = stage_sizes(original, original, manifest, t.final_cache_factor, t.max_program_cache_factor, grow_only=True)

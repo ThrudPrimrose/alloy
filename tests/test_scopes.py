@@ -1,6 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import dace
 import pytest
 from dace.libraries.standard.nodes import Reduce, external_call
+from dace.sdfg import nodes
 
 from alloy.frontend import scopes
 from helpers import MATRIX, REDUCTIONS, load_program, outlined
@@ -27,6 +29,33 @@ def test_the_accumulation_length_is_the_reduced_extent_of_each_scope(kernel, len
     sut = scopes.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
 
     assert [str(r.accumulation_length) for r in sut.scopes] == lengths
+
+
+M = dace.symbol("M", dace.int64)
+N = dace.symbol("N", dace.int64)
+
+
+@dace.program
+def two_increments(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, N], d: dace.float64[M, N]):
+    for i in dace.map[0:M]:
+        for j in dace.map[0:N]:
+            b[i, j] = a[i, j] + 1.0
+        for k in dace.map[0:N]:
+            d[i, k] = c[i, k] + 1.0
+
+
+def tasklet_labels(sdfg: dace.SDFG) -> list[str]:
+    return [n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
+
+
+def test_tasklets_that_share_a_frontend_label_each_get_their_own_in_a_scope():
+    sdfg = two_increments.to_sdfg()
+    assert tasklet_labels(sdfg).count("_Add_") == 2
+
+    (sut,) = scopes.outline(sdfg, MATRIX.libm_calls).scopes
+
+    labels = tasklet_labels(sut.sdfg)
+    assert len(labels) == len(set(labels))
 
 
 def test_a_library_node_a_pipeline_chose_stays_whole_as_its_own_scope():
