@@ -125,7 +125,7 @@ def c_flags(isa: str, dtype: str) -> list[str]:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Frame:
-    """What every kernel of one x86 ``(isa, dtype)`` shares: its C spellings, the loads of ``a`` and ``b``, the store."""
+    """What every kernel of one x86 ``(isa, dtype)`` shares: its C spellings, the loads and the store."""
 
     wide: bool
     fp: bool
