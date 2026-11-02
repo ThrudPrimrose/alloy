@@ -276,8 +276,9 @@ def scope_record(
         reason = drop_reason(rep, b, verdicts.get(b.name), timing)
         if reason is not None:
             dropped[reason] = dropped.get(reason, 0) + 1
-    one_per_config = {b.candidate.config_name(matrix): b for b in reversed(ranked(rep, verdicts, timing, scores))}
-    top = sorted(one_per_config.values(), key=ranked(rep, verdicts, timing, scores).index)[:k]
+    order = ranked(rep, verdicts, timing, scores)
+    one_per_config = {b.candidate.config_name(matrix): b for b in reversed(order)}
+    top = sorted(one_per_config.values(), key=order.index)[:k]
     s = rep.scope
     return ScopeRecord(
         symbol=s.symbol,
@@ -388,7 +389,6 @@ def assemble(
     verification: Verification | None = None,
     timing: Timings | None = None,
     commands: Commands | None = None,
-    top_k: int = TOP_K,
     predicted: Predictions | None = None,
     picked: dict[str, str] | None = None,
     advice: dict[str, str] | None = None,
@@ -401,7 +401,7 @@ def assemble(
             verdicts.get(rep.scope.symbol, {}),
             timing.scopes.get(rep.scope.symbol) if timing else None,
             matrix,
-            top_k,
+            TOP_K,
             (predicted or {}).get(rep.scope.symbol),
             (advice or {}).get(rep.scope.symbol, ""),
         )
@@ -533,14 +533,13 @@ def write(
     verification: Verification | None = None,
     timing: Timings | None = None,
     commands: Commands | None = None,
-    top_k: int = TOP_K,
     predicted: Predictions | None = None,
     picked: dict[str, str] | None = None,
     advice: dict[str, str] | None = None,
 ) -> Report:
     """Write ``report.json`` and ``report.md`` (rendered from it), with a copy of the matrix that produced them."""
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
-    r = assemble(program, reports, matrix, verification, timing, commands, top_k, predicted, picked, advice)
+    r = assemble(program, reports, matrix, verification, timing, commands, predicted, picked, advice)
     (out / "report.json").write_text(dumped_json(r))
     (out / "report.md").write_text(markdown(r))
     return r

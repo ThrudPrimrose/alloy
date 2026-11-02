@@ -2,30 +2,26 @@
 """What the ``alloy_profile`` and ``alloy_speculative`` agent tools get back: Alloy on the episode's kernel after the
 bench's canonical (CPF) pipeline, as plain C/C++ an agent can read, edit and rebuild without DaCe.
 
-Under ``folder``: ``report.md`` (every scope's candidates, the top ones ranked by time or prediction), and ``best/``
-with one translation unit per scope (``scopes/<symbol>.<ext>``, the chosen candidate's source), the program entry in
-the bench's C ABI (``program.c``, CPF calling the scopes) and a ``Makefile`` that compiles each scope with its own
-compiler and flags and links ``lib<program>.so``. The library is built here, so it can be submitted as it is."""
+Under ``folder``: ``report.md``, and ``best/`` with one translation unit per scope, the program entry in the bench's C
+ABI (``program.c``), a ``Makefile`` compiling each scope with its own compiler and flags, and the library it built."""
 
 import pathlib
 import shlex
 import subprocess
 
 import pydantic
-from hpcagent_bench import paths
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
-from hpcagent_bench.precision import Precision, numpy_dtype
+from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
 from alloy import api, configuration_matrix
 from alloy.backend.build import Build
-from alloy.evaluate.link import Best, Linker
-from alloy.frontend import inputs
-from alloy.hb_plugin.adapter import nothing_to_generate, pipeline_sdfg
+from alloy.evaluate.link import Best, BestScope, Linker
+from alloy.hb_plugin.adapter import manifest_of, nothing_to_generate, pipeline_sdfg
 from alloy.report import Mode
 
-__all__ = ["CodegenAnswer", "CodegenRequest", "ScopeChoice", "codegen"]
+__all__ = ["CodegenAnswer", "CodegenRequest", "codegen"]
 
 #: The bench pipeline whose output Alloy renders: the canonical parallel form.
 PIPELINE = "canon_cpu"
@@ -34,26 +30,12 @@ REPORT_CHARS = 20_000
 
 
 class CodegenRequest(pydantic.BaseModel):
-    """One tool call: the kernel, the mode, the graded precision and the folder the answer is written into."""
-
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 
     kernel: str
     mode: Mode
     precision: Precision
     folder: str
-
-
-class ScopeChoice(pydantic.BaseModel):
-    """The candidate a scope's translation unit holds, and how the Makefile compiles it."""
-
-    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
-
-    symbol: str
-    candidate: str
-    compiler: str
-    flags: tuple[str, ...]
-    source: str
 
 
 class CodegenAnswer(pydantic.BaseModel):
@@ -66,7 +48,7 @@ class CodegenAnswer(pydantic.BaseModel):
     workspace_bytes: str
     folder: str
     make: str
-    scopes: tuple[ScopeChoice, ...]
+    scopes: tuple[BestScope, ...]
     report: str
     #: Scope symbol -> why Alloy left it short and how to finish it by hand, with the target's intrinsics.
     advice: dict[str, str] = {}
@@ -95,10 +77,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
         raise api.NothingToGenerate(
             f"{spec.short_name}: no loop nest outlines into a scope, so Alloy has nothing to generate"
         )
-    manifest = inputs.load(
-        paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml",
-        datatype=numpy_dtype(request.precision).__name__,
-    )
+    manifest = manifest_of(spec, request.precision)
     out = pathlib.Path(request.folder)
     result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode)
     if result.best is None or not result.winners:
@@ -119,10 +98,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
         workspace_bytes=workspace,
         folder=str(best),
         make=shlex.join(["make", "-C", str(best)]),
-        scopes=tuple(
-            ScopeChoice(symbol=s.symbol, candidate=s.candidate, compiler=s.compiler, flags=s.flags, source=s.source)
-            for s in result.best.scopes
-        ),
+        scopes=result.best.scopes,
         report=report[:REPORT_CHARS]
         + (f"\n[cut: the rest is in {result.report}]" if len(report) > REPORT_CHARS else ""),
         advice=result.advice or {},

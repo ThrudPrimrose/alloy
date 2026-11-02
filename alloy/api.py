@@ -23,6 +23,9 @@ from alloy.heuristics import predict
 from alloy.heuristics.predict import Predictions
 from alloy.report import Mode
 
+#: Fuzz draws candidates are verified on.
+ITERATIONS = 2
+
 
 class NothingToGenerate(ValueError):
     """The program has no scope Alloy can take."""
@@ -46,15 +49,15 @@ class Result:
     advice: dict[str, str] | None = None
 
 
-def test_cases(program: Program, manifest: Manifest | None, iterations: int) -> verify.Cases | None:
+def test_cases(program: Program, manifest: Manifest | None) -> verify.Cases | None:
     """The draws candidates are verified on: the manifest's, or without one, draws derived from the SDFG when any
     value is a valid input (:func:`inputs.domain_gap`) and the bench's tolerance band is installed; else ``None``."""
     if manifest is not None:
-        return verify.Cases([inputs.draw(manifest, i) for i in range(iterations)], manifest.outputs)
+        return verify.Cases([inputs.draw(manifest, i) for i in range(ITERATIONS)], manifest.outputs)
     original = program.original
     if inputs.domain_gap(original) or importlib.util.find_spec("hpcagent_bench") is None:
         return None
-    return verify.Cases([inputs.derived_draw(original, i) for i in range(iterations)], inputs.derived_outputs(original))
+    return verify.Cases([inputs.derived_draw(original, i) for i in range(ITERATIONS)], inputs.derived_outputs(original))
 
 
 def roofline_sizes(program: Program, manifest: Manifest | None, matrix: Matrix) -> dict[str, int] | None:
@@ -70,6 +73,33 @@ def roofline_sizes(program: Program, manifest: Manifest | None, matrix: Matrix) 
     return timing.sized(program.original, program.original, {str(k): v for k, v in base.items()}, target, target)
 
 
+def predicted_winners(
+    reports: list[ScopeReport],
+    verification: Verification | None,
+    predicted: Predictions,
+    matrix: Matrix,
+    *,
+    finite_inputs: bool,
+) -> dict[str, Build]:
+    """Each scope's predicted pick; with nothing to check a variant, its default build."""
+    if verification is None:
+        return {rep.scope.symbol: rep.builds[0] for rep in reports}
+    verdicts = verification.verdicts
+    return {
+        rep.scope.symbol: predict.choose(
+            rep, verdicts.get(rep.scope.symbol, {}), predicted, matrix, finite_inputs=finite_inputs
+        )
+        for rep in reports
+    }
+
+
+def timed_winners(reports: list[ScopeReport], timings: Timings) -> dict[str, Build]:
+    """Each scope's fastest; every default build when the fastest together leave the band, as scopes each in it can."""
+    if not timings.program.arms["alloy_full"].verdict.ok:
+        return {rep.scope.symbol: rep.builds[0] for rep in reports}
+    return {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
+
+
 def generate(
     sdfg: dace.SDFG,
     out: pathlib.Path,
@@ -77,12 +107,11 @@ def generate(
     manifest: Manifest | None = None,
     matrix: Matrix | None = None,
     finite_inputs: bool = False,
-    iterations: int = 2,
     time_locally: bool = True,
     mode: Mode = Mode.PROFILE,
 ) -> Result:
     """Outline ``sdfg`` into scopes and build every candidate under ``out``, then verify them on the manifest's
-    ``iterations`` fuzz draws (without a manifest, on draws derived from ``sdfg`` when any value is a valid input:
+    fuzz draws (without a manifest, on draws derived from ``sdfg`` when any value is a valid input:
     :func:`test_cases`). In profile mode (a manifest is required), when ``time_locally``, time the survivors and link
     the fastest; a caller that times elsewhere (a benchmark's judge) passes ``time_locally=False``. In speculative mode
     link the ones :func:`predict.choose` picks, untimed, or each scope's default build when nothing was verified.
@@ -96,43 +125,22 @@ def generate(
     out.mkdir(parents=True, exist_ok=True)
     reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs)
     timings, best, commands, predicted, picked = None, None, None, None, None
-    cases = test_cases(program, manifest, iterations)
+    cases = test_cases(program, manifest)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
+    linker = Linker(program, matrix, out)
     winners: dict[str, Build] = {}
     if mode == Mode.SPECULATIVE:
         predicted = predict.predictions(reports, roofline_sizes(program, manifest, matrix))
-        verdicts = verification.verdicts if verification else {}
-        winners = {
-            rep.scope.symbol: predict.choose(
-                rep, verdicts.get(rep.scope.symbol, {}), predicted, matrix, finite_inputs=finite_inputs
-            )
-            if verification is not None
-            else rep.builds[0]  # nothing checked a variant: the default build ships
-            for rep in reports
-        }
+        winners = predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs)
         picked = {symbol: b.name for symbol, b in winners.items()}
     elif verification is not None and manifest is not None and time_locally:
-        timings = timing.time_program(Linker(program, matrix, out), reports, verification, manifest)
-        winners = {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
-        if not timings.program.arms["alloy_full"].verdict.ok:  # scopes each in band can compound past it together
-            winners = {rep.scope.symbol: rep.builds[0] for rep in reports}
+        timings = timing.time_program(linker, reports, verification, manifest)
+        winners = timed_winners(reports, timings)
     if winners:
-        linker = Linker(program, matrix, out)
         best = linker.write_best(winners)
         commands = linker.commands(best)
     verdicts = verification.verdicts if verification else {}
     host_isas = matrix.host_isas(machine.cpu_flags())
     advice = guidance.guidance(reports, verdicts, winners, host_isas, finite_inputs=finite_inputs)
-    report.write(
-        program,
-        reports,
-        matrix,
-        out,
-        verification,
-        timings,
-        commands,
-        predicted=predicted,
-        picked=picked,
-        advice=advice,
-    )
+    report.write(program, reports, matrix, out, verification, timings, commands, predicted, picked, advice)
     return Result(program, reports, verification, timings, best, out / "report.md", predicted, winners, advice)

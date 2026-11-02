@@ -1,8 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""The instruction lookup table: every abstract math op (:mod:`alloy.isa.ops`) spelled per ISA and dtype,
-loaded from the checked-in ``intrinsics.toml`` and indexed in both directions — op -> intrinsic for
-writing vector code, intrinsic or assembly mnemonic -> op for reading a build's source or disassembly
-back into math."""
+"""The instruction lookup table: every abstract math op (:mod:`alloy.isa.ops`) spelled per ISA and dtype, loaded from
+``intrinsics.toml`` and indexed both ways: op -> intrinsic, and intrinsic or mnemonic -> op."""
 
 import dataclasses
 import difflib
@@ -11,7 +9,7 @@ import math
 import pathlib
 import re
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic.dataclasses import dataclass
@@ -19,8 +17,7 @@ from pydantic.dataclasses import dataclass
 from alloy.isa.ops import OPS
 from alloy.records import Strings
 
-#: Parsed-table records: unknown keys refused, coercion allowed like configuration_matrix's STRICT; the stricter
-#: invariants live in :func:`checked`.
+#: Parsed-table records: unknown keys refused, coercion allowed; the stricter invariants live in :func:`checked`.
 TABLE = ConfigDict(extra="forbid")
 
 __all__ = [
@@ -45,38 +42,29 @@ __all__ = [
     "reverse",
 ]
 
-#: The element types the table covers: the float lanes f64/f32 (full op coverage required), the
-#: optional half-precision lane f16 (arithmetic subset, where the hardware has it), and the integer
-#: lanes i64/i32 (the bitwise, shift and logical ops, and integer mod).
+#: Lanes: f64/f32 hold every op, f16 is optional with an arithmetic subset, i64/i32 hold :data:`INT_OPS`.
 DTYPES = ("f64", "f32")
 F16 = "f16"
 INT_DTYPES = ("i64", "i32")
 ALL_DTYPES = DTYPES + (F16,) + INT_DTYPES
 
-#: The dtypes every ISA must fully cover.
 REQUIRED_DTYPES = set(DTYPES) | set(INT_DTYPES)
 
-#: Integer-lane ops: ``and``/``or``/``shl``/``shr``/``land``/``lor`` exist only under i64/i32; the rest of
-#: INT_OPS also under the float dtypes, ``mod`` as fmod on f64/f32 only.
+#: :data:`INT_ONLY_OPS` exist only under i64/i32; the rest of INT_OPS also on floats, ``mod`` as fmod there.
 INT_ONLY_OPS = frozenset({"and", "or", "shl", "shr", "land", "lor"})
 INT_OPS = INT_ONLY_OPS | {"mod", "add", "sub", "mul", "min", "max", "load", "store", "broadcast", "lt"}
 
-#: The shipped table.
 DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"
 
-#: Matrix ISA names that are another ISA under a compiler width knob: ``avx512_256`` is AVX-512 under
-#: ``-mprefer-vector-width=256``, which steers only the autovectorizer (a sweep knob, not a target).
+#: ``avx512_256`` is AVX-512 under ``-mprefer-vector-width=256``, which steers only the autovectorizer.
 ALIASES = {"avx512_256": "avx512"}
-#: Every ISA name a lookup error offers.
 KNOWN_ISAS = "avx2, avx512, neon, sve (avx512_256 is a compiler width knob, not a target)"
 
 #: An fma family form as the assembler prints it: ``vfnmadd231pd`` -> mnemonic ``vfnmadd``, dtype f64.
 FMA_FORM = re.compile(r"^(vfn?m(?:add|sub))(?:132|213|231)?[ps]([dsh])$")
-#: The last letter of an fma form -> its dtype.
 FMA_DTYPE = {"d": "f64", "s": "f32", "h": "f16"}
 
-#: A disassembler may suffix a mnemonic with flags (an EVEX ``vaddpd.z``); no mnemonic in the table
-#: contains a dot, so the part before it is the mnemonic.
+#: A disassembler's flag suffix (an EVEX ``vaddpd.z``); no mnemonic of the table holds a dot.
 DOT_SUFFIX = re.compile(r"^([a-z0-9]+)\.[a-z]+$")
 
 #: An intrinsic named anywhere in free text: a bare recipe step, or a prose step or masked note citing one.
@@ -86,20 +74,14 @@ SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_
 SVE_POLICY = re.compile(r"^(sv\w+)_[mz]$")
 AVX512_MASKED = re.compile(r"^(_mm\d*)_(?:maskz|mask3)_(\w+)$")
 
-#: Bytes per lane, the invariant between an ISA's width and its lane counts.
 LANE_BYTES = {"f64": 8, "f32": 4, "f16": 2, "i64": 8, "i32": 4}
 
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Entry:
-    """One op spelling: the C intrinsic (when one instruction exists) or a composite ``recipe``, the
-    assembly mnemonic for reading disassembly, the C ``signature``, the lane ``semantics``, an optional
-    ``masked`` variant (mask/predication-capable ISAs), and a ``note`` for the traps (operand order).
-    ``observed`` lists further mnemonics compilers print for the row, which reverse lookup reads back.
-
-    Transcendentals (no native instruction on the covered ISAs) carry no intrinsic and no recipe but a
-    list of ``approximations`` — keys into :attr:`Table.approx`, polynomial tiers with measured ULP
-    error — and ``libraries``, the vector math library call per veclib (libmvec/SVML/SLEEF/ArmPL)."""
+    """One op spelling: the intrinsic or a composite ``recipe``, the ``mnemonic`` (``observed``: others compilers
+    print), and a ``note`` for the traps. A transcendental has neither intrinsic nor recipe: ``approximations`` keys
+    :attr:`Table.approx` and ``libraries`` gives the vector math call per veclib."""
 
     mnemonic: str = ""
     intrinsic: str = ""
@@ -115,9 +97,8 @@ class Entry:
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Approx:
-    """One polynomial tier of a transcendental: the ``domain`` it is valid on (after the range
-    reduction it assumes), the measured ``error_ulp`` and ``error_abs``, and the Horner ``recipe`` in
-    abstract-op steps (fma/mul with inline coefficients) — the copyable implementation."""
+    """One polynomial tier of a transcendental: the ``domain`` it holds on after range reduction, its measured
+    errors, and the Horner ``recipe`` in abstract-op steps."""
 
     op: str
     domain: str
@@ -129,9 +110,7 @@ class Approx:
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Assist:
-    """A hardware assist the survey surfaced but that is not an abstract op: a single intrinsic that
-    helps implement one (the `helps` op), with the
-    assembly mnemonic for reading disassembly and a note on what it does. ``helps`` is an abstract op."""
+    """A single intrinsic that is no abstract op but helps implement the one in ``helps``."""
 
     name: str
     mnemonic: str
@@ -141,10 +120,7 @@ class Assist:
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class ScheduleInfo:
-    """One loop schedule: what it is and how it handles the tail (the vectorizer knob it maps to in
-    the matrix's ``[tails]``; ``scalar`` and ``scalar_remainder`` keep the remainder a scalar loop,
-    ``masked_remainder`` masks only the epilogue, ``full_mask`` masks every iteration, and
-    ``sve_intrinsics`` renders explicit predicated SVE loops)."""
+    """One loop schedule: what it is, and how it handles the tail (the vectorizer knob of the matrix's ``[tails]``)."""
 
     title: str
     description: str
@@ -155,12 +131,9 @@ class ScheduleInfo:
 
 @dataclass(slots=True, frozen=True, config=TABLE)
 class Isa:
-    """One vector ISA: its machine model (vector width, lanes per dtype, mask capability, legal loop
-    schedules, the ``gen_mask`` spelling) and the op table per dtype. ``vector_bytes`` 0 and ``lanes``
-    0 mean length-agnostic (SVE: the runtime ``svcntd()``). f64/f32 and i64/i32 carry every op the
-    abstract ISA defines; f16 is optional, holds the arithmetic subset, and records AVX2's convert-to-
-    f32 emulation as recipes. ``embedded_broadcast`` marks ISAs (AVX-512 EVEX) where a scalar operand
-    fuses into an arithmetic instruction as a broadcast memory operand."""
+    """One vector ISA: its machine model and its op table per dtype. ``vector_bytes`` and ``lanes`` 0 mean
+    length-agnostic (SVE). ``embedded_broadcast``: a scalar operand fuses into an arithmetic instruction as a
+    broadcast memory operand (AVX-512 EVEX)."""
 
     title: str
     vector_bytes: int
@@ -178,22 +151,18 @@ class Isa:
     assists: tuple[Assist, ...] = ()
 
     def entries(self, dtype: str) -> dict[str, Entry]:
-        """The op table of ``dtype``."""
         return {"f64": self.f64, "f32": self.f32, "f16": self.f16, "i64": self.i64, "i32": self.i32}[dtype]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class AssistHit:
-    """One reverse-lookup match over the assists: ``name`` is ``assist`` on ``isa``."""
-
     isa: str
     assist: Assist
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Hit:
-    """One reverse-lookup match: ``name`` spelled ``entry`` on ``isa``/``dtype`` as abstract ``op``, reached via the
-    intrinsic, a recipe step, the mnemonic, or ``step``: one mnemonic of a composite, not the op's whole math."""
+    """One reverse-lookup match; ``via`` ``step`` is one mnemonic of a composite, not the op's whole math."""
 
     isa: str
     dtype: str
@@ -204,8 +173,7 @@ class Hit:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Table:
-    """The parsed table and both indexes: ISAs, the shared approximation tiers, the schedule
-    metadata, and the reverse maps."""
+    """The parsed table and its reverse indexes."""
 
     isas: dict[str, Isa]
     approx: dict[str, Approx]
@@ -216,7 +184,6 @@ class Table:
     by_assist: dict[str, tuple[AssistHit, ...]]
 
     def isa(self, name: str) -> Isa:
-        """``name``'s ISA (aliases resolved), or ``KeyError`` naming the known ISAs."""
         key = ALIASES.get(name, name)
         try:
             return self.isas[key]
@@ -239,12 +206,8 @@ class Table:
         return entries[op]
 
     def reverse(self, name: str) -> tuple[Hit, ...]:
-        """Every ``(isa, op, dtype)`` an intrinsic, mnemonic or library call spells, or an empty tuple.
-
-        Accepts a C intrinsic (``_mm256_add_pd``), a composite recipe step, a vector math library call
-        (``_ZGVdN4v_sin``, ``_mm512_exp_pd``), or a mnemonic as a disassembler prints it (``vaddpd``,
-        ``vfmadd231pd``, ``fmla``, ``ld1d``, a ``.z``-suffixed EVEX form, any letter case). A mnemonic that
-        is only one step of a composite (``vfnmadd231pd`` in fmod) matches the composite."""
+        """Every ``(isa, op, dtype)`` an intrinsic, recipe step, library call or mnemonic spells, or an empty tuple.
+        A mnemonic takes any letter case, operands and an EVEX ``.z``; one step of a composite matches the composite."""
         token = normalized(name)
         if hits := self.by_intrinsic.get(token) or self.by_intrinsic.get(masked_form(token)):
             return hits
@@ -254,14 +217,12 @@ class Table:
         return self.mnemonic_hits(token)
 
     def mnemonic_hits(self, token: str) -> tuple[Hit, ...]:
-        """The rows a mnemonic spells whole, then those it is one step of."""
         whole = self.by_mnemonic.get(token, ())
         seen = {(h.isa, h.dtype, h.op) for h in whole}
         return whole + tuple(h for h in self.by_part.get(token, ()) if (h.isa, h.dtype, h.op) not in seen)
 
     def assist(self, name: str) -> tuple[AssistHit, ...]:
-        """Every assist an intrinsic or mnemonic names (e.g. ``_mm512_scalef_pd``, ``svexpa_f64``,
-        ``vreducepd``), or an empty tuple."""
+        """Every assist an intrinsic or mnemonic names, or an empty tuple."""
         token = normalized(name)
         return self.by_assist.get(token) or self.by_assist.get(token.lower(), ())
 
@@ -273,7 +234,7 @@ def suggestion(name: str, known: Iterable[str]) -> str:
 
 
 def normalized(name: str) -> str:
-    """The first word of a disassembly line or a name: operands, a comma and an EVEX ``.z`` suffix dropped."""
+    """The first word of a disassembly line: operands, a comma and an EVEX ``.z`` suffix dropped."""
     words = name.strip().split(maxsplit=1)
     token = words[0].split(",", 1)[0] if words else ""
     m = DOT_SUFFIX.match(token.lower())
@@ -291,7 +252,6 @@ def masked_form(token: str) -> str:
 
 
 def assist_hits(isas: dict[str, Isa]) -> dict[str, tuple[AssistHit, ...]]:
-    """The reverse index over the assists, by intrinsic name and by mnemonic."""
     index: dict[str, list[AssistHit]] = {}
     for isa_name, isa in isas.items():
         for assist in isa.assists:
@@ -307,29 +267,34 @@ def mnemonic_parts(mnemonic: str) -> list[str]:
     return [word for word in words if word not in ("op", "...")]
 
 
+def intrinsic_names(entry: Entry) -> Iterator[tuple[str, str]]:
+    """Every name of ``entry`` the intrinsic index holds, and how it spells the row."""
+    if entry.intrinsic:
+        yield entry.intrinsic, "intrinsic"
+    yield from ((name, "masked") for name in dict.fromkeys(SPELLED.findall(entry.masked)))
+    steps = (name for step in entry.recipe for name in SPELLED.findall(step))
+    yield from ((name, "recipe") for name in dict.fromkeys(steps))
+    yield from ((call, "library") for call in entry.libraries.values())
+
+
+def mnemonic_names(entry: Entry) -> list[str]:
+    return ([entry.mnemonic] if entry.mnemonic else []) + [n for n in entry.observed if n != entry.mnemonic]
+
+
 def entry_hits(isas: dict[str, Isa]) -> tuple[dict[str, tuple[Hit, ...]], ...]:
-    """The reverse indexes over every entry: by intrinsic (and recipe step), by mnemonic, and by the
-    mnemonics inside a composite."""
+    """The reverse indexes over every entry: by intrinsic, by mnemonic, and by the mnemonics inside a composite."""
     by_intrinsic: dict[str, list[Hit]] = {}
     by_mnemonic: dict[str, list[Hit]] = {}
     by_part: dict[str, list[Hit]] = {}
     for isa_name, isa in isas.items():
         for dtype in ALL_DTYPES:
             for op, entry in isa.entries(dtype).items():
-                if entry.intrinsic:
-                    by_intrinsic.setdefault(entry.intrinsic, []).append(Hit(isa_name, dtype, op, entry, "intrinsic"))
-                for name in dict.fromkeys(SPELLED.findall(entry.masked)):
-                    by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "masked"))
-                for name in dict.fromkeys(name for step in entry.recipe for name in SPELLED.findall(step)):
-                    by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "recipe"))
-                for call in entry.libraries.values():
-                    by_intrinsic.setdefault(call, []).append(Hit(isa_name, dtype, op, entry, "library"))
-                if entry.mnemonic:
-                    by_mnemonic.setdefault(entry.mnemonic, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
-                    for part in dict.fromkeys(mnemonic_parts(entry.mnemonic)):
-                        by_part.setdefault(part, []).append(Hit(isa_name, dtype, op, entry, "step"))
-                for name in (n for n in entry.observed if n != entry.mnemonic):
+                for name, via in intrinsic_names(entry):
+                    by_intrinsic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, via))
+                for name in mnemonic_names(entry):
                     by_mnemonic.setdefault(name, []).append(Hit(isa_name, dtype, op, entry, "mnemonic"))
+                for part in dict.fromkeys(mnemonic_parts(entry.mnemonic)):
+                    by_part.setdefault(part, []).append(Hit(isa_name, dtype, op, entry, "step"))
     return tuple({key: tuple(hits) for key, hits in index.items()} for index in (by_intrinsic, by_mnemonic, by_part))
 
 
@@ -350,7 +315,6 @@ def checked_float_entry(where: str, op: str, entry: Entry, approx: dict[str, App
 
 
 def checked_spelling(where: str, entry: Entry) -> None:
-    """A spelled row has exactly one of intrinsic and recipe, and a mnemonic."""
     if bool(entry.intrinsic) == bool(entry.recipe):
         raise ValueError(f"{where} sets exactly one of intrinsic, recipe")
     if not entry.mnemonic:
@@ -358,7 +322,6 @@ def checked_spelling(where: str, entry: Entry) -> None:
 
 
 def checked_entry(where: str, op: str, entry: Entry, integer: bool, isa: Isa, approx: dict[str, Approx]) -> None:
-    """One row against its op and its ISA."""
     if op not in OPS:
         raise ValueError(f"{where} is not an abstract op")
     if entry.approximations and OPS[op].kind != "transcendental":
@@ -374,7 +337,6 @@ def checked_entry(where: str, op: str, entry: Entry, integer: bool, isa: Isa, ap
 
 
 def checked_tiers(approx: dict[str, Approx], path: pathlib.Path) -> None:
-    """Every tier names an abstract op and carries a recipe, a domain and finite positive errors."""
     for name, tier in approx.items():
         if tier.op not in OPS:
             raise ValueError(f"{path}: [approx.{name}].op {tier.op!r} is not an abstract op")
@@ -386,9 +348,7 @@ def checked_tiers(approx: dict[str, Approx], path: pathlib.Path) -> None:
             raise ValueError(f"{path}: [approx.{name}] needs a finite error_abs")
 
 
-def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo], path: pathlib.Path) -> None:
-    """The ISA's machine model: schedules, masks, widths and lanes agree."""
-    where = f"{path}: [isa.{isa_name}]"
+def checked_schedules(where: str, isa: Isa, schedules: dict[str, ScheduleInfo]) -> None:
     unknown = [s for s in isa.schedules if s not in schedules]
     if unknown:
         raise ValueError(f"{where}.schedules cites unknown [schedules] {unknown}")
@@ -398,6 +358,12 @@ def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo],
         raise ValueError(f"{where} has no mask, so no masked schedule and no gen_mask")
     if isa.mask and not isa.gen_mask:
         raise ValueError(f"{where} has masks but no gen_mask spelling")
+
+
+def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo], path: pathlib.Path) -> None:
+    """The ISA's machine model: schedules, masks, widths and lanes agree."""
+    where = f"{path}: [isa.{isa_name}]"
+    checked_schedules(where, isa, schedules)
     lanes = set(REQUIRED_DTYPES) | ({F16} if isa.f16 else set())
     if set(isa.lanes) != lanes:
         raise ValueError(f"{where}.lanes must cover {sorted(lanes)}")
@@ -409,7 +375,6 @@ def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo],
 
 
 def checked_coverage(isa_name: str, isa: Isa, dtype: str, path: pathlib.Path) -> None:
-    """The ops ``dtype``'s table must hold; f16 is optional and holds a subset."""
     entries = isa.entries(dtype)
     where = f"{path}: [isa.{isa_name}.{dtype}]"
     if not entries and dtype in REQUIRED_DTYPES:
@@ -453,7 +418,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
 
 
 def lookup(isa: str, op: str, dtype: str, table: Table | None = None) -> Entry:
-    """The ``(isa, op, dtype)`` entry: the spelling, signature, semantics and traps."""
+    """The ``(isa, op, dtype)`` entry."""
     return (table or load()).entry(isa, op, dtype)
 
 

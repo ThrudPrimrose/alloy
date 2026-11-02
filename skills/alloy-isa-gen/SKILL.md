@@ -72,11 +72,11 @@ say so in the `clang` field — an honest refusal beats a wrong flag.
   `_kand_mask16` (alias of `_mm512_kand`). The header test greps `name\s*(`, so keep macros out of
   `recipe` lists (use them in `note` text). FP16 fma is `_mm512_fmadd_ph`, not `_mm512_fma_ph`;
   the 64-bit broadcast is `_mm256_set1_epi64x` (with an x).
-- **A kernel must run the table's own spelling.** `validate._body` builds calls from `entry.intrinsic` and
+- **A kernel must run the table's own spelling.** `validate.kernel_body` builds calls from `entry.intrinsic` and
   `entry.recipe`; `unexercised` turns a kernel that skips one into "unverified". Hardcoding the name back
   makes the gate pass on any mapping. `tests/test_isa_validate.py` swaps in wrong spellings to prove this.
 - **Compare with the lane's own type and watch NaN.** An f32 lane is checked against `sqrtf`/`fmaf`, not the
-  double libm; kernels use non-dyadic inputs and negative lanes, and `TRACK_ERROR` keeps a NaN (a plain
+  double libm; kernels use non-dyadic inputs and negative lanes, and `track_error` keeps a NaN (a plain
   `>` drops it). A kernel with a constant reference proves nothing.
 - **Function definitions may have a space before the paren** (`_mm256_set1_epi64x (`) — the test's
   regex tolerates it; your grep should too (`\bname\b`).

@@ -10,6 +10,7 @@ branch and holds only under its contract (finite inputs in ``domain``). ``fast``
 import ast
 import dataclasses
 import functools
+import math
 import pathlib
 import re
 import tomllib
@@ -91,9 +92,9 @@ class Spelled:
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def load_kernels(path: pathlib.Path = KERNELS_PATH) -> dict[tuple[str, str, str], Kernel]:
-    """Every kernel of ``path``, keyed by ``(function, dtype, level)``."""
-    with path.open("rb") as handle:
+def load_kernels() -> dict[tuple[str, str, str], Kernel]:
+    """Every kernel, keyed by ``(function, dtype, level)``."""
+    with KERNELS_PATH.open("rb") as handle:
         data = tomllib.load(handle)
     out = {}
     for fn, dtypes in data.items():
@@ -118,8 +119,8 @@ def load_kernels(path: pathlib.Path = KERNELS_PATH) -> dict[tuple[str, str, str]
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def load_prims(path: pathlib.Path = PRIMS_PATH) -> dict:
-    with path.open("rb") as handle:
+def load_prims() -> dict:
+    with PRIMS_PATH.open("rb") as handle:
         return tomllib.load(handle)["prims"]
 
 
@@ -148,6 +149,8 @@ def expand(template: str, fields: dict[str, str], args: tuple[str, ...] = ()) ->
 
 def literal(value: float, dtype: str) -> str:
     """``value`` as a C literal of the lane type."""
+    if math.isnan(value):
+        return "NAN"
     if value in (float("inf"), float("-inf")):
         text = "INFINITY" if value > 0 else "-INFINITY"
         return text if dtype == "f32" else f"(double){text}"
@@ -160,8 +163,8 @@ class Renderer:
 
     __slots__ = ("count", "dtype", "fields", "ops")
 
-    def __init__(self, isa: str, dtype: str, prims: dict | None = None) -> None:
-        table = (prims or load_prims())[isa]
+    def __init__(self, isa: str, dtype: str) -> None:
+        table = load_prims()[isa]
         self.fields = table["fields"][dtype]
         self.ops = {**table["ops"], **table.get("overrides", {}).get(dtype, {})}
         self.dtype = dtype
@@ -257,9 +260,9 @@ def refuse_reassociation(advice: str) -> tuple[str, ...]:
 NO_REASSOCIATION = ("#if defined(__clang__)", "#pragma clang fp reassociate(off)", "#endif")
 
 
-def render(k: Kernel, isa: str, prims: dict | None = None) -> Spelled:
+def render(k: Kernel, isa: str) -> Spelled:
     """``k`` as a C function for ``isa``."""
-    r = Renderer(isa, k.dtype, prims)
+    r = Renderer(isa, k.dtype)
     vec = r.fields["vec"]
     params = ", ".join(f"{vec} {name}" for name in k.args)
     refuses = k.level == "strict" or k.fn in NEEDS_IEEE

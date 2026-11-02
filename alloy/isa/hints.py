@@ -10,7 +10,7 @@ import ast
 import dataclasses
 from collections import Counter
 
-from alloy.isa.mathcheck import validate_kernel
+from alloy.isa.mathcheck import HEADERS, validate_kernel
 from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, render, target_of
 from alloy.isa.ops import OPS
 from alloy.isa.table import DTYPES, Table, load
@@ -32,78 +32,28 @@ OP_NAMES: dict[type, str] = {
     ast.RShift: "shr",
 }
 
-#: Function calls a tasklet may make -> abstract op names (sqrt and the transcendentals the table tiers).
+#: Function calls a tasklet may make -> abstract op names: the renamed ones, then those spelled like their op.
 CALL_NAMES: dict[str, str] = {
-    "sqrt": "sqrt",
     "fabs": "abs",
-    "abs": "abs",
     "fmod": "mod",
     "py_mod": "mod",
     "PyMod": "mod",
     "ITE": "select",
-    "sin": "sin",
-    "cos": "cos",
-    "exp": "exp",
-    "min": "min",
-    "max": "max",
     "ln": "log",
-    "log": "log",
-    "log2": "log2",
-    "log10": "log10",
-    "log1p": "log1p",
-    "exp2": "exp2",
-    "exp10": "exp10",
-    "expm1": "expm1",
-    "tan": "tan",
-    "atan": "atan",
-    "asin": "asin",
-    "acos": "acos",
-    "sinh": "sinh",
-    "cosh": "cosh",
-    "tanh": "tanh",
-    "pow": "pow",
+    **{
+        name: name
+        for name in (
+            "sqrt abs sin cos tan exp exp2 exp10 expm1 min max log log2 log10 log1p atan asin acos sinh cosh tanh pow"
+        ).split()
+    },
 }
 
 #: Ops a tasklet's arithmetic maps to, in a readable order.
-OP_ORDER = (
-    "reduce_add",
-    "fma",
-    "sin",
-    "cos",
-    "tan",
-    "exp",
-    "exp2",
-    "exp10",
-    "expm1",
-    "log",
-    "log2",
-    "log10",
-    "log1p",
-    "pow",
-    "atan",
-    "asin",
-    "acos",
-    "sinh",
-    "cosh",
-    "tanh",
-    "sqrt",
-    "mod",
-    "div",
-    "mul",
-    "add",
-    "sub",
-    "min",
-    "max",
-    "abs",
-    "neg",
-    "lt",
-    "select",
-    "and",
-    "or",
-    "shl",
-    "shr",
-    "land",
-    "lor",
+OP_ORDER = tuple(
+    (
+        "reduce_add fma sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow atan asin acos sinh cosh tanh sqrt mod "
+        "div mul add sub min max abs neg lt select and or shl shr land lor"
+    ).split()
 )
 
 
@@ -279,7 +229,7 @@ def op_spelling(
 def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
     """One line naming ``fn``'s three kernels and the one this build should take; the C is one CLI call away."""
     target = target_of(isa)
-    if target not in KERNEL_ISAS or dtype not in DTYPES:
+    if target not in HEADERS or dtype not in DTYPES:
         return f"no kernel for {isa}/{dtype}"
     levels = ", ".join(
         f"{level} {(k := kernel(fn, dtype, level)).error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)"
@@ -318,8 +268,6 @@ def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None, recomm
         hints.append(Hint(use, use_kind(use), spellings))
     return hints
 
-
-KERNEL_ISAS = ("avx2", "avx512", "neon", "sve")
 
 VERDICT_WORDS = {
     True: "verified on this host",

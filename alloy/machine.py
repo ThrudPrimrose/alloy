@@ -57,7 +57,6 @@ def cpu_flags() -> frozenset[str]:
 
 
 def available_memory() -> int:
-    """``MemAvailable`` from ``/proc/meminfo``, in bytes."""
     for line in pathlib.Path("/proc/meminfo").read_text().splitlines():
         if line.startswith("MemAvailable:"):
             return int(line.split()[1]) * 1024
@@ -73,8 +72,7 @@ CHILD_BASELINE_BYTES = 1 << 30
 
 
 def timing_memory_cap() -> int:
-    """Bytes one timed program may touch: what fits the :data:`TIMING_COPIES` copies alive at once, and a verifying
-    child's share of memory (each core slot holds one child, about three copies of the program)."""
+    """Bytes one timed program may touch: its copies alive at once, and a verifying child's share of memory."""
     return min(available_memory() // TIMING_COPIES, available_memory() // (len(core_slots()) * 3))
 
 
@@ -121,8 +119,7 @@ STREAM_BYTES_PER_THREAD = 64 << 20
 
 @dataclass(slots=True, frozen=True)
 class Bandwidth:
-    """Main-memory bandwidth in bytes per second and where it comes from: ``dmidecode`` (the installed modules'
-    theoretical peak) or ``stream`` (a measured parallel copy)."""
+    """Main-memory bandwidth: from ``dmidecode`` (the modules' theoretical peak) or ``stream`` (a measured copy)."""
 
     bytes_per_second: float
     source: str
@@ -134,7 +131,6 @@ def memory_devices_file() -> pathlib.Path:
 
 
 def memory_devices_text() -> str:
-    """``dmidecode -t 17`` output: the saved file when there is one, else a direct run; empty when neither works."""
     saved = memory_devices_file()
     if saved.is_file():
         return saved.read_text()
@@ -146,8 +142,7 @@ def memory_devices_text() -> str:
 
 
 def theoretical_bandwidth(text: str) -> float | None:
-    """The installed modules' peak in bytes per second: the sum of configured MT/s x data width over every device
-    with a module; ``None`` when the text lists none with a speed and a width."""
+    """The installed modules' peak in bytes per second, or ``None`` when no module lists a speed and a width."""
     total = 0.0
     for device in text.split("Memory Device")[1:]:
         if re.search(r"^\s*Size:\s*No Module Installed", device, re.MULTILINE):
@@ -162,8 +157,7 @@ def theoretical_bandwidth(text: str) -> float | None:
 
 
 def stream_bandwidth(threads: int, rounds: int = 3) -> float:
-    """A measured parallel copy: every thread copies its own arrays (numpy releases the GIL), the best of ``rounds``;
-    bytes read plus bytes written per second."""
+    """The best of ``rounds`` parallel copies (numpy releases the GIL), in bytes read plus written per second."""
     sources = [np.ones(STREAM_BYTES_PER_THREAD // 8) for _ in range(threads)]
     targets = [np.empty_like(s) for s in sources]
     best = 0.0
@@ -177,7 +171,6 @@ def stream_bandwidth(threads: int, rounds: int = 3) -> float:
 
 @functools.lru_cache(maxsize=1, typed=True)
 def memory_bandwidth() -> Bandwidth:
-    """Main-memory bandwidth: the theoretical peak from ``dmidecode -t 17`` when available, else measured."""
     peak = theoretical_bandwidth(memory_devices_text())
     if peak is not None:
         return Bandwidth(peak, "dmidecode")

@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve")
     kernel_p.add_argument("function", help="sin, cos, tan, exp, exp2, exp10, expm1, log (ln), log2, log10, log1p, ...")
     kernel_p.add_argument("dtype", help="f64 or f32")
-    kernel_p.add_argument("--level", choices=("strict", "relaxed", "fast"), help="one level; default all three")
+    kernel_p.add_argument("--level", choices=LEVELS, help="one level; default all three")
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
     commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
@@ -189,6 +189,10 @@ def report_failure(verdict: Verdict) -> int:
     return 3
 
 
+#: How a verdict reads in the C comment under an answer.
+MARKS = {True: "verified", None: "unverified", False: "FAILED"}
+
+
 def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
     """The kernels as C. Exit code 3 when one fails its gate."""
     table.isa(isa)
@@ -205,39 +209,48 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
             print(f"// or call {library}: {call}")
         if verify:
             verdict = validate_kernel(k.fn, dtype, name, target)
-            mark = {True: "verified", None: "unverified", False: "FAILED"}[verdict.ok]
-            print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+            print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
             status = 3 if verdict.ok is False else status
         print()
     return status
 
 
-def validate_command(table: Table, args: argparse.Namespace) -> int:
-    """The ``validate`` subcommand: one entry, or every entry the host can run plus every tier."""
-    if args.isa or args.op or args.dtype:
-        if not (args.isa and args.op and args.dtype):
-            print("alloy.isa: validate takes either no arguments or isa op dtype", file=sys.stderr)
-            return 2
-        verdict = validate(args.isa, args.op, args.dtype, table)
-        mark = "PASS" if verdict.ok else ("SKIP" if verdict.ok is None else "FAIL")
-        print(f"{mark} {args.isa}/{args.dtype}/{args.op}: {verdict.basis}; {verdict.detail}")
-        for hit in verdict.candidates:
-            print(f"  candidate: {hit.op} on {hit.isa}/{hit.dtype} ({hit.via})")
-        return 0 if verdict.ok is not False else 3
+def validate_one(table: Table, isa: str, op: str, dtype: str) -> int:
+    """``validate isa op dtype``."""
+    verdict = validate(isa, op, dtype, table)
+    mark = "PASS" if verdict.ok else ("SKIP" if verdict.ok is None else "FAIL")
+    print(f"{mark} {isa}/{dtype}/{op}: {verdict.basis}; {verdict.detail}")
+    for hit in verdict.candidates:
+        print(f"  candidate: {hit.op} on {hit.isa}/{hit.dtype} ({hit.via})")
+    return 0 if verdict.ok is not False else 3
+
+
+def validate_everything(table: Table) -> int:
+    """Every entry the host can run, every tier and every kernel."""
     results = validate_all(table)
     if platform.machine() in ("x86_64", "aarch64"):
         results += validate_kernels()
     failed = [(ident, v) for ident, v in results if v.ok is False]
-    skipped = [(ident, v) for ident, v in results if v.ok is None]
-    for ident, verdict in results:
-        if verdict.ok is False:
-            print(f"FAIL {ident}: {verdict.detail}")
+    skipped = sum(1 for _, v in results if v.ok is None)
+    for ident, verdict in failed:
+        print(f"FAIL {ident}: {verdict.detail}")
+    ran = len(results) - skipped
     print(
-        f"validated {len(results) - len(skipped)} entries, tiers and kernels on this host: "
-        f"{len(results) - len(skipped) - len(failed)} passed, {len(failed)} failed, "
-        f"{len(skipped)} not verifiable here"
+        f"validated {ran} entries, tiers and kernels on this host: {ran - len(failed)} passed, {len(failed)} failed, "
+        f"{skipped} not verifiable here"
     )
     return 3 if failed else 0
+
+
+def validate_command(table: Table, args: argparse.Namespace) -> int:
+    """The ``validate`` subcommand: one entry, or everything."""
+    given = (args.isa, args.op, args.dtype)
+    if all(given):
+        return validate_one(table, args.isa, args.op, args.dtype)
+    if any(given):
+        print("alloy.isa: validate takes either no arguments or isa op dtype", file=sys.stderr)
+        return 2
+    return validate_everything(table)
 
 
 def operand_rule(token: str) -> str:
@@ -345,8 +358,7 @@ def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bo
     print(skeleton(table, isa, schedule, dtype))
     if verify:
         verdict = verify_skeleton(isa, schedule, dtype, table)
-        mark = "verified" if verdict.ok else ("unverified" if verdict.ok is None else "FAILED")
-        print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+        print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
         if verdict.ok is False:
             return 3
     return 0

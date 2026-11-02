@@ -53,38 +53,10 @@ BAD = FakeTier(
 @pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
 @pytest.mark.parametrize(
     ("op", "dtype"),
-    [
-        ("add", "f64"),
-        ("sub", "f32"),
-        ("mul", "f64"),
-        ("div", "f32"),
-        ("fma", "f64"),
-        ("sqrt", "f64"),
-        ("min", "f64"),
-        ("max", "f32"),
-        ("select", "f64"),
-        ("select", "f32"),
-        ("reduce_add", "f64"),
-        ("reduce_add", "f32"),
-        ("gather", "f64"),
-        ("gather", "f32"),
-        ("scatter", "f64"),
-        ("scatter", "f32"),
-        ("mod", "f64"),
-        ("mod", "f32"),
-        ("load", "f64"),
-        ("store", "f64"),
-        ("broadcast", "f64"),
-        ("zero", "f64"),
-        ("and", "i64"),
-        ("or", "i32"),
-        ("shl", "i64"),
-        ("shr", "i32"),
-        ("land", "i64"),
-        ("lor", "i32"),
-    ],
+    [("mul", "f64"), ("min", "f64"), ("max", "f32"), ("mod", "f64"), ("mod", "f32"), ("load", "f64")],
 )
-def test_compiled_kernels_validate_the_avx2_entries(op, dtype):
+def test_a_float_row_of_an_op_with_integer_gaps_validates(op, dtype):
+    """The whole-gate test lets these ops stay unchecked, for their integer rows; their float rows must run."""
     verdict = validate("avx2", op, dtype, TABLE)
 
     assert verdict.ok is True, verdict.detail
@@ -100,28 +72,8 @@ def test_the_avx2_f16_emulation_recipes_validate(op):
 
 
 @pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
-@pytest.mark.parametrize(
-    ("op", "dtype"),
-    [
-        ("add", "f64"),
-        ("fma", "f32"),
-        ("select", "f64"),
-        ("select", "f32"),
-        ("reduce_add", "f64"),
-        ("gather", "f64"),
-        ("gather", "f32"),
-        ("scatter", "f32"),
-        ("gen_mask", "f64"),
-        ("gen_mask", "f32"),
-        ("mod", "f64"),
-        ("and", "i64"),
-        ("shl", "i32"),
-        ("land", "i64"),
-        ("lor", "i32"),
-    ],
-)
-def test_compiled_kernels_validate_the_avx512_entries(op, dtype):
-    verdict = validate("avx512", op, dtype, TABLE)
+def test_the_avx512_fmod_recipe_validates():
+    verdict = validate("avx512", "mod", "f64", TABLE)
 
     assert verdict.ok is True, verdict.detail
 
@@ -186,7 +138,7 @@ def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
         f"{isa}/{dtype}/{op}"
         for isa in ("avx2", *(("avx512",) if AVX512 else ()))
         for dtype in ("f64", "f32", "i64", "i32")
-        for op in getattr(TABLE.isas[isa], dtype)
+        for op in TABLE.isas[isa].entries(dtype)
     } | {f"approx/{name}" for name in TABLE.approx}
     assert expected <= {ident for ident, _ in results}
     assert [(ident, verdict.detail) for ident, verdict in results if verdict.ok is False] == []
@@ -207,10 +159,14 @@ def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
 def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
     """The kernel runs the table's own spelling, so a mapping that compiles but computes otherwise is caught."""
     target = TABLE.isas["avx2"]
-    entries = {**getattr(target, dtype), op: dataclasses.replace(getattr(target, dtype)[op], intrinsic=wrong)}
+    entries = {**target.entries(dtype), op: dataclasses.replace(target.entries(dtype)[op], intrinsic=wrong)}
     fields: dict[str, Any] = {dtype: entries}
     broken = dataclasses.replace(TABLE, isas={**TABLE.isas, "avx2": dataclasses.replace(target, **fields)})
-    assert validate("avx2", op, dtype, broken).ok is False
+
+    sut = validate("avx2", op, dtype, broken)
+
+    assert sut.ok is False
+    assert sut.candidates
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
@@ -246,16 +202,3 @@ def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch):
 def test_the_alias_runs_the_same_kernels():
     assert host_can_run("avx512_256", "f64") == host_can_run("avx512", "f64")
     assert kernel_c("avx512_256", "f64", "add", TABLE) == kernel_c("avx512", "f64", "add", TABLE)
-
-
-@pytest.mark.parametrize(("op", "wrong"), [("add", "_mm256_sub_pd"), ("min", "_mm256_max_pd")])
-def test_a_wrong_spelling_is_refused_with_a_shortlist(op, wrong):
-    assert AVX2, "the x86 gate needs an AVX2 host"
-    target = TABLE.isas["avx2"]
-    entries = {**target.f64, op: dataclasses.replace(target.f64[op], intrinsic=wrong)}
-    table = dataclasses.replace(TABLE, isas={**TABLE.isas, "avx2": dataclasses.replace(target, f64=entries)})
-
-    sut = validate("avx2", op, "f64", table)
-
-    assert sut.ok is False
-    assert sut.candidates

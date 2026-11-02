@@ -46,7 +46,6 @@ __all__ = [
     "FAST_SIZE",
     "Named",
     "PROFILE_REPS",
-    "Profile",
     "fast_size",
     "generated",
     "library",
@@ -72,8 +71,6 @@ DEVICES = {Target.CPU: dace.dtypes.DeviceType.CPU, Target.GPU: dace.dtypes.Devic
 
 #: Builds a library submission from a rendered unit and what it links against.
 Deliver = Callable[[str, Sequence[str]], Submission]
-#: Times one library submission on the judge: ``/profile`` in production, a fake in tests.
-Profile = Callable[[Submission], ProfileAnswer]
 
 
 def pipeline_sdfg(
@@ -106,6 +103,12 @@ def fast_size(token: str) -> Preset | None:
     return FAST_SIZE if preset.is_rung and RUNGS.index(FAST_SIZE) < RUNGS.index(preset) else None
 
 
+def manifest_of(spec: BenchSpec, precision: Precision) -> inputs.Manifest:
+    """``spec``'s manifest in the corpus, inputs drawn at ``precision``."""
+    path = paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml"
+    return inputs.load(path, datatype=numpy_dtype(precision).__name__)
+
+
 def generated(
     sdfg: dace.SDFG,
     spec: BenchSpec,
@@ -116,9 +119,7 @@ def generated(
 ) -> api.Result:
     """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision`` and timed by nobody here; in
     speculative mode each scope's pick is the prediction's."""
-    manifest = inputs.load(
-        paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml", datatype=numpy_dtype(precision).__name__
-    )
+    manifest = manifest_of(spec, precision)
     result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=False)
     if result.verification is None:
         raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
@@ -141,6 +142,13 @@ def target_of(task: Task) -> Target:
     return Target.CPU if task.image == "cpu" else Target.GPU
 
 
+def with_scratch(submission: Submission, workspace_bytes: str) -> Submission:
+    """The entry carves its transients out of the judge's scratch; without the request they point past a null buffer."""
+    if workspace_bytes != "0":
+        submission.workspace_bytes = workspace_bytes
+    return submission
+
+
 def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> Submission:
     """``sdfg`` rendered by CPF in the bench C ABI as a library submission."""
     form = render_canonical(
@@ -152,11 +160,7 @@ def rendered(task: Task, spec: BenchSpec, sdfg: dace.SDFG, deliver: Deliver) -> 
         target_of(task),
         DEFAULT_HINTS,
     )
-    submission = deliver(form.code, form.link)
-    # the entry carves its transients out of the judge's scratch; without the request they point past a null buffer
-    if form.workspace_bytes != "0":
-        submission.workspace_bytes = form.workspace_bytes
-    return submission
+    return with_scratch(deliver(form.code, form.link), form.workspace_bytes)
 
 
 def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Build], deliver: Deliver) -> Submission:
@@ -207,36 +211,45 @@ def ranked[B: Named](
     return chosen
 
 
-def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | None = None) -> Submission:
+def judge_client() -> JudgeClient:
+    return JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+
+
+def refuse_restricted(task: Task) -> None:
+    if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
+        raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
+
+
+def scratch_folder(spec: BenchSpec) -> pathlib.Path:
+    """A folder that lasts as long as the process: the library links its archives statically."""
+    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
+    atexit.register(shutil.rmtree, out, ignore_errors=True)
+    return out
+
+
+def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct, else
     every scope's reference (CPF's default rendering with no scope)."""
     started = time.monotonic()
-    if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
-        raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
+    refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
     deadline = started + resolve_kernel_timeout(spec)
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
-    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
-    atexit.register(shutil.rmtree, out, ignore_errors=True)  # the library links its archives statically
+    out = scratch_folder(spec)
     result = generated(sdfg, spec, task.precision, matrix, out)
     verification = result.verification
     assert verification is not None, "generated() refuses an unverified result"
-    linker, judge = (
-        Linker(result.program, matrix, out),
-        JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout()),
-    )
+    linker, judge = Linker(result.program, matrix, out), judge_client()
     size = fast_size(config.current().service.preset)
-    measure = profile or (lambda submission: judge.profile(submission, task.kernel, reps=PROFILE_REPS, size=size))
 
     stub_costs: list[float] = []
-    score_costs: list[float] = []
 
     def score_reserve() -> float:
         # the selection's final score plus the harness's own grade
-        return 2 * max(score_costs, default=max(stub_costs, default=0.0))
+        return 2 * max(stub_costs, default=0.0)
 
     def affordable_stub() -> bool:
         return deadline - time.monotonic() > max(stub_costs, default=0.0) + score_reserve()
@@ -244,24 +257,22 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
     def time_stub(selection: dict[str, Build], symbol: str) -> float:
         start = time.monotonic()
         try:
-            return stub_time(measure(rendered(task, spec, linker.stub(selection, symbol), deliver)))
+            stub = rendered(task, spec, linker.stub(selection, symbol), deliver)
+            return stub_time(judge.profile(stub, task.kernel, reps=PROFILE_REPS, size=size))
         finally:
             stub_costs.append(time.monotonic() - start)
 
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     candidates = {rep.scope.symbol: verified(rep, verification.verdicts[rep.scope.symbol]) for rep in result.scopes}
     chosen = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
+    correct = False
     if chosen != references and deadline - time.monotonic() > score_reserve():
-        start = time.monotonic()
         try:
             correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
         except (OSError, RuntimeError, ValueError):
-            correct = False  # the references need no grade
-        score_costs.append(time.monotonic() - start)
-        if correct:
-            # every deliver builds the same .so path, so the returned library is built last
-            return library(task, spec, linker, chosen, deliver)
-    return library(task, spec, linker, references, deliver)
+            pass  # the references need no grade
+    # every deliver builds the same .so path, so the returned library is built last
+    return library(task, spec, linker, chosen if correct else references, deliver)
 
 
 def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
@@ -270,26 +281,23 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     speculated threadblock shapes instead (:func:`speculative_gpu`)."""
     if target_of(task) is Target.GPU:
         return speculative_gpu(task, pipeline)
-    if task.language not in DIALECT or task.source_mode is SourceMode.RESTRICTED:
-        raise NotImplementedError(f"Alloy submits a C/C++ library; got {task.language.text}/{task.source_mode.text}")
+    refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
-    out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
-    atexit.register(shutil.rmtree, out, ignore_errors=True)  # the library links its archives statically
+    out = scratch_folder(spec)
     result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE)
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}
-    judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+    judge = judge_client()
     pick = library(task, spec, linker, chosen, deliver)
     baseline = library(task, spec, linker, references, deliver)
-    if chosen != references and faster_correct(judge, pick, baseline, task.kernel):
-        # every deliver builds the same .so path, so the returned library is built last
-        return library(task, spec, linker, chosen, deliver)
-    return library(task, spec, linker, references, deliver)
+    better = chosen != references and faster_correct(judge, pick, baseline, task.kernel)
+    # every deliver builds the same .so path, so the returned library is built last
+    return library(task, spec, linker, chosen if better else references, deliver)
 
 
 def faster_correct(judge: JudgeClient, pick: Submission, baseline: Submission, kernel: str) -> bool:
@@ -311,9 +319,7 @@ def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG) -> Submissio
     """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form: a HIP host and device source."""
     form = render_canonical(spec, spec.short_name, sdfg, "hip", task.precision.value, Target.GPU, DEFAULT_HINTS)
     submission = Submission(language=Language.HIP, source=form.code, device_source=form.device_code)
-    if form.workspace_bytes != "0":
-        submission.workspace_bytes = form.workspace_bytes
-    return submission
+    return with_scratch(submission, form.workspace_bytes)
 
 
 def speculative_gpu(task: Task, pipeline: str) -> Submission:
@@ -332,7 +338,6 @@ def speculative_gpu(task: Task, pipeline: str) -> Submission:
     blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
     print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
     chosen = device_submission(task, spec, program)
-    judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
-    if judge.score(chosen, task.kernel).correct:
+    if judge_client().score(chosen, task.kernel).correct:
         return chosen
     return device_submission(task, spec, run({}))

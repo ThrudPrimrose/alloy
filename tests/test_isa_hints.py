@@ -3,6 +3,8 @@
 reason, the do-it-yourself instruction, and hints computed from the scope's own Python tasklets (each
 classified and mapped to the relevant intrinsics with their traps and validation status)."""
 
+import dace
+
 from alloy.isa import load
 from alloy.isa.hints import advice, expression_ops, op_uses, tasklet_hints
 
@@ -10,7 +12,7 @@ TABLE = load()
 
 
 def test_every_tasklet_is_collected_and_classified():
-    hints = tasklet_hints(_example_sdfg(), "avx2", "f64", TABLE)
+    hints = tasklet_hints(example_sdfg(), "avx2", "f64", TABLE)
     by_tasklet = {hint.use.tasklet: hint for hint in hints}
 
     scale = by_tasklet["scale"]
@@ -23,7 +25,7 @@ def test_every_tasklet_is_collected_and_classified():
 
 
 def test_the_hints_name_the_relevant_spellings():
-    hints = tasklet_hints(_example_sdfg(), "avx2", "f64", TABLE)
+    hints = tasklet_hints(example_sdfg(), "avx2", "f64", TABLE)
     by_tasklet = {hint.use.tasklet: hint for hint in hints}
 
     spellings = {s.op: s for s in by_tasklet["scale"].spellings}
@@ -38,7 +40,7 @@ def test_the_hints_name_the_relevant_spellings():
 
 
 def test_a_libm_tasklet_points_at_tiers_and_the_library():
-    sdfg = _libm_sdfg()
+    sdfg = elementwise_sdfg("wave", "import math\ny = math.sin(x)")
     (hint,) = tasklet_hints(sdfg, "avx2", "f64", TABLE)
 
     assert hint.use.ops == ("sin",)
@@ -49,7 +51,7 @@ def test_a_libm_tasklet_points_at_tiers_and_the_library():
 
 
 def test_advice_carries_the_reason_the_instruction_and_the_hints():
-    text = advice("the masked tail is not expressible", _example_sdfg(), "avx2", "f64", TABLE)
+    text = advice("the masked tail is not expressible", example_sdfg(), "avx2", "f64", TABLE)
 
     assert "Reason: the masked tail is not expressible" in text
     assert "Do it yourself" in text
@@ -60,21 +62,20 @@ def test_advice_carries_the_reason_the_instruction_and_the_hints():
 
 
 def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default():
-    (hint,) = tasklet_hints(_integer_sdfg(), "avx2", "f64", TABLE)
+    (hint,) = tasklet_hints(integer_sdfg(), "avx2", "f64", TABLE)
 
     assert hint.use.dtype == "i64"
     assert {s.op: s.spelling for s in hint.spellings}["and"] == "_mm256_and_si256"
 
 
 def test_min_max_logic_and_conditionals_are_recognized():
-    (hint,) = tasklet_hints(_branchy_sdfg(), "avx512", "f64", TABLE)
+    sdfg = elementwise_sdfg("clip", "y = min(x, 1.0) if x > 0.0 else max(x, -1.0)")
+    (hint,) = tasklet_hints(sdfg, "avx512", "f64", TABLE)
     assert {"min", "max", "select"} <= set(hint.use.ops)
 
 
-def _example_sdfg():
+def example_sdfg():
     """Two scopes' worth of tasklets: a contractable elementwise map and a sum reduction."""
-    import dace
-
     sdfg = dace.SDFG("hints_example")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("t", [8], dace.float64)
@@ -93,24 +94,21 @@ def _example_sdfg():
     return sdfg
 
 
-def _libm_sdfg():
-    import dace
-
-    sdfg = dace.SDFG("hints_libm")
+def elementwise_sdfg(label: str, code: str) -> dace.SDFG:
+    """One map from ``a`` to ``b`` around one tasklet."""
+    sdfg = dace.SDFG(f"hints_{label}")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
     state = sdfg.add_state()
     entry, exit_ = state.add_map("m", dict(i="0:8"))
-    node = state.add_tasklet("wave", {"x"}, {"y"}, "import math\ny = math.sin(x)")
+    node = state.add_tasklet(label, {"x"}, {"y"}, code)
     a, b = state.add_access("a"), state.add_access("b")
     state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(node, exit_, b, src_conn="y", memlet=dace.Memlet("b[i]"))
     return sdfg
 
 
-def _integer_sdfg():
-    import dace
-
+def integer_sdfg():
     sdfg = dace.SDFG("hints_int")
     sdfg.add_array("a", [8], dace.int64)
     sdfg.add_array("b", [8], dace.int64)
@@ -122,21 +120,6 @@ def _integer_sdfg():
     state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(b, entry, node, dst_conn="y", memlet=dace.Memlet("b[i]"))
     state.add_memlet_path(node, exit_, c, src_conn="z", memlet=dace.Memlet("c[i]"))
-    return sdfg
-
-
-def _branchy_sdfg():
-    import dace
-
-    sdfg = dace.SDFG("hints_branchy")
-    sdfg.add_array("a", [8], dace.float64)
-    sdfg.add_array("b", [8], dace.float64)
-    state = sdfg.add_state()
-    entry, exit_ = state.add_map("m", dict(i="0:8"))
-    node = state.add_tasklet("clip", {"x"}, {"y"}, "y = min(x, 1.0) if x > 0.0 else max(x, -1.0)")
-    a, b = state.add_access("a"), state.add_access("b")
-    state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
-    state.add_memlet_path(node, exit_, b, src_conn="y", memlet=dace.Memlet("b[i]"))
     return sdfg
 
 
@@ -162,8 +145,6 @@ def test_a_negative_literal_is_no_negation():
 
 
 def test_a_canonical_reduction_past_its_private_node_counts():
-    import dace
-
     sdfg = dace.SDFG("wcr_past_private")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("s", [1], dace.float64)

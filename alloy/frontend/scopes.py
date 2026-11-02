@@ -1,6 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Split a dace program into scopes: one per top-level nest or library node, each a standalone SDFG with a fixed C
-ABI."""
+"""Split a dace program into scopes: one per top-level nest or library node, each with a fixed C ABI."""
 
 import copy
 import re

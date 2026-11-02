@@ -7,7 +7,7 @@ schedule->vector-schedule translator (plan work item 3): emitting a different bo
 axpy expression, the loop shape comes from here."""
 
 from alloy.isa.table import ALIASES, DTYPES, Table, load
-from alloy.isa.validate import TRACK_ERROR, Verdict, c_flags, compile_run, host_can_run
+from alloy.isa.validate import REPORT_ERROR, Verdict, c_flags, compile_run, host_can_run, track_error
 
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
@@ -200,14 +200,10 @@ int main(void) {{
     axpy(N, a, X, Y, C);
     for (int i = 0; i <= MAX_N; i++) {{
       double ref = i < N ? (double)a * (double)X[i] + (double)Y[i] : -7;  /* past N must stay untouched */
-      double d = fabs((double)C[i] - ref);
-      double m = fabs(ref) > 1 ? fabs(ref) : 1;
       {track}
     }}
   }}
-  printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
-  return 0;
-}}"""
+  {report}"""
 
 #: Skeleton tolerance per lane type: fma rounds once, the reference twice.
 SKELETON_TOL = {"f64": 1e-14, "f32": 1e-6}
@@ -224,7 +220,9 @@ def verify(isa: str, schedule: str, dtype: str, table: Table | None = None) -> V
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
     ctype = C_TYPE[dtype]
     fsuffix = "" if dtype == "f64" else "f"
-    source = skeleton(table, isa, schedule, dtype) + DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=TRACK_ERROR)
+    track = track_error("(double)C[i]", "ref", "      ")
+    driver = DRIVER.format(ctype=ctype, fsuffix=fsuffix, track=track, report=REPORT_ERROR)
+    source = skeleton(table, isa, schedule, dtype) + driver
     try:
         rel = compile_run(source, c_flags(isa, dtype))
     except RuntimeError as exc:
