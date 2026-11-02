@@ -6,6 +6,9 @@ import dace
 import numpy as np
 import pytest
 from dace.libraries.standard.nodes.scan import Scan
+from hpcagent_bench import paths
+from hpcagent_bench.frameworks.test import kernel_tolerances
+from hpcagent_bench.spec import BenchSpec
 
 from alloy import machine
 from alloy.backend import runtime
@@ -371,13 +374,98 @@ def test_an_exact_candidate_gets_no_forgiven_fraction(tmp_path):
     assert sut.verdicts[scope.symbol]["hand"].status == "fail"
 
 
+#: Every corpus kernel whose manifest sets ``conditioning_rtol`` or ``conditioning_atol``.
+CONDITIONED_KERNELS = (
+    "bdf_newton_krylov",
+    "bicgstab",
+    "contour_integral",
+    "cp2k_density_matrix_trs4",
+    "jfnk_bratu",
+    "mixed_precision_ir",
+    "rk45_ensemble",
+)
+
+
+def judged(grading: inputs.Grading, level: str, expected: np.ndarray, value: np.ndarray) -> verify.Verdict:
+    return verify.judge(level, verify.Reference([{"x": expected}], frozenset(), grading), [[{"x": value}]], [1])
+
+
+@pytest.mark.parametrize("kernel", CONDITIONED_KERNELS)
+def test_a_conditioned_corpus_kernel_is_graded_at_the_tolerances_of_the_judge(kernel):
+    spec = BenchSpec.load(kernel)
+    sut = inputs.grading(inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml"))
+    rtol, atol = kernel_tolerances(spec, "float64")
+    expected = np.array([1.0, 0.0])
+
+    inside = judged(sut, "band", expected, np.array([1.0 + 0.9 * rtol, 0.9 * atol]))
+    off_relative = judged(sut, "band", expected, np.array([1.0 + 2.0 * (rtol + atol), 0.0]))
+    off_absolute = judged(sut, "band", expected, np.array([1.0, 2.0 * atol]))
+
+    assert inside.status == "pass"
+    assert (off_relative.status, off_absolute.status) == ("fail", "fail")
+
+
+def test_a_conditioning_floor_under_the_band_of_the_precision_leaves_that_band():
+    """``float32``'s band is wider than this floor, as ``kernel_tolerances`` takes the larger of the two."""
+    expected = np.ones(4, dtype=np.float32)
+
+    sut = judged(inputs.Grading(conditioning_rtol=1e-7), "band", expected, expected * (1.0 + 1e-4))
+
+    assert sut.status == "pass"
+
+
+def test_an_exact_candidate_gets_no_conditioning_band():
+    """Bit-identity is the strict level's promise, stronger than what the judge grades."""
+    expected = np.ones(4)
+
+    sut = judged(inputs.Grading(conditioning_rtol=1e-3, conditioning_atol=1e-3), "exact", expected, expected + 1e-9)
+
+    assert sut.status == "fail"
+
+
+def reduction_reports(tmp: pathlib.Path, program: scopes.Program, report: ScopeReport) -> list[ScopeReport]:
+    """``report`` of ``program``'s reducing scope after the default build of the scope that sets up its output."""
+    return [
+        ScopeReport(program.scopes[0], (build(program.scopes[0], Candidate("c", "gcc"), MATRIX, tmp / "i", {}),)),
+        report,
+    ]
+
+
+#: A candidate of ``row_sum`` that sums every row and scales it by ``factor``.
+ROW_SUM = (
+    "for (int64_t i = 0; i < M; ++i) {{ for (int64_t j = 0; j < N; ++j) out[i] += a[i * N + j]; out[i] *= {factor}; }}"
+)
+
+
+@pytest.mark.parametrize(("factor", "status"), [("1.0 + 1e-7", "pass"), ("1.0 + 1e-5", "fail")])
+def test_a_reduction_is_graded_inside_the_conditioned_band_at_every_team_size(tmp_path, factor, status):
+    conditioned = ROW_SUM_MANIFEST.replace("level: 1", "level: 1\nconditioning_rtol: 1.0e-6")
+    program, cases = program_and_cases(tmp_path, "row_sum", conditioned)
+    report = candidate_writing(tmp_path, program.scopes[1], ROW_SUM.format(factor=factor), fp_level="reassoc")
+
+    sut = verify.verify(program, MATRIX, reduction_reports(tmp_path, program, report), cases, tmp_path / "out")
+
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == status
+
+
+def test_a_reduction_keeps_the_forgiven_fraction_at_every_team_size(tmp_path):
+    forgiving = ROW_SUM_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.1")
+    program, cases = program_and_cases(tmp_path, "row_sum", forgiving)
+    flipped = ROW_SUM.format(factor="1.0") + "\nout[0] += 1.0;"
+    report = candidate_writing(tmp_path, program.scopes[1], flipped, fp_level="reassoc")
+
+    sut = verify.verify(program, MATRIX, reduction_reports(tmp_path, program, report), cases, tmp_path / "out")
+
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
+
+
 def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other():
     """mandelbrot2's escape counts are integers: the judge forgives its boundary pixels there too."""
     expected = np.arange(100, dtype=np.int64)
     flipped = expected.copy()
     flipped[0] += 1
 
-    sut = verify.compare("band", expected, flipped, 1, "int64", mismatch_fraction=0.01)
+    sut = verify.compare("band", expected, flipped, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
 
     assert sut.status == "pass"
 
@@ -385,7 +473,7 @@ def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other():
 def test_an_integer_output_past_the_forgiven_fraction_fails():
     expected = np.arange(100, dtype=np.int64)
 
-    sut = verify.compare("band", expected, expected + 1, 1, "int64", mismatch_fraction=0.01)
+    sut = verify.compare("band", expected, expected + 1, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
 
     assert sut.status == "fail"
 

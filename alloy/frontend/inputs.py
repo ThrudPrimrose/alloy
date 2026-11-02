@@ -32,10 +32,13 @@ class Draw:
 @dataclass(slots=True, frozen=True)
 class Grading:
     """What the bench's judge leaves out of an answer: ``extents`` maps an output to the output whose value bounds its
-    graded prefix, ``mismatch_fraction`` is the share of an output's elements that may lie outside the band."""
+    graded prefix, ``mismatch_fraction`` is the share of an output's elements that may lie outside the band, and
+    ``conditioning_rtol`` / ``conditioning_atol`` are floors on the band of an ill-conditioned answer."""
 
     extents: dict[str, str] = field(default_factory=dict[str, str])
     mismatch_fraction: float = 0.0
+    conditioning_rtol: float = 0.0
+    conditioning_atol: float = 0.0
 
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)
@@ -81,7 +84,13 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
 
 def grading(manifest: Manifest) -> Grading:
     """How the judge grades ``manifest``'s outputs."""
-    return Grading(dict(manifest.spec.output_extent), float(manifest.spec.mismatch_fraction or 0.0))
+    spec = manifest.spec
+    return Grading(
+        dict(spec.output_extent),
+        float(spec.mismatch_fraction or 0.0),
+        float(spec.conditioning_rtol or 0.0),
+        float(spec.conditioning_atol or 0.0),
+    )
 
 
 def draw(manifest: Manifest, iteration: int) -> Draw:

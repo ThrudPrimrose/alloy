@@ -247,13 +247,14 @@ def canonical_bytes(values: np.ndarray) -> bytes:
 
 
 def compare(
-    tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str, mismatch_fraction: float = 0.0
+    tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datatype: str, grading: Grading = Grading()
 ) -> Verdict:
-    """``exact``: bit-identical, any NaN equal to any NaN. ``band``: HPCAgent-Bench's per-precision band with its
-    eps_acc*sqrt(l) floor at ``datatype``, forgiving ``mismatch_fraction`` of the elements; an integer or boolean output
-    has no rounding, so only that fraction can forgive it."""
+    """``exact``: bit-identical, any NaN equal to any NaN. ``band``: HPCAgent-Bench's per-precision band raised to
+    ``grading``'s conditioning floors, with its eps_acc*sqrt(l) floor at ``datatype``, forgiving ``grading``'s
+    ``mismatch_fraction`` of the elements; an integer or boolean output has no rounding, so only that fraction can
+    forgive it."""
     rounds = bool(np.issubdtype(ref.dtype, np.inexact))
-    if tolerance == "exact" or not (rounds or mismatch_fraction):
+    if tolerance == "exact" or not (rounds or grading.mismatch_fraction):
         same = ref.shape == val.shape and canonical_bytes(ref) == canonical_bytes(val)
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
     require_bench()
@@ -271,11 +272,11 @@ def compare(
         ok, err, detail = compare_arrays(
             ref,
             val,
-            band.rtol,
-            band.atol,
+            max(band.rtol, grading.conditioning_rtol),
+            max(band.atol, grading.conditioning_atol),
             accum_length=length,
             eps_precision=accumulation_eps(precision),
-            mismatch_fraction=mismatch_fraction,
+            mismatch_fraction=grading.mismatch_fraction,
         )
     except UngradeableTolerance as exc:
         return Verdict("ungradeable", detail=str(exc))
@@ -347,7 +348,7 @@ def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int
         for result, (name, expected) in itertools.product(val, expected_outputs.items()):
             level = "band" if name in ref.nondeterministic else tolerance
             want, got = (graded(ref.grading, name, expected_outputs, v) for v in (expected, result[name]))
-            verdict = compare(level, want, got, length, str(np.real(expected).dtype), ref.grading.mismatch_fraction)
+            verdict = compare(level, want, got, length, str(np.real(expected).dtype), ref.grading)
             if not verdict.ok:
                 return Verdict(verdict.status, verdict.error, f"{name}: {verdict.detail}")
             if verdict.status == "pass" and verdict.error >= worst.error:
@@ -361,7 +362,7 @@ def at_team_sizes(program: Program, cases: Cases) -> Cases:
     if not any(scope.has_reduction for scope in program.scopes):
         return cases
     draws = [dataclasses.replace(d, threads=size) for d in cases.draws for size in REDUCTION_TEAMS]
-    return Cases(draws, cases.outputs)
+    return dataclasses.replace(cases, draws=draws)
 
 
 def verify(
