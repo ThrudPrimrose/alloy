@@ -26,7 +26,7 @@ from alloy.heuristics.predict import Prediction, Predictions
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 6
+SCHEMA = 7
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.

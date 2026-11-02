@@ -2,6 +2,7 @@
 """Alloy's one entry point: an SDFG in, every scope's candidates built, verified, timed and reported."""
 
 import importlib.util
+import numbers
 import pathlib
 from dataclasses import dataclass
 
@@ -61,9 +62,18 @@ def test_cases(program: Program, manifest: Manifest | None) -> verify.Cases | No
     return verify.Cases([inputs.derived_draw(original, i) for i in range(ITERATIONS)], inputs.derived_outputs(original))
 
 
+def known_sizes(program: Program, running: dict[str, int] | None) -> dict[str, int] | None:
+    """The sizes the program will run at: what the caller declares over the constants of its SDFG; ``None`` while a
+    free symbol stays open (a manifest's presets say what may run, not what will)."""
+    constants = {k: int(v) for k, v in program.original.constants.items() if isinstance(v, numbers.Integral)}
+    sizes = {**constants, **(running or {})}
+    return sizes if program.original.free_symbols <= sizes.keys() else None
+
+
 def roofline_sizes(program: Program, manifest: Manifest | None, matrix: Matrix) -> dict[str, int] | None:
-    """The sizes speculative mode weighs loops and memory at: the manifest's first preset, or without one every size
-    symbol grown until the program fills the final timing stage's share of the largest cache."""
+    """The sizes speculative mode weighs loops and memory at while the running ones are unknown: the manifest's largest
+    preset, or without one every size symbol grown until the program fills the final timing stage's share of the
+    largest cache."""
     if manifest is not None:
         presets = inputs.presets(manifest)  # the largest: at the smallest every array sits in cache
         return max(presets, key=lambda sizes: timing.footprint(program.original, sizes), default=None)
@@ -110,13 +120,15 @@ def generate(
     finite_inputs: bool = False,
     time_locally: bool = True,
     mode: Mode = Mode.PROFILE,
+    running: dict[str, int] | None = None,
 ) -> Result:
     """Outline ``sdfg`` into scopes and build every candidate under ``out``, then verify them on the manifest's
     fuzz draws (without a manifest, on draws derived from ``sdfg`` when any value is a valid input:
     :func:`test_cases`). In profile mode (a manifest is required), when ``time_locally``, time the survivors and link
     the fastest; a caller that times elsewhere (a benchmark's judge) passes ``time_locally=False``. In speculative mode
     link the ones :func:`predict.choose` picks, untimed, or each scope's default build when nothing was verified.
-    ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it."""
+    ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it. ``running`` declares
+    the sizes the program will be called at: speculative mode then ranks every build, serial ones too, at those sizes."""
     matrix = matrix or configuration_matrix.load()
     program = scopes.outline(sdfg, matrix.libm_calls)
     if not program.scopes:
@@ -131,7 +143,9 @@ def generate(
     linker = Linker(program, matrix, out)
     winners: dict[str, Build] = {}
     if mode == Mode.SPECULATIVE:
-        predicted = predict.predictions(reports, roofline_sizes(program, manifest, matrix))
+        known = known_sizes(program, running)
+        sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
+        predicted = predict.predictions(reports, sizes, known is not None)
         winners = predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs)
         picked = {symbol: b.name for symbol, b in winners.items()}
     elif verification is not None and manifest is not None and time_locally:

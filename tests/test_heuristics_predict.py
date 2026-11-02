@@ -16,6 +16,7 @@ from alloy.backend.sweep import ScopeReport
 from alloy.evaluate.verify import Verdict
 from alloy.frontend import scopes
 from alloy.heuristics import predict
+from alloy.heuristics.load import Load
 from alloy.heuristics.predict import Instruction, Prediction
 from alloy.report import Mode
 from helpers import MATRIX, REDUCTIONS, SCALE_MANIFEST, build, gcc_only, load_program, write_manifest
@@ -183,6 +184,57 @@ def test_the_model_scores_openmp_builds_only_because_it_spreads_loops_over_the_c
     assert list(sut[scope.symbol]) == [default.name]
 
 
+def parallel_and_serial(scope: scopes.Scope, folder: pathlib.Path) -> ScopeReport:
+    default = build(scope, Candidate("c", "gcc"), MATRIX, folder / "default", {})
+    return ScopeReport(
+        scope, (default, build(scope, Candidate("c", "gcc", serial=True), MATRIX, folder / "serial", {}))
+    )
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(("size", "serial"), [(16, True), (10**9, False)])
+def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(tmp_path, monkeypatch, size, serial):
+    monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
+    rep = parallel_and_serial(only_scope(roots), tmp_path)
+
+    predicted = predict.predictions([rep], {"N": size}, running=True)
+
+    assert predict.choose(rep, {}, predicted, MATRIX, finite_inputs=False).candidate.serial is serial
+
+
+@pytest.mark.gcc
+def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core(tmp_path, monkeypatch):
+    monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
+    rep = parallel_and_serial(only_scope(roots), tmp_path)
+
+    sut = predict.predictions([rep], {"N": 1000}, running=True)[rep.scope.symbol]
+
+    parallel, serial = sut[rep.builds[0].name], sut[rep.builds[1].name]
+    assert (parallel.regions, parallel.elements) == (1.0, 1000.0)
+    assert (serial.regions, serial.elements) == (0.0, 1000.0)
+    assert parallel.compute > serial.compute / 4, "the region's cycles come on top of the four cores' share"
+
+
+@pytest.mark.gcc
+def test_a_size_the_sdfg_does_not_decide_leaves_the_serial_build_unranked(tmp_path):
+    rep = parallel_and_serial(only_scope(roots), tmp_path)
+
+    sut = predict.predictions([rep], {}, running=True)[rep.scope.symbol]
+
+    assert list(sut) == [rep.builds[0].name] and sut[rep.builds[0].name].elements == 0.0
+
+
+@pytest.mark.gcc
+def test_the_object_decides_whether_a_build_pays_for_a_team(tmp_path):
+    rep = parallel_and_serial(only_scope(roots), tmp_path)
+    load = Load(1.0, 1000.0, 250.0)
+    parallel, serial = rep.builds[0].archive, rep.builds[1].archive
+    assert parallel is not None and serial is not None
+
+    assert predict.team_of(parallel, load, 4) == (1.0, 4.0)
+    assert predict.team_of(serial, load, 4) == (0.0, 1.0)
+
+
 @pytest.mark.gcc
 def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
@@ -195,6 +247,36 @@ def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
     report = (tmp_path / "out" / "report.md").read_text()
     assert "(speculative)" in report.splitlines()[0]
     assert "cycles/elem" in report
+
+
+@dace.program
+def fixed(a: dace.float64[256], out: dace.float64[256]):
+    for i in dace.map[0:256]:
+        out[i] = a[i] * 2.0
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(("running", "serial"), [({"N": 16}, True), ({"N": 10**9}, False), (None, False), ({}, False)])
+def test_a_declared_size_decides_the_picks_thread_count_and_an_open_one_keeps_the_parallel_pick(
+    tmp_path, running, serial
+):
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+    matrix = gcc_only(tmp_path)
+
+    sut = api.generate(sdfg, tmp_path / "out", matrix=matrix, mode=Mode.SPECULATIVE, running=running)
+
+    (winner,) = (sut.winners or {}).values()
+    assert winner.candidate.serial is serial
+
+
+@pytest.mark.gcc
+def test_a_size_the_sdfg_fixes_needs_no_declaration(tmp_path):
+    matrix = gcc_only(tmp_path)
+
+    sut = api.generate(fixed.to_sdfg(), tmp_path / "out", matrix=matrix, mode=Mode.SPECULATIVE)
+
+    (winner,) = (sut.winners or {}).values()
+    assert winner.candidate.serial
 
 
 def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path):

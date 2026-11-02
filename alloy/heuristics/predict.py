@@ -1,15 +1,13 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Speculative mode's score: a build's predicted cycles per element of its scope. The innermost loops come from the
-object's disassembly (backward branches), grouped into source loops by the maps their source lines render (a
-main loop and its epilogues are one group); each group's hot copy costs llvm-mca's cycles on the host CPU over the
-elements one iteration handles (the bytes its memory operations move), and the scope sums its groups weighted by
-their maps' iteration volumes."""
+"""Speculative mode's score: a build's predicted cycles per element of its scope, from llvm-mca on the object's
+innermost loops, grouped into source loops by the maps their lines render and weighted by their iteration volumes."""
 
 import functools
 import math
 import pathlib
 import re
 import subprocess
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass as plain
 
@@ -19,13 +17,15 @@ from dace.sdfg import nodes
 from pydantic.dataclasses import dataclass
 
 from alloy import machine
+from alloy.backend import runtime
 from alloy.backend.build import Build
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate import timing
 from alloy.evaluate.verify import Verdict
 from alloy.frontend.scopes import Scope
-from alloy.heuristics import fission, fp
+from alloy.heuristics import fission, fp, prune
+from alloy.heuristics.load import Load, load_of
 from alloy.records import RECORD, Strings
 
 __all__ = [
@@ -41,31 +41,28 @@ __all__ = [
     "predictions",
 ]
 
-#: Iterations llvm-mca simulates; its total cycles over this count include loop-carried dependency chains.
+#: Iterations llvm-mca simulates, so its cycles include loop-carried chains.
 MCA_ITERATIONS = 100
-#: The share of the largest cache a scope's arrays may fill and still stay resident: the cache is shared with the rest
-#: of the program and loses lines to conflicts and write-allocates, so beyond half of it the loops stream memory.
+#: The share of the largest cache that stays resident: conflicts and write-allocates take the rest.
 CACHE_RESIDENT = 0.5
 #: Cycles per lane of a gather or scatter: llvm-mca prices them far too low on recent x86 cores.
 GATHER_LANE_CYCLES = 4.0
 GATHER = re.compile(r"^v(gather|scatter|pgather|pscatter)")
+#: What a region or a worksharing loop costs a team: the cheapest empty region measured on libomp.
+REGION_NS = 470.0
 
-#: Predictions within this fraction of the cheapest are a tie (left to the default FP level, then sweep order): a
-#: memory-bound scope's builds all sit on the bandwidth floor.
+#: Predictions within this fraction of the cheapest tie: memory-bound builds all sit on the bandwidth floor.
 TIE = 0.02
-#: Cycles charged per call in a loop: llvm-mca cannot see a callee (a vector math routine), so every call costs the
-#: same, which ranks one call per vector of elements above one per element.
+#: Cycles per call in a loop: llvm-mca cannot see a callee, so one call per vector ranks above one per element.
 CALL_CYCLES = 30.0
-#: A source position ``llvm-objdump -l`` prints before the instructions it covers.
 SOURCE_LINE = re.compile(r"^; .*:(\d+)$")
 #: A rendered statement's trailing comment: the label of the tasklet it renders.
 TASKLET_COMMENT = re.compile(r";\s*//\s*([A-Za-z_]\w*)\s*$")
-#: A line of ``llvm-objdump -d --no-show-raw-insn``: address, mnemonic, operands.
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)\s*(.*?)\s*$")
 FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
-#: A relocation ``llvm-objdump -r`` prints under the instruction it patches: names a call's callee.
+#: A relocation names a call's callee.
 RELOCATION = re.compile(r"^\s+[0-9a-f]+:\s+R_\S+\s+([A-Za-z_.$][\w.$@]*)")
-#: Vector math entries (glibc/SLEEF GNU ABI, SLEEF, ArmPL, SVML): a call per vector of elements, on the hot path.
+#: Vector math entries (glibc/SLEEF GNU ABI, SLEEF, ArmPL, SVML): one call per vector of elements.
 VECTOR_CALL = re.compile(r"^(_ZGV|Sleef_|armpl_|__svml_)")
 TARGET = re.compile(r"\b(?:0x)?([0-9a-f]+) <")
 X86_BRANCH = re.compile(r"^j[a-z]+$|^loop")
@@ -78,8 +75,7 @@ SVE_LENGTH = pathlib.Path("/proc/sys/abi/sve_default_vector_length")
 
 @plain(slots=True, frozen=True)
 class Instruction:
-    """One instruction; ``callee`` is the symbol a call's relocation names, ``""`` otherwise; ``line`` its source line
-    (0 when unknown)."""
+    """One instruction; ``callee`` is what a call's relocation names, ``line`` its source line (0 when unknown)."""
 
     address: int
     mnemonic: str
@@ -99,9 +95,8 @@ class Loop:
 
 @dataclass(slots=True, frozen=True, config=RECORD)
 class LoopCost:
-    """One source loop's hot copy (the one handling the most elements per iteration): the tasklets it renders, its
-    cycles and elements per iteration, its hot calls, the main-memory bytes one element moves, and its share of the
-    scope's iterations."""
+    """One source loop's hot copy: tasklets, cycles and elements per iteration, hot calls, main-memory bytes per
+    element, and its share of the scope's iterations."""
 
     tasklets: Strings
     cycles: float
@@ -113,20 +108,20 @@ class LoopCost:
 
 @dataclass(slots=True, frozen=True, config=RECORD)
 class Prediction:
-    """A build's predicted cycles per element of its scope, a roofline: the larger of its compute (its source loops'
-    llvm-mca cycles, weighted, spread over the physical cores) and its memory term (their main-memory bytes over the
-    bandwidth, 0 while the scope's arrays fill at most :data:`CACHE_RESIDENT` of the largest cache); the loops behind
-    it, and the object's innermost machine loops."""
+    """A build's predicted cycles per element, a roofline: the larger of ``compute`` (its loops' cycles over its team,
+    plus its regions) and ``memory`` (their bytes over the bandwidth once the arrays leave the cache). ``regions`` and
+    ``elements`` are one call's at the running size; ``elements`` is 0 when that size is unknown."""
 
     cycles_per_element: float
     compute: float
     memory: float
     loops: tuple[LoopCost, ...]
     machine_loops: int
+    regions: float = 0.0
+    elements: float = 0.0
 
 
 def disassembly(archive: pathlib.Path) -> dict[str, list[Instruction]]:
-    """Every function of ``archive``'s objects, by name, as its instructions in address order."""
     listing = subprocess.run(
         ["llvm-objdump", "-d", "-r", "-l", "--no-show-raw-insn", str(archive)],
         capture_output=True,
@@ -141,7 +136,7 @@ def disassembly(archive: pathlib.Path) -> dict[str, list[Instruction]]:
             current, source_line = functions.setdefault(head.group(1), []), 0
         elif (position := SOURCE_LINE.match(line)) is not None:
             source_line = int(position.group(1))
-        elif (reloc := RELOCATION.match(line)) is not None:  # a call's callee, or a constant's address: no instruction
+        elif (reloc := RELOCATION.match(line)) is not None:
             if current and CALL.match(current[-1].mnemonic):
                 last = current[-1]
                 current[-1] = Instruction(last.address, last.mnemonic, last.operands, reloc.group(1), last.line)
@@ -155,18 +150,22 @@ def is_branch(i: Instruction) -> bool:
     return bool(X86_BRANCH.match(i.mnemonic) or ARM_BRANCH.match(i.mnemonic))
 
 
-def innermost_loops(code: list[Instruction]) -> list[Loop]:
-    """The loops of one function holding no other loop: a branch back to an earlier address spans a loop."""
+def innermost_spans(code: list[Instruction]) -> list[tuple[int, int]]:
+    """A branch back to an earlier address spans a loop; the innermost spans hold no other."""
     spans = []
     for i in code:
         target = TARGET.search(i.operands) if is_branch(i) else None
         if target is not None and int(target.group(1), 16) < i.address:
             spans.append((int(target.group(1), 16), i.address))
-    inner = [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
+    return [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
+
+
+def innermost_loops(code: list[Instruction]) -> list[Loop]:
+    """The loops of one function holding no other loop."""
+    inner = innermost_spans(code)
     moving = [s for s in inner if any(s[0] <= i.address < s[1] and moves_data(i) for i in code)]
-    inner = moving or inner  # an outer latch laid out past the function's return moves nothing
     loops = []
-    for start, end in inner:
+    for start, end in moving or inner:  # an outer latch laid out past the function's return moves nothing
         body = tuple(i for i in code if start <= i.address < end and not is_branch(i))
         calls = tuple(i.callee for i in body if CALL.match(i.mnemonic))
         lines = frozenset(i.line for i in body if i.line)
@@ -175,7 +174,6 @@ def innermost_loops(code: list[Instruction]) -> list[Loop]:
 
 
 def moves_data(i: Instruction) -> bool:
-    """Whether ``i`` reads or writes memory."""
     return "(" in i.operands or "[" in i.operands
 
 
@@ -185,8 +183,7 @@ def sve_bytes() -> int:
 
 
 def x86_bytes(i: Instruction) -> int:
-    """Bytes an x86 instruction moves to or from memory (AT&T): its vector register width, an element for a scalar
-    or broadcast FP form, else its general register width."""
+    """AT&T: the vector register width, an element for a scalar or broadcast FP form, else the general register's."""
     if "(" not in i.operands or "%rip" in i.operands:  # a rip-relative operand is a constant, not an array
         return 0
     if i.mnemonic in {"vmovhpd", "vmovlpd", "vmovhps", "vmovlps"}:
@@ -201,7 +198,6 @@ def x86_bytes(i: Instruction) -> int:
 
 
 def arm_bytes(i: Instruction) -> int:
-    """Bytes an aarch64 load or store moves: by register class, twice for a pair, the SVE length for z registers."""
     if "[" not in i.operands or not re.match(r"^(ld|st)", i.mnemonic):
         return 0
     first = i.operands.lstrip("{").split(",")[0].strip()
@@ -212,7 +208,6 @@ def arm_bytes(i: Instruction) -> int:
 
 
 def data_bytes(loop: Loop) -> int:
-    """Bytes one iteration of ``loop`` moves to and from the scope's arrays (stack spills excluded)."""
     return sum(
         x86_bytes(i) + arm_bytes(i)
         for i in loop.body
@@ -222,7 +217,6 @@ def data_bytes(loop: Loop) -> int:
 
 @functools.lru_cache(maxsize=4096, typed=True)
 def mca_cycles(body: str) -> float | None:
-    """Cycles per iteration of ``body`` on the host CPU, or ``None`` when llvm-mca rejects it."""
     run = subprocess.run(
         ["llvm-mca", "-mcpu=native", f"-iterations={MCA_ITERATIONS}", "-"],
         input=body,
@@ -236,36 +230,35 @@ def mca_cycles(body: str) -> float | None:
 
 @plain(slots=True, frozen=True)
 class MapFacts:
-    """What the innermost map around a tasklet tells the model: array accesses per element (distinct memlets that
-    depend on its last, vectorized, parameter) and the iterations of it and every enclosing map. ``index`` tells two
-    maps with equal facts apart."""
+    """The innermost map around a tasklet: array accesses per element (distinct memlets on its last parameter) and
+    the iterations of it and every enclosing map. ``index`` tells two maps with equal facts apart."""
 
     accesses: int
     volume: sympy.Expr
     index: int
 
 
+def map_facts(state: dace.SDFGState, entry: nodes.MapEntry, index: int) -> MapFacts:
+    param, exit_node = entry.map.params[-1], state.exit_node(entry)
+    accessed = {  # a read and a write of one element are two accesses; two reads of it are one
+        (e.data.data, str(e.data.subset), e.dst is exit_node)
+        for e in [*state.out_edges(entry), *state.in_edges(exit_node)]
+        if e.data.subset is not None and param in {str(s) for s in e.data.subset.free_symbols}
+    }
+    volume, enclosing = sympy.Integer(1), entry
+    while isinstance(enclosing, nodes.MapEntry):
+        volume *= enclosing.map.range.num_elements()
+        enclosing = state.entry_node(enclosing)
+    return MapFacts(max(1, len(accessed)), volume, index)
+
+
 def innermost_maps(sdfg: dace.SDFG) -> dict[str, MapFacts]:
     """Every tasklet label of ``sdfg``'s innermost maps, with its map's facts."""
     out: dict[str, MapFacts] = {}
-    for index, (node, state) in enumerate(sdfg.all_nodes_recursive()):
-        if not isinstance(node, nodes.MapEntry) or not isinstance(state, dace.SDFGState):
-            continue
-        inside = state.scope_children()[node]
-        if any(isinstance(n, nodes.MapEntry) for n in inside):
-            continue
-        param, exit_node = node.map.params[-1], state.exit_node(node)
-        accessed = {  # a read and a write of one element are two accesses; two reads of it are one
-            (e.data.data, str(e.data.subset), e.dst is exit_node)
-            for e in [*state.out_edges(node), *state.in_edges(exit_node)]
-            if e.data.subset is not None and param in {str(s) for s in e.data.subset.free_symbols}
-        }
-        volume, entry = sympy.Integer(1), node
-        while isinstance(entry, nodes.MapEntry):
-            volume *= entry.map.range.num_elements()
-            entry = state.entry_node(entry)
-        facts = MapFacts(max(1, len(accessed)), volume, index)
-        out |= {n.label: facts for n in inside if isinstance(n, nodes.Tasklet)}
+    states = [b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, dace.SDFGState)]
+    for index, (state, entry) in enumerate((s, e) for s in states for e in prune.innermost_entries(s)):
+        facts = map_facts(state, entry, index)
+        out |= {n.label: facts for n in state.scope_children()[entry] if isinstance(n, nodes.Tasklet)}
     return out
 
 
@@ -274,12 +267,7 @@ def accesses_per_element(scope: Scope) -> int:
     return max((f.accesses for f in innermost_maps(scope.sdfg).values()), default=1)
 
 
-def element_bytes(scope: Scope) -> int:
-    return min((d.dtype.bytes for d in scope.sdfg.arrays.values() if not d.transient), default=8)
-
-
 def tasklet_lines(source: pathlib.Path) -> dict[int, str]:
-    """Source line -> the tasklet label its trailing comment names."""
     lines = source.read_text().splitlines() if source.is_file() else []
     return {n: m.group(1) for n, text in enumerate(lines, start=1) if (m := TASKLET_COMMENT.search(text)) is not None}
 
@@ -292,13 +280,10 @@ def evaluated(volume: sympy.Expr, sizes: dict[str, int] | None) -> float | None:
 def temporaries(sdfg: dace.SDFG, sizes: dict[str, int]) -> int:
     """Bytes of ``sdfg``'s transient arrays that grow with the sizes: the values a fission cut widens."""
     grown = [d for d in sdfg.arrays.values() if d.transient and dace.symbolic.issymbolic(d.total_size)]
-    numeric: dict[dace.symbol | str, int | float] = {k: v for k, v in sizes.items()}  # noqa: C416 -- widens types
-    known = [d for d in grown if {str(s) for s in d.free_symbols} <= sizes.keys()]  # a loop variable has no size
-    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in known)
+    return timing.bytes_at([d for d in grown if {str(s) for s in d.free_symbols} <= sizes.keys()], sizes)
 
 
 def element_lanes(i: Instruction, width: int) -> int:
-    """The lanes a gather or scatter moves."""
     for register, bytes_wide in (("%zmm", 64), ("%ymm", 32), ("%xmm", 16)):
         if register in i.operands:
             return bytes_wide // width
@@ -306,57 +291,40 @@ def element_lanes(i: Instruction, width: int) -> int:
 
 
 def hot_calls(loop: Loop, elements: float) -> int:
-    """Calls every iteration makes: a vector loop's vector math entries, and its scalar calls when there are as many
-    as lanes (a scalarized math call); fewer are the fallback of a few lanes (errno, a special value)."""
+    """Calls every iteration makes: scalar calls in a vector loop count only when there are as many as lanes; fewer
+    are the fallback of a few lanes (errno, a special value)."""
     vector = sum(bool(VECTOR_CALL.match(c)) for c in loop.callees)
     scalar = len(loop.callees) - vector
     return len(loop.callees) if elements <= 1 or scalar >= elements else vector
 
 
 def loop_cost(loop: Loop, tasklets: tuple[str, ...], maps: dict[str, MapFacts], scope: Scope) -> LoopCost | None:
-    """One machine loop's cost before weighting; ``None`` when llvm-mca rejects its body."""
     cycles = mca_cycles("\n".join(f"{i.mnemonic} {i.operands}" for i in loop.body) + "\n")
     if cycles is None:
         return None
     known = [maps[t] for t in tasklets if t in maps]
     accesses = max((f.accesses for f in known), default=accesses_per_element(scope))
-    per_element = element_bytes(scope) * accesses
+    width = prune.smallest_element(scope.sdfg)
+    per_element = width * accesses
     elements = max(1.0, data_bytes(loop) / per_element)
-    cycles += GATHER_LANE_CYCLES * sum(
-        element_lanes(i, element_bytes(scope)) for i in loop.body if GATHER.match(i.mnemonic)
-    )
+    cycles += GATHER_LANE_CYCLES * sum(element_lanes(i, width) for i in loop.body if GATHER.match(i.mnemonic))
     return LoopCost(tasklets, cycles, elements, hot_calls(loop, elements), float(per_element), 1.0)
 
 
 def weight(tasklets: tuple[str, ...], maps: dict[str, MapFacts], sizes: dict[str, int] | None, total: float) -> float:
-    """A source loop's iterations over the scope's largest map's; 1 when the sizes are unknown."""
     volumes = [v for t in tasklets if t in maps if (v := evaluated(maps[t].volume, sizes)) is not None]
     return max(volumes) / total if volumes and total > 0 else 1.0
 
 
 def source_loop(tasklets: tuple[str, ...], maps: dict[str, MapFacts]) -> frozenset[MapFacts] | tuple[str, ...]:
-    """What groups machine loops: the maps their statements render, so a main loop and an epilogue attributed to other
-    lines count once; the statements themselves where no map renders them."""
+    """What groups machine loops: the maps their statements render, so a main loop and its epilogue count once."""
     return frozenset(maps[t] for t in tasklets if t in maps) or tasklets
 
 
-def predict(
-    build: Build, scope: Scope, sizes: dict[str, int] | None = None, sdfg: dace.SDFG | None = None
-) -> Prediction | None:
-    """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`): per source loop (machine loops
-    grouped by the maps their lines render; loops rendering no statement only count when no loop renders one),
-    the hot copy's ``(cycles + calls) / elements`` and main-memory bytes, weighted by its maps' iterations at
-    ``sizes`` over the scope's largest map's. ``sdfg`` is what the build rendered (the scope's own by default).
-    ``None`` without an object or a loop llvm-mca accepts."""
-    if build.archive is None:
-        return None
-    machine_loops = [loop for code in disassembly(build.archive).values() for loop in innermost_loops(code)]
-    labels = tasklet_lines(build.source)
-    rendered = sdfg if sdfg is not None else scope.sdfg
-    maps = innermost_maps(rendered)
-    largest = max(
-        (v for f in innermost_maps(scope.sdfg).values() if (v := evaluated(f.volume, sizes)) is not None), default=0.0
-    )
+def hot_copies(
+    machine_loops: list[Loop], labels: dict[int, str], maps: dict[str, MapFacts], scope: Scope
+) -> dict[frozenset[MapFacts] | tuple[str, ...], LoopCost]:
+    """Each source loop's hot copy: the most elements per iteration, then the fewest cycles."""
     groups: dict[frozenset[MapFacts] | tuple[str, ...], LoopCost] = {}
     for loop in machine_loops:
         tasklets = tuple(sorted({labels[n] for n in loop.lines if n in labels}))
@@ -367,30 +335,84 @@ def predict(
             groups[key] = cost
     if any(groups) and () in groups:  # a loop rendering no statement (OpenMP chunking) next to the loops that do
         del groups[()]
+    return groups
+
+
+def weighted(
+    costs: Iterable[LoopCost], maps: dict[str, MapFacts], scope: Scope, sizes: dict[str, int] | None
+) -> tuple[LoopCost, ...]:
+    largest = max(
+        (v for f in innermost_maps(scope.sdfg).values() if (v := evaluated(f.volume, sizes)) is not None), default=0.0
+    )
+    return tuple(
+        LoopCost(c.tasklets, c.cycles, c.elements, c.calls, c.bytes, weight(c.tasklets, maps, sizes, largest))
+        for c in costs
+    )
+
+
+def team_of(archive: pathlib.Path, load: Load | None, cores: int) -> tuple[float, float]:
+    """``(regions, threads sharing the work)``: at an unknown size every core and no region is the whole model."""
+    if load is None:
+        return 0.0, float(cores)
+    return (load.regions, load.elements / load.span) if runtime.openmp_needs(archive) else (0.0, 1.0)
+
+
+def memory_term(loops: tuple[LoopCost, ...], footprint: int, share: float) -> float:
+    """Cycles per element on ``share`` of the bandwidth, once ``footprint`` bytes leave the cache."""
+    if footprint <= CACHE_RESIDENT * machine.largest_cache_bytes():
+        return 0.0
+    bandwidth = share * machine.memory_bandwidth().bytes_per_second / machine.max_frequency_hz()
+    return sum(c.weight * c.bytes for c in loops) / bandwidth
+
+
+def predict(
+    build: Build,
+    scope: Scope,
+    sizes: dict[str, int] | None = None,
+    sdfg: dace.SDFG | None = None,
+    *,
+    running: bool = False,
+) -> Prediction | None:
+    """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`), each source loop weighted by its
+    maps' iterations at ``sizes``. ``sdfg`` is what the build rendered (the scope's own by default). With ``running``
+    the scope will run at ``sizes``: a build pays for its regions on its real team. ``None`` without an object or a
+    loop llvm-mca accepts, and for a serial build at a size that does not decide the scope."""
+    if build.archive is None:
+        return None
+    rendered = sdfg if sdfg is not None else scope.sdfg
+    cores = len(machine.physical_cores())
+    load = load_of(rendered, sizes or {}, cores) if running else None
+    if build.candidate.serial and load is None:
+        return None
+    machine_loops = [loop for code in disassembly(build.archive).values() for loop in innermost_loops(code)]
+    maps = innermost_maps(rendered)
+    groups = hot_copies(machine_loops, tasklet_lines(build.source), maps, scope)
     if not groups:
         return None
-    loops = tuple(
-        LoopCost(c.tasklets, c.cycles, c.elements, c.calls, c.bytes, weight(c.tasklets, maps, sizes, largest))
-        for c in groups.values()
-    )
-    compute = sum(c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements for c in loops)
-    compute /= len(machine.physical_cores())  # the scope's loops are OpenMP-parallel
-    memory = 0.0
+    loops = weighted(groups.values(), maps, scope, sizes)
+    regions, team = team_of(build.archive, load, cores)
+    elements = load.elements if load is not None else 0.0
+    compute = sum(c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements for c in loops) / team
+    if regions > 0:
+        compute += regions * REGION_NS * 1e-9 * machine.max_frequency_hz() / elements
     footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
-    if footprint > CACHE_RESIDENT * machine.largest_cache_bytes():
-        bandwidth = machine.memory_bandwidth().bytes_per_second / machine.max_frequency_hz()
-        memory = sum(c.weight * c.bytes for c in loops) / bandwidth
-    return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops))
+    memory = memory_term(loops, footprint, team / cores)
+    return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops), regions, elements)
 
 
 #: ``{scope symbol: {candidate name: prediction}}``; a build without one (no object, no loop) is absent.
 Predictions = dict[str, dict[str, Prediction]]
 
 
-def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None) -> Predictions:
-    """The prediction of every distinct OpenMP build of every scope at ``sizes`` (the loops weigh equally without), in
-    parallel (llvm-mca runs per loop). The model spreads a scope's loops over the cores, so it scores no serial build."""
-    jobs = [(rep, b) for rep in reports for b in rep.builds if not (b.error or b.duplicate_of or b.candidate.serial)]
+def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None, running: bool = False) -> Predictions:
+    """The prediction of every distinct build of every scope at ``sizes`` (the loops weigh equally without), in parallel
+    (llvm-mca runs per loop). Without ``running``, :func:`predict`'s model, every core and no region, skips serial builds."""
+    jobs = [
+        (rep, b)
+        for rep in reports
+        for b in rep.builds
+        if not (b.error or b.duplicate_of or (b.candidate.serial and not running))
+    ]
     cut = {  # what each scope's fission builds rendered, split once per scope
         rep.scope.symbol: fission.fissioned(rep.scope.sdfg)
         for rep in reports
@@ -399,7 +421,7 @@ def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None)
 
     def score(job: tuple[ScopeReport, Build]) -> Prediction | None:
         rep, b = job
-        return predict(b, rep.scope, sizes, cut[rep.scope.symbol] if b.candidate.fission else None)
+        return predict(b, rep.scope, sizes, cut[rep.scope.symbol] if b.candidate.fission else None, running=running)
 
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
         scored = list(pool.map(score, jobs))
@@ -416,13 +438,14 @@ def choose(
     """The scope's speculative winner: among the correct distinct builds at or below the default FP level
     (:func:`fp.default_level`) within :data:`TIE` of the fewest predicted cycles per element (all of them when none is
     predicted), the default level's, then the first in sweep order. Without verdicts
-    (no manifest) every build that compiled counts as correct. A serial build wins only by measurement, so never here."""
+    (no manifest) every build that compiled counts as correct. A serial build counts only at a size that decides it."""
     scores = predicted.get(rep.scope.symbol, {})
     level = fp.default_level(matrix, rep.scope, finite_inputs=finite_inputs)
 
     def correct(b: Build) -> bool:
         verified = not verdicts or (b.name in verdicts and verdicts[b.name].ok)
-        return not b.error and not b.duplicate_of and not b.candidate.serial and verified
+        sized = not b.candidate.serial or (b.name in scores and scores[b.name].elements > 0)
+        return not b.error and not b.duplicate_of and sized and verified
 
     def cost(b: Build) -> float:
         return scores[b.name].cycles_per_element if b.name in scores else math.inf

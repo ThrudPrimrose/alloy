@@ -44,10 +44,11 @@ INSTRUMENT = re.compile(r'"instrument": "(\w+)"')
 def build(job: pathlib.Path) -> None:
     """Run the pickled ``job`` of :func:`compile`: the program lands in its ``out``."""
     with job.open("rb") as handle:
-        sdfg_file, manifest, mode, matrix, out, finite_inputs = pickle.load(handle)
+        sdfg_file, manifest, mode, matrix, out, finite_inputs, running = pickle.load(handle)
     sdfg = dace.SDFG.from_file(sdfg_file)
     with set_temporary("compiler", "build_plugin", value=""):  # Alloy's own programs compile the DaCe way
-        result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, finite_inputs=finite_inputs)
+        declared = {"finite_inputs": finite_inputs, "running": running}
+        result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, **declared)
         if not result.winners:
             raise RuntimeError(f"{sdfg.name}: Alloy linked no build (profile mode without local timing)")
         archives = {symbol: built(b) for symbol, b in result.winners.items()}
@@ -94,13 +95,20 @@ def json_value(value: Any) -> Any:
     return sorted(value) if isinstance(value, frozenset | set) else str(value)
 
 
-def build_key(sdfg: dace.SDFG, manifest: Manifest | None, mode: Mode, matrix: Matrix, finite_inputs: bool) -> str:
+def build_key(
+    sdfg: dace.SDFG,
+    manifest: Manifest | None,
+    mode: Mode,
+    matrix: Matrix,
+    finite_inputs: bool,
+    running: dict[str, int] | None = None,
+) -> str:
     """A digest of all that decides the program :func:`compile` builds: the SDFG, what the caller declares, the matrix
     and its compilers, the manifest, the packages doing the work, and the host and configuration they read."""
     executables = sorted({e for spelled in matrix.compilers.values() for e in spelled.executables.values()})
     decided_by = {
         "sdfg": (sdfg.name, sdfg.hash_sdfg(), instrumentation(sdfg)),
-        "declared": (mode, finite_inputs),
+        "declared": (mode, finite_inputs, running),
         "matrix": dataclasses.asdict(matrix),
         "compilers": [compiler_version(e) for e in executables],
         "manifest": None if manifest is None else (manifest.path, manifest.raw, manifest.datatype),
@@ -113,7 +121,13 @@ def build_key(sdfg: dace.SDFG, manifest: Manifest | None, mode: Mode, matrix: Ma
 
 
 def run_worker(
-    sdfg: dace.SDFG, manifest: Manifest | None, mode: Mode, matrix: Matrix, out: pathlib.Path, finite_inputs: bool
+    sdfg: dace.SDFG,
+    manifest: Manifest | None,
+    mode: Mode,
+    matrix: Matrix,
+    out: pathlib.Path,
+    finite_inputs: bool,
+    running: dict[str, int] | None,
 ) -> subprocess.CompletedProcess[str]:
     """:func:`build` for these arguments in a process of its own."""
     with tempfile.TemporaryDirectory(prefix="alloy_job_") as folder:
@@ -121,7 +135,7 @@ def run_worker(
         sdfg_file = pathlib.Path(folder) / "program.sdfg"
         sdfg.save(str(sdfg_file))
         with job.open("wb") as handle:
-            pickle.dump((sdfg_file, manifest, mode, matrix, out, finite_inputs), handle)
+            pickle.dump((sdfg_file, manifest, mode, matrix, out, finite_inputs, running), handle)
         return subprocess.run(
             [sys.executable, "-m", "alloy.dace_backend", str(job)], check=False, capture_output=True, text=True
         )
@@ -135,24 +149,26 @@ def compile(
     matrix: Matrix | None = None,
     out: pathlib.Path | None = None,
     finite_inputs: bool = False,
+    running: dict[str, int] | None = None,
     output_file: str | None = None,
     validate: bool = True,
     return_program_handle: bool = True,
 ) -> CompiledSDFG | None:
     """Run Alloy on ``sdfg`` (under ``out``, default ``<build folder>/alloy``) and compile the outlined program with
     each scope's linked build: called with the same arguments as ``sdfg``. A program with no scope builds the DaCe way.
-    Profile mode needs a manifest (:func:`api.generate`); ``finite_inputs`` declares no input is NaN or Inf. A build
-    under ``out`` with the same :func:`build_key` is loaded, not repeated."""
+    Profile mode needs a manifest (:func:`api.generate`); ``finite_inputs`` declares no input is NaN or Inf, ``running``
+    the sizes the program will be called at (``SDFG.compile`` has no way to say). A build under ``out`` with the same
+    :func:`build_key` is loaded, not repeated."""
     matrix = matrix or configuration_matrix.load()
     out = out or pathlib.Path(sdfg.build_folder) / "alloy"
     out.mkdir(parents=True, exist_ok=True)
     if validate:
         sdfg.validate()
-    key = build_key(sdfg, manifest, mode, matrix, finite_inputs)
+    key = build_key(sdfg, manifest, mode, matrix, finite_inputs, running)
     folder, stamp = out / PROGRAM_FOLDER, out / PROGRAM_FOLDER / KEY_FILE
     if not stamp.is_file() or stamp.read_text() != key:
         stamp.unlink(missing_ok=True)  # a build that dies below leaves no key over its half-written program
-        run = run_worker(sdfg, manifest, mode, matrix, out, finite_inputs)
+        run = run_worker(sdfg, manifest, mode, matrix, out, finite_inputs, running)
         if run.returncode == NOTHING_TO_GENERATE:
             with set_temporary("compiler", "build_plugin", value=""):
                 handle = return_program_handle

@@ -16,7 +16,7 @@ from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Scope
 
-__all__ = ["Facts", "Pruned", "facts", "is_native", "prune"]
+__all__ = ["Facts", "Pruned", "facts", "innermost_entries", "is_native", "prune", "smallest_element"]
 
 #: Iterations clang unrolls a vector loop by at most (its interleave count), so a remainder can exist after a trip
 #: count the vector length divides; gcc does not interleave. A trip count must be a multiple of lanes x this.
@@ -26,13 +26,14 @@ MAX_INTERLEAVE = 4
 @dataclass(slots=True, frozen=True)
 class Facts:
     """What a scope's code does, read from its SDFG: whether a multiply feeds an add or subtract (contraction), a
-    call sets errno (libm, sqrt), it reduces, it divides or takes a min/max (fast-math approximations); the trip count
+    call sets errno, it reduces, it divides or takes a min/max (fast-math approximations), it divides; the trip count
     of every innermost loop (``None`` when not a constant) and the smallest element in bytes."""
 
     contracts: bool
     sets_errno: bool
     reduces: bool
     approximates: bool
+    divisions: bool
     trip_counts: tuple[int | None, ...]
     element_bytes: int
 
@@ -78,26 +79,35 @@ def extent(begin: object, end: object, step: object) -> int | None:
     return int(value) if isinstance(value, sympy.Integer) else None
 
 
+def innermost_entries(state: dace.SDFGState) -> list[nodes.MapEntry]:
+    """The maps of ``state`` holding no other map."""
+    children = state.scope_children()
+    return [
+        node
+        for node in state.nodes()
+        if isinstance(node, nodes.MapEntry) and not any(isinstance(n, nodes.MapEntry) for n in children[node])
+    ]
+
+
+def smallest_element(sdfg: dace.SDFG) -> int:
+    """The smallest element of ``sdfg``'s non-transient containers, in bytes."""
+    return min((d.dtype.bytes for d in sdfg.arrays.values() if not d.transient), default=8)
+
+
 def trip_counts(sdfg: dace.SDFG) -> tuple[int | None, ...]:
     """The vectorizable trip count of every innermost map (its last dimension); a sequential loop counts as unknown."""
     counts: list[int | None] = []
     for block in sdfg.all_control_flow_blocks():
         if isinstance(block, LoopRegion):
             counts.append(None)
-        if not isinstance(block, dace.SDFGState):
-            continue
-        children = block.scope_children()
-        counts.extend(
-            extent(*node.map.range[-1])
-            for node in block.nodes()
-            if isinstance(node, nodes.MapEntry) and not any(isinstance(n, nodes.MapEntry) for n in children[node])
-        )
+        if isinstance(block, dace.SDFGState):
+            counts.extend(extent(*entry.map.range[-1]) for entry in innermost_entries(block))
     return tuple(counts)
 
 
 def facts(scope: Scope) -> Facts:
     """``scope``'s static facts (see :class:`Facts`)."""
-    contracts = approximates = sets_errno = False
+    contracts = approximates = sets_errno = divisions = False
     for node, state in scope.sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.Tasklet) or not isinstance(state, dace.SDFGState):
             continue
@@ -105,15 +115,16 @@ def facts(scope: Scope) -> Facts:
         multiplies = bool(ops & {ast.Mult, ast.Pow})  # x**2 renders as a multiply
         contracts |= multiplies and (bool(ops & {ast.Add, ast.Sub}) or feeds_add(state, node))
         sets_errno |= "sqrt" in calls
+        divisions |= ast.Div in ops
         approximates |= ast.Div in ops or bool(calls & {"min", "max", "fmin", "fmax"})
-    sizes = [d.dtype.bytes for d in scope.sdfg.arrays.values() if not d.transient] or [8]
     return Facts(
         contracts=contracts,
         sets_errno=sets_errno or scope.calls_libm,
         reduces=scope.has_reduction,
         approximates=approximates,
+        divisions=divisions,
         trip_counts=trip_counts(scope.sdfg),
-        element_bytes=min(sizes),
+        element_bytes=smallest_element(scope.sdfg),
     )
 
 
@@ -126,6 +137,7 @@ def is_native(candidate: Candidate) -> bool:
 #: level not listed (strict, or one a swapped matrix adds) is always built.
 BITES: dict[str, tuple[Callable[[Facts], bool], str]] = {
     "contract": (lambda f: f.contracts, "no multiply feeds an add"),
+    "reciprocal": (lambda f: f.divisions, "no division"),
     "noerrno": (lambda f: f.sets_errno, "no libm or sqrt call"),
     "reassoc": (lambda f: f.reduces, "no reduction"),
     "fast": (lambda f: f.contracts or f.sets_errno or f.reduces or f.approximates, "nothing fast-math rewrites"),

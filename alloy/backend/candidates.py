@@ -9,6 +9,9 @@ from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.scopes import Scope
 from alloy.heuristics import fission
 
+#: The FP level also built without a region: a small division loop gains from both at once.
+SERIAL_LEVEL = "reciprocal"
+
 #: A code variant's identity: the language and every codegen knob it is rendered with.
 RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 
@@ -125,7 +128,8 @@ def flips(
 ) -> list[Candidate]:
     """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
     host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them; ``fission`` adds the fissioned
-    rendering (the scope has a cut). The serial build comes last, so every OpenMP build precedes it in sweep order."""
+    rendering (the scope has a cut). The serial builds come last, so every OpenMP build precedes them in sweep order; a
+    scope that reduces stops short of :data:`SERIAL_LEVEL` by default, so it builds only the first."""
     comp, d = matrix.compilers[compiler], matrix.defaults
     levels = fp_levels(matrix, scope, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
@@ -148,6 +152,8 @@ def flips(
     if fission:
         out.append(Candidate(language, compiler, fission=True, note="fission"))
     out.append(Candidate(language, compiler, serial=True, note="serial"))
+    if SERIAL_LEVEL in levels and not scope.has_reduction:
+        out.append(Candidate(language, compiler, fp_level=SERIAL_LEVEL, serial=True, note=f"serial, fp {SERIAL_LEVEL}"))
     return out
 
 

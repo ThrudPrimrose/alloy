@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pathlib
+import re
 import subprocess
 
 import dace
@@ -19,6 +20,12 @@ N = dace.symbol("N")
 @dace.program
 def scale(x: dace.float64[N], y: dace.float64[N], a: dace.float64):
     y[:] = a * x
+
+
+@dace.program
+def thirds(x: dace.float64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[i] = x[i] / 3.0
 
 
 def scale_scope() -> scopes.Scope:
@@ -138,6 +145,29 @@ SVE_FULL_MASK = """\
   38:	whilelo	p7.d, x3, x0
   3c:	b.ne	20 <axpy+0x20>
 """
+
+
+def divisions(archive: pathlib.Path | None) -> int:
+    listing = subprocess.run(["llvm-objdump", "-d", str(archive)], capture_output=True, text=True, check=True).stdout
+    return len(re.findall(r"\b(?:v?div[ps]d|fdiv)\b", listing))
+
+
+@pytest.mark.parametrize(
+    "compiler",
+    [
+        pytest.param("gcc", marks=pytest.mark.gcc),
+        pytest.param("clang", marks=pytest.mark.clang),
+        pytest.param("icx", marks=pytest.mark.icx),
+    ],
+)
+def test_the_reciprocal_level_turns_a_division_by_a_constant_into_a_multiply(tmp_path, compiler):
+    (scope,) = scopes.outline(thirds.to_sdfg(), MATRIX.libm_calls).scopes
+    strict = build(scope, Candidate("c", compiler), MATRIX, tmp_path / "strict", {})
+
+    sut = build(scope, Candidate("c", compiler, fp_level="reciprocal"), MATRIX, tmp_path / "reciprocal", {})
+
+    assert divisions(strict.archive) > 0
+    assert divisions(sut.archive) == 0
 
 
 @pytest.mark.parametrize(

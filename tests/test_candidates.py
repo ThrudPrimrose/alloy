@@ -41,7 +41,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
         if name in gcc.tail
     )
     assert {c.compiler for c in sut} == {"gcc"}
-    assert {c.resolved(matrix)[0] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
+    assert {c.resolved(matrix)[0] for c in sut} == {"strict", "contract", "reciprocal", "noerrno", "reassoc"}
     assert len(sut) == len(matrix.languages) * per_language
 
 
@@ -147,6 +147,15 @@ def test_a_tail_is_built_with_the_compilers_spelling_and_names_its_config():
     assert full.config_name(MATRIX).endswith("_avx512_full_mask")
     assert full.variant_key(MATRIX) == out[0].variant_key(MATRIX), "a flag tail renders the default source"
     assert sve.variant_key(MATRIX) != out[0].variant_key(MATRIX), "explicit SVE loops are a source of their own"
+
+
+def test_a_scope_that_may_reach_the_reciprocal_level_also_tries_it_without_a_region():
+    scope = scope_with(outlined(), libm=True, reduction=False)
+
+    sut = flips(MATRIX, scope, "c", "gcc", finite_inputs=False)
+
+    assert [c.fp_level for c in sut if c.serial] == ["", "reciprocal"]
+    assert sut[-1].name(MATRIX) == "c_gcc_reciprocal_default_none_serial"
 
 
 @pytest.mark.parametrize(
