@@ -189,6 +189,8 @@ def check_consistency(m: Matrix) -> None:
     ):
         if value not in known:
             raise ValueError(f"{m.path}: defaults.{kind} {value!r} is not declared")
+    if not any("cpp" in comp.executables for comp in m.compilers.values()):
+        raise ValueError(f"{m.path}: no compiler spells cpp, and the scope timers build as C++")
     for name, comp in m.compilers.items():
         if not comp.executables:
             raise ValueError(f"{m.path}: compilers.{name} names no executable for any language")

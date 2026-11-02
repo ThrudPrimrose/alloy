@@ -156,3 +156,21 @@ def test_scopes_run_in_program_order():
     assert sorted(sut) == sorted(r.symbol for r in program.scopes)
     reduction = next(r.symbol for r in program.scopes if r.has_reduction)
     assert sut[-1] == reduction
+
+
+def test_best_carries_each_winners_own_source_and_flags(tmp_path):
+    program = outlined()
+    winners = {
+        scope.symbol: build(scope, Candidate("c", "gcc", fp_level="contract"), MATRIX, tmp_path / scope.symbol, {})
+        for scope in program.scopes
+    }
+
+    sut = Linker(program, MATRIX, tmp_path / "out").write_best(winners)
+
+    best = tmp_path / "out" / "best"
+    assert {s.symbol for s in sut.scopes} == set(winners)
+    for scope in sut.scopes:
+        winner = winners[scope.symbol]
+        assert scope.candidate == winner.name
+        assert scope.flags == winner.flags
+        assert (best / scope.source).read_bytes() == winner.source.read_bytes()

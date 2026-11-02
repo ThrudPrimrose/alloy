@@ -161,3 +161,26 @@ def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_pa
     assert sut.archive is None
     assert "#error alloy: tail sve_intrinsics on sve cannot be rendered" in sut.source.read_text()
     assert "inside an SVE map" in sut.source.read_text()
+
+
+def compiled_asm(tmp_path, source: str, level: str) -> str:
+    unit = tmp_path / f"{level}.c"
+    unit.write_text(source)
+    flags = [*MATRIX.compilers["gcc"].fp[level], "-O3", "-mavx2", "-mfma", "-S", "-o", "-", str(unit)]
+    return subprocess.run(["gcc", *flags], capture_output=True, text=True, check=True).stdout
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(("level", "fused"), [("strict", False), ("contract", True)])
+def test_only_a_contracting_level_fuses_a_product_into_its_sum(level, fused, tmp_path):
+    source = "void f(int n, double *a, double *b, double *c) { for (int i = 0; i < n; i++) c[i] += a[i] * b[i]; }"
+
+    assert ("vfmadd" in compiled_asm(tmp_path, source, level)) is fused
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(("level", "packed"), [("strict", False), ("reassoc", True)])
+def test_only_a_reassociating_level_vectorizes_a_sum(level, packed, tmp_path):
+    source = "double f(int n, double *a) { double s = 0; for (int i = 0; i < n; i++) s += a[i]; return s; }"
+
+    assert ("vaddpd" in compiled_asm(tmp_path, source, level)) is packed
