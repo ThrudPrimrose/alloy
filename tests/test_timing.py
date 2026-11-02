@@ -109,3 +109,25 @@ def test_alloy_full_links_every_scope_winner_and_matches_dace_default(tmp_path):
     assert all(m.verdict.ok and math.isfinite(m.median) for m in sut.arms.values())
     assert timing.footprint(program.original, sut.sizes) >= 2 * machine.largest_cache_bytes()
     assert all(r.winner in r.final for r in timings.scopes.values())
+
+
+def measured(median: float, spread: float = 0.1, status: str = "pass") -> timing.Measured:
+    return timing.Measured(median, median - spread, median + spread, verify.Verdict(status))  # type: ignore[arg-type]
+
+
+def test_a_candidate_whose_interval_overlaps_the_reference_does_not_win():
+    final = {timing.REFERENCE: measured(1.0), "close": measured(0.95)}
+
+    assert timing.winner_of(final, ["close"]) == timing.REFERENCE
+
+
+def test_the_fastest_clear_candidate_wins_past_a_wide_faster_one():
+    final = {timing.REFERENCE: measured(1.0), "wide": measured(0.5, 0.6), "clear": measured(0.7)}
+
+    assert timing.winner_of(final, ["wide", "clear"]) == "clear"
+
+
+def test_a_failed_candidate_never_wins():
+    final = {timing.REFERENCE: measured(1.0), "wrong": measured(0.1, status="fail")}
+
+    assert timing.winner_of(final, ["wrong"]) == timing.REFERENCE

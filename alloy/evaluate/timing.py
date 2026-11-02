@@ -250,9 +250,13 @@ def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, man
     keep = [REFERENCE, *ranked[: t.top]]
     top = Arms({n: arms.folders[n] for n in keep}, arms.tolerances, symbol, arms.outputs, arms.nondeterministic)
     final = measure(top, inputs.at(manifest, final_sizes), length(linker, final_sizes), cores, t.final_reps)
-    clear = [n for n in ranked[: t.top] if final[n].verdict.ok and final[n].high < final[REFERENCE].low]
-    winner = min(clear, key=lambda n: final[n].median, default=REFERENCE)
-    return ScopeTiming(screen, final, winner, screen_sizes, final_sizes)
+    return ScopeTiming(screen, final, winner_of(final, ranked[: t.top]), screen_sizes, final_sizes)
+
+
+def winner_of(final: dict[str, Measured], names: list[str]) -> str:
+    """The fastest of ``names`` that passes and whose CI lies wholly below the reference's, else the reference."""
+    clear = [n for n in names if final[n].verdict.ok and final[n].high < final[REFERENCE].low]
+    return min(clear, key=lambda n: final[n].median, default=REFERENCE)
 
 
 def length(linker: Linker, sizes: dict[str, int]) -> int:

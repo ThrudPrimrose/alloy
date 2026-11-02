@@ -148,7 +148,7 @@ def test_the_shapes_the_frontend_emits_are_recognized():
 
 
 def test_an_operation_without_a_row_is_named_not_dropped():
-    assert expression_ops("y = a > b")[1] == {"compare"}
+    assert "lt" in expression_ops("y = a > b")[0]
     assert expression_ops("y = floor(a)")[1] == {"floor"}
 
 

@@ -96,6 +96,7 @@ OP_ORDER = (
     "max",
     "abs",
     "neg",
+    "lt",
     "select",
     "and",
     "or",
@@ -159,7 +160,7 @@ def expression_ops(code: str) -> tuple[set[str], set[str]]:
         elif isinstance(child, ast.IfExp | ast.If):
             ops.add("select")
         elif isinstance(child, ast.Compare):
-            skipped.add("compare")
+            ops.add("lt")
         elif isinstance(child, ast.Call):
             name = ast.unparse(child.func).rsplit(".", 1)[-1]
             ops.add(CALL_NAMES[name]) if name in CALL_NAMES else skipped.add(name)

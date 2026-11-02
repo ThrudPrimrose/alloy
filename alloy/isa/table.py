@@ -57,10 +57,10 @@ ALL_DTYPES = DTYPES + (F16,) + INT_DTYPES
 #: The dtypes every ISA must fully cover.
 REQUIRED_DTYPES = set(DTYPES) | set(INT_DTYPES)
 
-#: Integer-lane ops: ``and``/``or``/``shl``/``shr``/``land``/``lor`` exist only under i64/i32; ``mod``
-#: exists under all float dtypes (fmod) and both integer ones (truncated remainder).
+#: Integer-lane ops: ``and``/``or``/``shl``/``shr``/``land``/``lor`` exist only under i64/i32; the rest of
+#: INT_OPS also under the float dtypes, ``mod`` as fmod on f64/f32 only.
 INT_ONLY_OPS = frozenset({"and", "or", "shl", "shr", "land", "lor"})
-INT_OPS = INT_ONLY_OPS | {"mod"}
+INT_OPS = INT_ONLY_OPS | {"mod", "add", "sub", "mul", "min", "max", "load", "store", "broadcast", "lt"}
 
 #: The shipped table.
 DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"

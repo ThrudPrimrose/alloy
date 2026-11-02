@@ -5,9 +5,8 @@ code, independent of the target. Every entry maps to a concrete intrinsic per IS
 
 Two operand conventions hold across the elementwise and bitwise ops: a binary op accepts a scalar in
 either operand position — the scalar is broadcast to all lanes (per ISA: an EVEX embedded broadcast on
-AVX-512, an explicit ``set1``/``vdup``/``svdup`` elsewhere, see the ISA notes); and integer-lane ops
-(``and`` … ``lor``, integer ``mod``) are looked up under the ``i64``/``i32`` dtypes, the float ones under
-``f64``/``f32``."""
+AVX-512 when it is the last source, an explicit ``set1``/``vdup``/``svdup`` elsewhere, see the ISA notes); and
+integer lanes are looked up under the ``i64``/``i32`` dtypes, the float ones under ``f64``/``f32``."""
 
 from pydantic.dataclasses import dataclass
 
@@ -53,12 +52,26 @@ OPS: dict[str, AbstractOp] = {
         "elementwise",
         2,
         "vector",
-        "v[j] = a[j] % b[j]: fmod for f64/f32 (sign of a), truncated remainder for i64/i32",
+        "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod for finite b and small a/b on f64/f32, truncated remainder on i64/i32",
     ),
     "fma": AbstractOp("fma", "a*b + c", "elementwise", 3, "vector", "one rounding: v[j] = a[j]*b[j] + c[j]"),
     "sqrt": AbstractOp("sqrt", "sqrt", "elementwise", 1, "vector", "v[j] = sqrt(x[j])"),
-    "min": AbstractOp("min", "min", "elementwise", 2, "vector", "v[j] = min(a[j], b[j])"),
-    "max": AbstractOp("max", "max", "elementwise", 2, "vector", "v[j] = max(a[j], b[j])"),
+    "min": AbstractOp(
+        "min",
+        "min",
+        "elementwise",
+        2,
+        "vector",
+        "v[j] = min(a[j], b[j]); NaN and equal zeros differ per ISA, see the row",
+    ),
+    "max": AbstractOp(
+        "max",
+        "max",
+        "elementwise",
+        2,
+        "vector",
+        "v[j] = max(a[j], b[j]); NaN and equal zeros differ per ISA, see the row",
+    ),
     "abs": AbstractOp("abs", "|x|", "elementwise", 1, "vector", "v[j] = |x[j]|"),
     "neg": AbstractOp("neg", "-x", "elementwise", 1, "vector", "v[j] = -x[j]"),
     "select": AbstractOp(
@@ -66,8 +79,22 @@ OPS: dict[str, AbstractOp] = {
     ),
     "and": AbstractOp("and", "&", "bitwise", 2, "vector", "v[j] = a[j] & b[j] (integer lanes)"),
     "or": AbstractOp("or", "|", "bitwise", 2, "vector", "v[j] = a[j] | b[j] (integer lanes)"),
-    "shl": AbstractOp("shl", "<<", "shift", 2, "vector", "v[j] = a[j] << b[j] (integer lanes)"),
-    "shr": AbstractOp("shr", ">>", "shift", 2, "vector", "v[j] = a[j] >> b[j], logical (integer lanes)"),
+    "shl": AbstractOp(
+        "shl",
+        "<<",
+        "shift",
+        2,
+        "vector",
+        "v[j] = a[j] << b[j] (integer lanes); a count at or past the width gives 0, NEON reads only its low byte",
+    ),
+    "shr": AbstractOp(
+        "shr",
+        ">>",
+        "shift",
+        2,
+        "vector",
+        "v[j] = a[j] >> b[j], logical (integer lanes); C >> on a signed lane is arithmetic, not this op",
+    ),
     "land": AbstractOp(
         "land",
         "&&",
@@ -84,6 +111,7 @@ OPS: dict[str, AbstractOp] = {
         "vector",
         "(a[j] != 0) || (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit",
     ),
+    "lt": AbstractOp("lt", "a < b", "mask", 2, "mask", "lane j true iff a[j] < b[j] (feeds select)"),
     "reduce_add": AbstractOp("reduce_add", "sum(v)", "reduction", 1, "scalar", "s = sum of every active lane of v"),
     "exp": AbstractOp("exp", "e^x", "transcendental", 1, "vector", "v[j] = exp(x[j])"),
     "sin": AbstractOp("sin", "sin x", "transcendental", 1, "vector", "v[j] = sin(x[j])"),

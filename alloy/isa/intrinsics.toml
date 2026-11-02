@@ -78,12 +78,14 @@ note = "dot product inside EACH 128-bit half (lane 0 of each half holds that hal
 [isa.avx2.f64.load]
 intrinsic = "_mm256_loadu_pd"
 mnemonic = "vmovupd"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..3"
 
 [isa.avx2.f64.store]
 intrinsic = "_mm256_storeu_pd"
 mnemonic = "vmovupd"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j], j = 0..3"
 
@@ -135,18 +137,21 @@ note = "no single intrinsic: add the 128-bit halves, then horizontal; pairs (l0+
 [isa.avx2.f64.zero]
 intrinsic = "_mm256_setzero_pd"
 mnemonic = "vxorpd"
+observed = ["vxorpd", "vxorps"]
 signature = "() -> v"
 semantics = "v[j] = 0.0"
 
 [isa.avx2.f32.load]
 intrinsic = "_mm256_loadu_ps"
 mnemonic = "vmovups"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..7"
 
 [isa.avx2.f32.store]
 intrinsic = "_mm256_storeu_ps"
 mnemonic = "vmovups"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j], j = 0..7"
 
@@ -198,6 +203,7 @@ note = "no single intrinsic: add the 128-bit halves, then horizontal; a pairwise
 [isa.avx2.f32.zero]
 intrinsic = "_mm256_setzero_ps"
 mnemonic = "vxorps"
+observed = ["vxorpd", "vxorps"]
 signature = "() -> v"
 semantics = "v[j] = 0.0f"
 
@@ -270,6 +276,7 @@ note = "classifies lanes (NaN/Inf/zero/denormal) into an opmask; the finite-inpu
 intrinsic = "_mm512_loadu_pd"
 masked = "_mm512_maskz_loadu_pd(k, p)"
 mnemonic = "vmovupd"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..7"
 
@@ -277,12 +284,14 @@ semantics = "v[j] = p[j], j = 0..7"
 intrinsic = "_mm512_storeu_pd"
 masked = "_mm512_mask_storeu_pd(p, k, v)"
 mnemonic = "vmovupd"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j] for active lanes j"
 
 [isa.avx512.f64.broadcast]
 intrinsic = "_mm512_set1_pd"
 mnemonic = "vbroadcastsd"
+observed = ["vbroadcastsd", "vbroadcastss"]
 signature = "(s) -> v"
 semantics = "v[j] = s, j = 0..7"
 note = "EVEX embedded broadcast {1to8} folds a broadcast into an arithmetic operand"
@@ -333,6 +342,7 @@ note = "header composite, not one instruction: shuffle-add chain the compiler ex
 [isa.avx512.f64.zero]
 intrinsic = "_mm512_setzero_pd"
 mnemonic = "vxorpd"
+observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "() -> v"
 semantics = "v[j] = 0.0"
 
@@ -347,6 +357,7 @@ note = "the standardized gen_mask: element i+offset active iff offset < N - i. C
 intrinsic = "_mm512_loadu_ps"
 masked = "_mm512_maskz_loadu_ps(k, p)"
 mnemonic = "vmovups"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..15"
 
@@ -354,12 +365,14 @@ semantics = "v[j] = p[j], j = 0..15"
 intrinsic = "_mm512_storeu_ps"
 masked = "_mm512_mask_storeu_ps(p, k, v)"
 mnemonic = "vmovups"
+observed = ["vmovupd", "vmovapd", "vmovups", "vmovaps"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j] for active lanes j"
 
 [isa.avx512.f32.broadcast]
 intrinsic = "_mm512_set1_ps"
 mnemonic = "vbroadcastss"
+observed = ["vbroadcastsd", "vbroadcastss"]
 signature = "(s) -> v"
 semantics = "v[j] = s, j = 0..15"
 note = "EVEX embedded broadcast {1to16} folds a broadcast into an arithmetic operand"
@@ -410,6 +423,7 @@ note = "header composite, not one instruction: shuffle-add chain the compiler ex
 [isa.avx512.f32.zero]
 intrinsic = "_mm512_setzero_ps"
 mnemonic = "vxorps"
+observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "() -> v"
 semantics = "v[j] = 0.0f"
 
@@ -457,12 +471,14 @@ note = "structure load: deinterleaves an AoS pair (vld3/vld4 for 3- and 4-wide) 
 [isa.neon.f64.load]
 intrinsic = "vld1q_f64"
 mnemonic = "ld1"
+observed = ["ldr"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..1"
 
 [isa.neon.f64.store]
 intrinsic = "vst1q_f64"
 mnemonic = "st1"
+observed = ["str"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j], j = 0..1"
 
@@ -499,6 +515,7 @@ semantics = "v[j] = a[j] / b[j]"
 [isa.neon.f64.fma]
 intrinsic = "vfmaq_f64"
 mnemonic = "fmla"
+observed = ["fmla"]
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j] + b[j]*c[j]"
 note = "operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd"
@@ -519,12 +536,14 @@ semantics = "v[j] = 0.0"
 [isa.neon.f32.load]
 intrinsic = "vld1q_f32"
 mnemonic = "ld1"
+observed = ["ldr"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], j = 0..3"
 
 [isa.neon.f32.store]
 intrinsic = "vst1q_f32"
 mnemonic = "st1"
+observed = ["str"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j], j = 0..3"
 
@@ -561,6 +580,7 @@ semantics = "v[j] = a[j] / b[j]"
 [isa.neon.f32.fma]
 intrinsic = "vfmaq_f32"
 mnemonic = "fmla"
+observed = ["fmla"]
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j] + b[j]*c[j]"
 note = "operand-order trap: the accumulator is FIRST, the products last (a + b*c) — the opposite of Intel's fmadd"
@@ -639,6 +659,7 @@ semantics = "p[j] = v[j] for active lanes j"
 [isa.sve.f64.broadcast]
 intrinsic = "svdup_f64"
 mnemonic = "dup"
+observed = ["mov", "dup"]
 signature = "(s) -> v"
 semantics = "v[j] = s for every lane j"
 
@@ -670,6 +691,7 @@ semantics = "v[j] = a[j] / b[j] for active lanes j"
 [isa.sve.f64.fma]
 intrinsic = "svmla_f64_x"
 mnemonic = "fmla"
+observed = ["fmad", "fmla"]
 signature = "(pg, add, m1, m2) -> v"
 semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
 note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
@@ -684,12 +706,14 @@ note = "cleanest horizontal add of all targets"
 [isa.sve.f64.zero]
 intrinsic = "svdup_f64"
 mnemonic = "mov"
+observed = ["movi"]
 signature = "(0.0) -> v"
 semantics = "v[j] = 0.0 for every lane j"
 
 [isa.sve.f64.gen_mask]
 intrinsic = "svwhilelt_b64_s64"
 mnemonic = "whilelt"
+observed = ["whilelo"]
 signature = "(i, N) -> pg"
 semantics = "lane j active iff i + j < N"
 note = "the standardized gen_mask; the loop steps by svcntd() and never needs a remainder loop"
@@ -709,6 +733,7 @@ semantics = "p[j] = v[j] for active lanes j"
 [isa.sve.f32.broadcast]
 intrinsic = "svdup_f32"
 mnemonic = "dup"
+observed = ["mov", "dup"]
 signature = "(s) -> v"
 semantics = "v[j] = s for every lane j"
 
@@ -740,6 +765,7 @@ semantics = "v[j] = a[j] / b[j] for active lanes j"
 [isa.sve.f32.fma]
 intrinsic = "svmla_f32_x"
 mnemonic = "fmla"
+observed = ["fmad", "fmla"]
 signature = "(pg, add, m1, m2) -> v"
 semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
 note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
@@ -753,12 +779,14 @@ semantics = "s = sum of the active lanes of v"
 [isa.sve.f32.zero]
 intrinsic = "svdup_f32"
 mnemonic = "mov"
+observed = ["movi"]
 signature = "(0.0f) -> v"
 semantics = "v[j] = 0.0f for every lane j"
 
 [isa.sve.f32.gen_mask]
 intrinsic = "svwhilelt_b32_s64"
 mnemonic = "whilelt"
+observed = ["whilelo"]
 signature = "(i, N) -> pg"
 semantics = "lane j active iff i + j < N"
 note = "the standardized gen_mask; the loop steps by svcntw() and never needs a remainder loop"
@@ -1224,6 +1252,7 @@ note = "not IEEE minNum: min(NaN,x)=x, min(x,NaN)=NaN, equal zeros return the se
 
 [isa.avx2.f64.abs]
 mnemonic = "vandpd"
+observed = ["vandpd", "vandps"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_and_pd"]
@@ -1231,6 +1260,7 @@ note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as i
 
 [isa.avx2.f64.neg]
 mnemonic = "vxorpd"
+observed = ["vxorpd", "vxorps"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_xor_pd"]
@@ -1285,6 +1315,7 @@ note = "not IEEE minNum: min(NaN,x)=x, min(x,NaN)=NaN, equal zeros return the se
 
 [isa.avx2.f32.abs]
 mnemonic = "vandps"
+observed = ["vandpd", "vandps"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_and_ps"]
@@ -1292,6 +1323,7 @@ note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as i
 
 [isa.avx2.f32.neg]
 mnemonic = "vxorps"
+observed = ["vxorpd", "vxorps"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_xor_ps"]
@@ -1349,6 +1381,7 @@ note = "x86 min/max return the second operand when either is NaN"
 
 [isa.avx512.f64.abs]
 mnemonic = "vpandq"
+observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
@@ -1356,6 +1389,7 @@ note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _m
 
 [isa.avx512.f64.neg]
 mnemonic = "vpxorq"
+observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
@@ -1415,6 +1449,7 @@ note = "x86 min/max return the second operand when either is NaN"
 
 [isa.avx512.f32.abs]
 mnemonic = "vpandd"
+observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
@@ -1422,6 +1457,7 @@ note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _m
 
 [isa.avx512.f32.neg]
 mnemonic = "vpxord"
+observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
@@ -1492,6 +1528,7 @@ note = "native on NEON, unlike x86 where neg is an XOR-mask recipe"
 [isa.neon.f64.select]
 intrinsic = "vbslq_f64"
 mnemonic = "bsl"
+observed = ["bif", "bit"]
 signature = "(mask, t, f) -> v"
 semantics = "v[j] = mask[j] ? t[j] : f[j]"
 note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
@@ -1551,6 +1588,7 @@ note = "native on NEON, unlike x86 where neg is an XOR-mask recipe"
 [isa.neon.f32.select]
 intrinsic = "vbslq_f32"
 mnemonic = "bsl"
+observed = ["bif", "bit"]
 signature = "(mask, t, f) -> v"
 semantics = "v[j] = mask[j] ? t[j] : f[j]"
 note = "mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend"
@@ -1610,6 +1648,7 @@ note = "native, unlike x86"
 [isa.sve.f64.select]
 intrinsic = "svsel_f64"
 mnemonic = "sel"
+observed = ["mov"]
 signature = "(pg, t, f) -> v"
 semantics = "v[j] = pg[j] ? t[j] : f[j]"
 note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
@@ -1670,6 +1709,7 @@ note = "native, unlike x86"
 [isa.sve.f32.select]
 intrinsic = "svsel_f32"
 mnemonic = "sel"
+observed = ["mov"]
 signature = "(pg, t, f) -> v"
 semantics = "v[j] = pg[j] ? t[j] : f[j]"
 note = "predicate FIRST; no activity suffix - SEL is not predicated on a second predicate"
@@ -2419,3 +2459,503 @@ signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["svdiv_s32_x", "svmls_s32_x"]
 note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1"
+
+# Integer arithmetic, memory and compare rows, and the compare every select needs.
+
+[isa.avx2.i64.add]
+intrinsic = "_mm256_add_epi64"
+mnemonic = "vpaddq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.avx2.i64.sub]
+intrinsic = "_mm256_sub_epi64"
+mnemonic = "vpsubq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.avx2.i64.mul]
+mnemonic = "vpmuludq+vpmulld+vpsllq+vpaddq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+recipe = ["_mm256_mul_epu32", "_mm256_srli_epi64", "_mm256_mullo_epi32", "_mm256_slli_epi64", "_mm256_add_epi64"]
+note = "no vpmullq on AVX2: lo*lo + ((hi(a)*lo(b) + lo(a)*hi(b)) << 32)"
+
+[isa.avx2.i64.min]
+mnemonic = "vpcmpgtq+vpblendvb"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+recipe = ["_mm256_cmpgt_epi64", "_mm256_blendv_epi8"]
+note = "no vpminsq on AVX2: blend on a > b"
+
+[isa.avx2.i64.max]
+mnemonic = "vpcmpgtq+vpblendvb"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+recipe = ["_mm256_cmpgt_epi64", "_mm256_blendv_epi8"]
+note = "no vpmaxsq on AVX2: blend on a > b"
+
+[isa.avx2.i64.load]
+intrinsic = "_mm256_loadu_si256"
+mnemonic = "vmovdqu"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+note = "takes a const __m256i*: cast the pointer"
+
+[isa.avx2.i64.store]
+intrinsic = "_mm256_storeu_si256"
+mnemonic = "vmovdqu"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+note = "takes a __m256i*: cast the pointer"
+
+[isa.avx2.i64.broadcast]
+intrinsic = "_mm256_set1_epi64x"
+mnemonic = "vpbroadcastq"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx2.i64.lt]
+intrinsic = "_mm256_cmpgt_epi64"
+mnemonic = "vpcmpgtq"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+note = "only greater-than exists: pass (b, a); all-ones lanes"
+
+[isa.avx2.i32.add]
+intrinsic = "_mm256_add_epi32"
+mnemonic = "vpaddd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.avx2.i32.sub]
+intrinsic = "_mm256_sub_epi32"
+mnemonic = "vpsubd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.avx2.i32.mul]
+intrinsic = "_mm256_mullo_epi32"
+mnemonic = "vpmulld"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.avx2.i32.min]
+intrinsic = "_mm256_min_epi32"
+mnemonic = "vpminsd"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.avx2.i32.max]
+intrinsic = "_mm256_max_epi32"
+mnemonic = "vpmaxsd"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.avx2.i32.load]
+intrinsic = "_mm256_loadu_si256"
+mnemonic = "vmovdqu"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+note = "takes a const __m256i*: cast the pointer"
+
+[isa.avx2.i32.store]
+intrinsic = "_mm256_storeu_si256"
+mnemonic = "vmovdqu"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+note = "takes a __m256i*: cast the pointer"
+
+[isa.avx2.i32.broadcast]
+intrinsic = "_mm256_set1_epi32"
+mnemonic = "vpbroadcastd"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx2.i32.lt]
+intrinsic = "_mm256_cmpgt_epi32"
+mnemonic = "vpcmpgtd"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+note = "only greater-than exists: pass (b, a); all-ones lanes"
+
+[isa.avx512.i64.add]
+intrinsic = "_mm512_add_epi64"
+mnemonic = "vpaddq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.avx512.i64.sub]
+intrinsic = "_mm512_sub_epi64"
+mnemonic = "vpsubq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.avx512.i64.mul]
+intrinsic = "_mm512_mullo_epi64"
+mnemonic = "vpmullq"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.avx512.i64.min]
+intrinsic = "_mm512_min_epi64"
+mnemonic = "vpminsq"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.avx512.i64.max]
+intrinsic = "_mm512_max_epi64"
+mnemonic = "vpmaxsq"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.avx512.i64.load]
+intrinsic = "_mm512_loadu_si512"
+mnemonic = "vmovdqu64"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.avx512.i64.store]
+intrinsic = "_mm512_storeu_si512"
+mnemonic = "vmovdqu64"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.avx512.i64.broadcast]
+intrinsic = "_mm512_set1_epi64"
+mnemonic = "vpbroadcastq"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx512.i64.lt]
+intrinsic = "_mm512_cmplt_epi64_mask"
+mnemonic = "vpcmpltq"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.avx512.i32.add]
+intrinsic = "_mm512_add_epi32"
+mnemonic = "vpaddd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.avx512.i32.sub]
+intrinsic = "_mm512_sub_epi32"
+mnemonic = "vpsubd"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.avx512.i32.mul]
+intrinsic = "_mm512_mullo_epi32"
+mnemonic = "vpmulld"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.avx512.i32.min]
+intrinsic = "_mm512_min_epi32"
+mnemonic = "vpminsd"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.avx512.i32.max]
+intrinsic = "_mm512_max_epi32"
+mnemonic = "vpmaxsd"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.avx512.i32.load]
+intrinsic = "_mm512_loadu_si512"
+mnemonic = "vmovdqu32"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.avx512.i32.store]
+intrinsic = "_mm512_storeu_si512"
+mnemonic = "vmovdqu32"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.avx512.i32.broadcast]
+intrinsic = "_mm512_set1_epi32"
+mnemonic = "vpbroadcastd"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.avx512.i32.lt]
+intrinsic = "_mm512_cmplt_epi32_mask"
+mnemonic = "vpcmpltd"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.neon.i64.add]
+intrinsic = "vaddq_s64"
+mnemonic = "add"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.neon.i64.sub]
+intrinsic = "vsubq_s64"
+mnemonic = "sub"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.neon.i64.mul]
+mnemonic = "umull+mla"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+recipe = ["vmovn_u64", "vmull_u32", "vmlal_u32"]
+note = "no vmulq_s64: lo*lo + ((cross terms) << 32), or scalar per lane"
+
+[isa.neon.i64.min]
+mnemonic = "cmgt+bsl"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+recipe = ["vcgtq_s64", "vbslq_s64"]
+
+[isa.neon.i64.max]
+mnemonic = "cmgt+bsl"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+recipe = ["vcgtq_s64", "vbslq_s64"]
+
+[isa.neon.i64.load]
+intrinsic = "vld1q_s64"
+mnemonic = "ldr"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.neon.i64.store]
+intrinsic = "vst1q_s64"
+mnemonic = "str"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.neon.i64.broadcast]
+intrinsic = "vdupq_n_s64"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.neon.i64.lt]
+intrinsic = "vcltq_s64"
+mnemonic = "cmgt"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.neon.i32.add]
+intrinsic = "vaddq_s32"
+mnemonic = "add"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.neon.i32.sub]
+intrinsic = "vsubq_s32"
+mnemonic = "sub"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.neon.i32.mul]
+intrinsic = "vmulq_s32"
+mnemonic = "mul"
+signature = "(a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.neon.i32.min]
+intrinsic = "vminq_s32"
+mnemonic = "smin"
+signature = "(a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.neon.i32.max]
+intrinsic = "vmaxq_s32"
+mnemonic = "smax"
+signature = "(a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.neon.i32.load]
+intrinsic = "vld1q_s32"
+mnemonic = "ldr"
+signature = "(p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.neon.i32.store]
+intrinsic = "vst1q_s32"
+mnemonic = "str"
+signature = "(p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.neon.i32.broadcast]
+intrinsic = "vdupq_n_s32"
+mnemonic = "dup"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.neon.i32.lt]
+intrinsic = "vcltq_s32"
+mnemonic = "cmgt"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.sve.i64.add]
+intrinsic = "svadd_s64_x"
+mnemonic = "add"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.sve.i64.sub]
+intrinsic = "svsub_s64_x"
+mnemonic = "sub"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.sve.i64.mul]
+intrinsic = "svmul_s64_x"
+mnemonic = "mul"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.sve.i64.min]
+intrinsic = "svmin_s64_x"
+mnemonic = "smin"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.sve.i64.max]
+intrinsic = "svmax_s64_x"
+mnemonic = "smax"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.sve.i64.load]
+intrinsic = "svld1_s64"
+mnemonic = "ld1d"
+signature = "(pg, p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.sve.i64.store]
+intrinsic = "svst1_s64"
+mnemonic = "st1d"
+signature = "(pg, p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.sve.i64.broadcast]
+intrinsic = "svdup_s64"
+mnemonic = "mov"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.sve.i64.lt]
+intrinsic = "svcmplt_s64"
+mnemonic = "cmpgt"
+signature = "(pg, a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.sve.i32.add]
+intrinsic = "svadd_s32_x"
+mnemonic = "add"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] + b[j], wrapping"
+
+[isa.sve.i32.sub]
+intrinsic = "svsub_s32_x"
+mnemonic = "sub"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] - b[j], wrapping"
+
+[isa.sve.i32.mul]
+intrinsic = "svmul_s32_x"
+mnemonic = "mul"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = a[j] * b[j], low bits"
+
+[isa.sve.i32.min]
+intrinsic = "svmin_s32_x"
+mnemonic = "smin"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = min(a[j], b[j]), signed"
+
+[isa.sve.i32.max]
+intrinsic = "svmax_s32_x"
+mnemonic = "smax"
+signature = "(pg, a, b) -> v"
+semantics = "v[j] = max(a[j], b[j]), signed"
+
+[isa.sve.i32.load]
+intrinsic = "svld1_s32"
+mnemonic = "ld1w"
+signature = "(pg, p) -> v"
+semantics = "v[j] = p[j]"
+
+[isa.sve.i32.store]
+intrinsic = "svst1_s32"
+mnemonic = "st1w"
+signature = "(pg, p, v)"
+semantics = "p[j] = v[j]"
+
+[isa.sve.i32.broadcast]
+intrinsic = "svdup_s32"
+mnemonic = "mov"
+signature = "(s) -> v"
+semantics = "v[j] = s"
+
+[isa.sve.i32.lt]
+intrinsic = "svcmplt_s32"
+mnemonic = "cmpgt"
+signature = "(pg, a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+
+[isa.avx2.f64.lt]
+intrinsic = "_mm256_cmp_pd"
+mnemonic = "vcmppd"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "third argument _CMP_LT_OQ; all-ones lanes"
+
+[isa.avx2.f32.lt]
+intrinsic = "_mm256_cmp_ps"
+mnemonic = "vcmpps"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "third argument _CMP_LT_OQ; all-ones lanes"
+
+[isa.avx512.f64.lt]
+intrinsic = "_mm512_cmp_pd_mask"
+mnemonic = "vcmppd"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "third argument _CMP_LT_OQ; a k mask"
+
+[isa.avx512.f32.lt]
+intrinsic = "_mm512_cmp_ps_mask"
+mnemonic = "vcmpps"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "third argument _CMP_LT_OQ; a k mask"
+
+[isa.neon.f64.lt]
+intrinsic = "vcltq_f64"
+mnemonic = "fcmgt"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "all-ones lanes"
+
+[isa.neon.f32.lt]
+intrinsic = "vcltq_f32"
+mnemonic = "fcmgt"
+signature = "(a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "all-ones lanes"
+
+[isa.sve.f64.lt]
+intrinsic = "svcmplt_f64"
+mnemonic = "fcmgt"
+signature = "(pg, a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "a predicate"
+
+[isa.sve.f32.lt]
+intrinsic = "svcmplt_f32"
+mnemonic = "fcmgt"
+signature = "(pg, a, b) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "a predicate"

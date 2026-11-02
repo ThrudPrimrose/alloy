@@ -55,7 +55,7 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
-def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_faster_program(kernel, tmp_path):
+def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_against_the_default(kernel, tmp_path):
     autogen.ensure(kernel, ["dace"])
     bench = Benchmark(kernel)
     sdfg = dace_program(bench).to_sdfg(simplify=False)
@@ -86,7 +86,7 @@ def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(
 @pytest.mark.e2e
 @pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
 def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(pipeline, tmp_path, monkeypatch):
-    """OMEN's scattering self-energies (complex128, an indirect neighbour index, matmuls in an eight-deep nest) after
+    """OMEN's scattering self-energies (complex128, an indirect neighbor index, matmuls in an eight-deep nest) after
     a bench transformation pipeline: every scope builds distinct variants and the whole program still verifies."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")

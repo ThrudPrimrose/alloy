@@ -20,6 +20,7 @@ reported as correct.
 
 import contextlib
 import dataclasses
+import functools
 import pathlib
 import platform
 import re
@@ -36,32 +37,7 @@ __all__ = ["Verdict", "candidates_for", "host_can_run", "validate", "validate_al
 
 #: Per-op relative-error tolerances for the compiled kernels. IEEE ops are exactly rounded, so their
 #: tolerance is zero; order-sensitive ops (reductions, recipes) get a real band.
-TOL: dict[str, float] = {
-    "add": 0.0,
-    "sub": 0.0,
-    "mul": 0.0,
-    "div": 0.0,
-    "min": 0.0,
-    "max": 0.0,
-    "and": 0.0,
-    "or": 0.0,
-    "shl": 0.0,
-    "shr": 0.0,
-    "select": 0.0,
-    "abs": 0.0,
-    "neg": 0.0,
-    "sqrt": 0.0,
-    "gather": 0.0,
-    "scatter": 0.0,
-    "load": 0.0,
-    "store": 0.0,
-    "broadcast": 0.0,
-    "zero": 0.0,
-    "gen_mask": 0.0,
-    "fma": 1e-15,
-    "reduce_add": 1e-12,
-    "mod": 1e-13,
-}
+TOL: dict[str, float] = {"reduce_add": 1e-12, "mod": 1e-13}  # any other op is bit-exact
 TOL_F16 = 4e-3  # the AVX2 f16 recipes compute in f32; a few f16 ulps of slack
 TOL_LIBRARY = {"f64": 1e-13, "f32": 1e-6}  # vector math library entries vs double libm, by lane type
 TIER_SLACK = 2.0  # a tier's re-measured error may exceed the recorded one by this factor
@@ -134,7 +110,7 @@ TRACK_ERROR = "double e = d / m;\n    if (isnan(e) || e > maxrel) maxrel = e;"
 def c_flags(isa: str, dtype: str) -> list[str]:
     isa = ALIASES.get(isa, isa)
     if isa == "neon":
-        return []
+        return ["-march=armv8.2-a+fp16"] if dtype == "f16" else []
     if isa == "sve":
         return ["-march=armv8-a+sve"]
     if isa == "avx2":
@@ -142,9 +118,9 @@ def c_flags(isa: str, dtype: str) -> list[str]:
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
 
 
-def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, float] | None:
+def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] | None:
     """The kernel body for ``(isa, dtype, op)``, spelled with the table's own entry so a wrong mapping fails:
-    (compute C, scalar-reference C, tolerance), or None when the entry has no executable form here."""
+    (compute C, scalar-reference C), or None when the entry has no executable form here."""
     entry = table.entry(isa, op, dtype)
     if dtype == "f16":
         return f16_body(op, entry) if isa == "avx2" else None
@@ -167,9 +143,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
             return None
         return logical_body(isa, dtype, op, decl, store, entry)
     if op == "mod" and dtype in INT_DTYPES:
-        # the documented recipe (no vector remainder, r = a - q*b per lane) against libm
-        compute = "for (int j = 0; j < VL; j++) out[j] = a[j] - (a[j] / b[j]) * b[j];"
-        return compute, "for (int j = 0; j < VL; j++) ref[j] = fmod((double)a[j], (double)b[j]);", 0.0
+        return None  # prose recipes: nothing of the row would run
 
     if op == "abs" or op == "neg":
         if not fp:
@@ -189,7 +163,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
             if op == "abs"
             else "for (int j = 0; j < VL; j++) ref[j] = -a[j];"
         )
-        return f"{decl}\n  {compute}\n  {store}", ref, 0.0
+        return f"{decl}\n  {compute}\n  {store}", ref
 
     if op == "select":
         if not fp:
@@ -199,7 +173,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
         else:
             compute = f"{v} k = {p}_cmp_{sfx}(va, vb, _CMP_LT_OQ);\n  {v} vr = {entry.intrinsic}(vb, va, k);"
         ref = "for (int j = 0; j < VL; j++) ref[j] = a[j] < b[j] ? a[j] : b[j];"
-        return f"{decl}\n  {compute}\n  {store}", ref, 0.0
+        return f"{decl}\n  {compute}\n  {store}", ref
 
     if op == "reduce_add":
         if not fp:
@@ -223,7 +197,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
                 "  float r = _mm_cvtss_f32(s2);\n  out[0] = r;"
             )
         ref = "for (int j = 0; j < VL; j++) ref[0] += a[j];"
-        return f"{decl}\n  {compute}", ref, TOL["reduce_add"]
+        return f"{decl}\n  {compute}", ref
 
     if op in ("gather", "scatter"):
         if not fp:
@@ -235,13 +209,13 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
         if op == "gather":
             args = f"vi, a, {scale}" if wide else f"a, vi, {scale}"
             g = f"{idx_ld}\n  {v} vr = {entry.intrinsic}({args});"
-            return f"{decl}\n  {g}\n  {store}", "for (int j = 0; j < VL; j++) ref[j] = a[idx[j]];", 0.0
+            return f"{decl}\n  {g}\n  {store}", "for (int j = 0; j < VL; j++) ref[j] = a[idx[j]];"
         if wide:
             compute = f"{idx_ld}\n  {entry.intrinsic}(out, vi, va, {scale});"
         else:  # AVX2 has no scatter: the documented fallback, hand-coded
             compute = f"{s} buf[VL];\n  {store_fn}(buf, va);\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
         ref = "for (int j = 0; j < VL; j++) ref[j] = 0;\nfor (int j = 0; j < VL; j++) ref[idx[j]] = a[j];"
-        return f"{decl}\n  {compute}", ref, 0.0
+        return f"{decl}\n  {compute}", ref
 
     if op == "gen_mask":
         if not wide or not fp:
@@ -255,7 +229,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
             f"  {v} vr = {masked_load}(k, a);"
         )
         ref = "for (int j = 0; j < VL; j++) ref[j] = j < n ? a[j] : 0;"
-        return f"{decl}\n  {compute}\n  {store}", ref, 0.0
+        return f"{decl}\n  {compute}\n  {store}", ref
 
     if op == "mod":
         if not fp:
@@ -264,9 +238,11 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
         rounding = "0x0B" if wide else "_MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC"
         compute = f"{v} q = {trunc}({div}(va, vb), {rounding});\n  {v} vr = {fnmadd}(q, vb, va);"
         ref = f"for (int j = 0; j < VL; j++) ref[j] = fmod{'' if dtype == 'f64' else 'f'}(a[j], b[j]);"
-        return f"{decl}\n  {compute}\n  {store}", ref, TOL["mod"]
+        return f"{decl}\n  {compute}\n  {store}", ref
 
     name = entry.intrinsic
+    if not name:
+        return None  # a recipe with no kernel written for it: unverified
     exprs = {
         "add": f"{name}(va, vb)",
         "sub": f"{name}(va, vb)",
@@ -274,13 +250,13 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
         "div": f"{name}(va, vb)",
         "min": f"{name}(va, vb)",
         "max": f"{name}(va, vb)",
-        "fma": f"{name}(va, vb, va)",
+        "fma": f"{name}(va, vb, vb)",
         "and": f"{name}(va, vb)",
         "or": f"{name}(va, vb)",
         "shl": f"{name}(va, vb)",
         "shr": f"{name}(va, vb)",
         "sqrt": f"{name}(va)",
-        "load": f"{name}(a)",
+        "load": f"{name}({cast}a)",
         "store": "vb",
         "broadcast": f"{name}(a[0])",
         "zero": f"{name}()",
@@ -289,7 +265,7 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str, 
         return None
     compute = f"{v} vr = {exprs[op]};"
     ref = scalar_ref(op, dtype)
-    return f"{decl}\n  {compute}\n  {store}", ref, TOL.get(op, 0.0)
+    return f"{decl}\n  {compute}\n  {store}", ref
 
 
 def scalar_ref(op: str, dtype: str) -> str:
@@ -300,6 +276,14 @@ def scalar_ref(op: str, dtype: str) -> str:
             "or": "a[j] | b[j]",
             "shl": f"({s})(({u})a[j] << b[j])",
             "shr": f"({s})(({u})a[j] >> b[j])",  # logical: a negative lane must not sign-fill
+            "add": f"({s})(({u})a[j] + ({u})b[j])",
+            "sub": f"({s})(({u})a[j] - ({u})b[j])",
+            "mul": f"({s})(({u})a[j] * ({u})b[j])",
+            "min": "a[j] < b[j] ? a[j] : b[j]",
+            "max": "a[j] > b[j] ? a[j] : b[j]",
+            "load": "a[j]",
+            "store": "b[j]",
+            "broadcast": "a[0]",
         }
     else:
         f = "" if dtype == "f64" else "f"  # a float lane is checked against the float libm
@@ -310,7 +294,7 @@ def scalar_ref(op: str, dtype: str) -> str:
             "div": "a[j] / b[j]",
             "min": "a[j] < b[j] ? a[j] : b[j]",
             "max": "a[j] > b[j] ? a[j] : b[j]",
-            "fma": f"fma{f}(a[j], b[j], a[j])",
+            "fma": f"fma{f}(a[j], b[j], b[j])",
             "sqrt": f"sqrt{f}(a[j])",
             "load": "a[j]",
             "store": "b[j]",
@@ -320,7 +304,7 @@ def scalar_ref(op: str, dtype: str) -> str:
     return f"for (int j = 0; j < VL; j++) ref[j] = {refs[op]};"
 
 
-def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry) -> tuple[str, str, float]:
+def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: Entry) -> tuple[str, str]:
     """land/lor, full kernel body: k-register ops on AVX-512, the andnot-of-compares recipe on AVX2."""
     wide = isa == "avx512"
     sym = "&&" if op == "land" else "||"
@@ -335,7 +319,7 @@ def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: En
             "  out[0] = (got == expect) ? 1 : 0;"
         )
         ref = "for (int j = 0; j < VL; j++) ref[j] = 0;\n  ref[0] = 1;"
-        return f"{decl}\n  {compute}", ref, 0.0
+        return f"{decl}\n  {compute}", ref
     eq = f"_mm256_cmpeq_{'epi64' if dtype == 'i64' else 'epi32'}"
     ones = "_mm256_set1_epi64x(-1)" if dtype == "i64" else "_mm256_set1_epi32(-1)"
     za, zb = f"{eq}(va, _mm256_setzero_si256())", f"{eq}(vb, _mm256_setzero_si256())"
@@ -345,22 +329,22 @@ def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: En
         else f"_mm256_andnot_si256(_mm256_and_si256({za}, {zb}), {ones})"
     )
     ref = f"for (int j = 0; j < VL; j++) ref[j] = ((a[j] != 0) {sym} (b[j] != 0)) ? -1 : 0;"
-    return f"{decl}\n  __m256i vr = {expr};\n  {store}", ref, 0.0
+    return f"{decl}\n  __m256i vr = {expr};\n  {store}", ref
 
 
-def f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
+def f16_body(op: str, entry: Entry) -> tuple[str, str]:
     """AVX2's f16 entries, hand-coded over all 16 lanes: memory ops and the bitwise recipes work on the
     storage, arithmetic converts each 8-lane half to f32 and back. The reference is native _Float16
     arithmetic (gcc >= 12, clang >= 15)."""
     load, store = "_mm256_loadu_si256((const __m256i*)h)", "_mm256_storeu_si256((__m256i*)out16, vr);"
     plain = "for (int j = 0; j < VL; j++) ref[j] = (double)(_Float16)h[j];"
     if op == "load":
-        return f"__m256i vr = {entry.intrinsic}((const __m256i*)h);\n  {store}", plain, 0.0
+        return f"__m256i vr = {entry.intrinsic}((const __m256i*)h);\n  {store}", plain
     if op == "store":
-        return f"__m256i vr = {load};\n  {entry.intrinsic}((__m256i*)out16, vr);", plain, 0.0
+        return f"__m256i vr = {load};\n  {entry.intrinsic}((__m256i*)out16, vr);", plain
     if op == "broadcast":
         ref = "for (int j = 0; j < VL; j++) ref[j] = (double)(_Float16)h[0];"
-        return f"short bits;\n  memcpy(&bits, h, 2);\n  __m256i vr = {entry.intrinsic}(bits);\n  {store}", ref, 0.0
+        return f"short bits;\n  memcpy(&bits, h, 2);\n  __m256i vr = {entry.intrinsic}(bits);\n  {store}", ref
     if op == "select":
         and_, andnot, or_ = entry.recipe
         body = (
@@ -368,13 +352,13 @@ def f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
             f"  __m256i vr = {or_}({and_}({load}, m), {andnot}(m, hb));\n  {store}"
         )
         ref = "for (int j = 0; j < VL; j++) ref[j] = mk[j] ? (double)(_Float16)h[j] : (double)(_Float16)k[j];"
-        return body, ref, 0.0
+        return body, ref
     if op in ("abs", "neg"):
         set1, bitop = entry.recipe
         mask = "0x7fff" if op == "abs" else "(short)0x8000"
         expr = "(_Float16)h[j] < 0 ? -(_Float16)h[j] : (_Float16)h[j]" if op == "abs" else "-(_Float16)h[j]"
         ref = f"for (int j = 0; j < VL; j++) ref[j] = (double)({expr});"
-        return f"__m256i vr = {bitop}({load}, {set1}({mask}));\n  {store}", ref, 0.0
+        return f"__m256i vr = {bitop}({load}, {set1}({mask}));\n  {store}", ref
     to_f32, f32op, to_f16 = entry.recipe
     if op == "fma":
         compute = f"__m256 vr = {f32op}(fa, fb, fa);"
@@ -400,7 +384,7 @@ def f16_body(op: str, entry: Entry) -> tuple[str, str, float]:
         f"    __m128i hr = {to_f16}(vr, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);\n"
         f"    _mm_storeu_si128((__m128i*)(out16 + o), hr);\n  }}"
     )
-    return body, ref, TOL_F16
+    return body, ref
 
 
 #: Sixteen exact f16 values per operand, no zero divisor; ``F16_POSITIVE`` feeds sqrt.
@@ -416,10 +400,13 @@ def kernel_inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
     b: list[int] | list[float]
     if dtype in INT_DTYPES:
         logical = op in ("land", "lor")
-        a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) for j in range(lanes)]
+        high = 1 << 40 if dtype == "i64" and op in ("and", "or", "shl", "shr") else 0  # a bit past lane 32's reach
+        a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) + high for j in range(lanes)]
         b = [0 if logical and j % 4 < 2 else 1 + j for j in range(lanes)]
     else:
-        a = [(0.5371 + 0.3 * j) * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
+        # every third lane is larger than b, so a compare goes both ways and a quotient passes 1
+        scale = [10.0 if j % 3 == 2 else 1.0 for j in range(lanes)]
+        a = [(0.5371 + 0.3 * j) * scale[j] * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
         b = [1.25 + 0.7 * j for j in range(lanes)]
     return ", ".join(map(repr, a)), ", ".join(map(repr, b))
 
@@ -430,7 +417,7 @@ def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str |
     body = kernel_body(isa, dtype, op, table or load()) if isa in ("avx2", "avx512") else None
     if body is None:
         return None
-    compute, ref, _tol = body
+    compute, ref = body
     wide = isa == "avx512"
     lanes = (16 if wide else 8) if dtype in ("f32", "i32") else (8 if wide else 4)
     s = {"f64": "double", "f32": "float", "i64": "int64_t", "i32": "int32_t", "f16": "uint16_t"}[dtype]
@@ -496,6 +483,22 @@ def c_compiler() -> str | None:
     return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 
 
+class HostCannotRun(RuntimeError):
+    """The toolchain or the host, not the row, stopped the kernel."""
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def toolchain_builds(flags: tuple[str, ...], libs: tuple[str, ...]) -> bool:
+    """Whether a trivial kernel builds and runs with ``flags`` and ``libs``: a failure past it is the row's."""
+    try:
+        return (
+            compile_run('#include <stdio.h>\nint main(void) { printf("ALLOY-VERIFY rel=0\\n"); }', list(flags), libs)
+            == 0
+        )
+    except RuntimeError:
+        return False
+
+
 def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> float:
     """Compile and run a kernel; the rel error it prints. Raises RuntimeError on build/run failure."""
     cc = c_compiler()
@@ -506,7 +509,7 @@ def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> fl
         c_file.write_text(source)
         try:
             build = subprocess.run(
-                [cc, "-O1", *flags, str(c_file), *libs, "-lm", "-o", str(exe)],
+                [cc, "-O0", *flags, str(c_file), *libs, "-lm", "-o", str(exe)],  # -O0: nothing folds the intrinsic away
                 capture_output=True,
                 text=True,
                 check=False,
@@ -517,6 +520,8 @@ def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = ()) -> fl
             run = subprocess.run([str(exe)], capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"timed out after {COMPILE_TIMEOUT} s: {exc.cmd[0]}") from None
+        except OSError as exc:  # a noexec temporary folder
+            raise HostCannotRun(f"cannot execute a kernel here: {exc}") from None
         if run.returncode != 0:
             raise RuntimeError(f"kernel exited {run.returncode}: {run.stderr.strip()[:200]}")
     match = VERIFY_LINE.search(run.stdout)
@@ -685,6 +690,8 @@ def validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) 
         try:
             rel = compile_run(library_kernel(call, op, dtype), c_flags(isa, dtype), ("-lmvec",))
         except RuntimeError as exc:
+            if not toolchain_builds(tuple(c_flags(isa, dtype)), ("-lmvec",)):
+                return Verdict(None, f"this toolchain has no libmvec (unverified, not wrong): {exc}")
             return Verdict(False, "libmvec kernel", str(exc), candidates_for(isa, op, dtype, table))
         tol = TOL_LIBRARY[dtype]
         ok = rel <= tol
@@ -693,6 +700,10 @@ def validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) 
             "libmvec kernel vs libm",
             f"max rel err {rel:.3e} vs tolerance {tol:.3e}",
             candidates_for(isa, op, dtype, table) if not ok else (),
+        )
+    if not host_can_run(isa, dtype):
+        return Verdict(
+            None, f"{isa}/{dtype}: tier re-measured in Python, the row's library calls never ran", best.detail
         )
     return Verdict(True, best.basis, best.detail)
 
@@ -719,10 +730,14 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
     if source is None:
         return Verdict(None, "no compiled validator for this entry yet (the table spelling is still in force)")
     if missing := unexercised(entry, source):
-        return Verdict(None, f"the validator kernel does not run {', '.join(missing)} (unverified, not wrong)")
+        return Verdict(None, f"the validator kernel does not run {', '.join(missing)}")
     try:
         rel = compile_run(source, c_flags(isa, dtype))
-    except RuntimeError as exc:
+    except HostCannotRun as exc:
+        return Verdict(None, str(exc))
+    except (RuntimeError, ValueError) as exc:
+        if not toolchain_builds(tuple(c_flags(isa, dtype)), ()):
+            return Verdict(None, f"this toolchain cannot build {isa}/{dtype} kernels (unverified, not wrong): {exc}")
         return Verdict(False, "compiled kernel", str(exc), candidates_for(isa, op, dtype, table))
     tol = TOL_F16 if dtype == "f16" else TOL.get(op, 0.0)
     if dtype == "f32" and op in ("mod", "reduce_add"):
@@ -733,14 +748,13 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
 
 
 def validate_all(table: Table | None = None, jobs: int = 8) -> list[tuple[str, Verdict]]:
-    """Every entry this host can execute plus every tier, in parallel; (id, verdict) pairs."""
+    """Every entry plus every tier, in parallel, ``ok is None`` for what this host cannot execute; (id, verdict)."""
     table = table or load()
     ids = [
         f"{isa}/{dtype}/{op}"
         for isa, target in table.isas.items()
         for dtype in ALL_DTYPES
-        for op in getattr(target, dtype)
-        if host_can_run(isa, dtype)
+        for op in target.entries(dtype)
     ]
 
     def one(ident: str) -> Verdict:

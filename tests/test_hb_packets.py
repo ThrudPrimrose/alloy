@@ -129,3 +129,29 @@ def test_a_mode_alloy_does_not_have_is_not_found(tmp_path: pathlib.Path, monkeyp
 
     assert sut.code == HTTPStatus.NOT_FOUND
     assert "profile" in str(sut.answer["error"]) and "speculative" in str(sut.answer["error"])
+
+
+def isa_call(command: str, arguments: list[str]) -> FakeJudge:
+    plugins.load()
+    judge = FakeJudge()
+    body = {"command": command, "arguments": arguments}
+    ROUTES["alloy"].handler(judge, RouteRequest(HTTPMethod.POST, ["alloy", "isa"], {}, body, "e1"))
+    return judge
+
+
+def test_the_isa_tool_answers_a_lookup():
+    sut = isa_call("lookup", ["avx2", "add", "f64"])
+
+    assert sut.code == HTTPStatus.OK
+    assert "_mm256_add_pd" in str(sut.answer)
+
+
+def test_the_isa_tool_refuses_a_query_it_does_not_serve():
+    assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
+
+
+def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake():
+    sut = isa_call("lookup", ["avx2", "fmadd", "f64"])
+
+    assert sut.code == HTTPStatus.BAD_REQUEST
+    assert "did you mean fma" in str(sut.answer)

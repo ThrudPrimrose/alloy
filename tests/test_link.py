@@ -143,7 +143,9 @@ def test_a_stub_runs_its_scope_and_the_scopes_before_it_and_no_later_one(tmp_pat
         if symbol == reduction:
             np.testing.assert_allclose(total[0], total_of_the_program, rtol=1e-12)
         else:
-            assert total[0] != total_of_the_program, "the reduction runs after the stubbed scope, so it must not run"
+            assert not np.isclose(total[0], total_of_the_program, rtol=1e-9), (
+                "the reduction runs after the stubbed scope, so it must not run"
+            )
 
 
 def test_scopes_run_in_program_order():

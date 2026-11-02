@@ -1,4 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import dataclasses
 import pathlib
 
 import numpy as np
@@ -199,3 +200,36 @@ def test_exact_tells_a_signed_zero_apart_but_not_two_nans():
 def test_verification_refuses_an_empty_draw_list():
     with pytest.raises(ValueError, match="at least one draw"):
         verify.verify(outlined(), MATRIX, [], verify.Cases([], ("a",)), pathlib.Path("."))
+
+
+def test_a_wrong_candidate_fails_through_the_whole_verification(tmp_path):
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    (scope,) = program.scopes
+    good = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "good", {})
+    wrong = handwritten_archive(tmp_path, scope, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
+    bad = dataclasses.replace(good, name="wrong", archive=wrong, object_hash="wrong")
+
+    sut = verify.verify(program, MATRIX, [ScopeReport(scope, (good, bad))], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["wrong"].status == "fail"
+
+
+def test_an_ungradeable_verdict_is_not_correct():
+    assert not verify.Verdict("ungradeable").ok
+
+
+def test_a_nondeterministic_output_is_compared_by_band_even_at_exact():
+    ref = verify.Reference([{"x": np.array([1.0])}], frozenset({"x"}))
+
+    sut = verify.judge("exact", ref, [{"x": np.array([1.0 + 1e-15])}], [1])
+
+    assert sut.ok
+
+
+def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
+    cases = verify.Cases([inputs.Draw({}, {})], ("x",))
+    runs = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}, {"x": np.array([1.0])}]]
+
+    sut = verify.reference_from(cases, runs)
+
+    assert sut.nondeterministic == frozenset({"x"})
