@@ -8,10 +8,11 @@ import pytest
 from alloy import machine
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
-from alloy.evaluate import link, verify
+from alloy.evaluate import link, timing, verify
 from alloy.frontend import inputs, scopes
 from helpers import (
     MATRIX,
+    PREFIX_MANIFEST,
     REDUCTIONS,
     ROW_SUM_MANIFEST,
     SCALE_MANIFEST,
@@ -212,6 +213,119 @@ def test_a_wrong_candidate_fails_through_the_whole_verification(tmp_path):
     sut = verify.verify(program, MATRIX, [ScopeReport(scope, (good, bad))], cases, tmp_path / "out")
 
     assert sut.verdicts[scope.symbol]["wrong"].status == "fail"
+
+
+def candidate_writing(tmp: pathlib.Path, scope: scopes.Scope, body: str, fp_level: str = "") -> ScopeReport:
+    """``scope``'s default build beside a hand-written candidate ``wrong`` at ``fp_level``."""
+    good = build(scope, Candidate("c", "gcc"), MATRIX, tmp / "good", {})
+    candidate = Candidate("c", "gcc", fp_level=fp_level)
+    written = dataclasses.replace(
+        good, name="hand", candidate=candidate, archive=handwritten_archive(tmp, scope, body), object_hash="hand"
+    )
+    return ScopeReport(scope, (good, written))
+
+
+#: Writes the graded prefix right and the rest of ``out`` wrong.
+WRONG_TAIL = "for (int64_t i = 0; i < N; ++i) out[i] = i < N / 2 ? 2.0 * a[i] : -1.0;"
+
+
+def test_a_candidate_is_only_judged_on_the_prefix_the_manifest_grades(tmp_path):
+    """``output_extent``: past ``count`` the answer is untouched buffer, so a candidate may leave anything there."""
+    program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
+    (scope,) = program.scopes
+    report = candidate_writing(tmp_path, scope, WRONG_TAIL)
+
+    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["hand"].status == "exact"
+
+
+def test_a_wrong_value_inside_the_graded_prefix_still_fails(tmp_path):
+    program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
+    (scope,) = program.scopes
+    wrong = "for (int64_t i = 0; i < N; ++i) out[i] = i == N / 2 - 1 ? -1.0 : 2.0 * a[i];"
+    report = candidate_writing(tmp_path, scope, wrong)
+
+    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["hand"].status == "fail"
+
+
+def test_the_grading_of_a_manifest_reaches_the_timing_stage(tmp_path):
+    """The sizes a scope is timed at are checked again: the same prefix is graded there."""
+    program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
+    manifest = inputs.load(tmp_path / "scale_prefix.yaml", f"{REDUCTIONS}:scale_prefix")
+    (scope,) = program.scopes
+    report = candidate_writing(tmp_path, scope, WRONG_TAIL)
+    verification = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    sut = timing.time_scope(link.Linker(program, MATRIX, tmp_path / "out"), report, verification, manifest)
+
+    assert sut.screen["hand"].verdict.status == "exact"
+
+
+def test_a_band_candidate_may_miss_the_fraction_of_elements_the_manifest_forgives(tmp_path):
+    forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
+    program, cases = program_and_cases(tmp_path, "scale", forgiving)
+    (scope,) = program.scopes
+    flipped = "for (int64_t i = 0; i < N; ++i) out[i] = 2.0 * a[i];\nout[0] += 1.0;"
+    report = candidate_writing(tmp_path, scope, flipped, fp_level="reassoc")
+
+    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["hand"].status == "pass"
+
+
+def test_a_candidate_past_the_forgiven_fraction_fails(tmp_path):
+    forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
+    program, cases = program_and_cases(tmp_path, "scale", forgiving)
+    (scope,) = program.scopes
+    wrong = "for (int64_t i = 0; i < N; ++i) out[i] = i % 8 ? 2.0 * a[i] : 0.0;"
+    report = candidate_writing(tmp_path, scope, wrong, fp_level="reassoc")
+
+    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["hand"].status == "fail"
+
+
+def test_an_exact_candidate_gets_no_forgiven_fraction(tmp_path):
+    """Bit-identity is the strict level's promise, stronger than what the judge grades."""
+    forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
+    program, cases = program_and_cases(tmp_path, "scale", forgiving)
+    (scope,) = program.scopes
+    flipped = "for (int64_t i = 0; i < N; ++i) out[i] = 2.0 * a[i];\nout[0] += 1.0;"
+    report = candidate_writing(tmp_path, scope, flipped)
+
+    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["hand"].status == "fail"
+
+
+def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other():
+    """mandelbrot2's escape counts are integers: the judge forgives its boundary pixels there too."""
+    expected = np.arange(100, dtype=np.int64)
+    flipped = expected.copy()
+    flipped[0] += 1
+
+    sut = verify.compare("band", expected, flipped, 1, "int64", mismatch_fraction=0.01)
+
+    assert sut.status == "pass"
+
+
+def test_an_integer_output_past_the_forgiven_fraction_fails():
+    expected = np.arange(100, dtype=np.int64)
+
+    sut = verify.compare("band", expected, expected + 1, 1, "int64", mismatch_fraction=0.01)
+
+    assert sut.status == "fail"
+
+
+def test_a_scalar_output_needs_no_extent():
+    reference = verify.Reference([{"s": np.array(2.0)}], frozenset())
+
+    sut = verify.judge("exact", reference, [{"s": np.array(2.0)}], [1])
+
+    assert sut.status == "exact"
 
 
 def test_an_ungradeable_verdict_is_not_correct():

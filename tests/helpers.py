@@ -7,7 +7,7 @@ import subprocess
 
 from dace.frontend.python.parser import DaceProgram
 
-from alloy import configuration_matrix
+from alloy import api, configuration_matrix
 from alloy.backend.build import Build, compile_source, deduplicated, write_source
 from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
@@ -77,6 +77,20 @@ args:
   a: (N,)
   out: {shape: "(N,)", out: true}
 """
+PREFIX_MANIFEST = """name: scale prefix
+level: 1
+parameters:
+  S:
+    N: 512
+  fuzzed:
+    N: [64, 512]
+args:
+  a: (N,)
+  out: {shape: "(N,)", out: true}
+  count: {shape: "(1,)", dtype: int64, out: true}
+output_extent:
+  out: count
+"""
 ROW_SUM_MANIFEST = """name: row sum
 level: 1
 parameters:
@@ -95,7 +109,9 @@ args:
 def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[scopes.Program, verify.Cases]:
     manifest = write_manifest(tmp, kernel, manifest_text)
     program = scopes.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
-    return program, verify.Cases([inputs.draw(manifest, i) for i in range(2)], manifest.outputs)
+    cases = api.test_cases(program, manifest, 2)
+    assert cases is not None, "a manifest always gives draws"
+    return program, cases
 
 
 def write_manifest(tmp: pathlib.Path, kernel: str, manifest_text: str) -> inputs.Manifest:

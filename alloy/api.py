@@ -50,7 +50,8 @@ def test_cases(program: Program, manifest: Manifest | None, iterations: int) -> 
     """The draws candidates are verified on: the manifest's, or without one, draws derived from the SDFG when any
     value is a valid input (:func:`inputs.domain_gap`) and the bench's tolerance band is installed; else ``None``."""
     if manifest is not None:
-        return verify.Cases([inputs.draw(manifest, i) for i in range(iterations)], manifest.outputs)
+        draws = [inputs.draw(manifest, i) for i in range(iterations)]
+        return verify.Cases(draws, manifest.outputs, inputs.grading(manifest))
     original = program.original
     if inputs.domain_gap(original) or importlib.util.find_spec("hpcagent_bench") is None:
         return None

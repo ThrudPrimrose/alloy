@@ -101,6 +101,9 @@ distributions) and is compared against the scope's own `strict` build. Each FP l
   reductions and `l` admitting a single lost update. `l` is `Scope.accumulation_length`, derived exactly from the
   SDFG's WCR edges (matmul: K; square matmul: the contracted N; row sum: N; elementwise: 1). When
   `eps_acc * sqrt(l) >= rtol` the bench raises `UngradeableTolerance`; the report shows "ungradeable", never a pass.
+  The manifest's `mismatch_fraction` forgives that share of the elements here, integer outputs included.
+
+Both tests read only the prefix `output_extent` grades, bounded by the reference's value, as the judge does.
 
 ## Timing
 
