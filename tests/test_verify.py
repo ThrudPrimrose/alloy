@@ -146,8 +146,9 @@ def test_a_serial_build_of_a_reduction_stays_correct_through_the_whole_verificat
     assert sut.verdicts[reduce_scope.symbol][serial.name].ok
     draw = cases.draws[0]
     outputs = verify.run(sut.programs[reduce_scope.symbol, serial.name], draw, cases.outputs)
-    assert not isinstance(outputs, str), outputs
-    np.testing.assert_allclose(outputs["out"], draw.values["a"].sum(axis=1), rtol=1e-12)
+    assert not isinstance(outputs, str) and outputs, outputs
+    for output in outputs:
+        np.testing.assert_allclose(output["out"], draw.values["a"].sum(axis=1), rtol=1e-12)
 
 
 def parallel_scan() -> scopes.Program:
@@ -392,7 +393,7 @@ def test_an_integer_output_past_the_forgiven_fraction_fails():
 def test_a_scalar_output_needs_no_extent():
     reference = verify.Reference([{"s": np.array(2.0)}], frozenset())
 
-    sut = verify.judge("exact", reference, [{"s": np.array(2.0)}], [1])
+    sut = verify.judge("exact", reference, [[{"s": np.array(2.0)}]], [1])
 
     assert sut.status == "exact"
 
