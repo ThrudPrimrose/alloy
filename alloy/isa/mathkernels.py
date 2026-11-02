@@ -248,7 +248,7 @@ def refuse_reassociation(advice: str) -> tuple[str, ...]:
     """The preprocessor lines that refuse a reassociating translation unit."""
     return (
         "#if defined(__FAST_MATH__) || defined(__ASSOCIATIVE_MATH__)",
-        f'#error "math kernels that need IEEE semantics: drop -ffast-math here, or {advice}"',
+        f'#error "strict math kernels need IEEE semantics: drop -ffast-math here, or {advice}"',
         "#endif",
     )
 

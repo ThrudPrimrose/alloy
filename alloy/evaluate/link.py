@@ -126,7 +126,7 @@ class Linker:
             probe = self.matrix.veclibs[lib].probe
             executables = [
                 exe
-                for c in candidates
+                for c in sorted(candidates, key=lambda c: (c.compiler, c.language))
                 if c.veclib == lib
                 for exe in self.matrix.compilers[c.compiler].executables.values()
             ]

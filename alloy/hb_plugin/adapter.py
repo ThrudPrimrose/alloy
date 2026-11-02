@@ -2,7 +2,9 @@
 """Alloy on HPCAgent-Bench: Alloy builds and verifies every scope's candidates, the judge times each as a
 ``/profile`` stub, and the chosen library is scored once with ``/score``."""
 
+import atexit
 import pathlib
+import shutil
 import sys
 import tempfile
 import time
@@ -218,6 +220,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
     out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
+    atexit.register(shutil.rmtree, out, ignore_errors=True)  # the library links its archives statically
     result = generated(sdfg, spec, task.precision, matrix, out)
     verification = result.verification
     assert verification is not None, "generated() refuses an unverified result"
@@ -275,6 +278,7 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
     out = pathlib.Path(tempfile.mkdtemp(prefix=f"alloy_{spec.short_name}_"))
+    atexit.register(shutil.rmtree, out, ignore_errors=True)  # the library links its archives statically
     result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE)
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}

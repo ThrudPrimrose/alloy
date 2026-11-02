@@ -167,7 +167,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
             return 0
         print_entry(table, args.isa, function, args.dtype)
         if verdict is not None:
-            print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}")
+            what = "intrinsic or recipe only" if verdict.ok else ""
+            print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail} {what}".rstrip())
     if function in functions():
         return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
     return 0

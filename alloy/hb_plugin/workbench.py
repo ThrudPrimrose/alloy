@@ -92,7 +92,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, PIPELINE, request.precision, Target.CPU)
     if nothing_to_generate(sdfg, matrix):
-        raise NothingToGenerate(
+        raise api.NothingToGenerate(
             f"{spec.short_name}: no loop nest outlines into a scope, so Alloy has nothing to generate"
         )
     manifest = inputs.load(
@@ -103,7 +103,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode)
     if result.best is None or not result.winners:
         hints = "\n\n".join((result.advice or {}).values())
-        raise NothingToGenerate(
+        raise api.NothingToGenerate(
             f"{spec.short_name}: Alloy picked no build for any scope (nothing was verified)\n\n{hints}"
         )
     linker, best = Linker(result.program, matrix, out), out / "best"

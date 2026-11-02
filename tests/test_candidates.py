@@ -40,7 +40,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
         if name in gcc.tail
     )
     assert {c.compiler for c in sut} == {"gcc"}
-    assert {c.resolved(matrix)[1] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
+    assert {c.resolved(matrix)[0] for c in sut} == {"strict", "contract", "noerrno", "reassoc"}
     assert len(sut) == len(matrix.languages) * per_language
 
 
@@ -50,7 +50,7 @@ def test_fast_math_is_tried_only_when_inputs_are_declared_finite(tmp_path):
 
     sut = one_factor_at_a_time(matrix, scope, finite_inputs=True)
 
-    assert "fast" in {c.resolved(matrix)[1] for c in sut}
+    assert "fast" in {c.resolved(matrix)[0] for c in sut}
 
 
 def test_a_level_that_does_not_need_finite_inputs_never_assumes_them():

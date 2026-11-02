@@ -13,20 +13,21 @@ The machine abstract math ISA and its per-target spellings. The abstract ops:
 | `sub` | v[j] = a[j] - b[j] | elementwise | vector |
 | `mul` | v[j] = a[j] * b[j] | elementwise | vector |
 | `div` | v[j] = a[j] / b[j] | elementwise | vector |
-| `mod` | v[j] = a[j] % b[j]: fmod for f64/f32 (sign of a), truncated remainder for i64/i32 | elementwise | vector |
+| `mod` | v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod for finite b and small a/b on f64/f32, truncated remainder on i64/i32 | elementwise | vector |
 | `fma` | one rounding: v[j] = a[j]*b[j] + c[j] | elementwise | vector |
 | `sqrt` | v[j] = sqrt(x[j]) | elementwise | vector |
-| `min` | v[j] = min(a[j], b[j]) | elementwise | vector |
-| `max` | v[j] = max(a[j], b[j]) | elementwise | vector |
-| `abs` | v[j] = |x[j]| | elementwise | vector |
+| `min` | v[j] = min(a[j], b[j]); NaN and equal zeros differ per ISA, see the row | elementwise | vector |
+| `max` | v[j] = max(a[j], b[j]); NaN and equal zeros differ per ISA, see the row | elementwise | vector |
+| `abs` | v[j] = \|x[j]\| | elementwise | vector |
 | `neg` | v[j] = -x[j] | elementwise | vector |
 | `select` | v[j] = mask[j] ? t[j] : f[j] (per-lane blend) | elementwise | vector |
 | `and` | v[j] = a[j] & b[j] (integer lanes) | bitwise | vector |
-| `or` | v[j] = a[j] | b[j] (integer lanes) | bitwise | vector |
-| `shl` | v[j] = a[j] << b[j] (integer lanes) | shift | vector |
-| `shr` | v[j] = a[j] >> b[j], logical (integer lanes) | shift | vector |
+| `or` | v[j] = a[j] \| b[j] (integer lanes) | bitwise | vector |
+| `shl` | v[j] = a[j] << b[j] (integer lanes); a count at or past the width gives 0, NEON reads only its low byte | shift | vector |
+| `shr` | v[j] = a[j] >> b[j], logical (integer lanes); C >> on a signed lane is arithmetic, not this op | shift | vector |
 | `land` | (a[j] != 0) && (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
-| `lor` | (a[j] != 0) || (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
+| `lor` | (a[j] != 0) \|\| (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
+| `lt` | lane j true iff a[j] < b[j] (feeds select) | mask | mask |
 | `reduce_add` | s = sum of every active lane of v | reduction | scalar |
 | `exp` | v[j] = exp(x[j]) | transcendental | vector |
 | `sin` | v[j] = sin(x[j]) | transcendental | vector |
@@ -39,7 +40,7 @@ Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for
 ## Pages
 
 - [`avx2.md`](avx2.md) — AVX2 + FMA3 (256-bit VEX)
-- [`avx512.md`](avx512.md) — AVX-512F (512-bit EVEX, opmask k0..k7)
+- [`avx512.md`](avx512.md) — AVX-512F+DQ (512-bit EVEX, opmask k0..k7)
 - [`neon.md`](neon.md) — Arm NEON / AdvSIMD (fixed 128-bit)
 - [`sve.md`](sve.md) — Arm SVE (scalable vectors, predicated)
 - [`kernels.md`](kernels.md) — sin, exp, log, pow and more as intrinsics: strict, relaxed and fast

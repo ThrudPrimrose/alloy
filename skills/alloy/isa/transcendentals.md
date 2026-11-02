@@ -1,25 +1,25 @@
 # Transcendentals — polynomial tiers with measured ULP (generated, do not edit)
 
-ULP at function scale: max |approx − ref| / spacing(max(|ref|, 1.0)) against double-precision libm on dense grids; the reference's own 0.5 ulp is the floor. Recipes are Horner schemes in abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations.
+Error in units of 2^-52 at function scale: max \|approx - ref\| / spacing(max(\|ref\|, 1.0)) against double-precision libm on dense grids, so real f64 ulp is 2x to 2.7x larger on the good tiers and f32 rows get the same f64 figures. `kernel` gives better polynomials with true ulp. Recipes are Horner schemes in abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations.
 
 | tier | op | domain | error (ulp) | error (abs) |
 |---|---|---|---|---|
-| `sin-taylor7` | sin | |x| <= pi/2 after Cody-Waite reduction | 7.066e+11 | 0.000157 |
-| `sin-taylor9` | sin | |x| <= pi/2 after Cody-Waite reduction | 1.595e+10 | 3.54e-06 |
-| `sin-taylor11` | sin | |x| <= pi/2 after Cody-Waite reduction | 2.534e+08 | 5.63e-08 |
-| `sin-quad-cheb9` | sin | |x| <= pi/4 after quadrant (mod pi/2) reduction | 3.101e+04 | 6.89e-12 |
-| `sin-quad-cheb13` | sin | |x| <= pi/4 after quadrant (mod pi/2) reduction | 8.5 | 1.89e-15 |
-| `cos-taylor6` | cos | |x| <= pi/2 after Cody-Waite reduction | 4.029e+12 | 0.000895 |
-| `cos-taylor8` | cos | |x| <= pi/2 after Cody-Waite reduction | 1.114e+11 | 2.47e-05 |
-| `cos-taylor10` | cos | |x| <= pi/2 after Cody-Waite reduction | 2.093e+09 | 4.65e-07 |
-| `cos-quad-cheb8` | cos | |x| <= pi/4 after quadrant (mod pi/2) reduction | 4.343e+05 | 9.64e-11 |
-| `cos-quad-cheb12` | cos | |x| <= pi/4 after quadrant (mod pi/2) reduction | 16 | 3.55e-15 |
-| `exp-taylor5` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 1.14e+10 | 2.53e-06 |
-| `exp-taylor7` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 2.418e+07 | 5.37e-09 |
-| `exp-taylor9` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 3.203e+04 | 7.11e-12 |
-| `exp-cheb7` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 4.736e+05 | 1.05e-10 |
-| `exp-cheb9` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 221 | 4.91e-14 |
-| `exp-cheb11` | exp | |x| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 67 | 1.49e-14 |
+| `sin-taylor7` | sin | \|x\| <= pi/2 after Cody-Waite reduction | 7.066e+11 | 0.000157 |
+| `sin-taylor9` | sin | \|x\| <= pi/2 after Cody-Waite reduction | 1.595e+10 | 3.54e-06 |
+| `sin-taylor11` | sin | \|x\| <= pi/2 after Cody-Waite reduction | 2.534e+08 | 5.63e-08 |
+| `sin-quad-cheb9` | sin | \|x\| <= pi/4 after quadrant (mod pi/2) reduction | 3.101e+04 | 6.89e-12 |
+| `sin-quad-cheb13` | sin | \|x\| <= pi/4 after quadrant (mod pi/2) reduction | 8.5 | 1.89e-15 |
+| `cos-taylor6` | cos | \|x\| <= pi/2 after Cody-Waite reduction | 4.029e+12 | 0.000895 |
+| `cos-taylor8` | cos | \|x\| <= pi/2 after Cody-Waite reduction | 1.114e+11 | 2.47e-05 |
+| `cos-taylor10` | cos | \|x\| <= pi/2 after Cody-Waite reduction | 2.093e+09 | 4.65e-07 |
+| `cos-quad-cheb8` | cos | \|x\| <= pi/4 after quadrant (mod pi/2) reduction | 4.343e+05 | 9.64e-11 |
+| `cos-quad-cheb12` | cos | \|x\| <= pi/4 after quadrant (mod pi/2) reduction | 16 | 3.55e-15 |
+| `exp-taylor5` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 1.14e+10 | 2.53e-06 |
+| `exp-taylor7` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 2.418e+07 | 5.37e-09 |
+| `exp-taylor9` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 3.203e+04 | 7.11e-12 |
+| `exp-cheb7` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 4.736e+05 | 1.05e-10 |
+| `exp-cheb9` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 221 | 4.91e-14 |
+| `exp-cheb11` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 67 | 1.49e-14 |
 
 ## Recipes
 

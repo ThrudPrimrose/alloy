@@ -46,6 +46,10 @@ MCA_ITERATIONS = 100
 #: The share of the largest cache a scope's arrays may fill and still stay resident: the cache is shared with the rest
 #: of the program and loses lines to conflicts and write-allocates, so beyond half of it the loops stream memory.
 CACHE_RESIDENT = 0.5
+#: Cycles per lane of a gather or scatter: llvm-mca prices them far too low on recent x86 cores.
+GATHER_LANE_CYCLES = 4.0
+GATHER = re.compile(r"^v(gather|scatter|pgather|pscatter)")
+
 #: Predictions within this fraction of the cheapest are a tie (left to the default FP level, then sweep order): a
 #: memory-bound scope's builds all sit on the bandwidth floor.
 TIE = 0.02
@@ -183,8 +187,10 @@ def sve_bytes() -> int:
 def x86_bytes(i: Instruction) -> int:
     """Bytes an x86 instruction moves to or from memory (AT&T): its vector register width, an element for a scalar
     or broadcast FP form, else its general register width."""
-    if "(" not in i.operands:
+    if "(" not in i.operands or "%rip" in i.operands:  # a rip-relative operand is a constant, not an array
         return 0
+    if i.mnemonic in {"vmovhpd", "vmovlpd", "vmovhps", "vmovlps"}:
+        return 8
     scalar = re.search(r"(sd|ss|sh)$", i.mnemonic) or i.mnemonic.startswith("vbroadcast")
     if scalar or i.mnemonic in {"vmovq", "movq"}:
         return {"d": 8, "s": 4, "h": 2}.get(i.mnemonic[-1], 8)
@@ -277,9 +283,7 @@ def tasklet_lines(source: pathlib.Path) -> dict[int, str]:
 
 
 def evaluated(volume: sympy.Expr, sizes: dict[str, int] | None) -> float | None:
-    if not sizes:
-        return None
-    value = volume.subs({sympy.Symbol(k): v for k, v in sizes.items()})
+    value = volume.subs({sympy.Symbol(k): v for k, v in (sizes or {}).items()})
     return float(value) if value.is_number else None
 
 
@@ -287,13 +291,24 @@ def temporaries(sdfg: dace.SDFG, sizes: dict[str, int]) -> int:
     """Bytes of ``sdfg``'s transient arrays that grow with the sizes: the values a fission cut widens."""
     grown = [d for d in sdfg.arrays.values() if d.transient and dace.symbolic.issymbolic(d.total_size)]
     numeric: dict[dace.symbol | str, int | float] = {k: v for k, v in sizes.items()}  # noqa: C416 -- widens types
-    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in grown)
+    known = [d for d in grown if {str(s) for s in d.free_symbols} <= sizes.keys()]  # a loop variable has no size
+    return sum(int(dace.symbolic.evaluate(d.total_size, numeric)) * d.dtype.bytes for d in known)
+
+
+def element_lanes(i: Instruction, width: int) -> int:
+    """The lanes a gather or scatter moves."""
+    for register, bytes_wide in (("%zmm", 64), ("%ymm", 32), ("%xmm", 16)):
+        if register in i.operands:
+            return bytes_wide // width
+    return 1
 
 
 def hot_calls(loop: Loop, elements: float) -> int:
-    """Calls every iteration makes: all of a scalar loop's; a vector loop's calls to vector math entries, its scalar
-    calls being the fallback of a few lanes (errno, a special value)."""
-    return len(loop.callees) if elements <= 1 else sum(bool(VECTOR_CALL.match(c)) for c in loop.callees)
+    """Calls every iteration makes: a vector loop's vector math entries, and its scalar calls when there are as many
+    as lanes (a scalarized math call); fewer are the fallback of a few lanes (errno, a special value)."""
+    vector = sum(bool(VECTOR_CALL.match(c)) for c in loop.callees)
+    scalar = len(loop.callees) - vector
+    return len(loop.callees) if elements <= 1 or scalar >= elements else vector
 
 
 def loop_cost(loop: Loop, tasklets: tuple[str, ...], maps: dict[str, MapFacts], scope: Scope) -> LoopCost | None:
@@ -305,6 +320,9 @@ def loop_cost(loop: Loop, tasklets: tuple[str, ...], maps: dict[str, MapFacts], 
     accesses = max((f.accesses for f in known), default=accesses_per_element(scope))
     per_element = element_bytes(scope) * accesses
     elements = max(1.0, data_bytes(loop) / per_element)
+    cycles += GATHER_LANE_CYCLES * sum(
+        element_lanes(i, element_bytes(scope)) for i in loop.body if GATHER.match(i.mnemonic)
+    )
     return LoopCost(tasklets, cycles, elements, hot_calls(loop, elements), float(per_element), 1.0)
 
 

@@ -187,7 +187,7 @@ def test_hints_quote_the_levels_and_the_call():
     line = kernel_summary("avx2", "f64", "log")
 
     assert "strict" in line and "relaxed" in line and "fast" in line
-    assert "python -m alloy.isa kernel avx2 log f64" in line
+    assert "kernel avx2 log f64" in line
 
 
 ARM_MOD = """

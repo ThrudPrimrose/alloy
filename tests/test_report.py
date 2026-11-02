@@ -13,7 +13,7 @@ import pytest
 
 from alloy import report
 from alloy.backend import sweep
-from alloy.backend.build import Build, Remarks, build
+from alloy.backend.build import Build, Remarks
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Commands
 from alloy.evaluate.timing import Measured, ProgramTiming, ScopeTiming, Timings
@@ -22,7 +22,7 @@ from alloy.frontend import scopes
 from alloy.frontend.tree import Kind
 from alloy.heuristics import prune
 from alloy.records import dumped_json
-from helpers import MATRIX, outlined
+from helpers import MATRIX, build, outlined
 
 PASSED = Verdict(status="pass", error=1e-16, detail="")
 FAILED = Verdict(status="fail", error=math.inf, detail="out: outside the band")

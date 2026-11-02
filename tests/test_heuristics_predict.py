@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from alloy import api, machine
-from alloy.backend.build import Build, Remarks, build
+from alloy.backend.build import Build, Remarks
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate.verify import Verdict
@@ -18,7 +18,7 @@ from alloy.frontend import scopes
 from alloy.heuristics import predict
 from alloy.heuristics.predict import Instruction, Prediction
 from alloy.report import Mode
-from helpers import MATRIX, REDUCTIONS, SCALE_MANIFEST, gcc_only, load_program, write_manifest
+from helpers import MATRIX, REDUCTIONS, SCALE_MANIFEST, build, gcc_only, load_program, write_manifest
 
 N, M, K = dace.symbol("N"), dace.symbol("M"), dace.symbol("K")
 

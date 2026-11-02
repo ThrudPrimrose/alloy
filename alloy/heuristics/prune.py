@@ -44,9 +44,9 @@ class Pruned:
 
 
 def operations(tasklet: nodes.Tasklet) -> tuple[set[type], set[str]]:
-    """The binary operators and called names of a Python tasklet; a tasklet in another language yields nothing."""
+    """The binary operators and called names of a Python tasklet; a tasklet in another language could do anything."""
     if tasklet.code.language != dace.Language.Python:
-        return set(), set()
+        return {ast.Mult, ast.Add, ast.Div}, {"sqrt"}
     ops: set[type] = set()
     calls: set[str] = set()
     for node in ast.walk(ast.parse(tasklet.code.as_string)):
@@ -102,7 +102,8 @@ def facts(scope: Scope) -> Facts:
         if not isinstance(node, nodes.Tasklet) or not isinstance(state, dace.SDFGState):
             continue
         ops, calls = operations(node)
-        contracts |= ast.Mult in ops and (bool(ops & {ast.Add, ast.Sub}) or feeds_add(state, node))
+        multiplies = bool(ops & {ast.Mult, ast.Pow})  # x**2 renders as a multiply
+        contracts |= multiplies and (bool(ops & {ast.Add, ast.Sub}) or feeds_add(state, node))
         sets_errno |= "sqrt" in calls
         approximates |= ast.Div in ops or bool(calls & {"min", "max", "fmin", "fmax"})
     sizes = [d.dtype.bytes for d in scope.sdfg.arrays.values() if not d.transient] or [8]
@@ -112,6 +113,9 @@ def facts(scope: Scope) -> Facts:
         reduces=scope.has_reduction,
         approximates=approximates,
         trip_counts=trip_counts(scope.sdfg),
+            isinstance(n, nodes.MapEntry) and n.map.schedule != dace.ScheduleType.Sequential
+            for n, unused in scope.sdfg.all_nodes_recursive()
+        ),
         element_bytes=min(sizes),
     )
 

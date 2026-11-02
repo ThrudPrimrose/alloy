@@ -65,7 +65,7 @@ def roofline_sizes(program: Program, manifest: Manifest | None, matrix: Matrix) 
         return max(presets, key=lambda sizes: timing.footprint(program.original, sizes), default=None)
     base = dict.fromkeys(program.original.free_symbols, inputs.DERIVED_SIZES[0])
     if not base:
-        return None
+        return {}
     target = matrix.timing.final_cache_factor * machine.largest_cache_bytes()
     return timing.sized(program.original, program.original, {str(k): v for k, v in base.items()}, target, target)
 

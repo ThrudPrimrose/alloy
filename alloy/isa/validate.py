@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Numerical validation of table entries: every spelling an agent gets from a lookup is checked before
-it is returned. Two validators, one idea — never hand the agent an unverified mapping:
+"""Numerical validation of table entries: the intrinsic or recipe of an x86 row the host runs is checked before a
+lookup returns it, and every other row says unverified. Masked forms, mnemonics and notes are not checked. Two
+validators:
 
 - x86 entries the host can execute (AVX2+FMA, AVX-512F+DQ) are checked by a small compiled C kernel:
   fixed inputs through the looked-up intrinsic (or its fallback recipe, hand-coded once per op and ISA
@@ -14,8 +15,7 @@ other dtypes and ISAs, the reverse-lookup family — so the caller returns a sho
 failure notice instead of a wrong answer.
 
 ``Verdict.ok is None`` means not verifiable on this host (NEON/SVE, for which no kernels exist yet,
-AVX-512 FP16 without the hardware, entries with no executable form, no C compiler): unverified is never
-reported as correct.
+AVX-512 FP16, entries with no executable form, no C compiler): unverified is never reported as correct.
 """
 
 import contextlib
@@ -32,6 +32,7 @@ from typing import Any
 
 from alloy.isa.ops import OPS
 from alloy.isa.table import ALIASES, ALL_DTYPES, DTYPES, INT_DTYPES, SPELLED, Entry, Hit, Table, load
+from alloy.machine import cpu_flags
 
 __all__ = ["Verdict", "candidates_for", "host_can_run", "validate", "validate_all", "validate_tier"]
 
@@ -59,19 +60,11 @@ class Verdict:
 
 
 def host_flags() -> frozenset[str]:
-    """The host's CPU feature flags — x86 ``flags`` or aarch64 ``Features`` lines."""
+    """The host's CPU feature flags, none when ``/proc/cpuinfo`` cannot say."""
     try:
-        lines = pathlib.Path("/proc/cpuinfo").read_text(errors="ignore").splitlines()
-    except OSError:
+        return cpu_flags()
+    except (OSError, RuntimeError):
         return frozenset()
-    wanted = ("flags", "features")
-    return frozenset(
-        flag
-        for line in lines
-        for key, _, rest in (line.partition(":"),)
-        if key.strip().lower() in wanted
-        for flag in rest.split()
-    )
 
 
 def host_can_run(isa: str, dtype: str) -> bool:
@@ -82,8 +75,7 @@ def host_can_run(isa: str, dtype: str) -> bool:
         if isa == "avx2":
             return {"avx2", "fma", "f16c"} <= flags if dtype == "f16" else {"avx2", "fma"} <= flags
         if isa == "avx512":  # the kernels and the k-mask entries need DQ
-            needed = {"avx512f", "avx512dq", "avx512fp16"} if dtype == "f16" else {"avx512f", "avx512dq"}
-            return needed <= flags
+            return dtype != "f16" and {"avx512f", "avx512dq"} <= flags  # no FP16 kernel exists
         return False
     if machine == "aarch64":
         return {"neon": "asimd", "sve": "sve"}.get(isa, "") in flags
@@ -689,7 +681,7 @@ def validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) 
     ):
         try:
             rel = compile_run(library_kernel(call, op, dtype), c_flags(isa, dtype), ("-lmvec",))
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             if not toolchain_builds(tuple(c_flags(isa, dtype)), ("-lmvec",)):
                 return Verdict(None, f"this toolchain has no libmvec (unverified, not wrong): {exc}")
             return Verdict(False, "libmvec kernel", str(exc), candidates_for(isa, op, dtype, table))

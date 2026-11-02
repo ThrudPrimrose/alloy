@@ -194,10 +194,10 @@ semantics = "v[j] = a[j]*b[j] + c[j]"
 note = "Intel order: products first, accumulator last"
 
 [isa.avx2.f32.reduce_add]
-mnemonic = "vextractf128 + vaddps + vmovshdup + vmovhlps + vaddss"
+mnemonic = "vextractf128 + vaddps+vaddps + vmovshdup + vmovhlps + vaddss"
 signature = "(v) -> s"
 semantics = "s = sum of the 8 lanes of v"
-recipe = ["_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_add_ps", "_mm_movehdup_ps", "_mm_movehl_ps", "_mm_add_ss", "_mm_cvtss_f32"]
+recipe = ["_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_add_ps", "_mm_movehdup_ps", "_mm_movehl_ps", "_mm_add_ps", "_mm_add_ss", "_mm_cvtss_f32"]
 note = "no single intrinsic: add the 128-bit halves, then horizontal; a pairwise tree, so the result differs from a scalar left fold: needs reassociation permission"
 
 [isa.avx2.f32.zero]
@@ -694,7 +694,7 @@ mnemonic = "fmla"
 observed = ["fmad", "fmla"]
 signature = "(pg, add, m1, m2) -> v"
 semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
-note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
+note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd; a loop-carried accumulator under a tail predicate needs the _m form: _x leaves inactive lanes unspecified"
 
 [isa.sve.f64.reduce_add]
 intrinsic = "svaddv_f64"
@@ -768,7 +768,7 @@ mnemonic = "fmla"
 observed = ["fmad", "fmla"]
 signature = "(pg, add, m1, m2) -> v"
 semantics = "v[j] = add[j] + m1[j]*m2[j] for active lanes j"
-note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd"
+note = "operand-order trap: the accumulator is FIRST (add + m1*m2), like NEON — differs from Intel's fmadd; a loop-carried accumulator under a tail predicate needs the _m form: _x leaves inactive lanes unspecified"
 
 [isa.sve.f32.reduce_add]
 intrinsic = "svaddv_f32"
@@ -802,42 +802,42 @@ signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
 libraries = { libmvec = "_ZGVdN4v_exp", svml = "_mm256_exp_pd", sleef = "Sleef_expd4_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
 libraries = { libmvec = "_ZGVdN4v_sin", svml = "_mm256_sin_pd", sleef = "Sleef_sind4_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
 libraries = { libmvec = "_ZGVdN4v_cos", svml = "_mm256_cos_pd", sleef = "Sleef_cosd4_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
 libraries = { libmvec = "_ZGVdN8v_expf", svml = "_mm256_exp_ps", sleef = "Sleef_expf8_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
 libraries = { libmvec = "_ZGVdN8v_sinf", svml = "_mm256_sin_ps", sleef = "Sleef_sinf8_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
 libraries = { libmvec = "_ZGVdN8v_cosf", svml = "_mm256_cos_ps", sleef = "Sleef_cosf8_u10" }
-note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds exactly these calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
+note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f64.exp]
 signature = "(v) -> v"
@@ -1284,7 +1284,7 @@ note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_Z
 intrinsic = "_mm256_i64gather_pd"
 mnemonic = "vgatherqpd"
 signature = "(base, idx, scale) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
 note = "slow on AMD Zen1/2 (microcoded): affine indices want a plain load"
 
 [isa.avx2.f64.scatter]
@@ -1347,7 +1347,7 @@ note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_Z
 intrinsic = "_mm256_i32gather_ps"
 mnemonic = "vgatherdps"
 signature = "(base, idx, scale) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
 note = "32-bit indices; slow on AMD Zen1/2"
 
 [isa.avx2.f32.scatter]
@@ -1414,7 +1414,7 @@ intrinsic = "_mm512_i64gather_pd"
 masked = "_mm512_mask_i64gather_pd(src, k, idx, base, 8)"
 mnemonic = "vgatherqpd"
 signature = "(idx, base, scale) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
 note = "operand-order trap: AVX-512 gathers take (index, base), AVX2 took (base, index)"
 
 [isa.avx512.f64.scatter]
@@ -1482,7 +1482,7 @@ intrinsic = "_mm512_i32gather_ps"
 masked = "_mm512_mask_i32gather_ps(src, k, idx, base, 4)"
 mnemonic = "vgatherdps"
 signature = "(idx, base, scale) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
 note = "32-bit indices; operand order (index, base)"
 
 [isa.avx512.f32.scatter]
@@ -1543,7 +1543,7 @@ note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b
 [isa.neon.f64.gather]
 mnemonic = "ldr+ins"
 signature = "(base, idx) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead"]
 
 [isa.neon.f64.scatter]
@@ -1603,7 +1603,7 @@ note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b
 [isa.neon.f32.gather]
 mnemonic = "ldr+ins"
 signature = "(base, idx) -> v"
-semantics = "v[j] = base[idx[j]]"
+semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead"]
 
 [isa.neon.f32.scatter]
@@ -1758,7 +1758,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = add(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph"]
-note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes; each step works on 8 lanes: load with _mm_loadu_si128 (a __m128i), step by 8, and build with -mf16c"
 
 [isa.avx2.f16.sub]
 mnemonic = "vcvtph2ps+op+vcvtps2ph"

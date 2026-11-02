@@ -62,6 +62,7 @@ def in_order(graph: AbstractControlFlowRegion | SDFGState) -> list[Any]:
             indegree[id(edge.dst)] -= 1
             if indegree[id(edge.dst)] == 0:
                 heapq.heappush(ready, rank[id(edge.dst)])
+    ordered += [n for n in all_nodes if not any(n is o for o in ordered)]  # blocks on a cycle keep their rank
     return ordered
 
 
