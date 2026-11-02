@@ -13,17 +13,21 @@ from collections.abc import Sequence
 
 from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.harness.envelope import Submission
+from hpcagent_bench.harness.judge_wire import ScorePreview
 from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
+from alloy.evaluate.verify import Verdict
 from alloy.hb_plugin.adapter import (
     fast_size,
+    faster_correct,
     pipeline_sdfg,
     ranked,
     rendered,
     stub_time,
+    verified,
 )
 
 
@@ -136,3 +140,44 @@ def test_a_library_without_transients_asks_for_no_scratch() -> None:
     sut = rendered(Task("tsvc_2_vpv", SourceMode.ANY, Language.CPP), spec, sdfg, as_source)
 
     assert sut.workspace_bytes is None
+
+
+@dataclasses.dataclass
+class Judge:
+    """Scores from a table; ``None`` is a judge that does not answer."""
+
+    scores: dict[str, tuple[bool, float] | None]
+
+    def score(self, submission: Submission, kernel: str) -> ScorePreview:
+        answer = self.scores[submission.source]
+        if answer is None:
+            raise OSError("no answer")
+        correct, speedup = answer
+        return ScorePreview(correct=correct, speedup=speedup, native_ns=1, baseline_ns=1, baseline="c", speedups={})
+
+
+PICK = Submission(language=Language.C, source="pick")
+BASE = Submission(language=Language.C, source="base")
+
+
+@pytest.mark.parametrize(
+    ("scores", "expected"),
+    [
+        ({"pick": (True, 2.0), "base": (True, 1.0)}, True),
+        ({"pick": (True, 0.5), "base": (True, 1.0)}, False),
+        ({"pick": (False, 9.0), "base": (True, 1.0)}, False),
+        ({"pick": None, "base": (True, 1.0)}, False),
+        ({"pick": (True, 0.5), "base": (False, 1.0)}, True),
+    ],
+)
+def test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected) -> None:
+    assert faster_correct(Judge(scores), PICK, BASE, "k") is expected  # type: ignore[arg-type]
+
+
+def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
+    builds = [Fake("good"), Fake("wrong")]
+    rep = dataclasses.make_dataclass("Rep", [("builds", list)])([Fake("ref"), *builds])
+
+    sut = verified(rep, {"good": Verdict("pass"), "wrong": Verdict("fail")})  # type: ignore[arg-type]
+
+    assert [b.name for b in sut] == ["good"]

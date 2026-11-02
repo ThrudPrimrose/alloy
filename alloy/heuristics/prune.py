@@ -113,9 +113,6 @@ def facts(scope: Scope) -> Facts:
         reduces=scope.has_reduction,
         approximates=approximates,
         trip_counts=trip_counts(scope.sdfg),
-            isinstance(n, nodes.MapEntry) and n.map.schedule != dace.ScheduleType.Sequential
-            for n, unused in scope.sdfg.all_nodes_recursive()
-        ),
         element_bytes=min(sizes),
     )
 

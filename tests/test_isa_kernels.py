@@ -3,16 +3,18 @@
 at its recorded error, and the gate is shown to fail on a broken kernel."""
 
 import dataclasses
+import math
 import pathlib
 import re
 import subprocess
 
 import pytest
 
+from alloy import configuration_matrix
 from alloy.isa import load
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
-from alloy.isa.mathcheck import HEADERS, Measured, emulated, measure, validate_kernel
+from alloy.isa.mathcheck import HEADERS, Measured, emulated, judged, measure, validate_kernel
 from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, kernels_for, libraries, render, spelled
 from alloy.isa.validate import host_can_run
 
@@ -245,3 +247,48 @@ def test_the_arm_fmod_recipes_compute_fmod(isa, dtype, tmp_path):
     run = subprocess.run([*launcher, str(exe)], capture_output=True, text=True, check=False)
 
     assert run.returncode == 0, run.stdout
+
+
+def test_a_kernel_past_its_recorded_error_fails_its_verdict():
+    k = kernel("exp", "f64", "relaxed")
+
+    assert judged(k, Measured(k.error_ulp * 100, 0.0, 0.0, 0.0, 0), "gate").ok is False
+
+
+def test_a_special_value_off_libm_fails_the_verdict():
+    k = kernel("exp", "f64", "strict")
+
+    assert judged(k, Measured(k.error_ulp, 0.0, 0.0, 0.0, 1), "gate").ok is False
+
+
+def test_a_kernel_at_its_record_passes_the_verdict():
+    k = kernel("exp", "f64", "strict")
+
+    assert judged(k, Measured(k.error_ulp, 0.0, 0.0, 0.0, 0), "gate").ok is True
+
+
+@pytest.mark.parametrize("compiler", ["gcc", "clang"])
+@pytest.mark.parametrize("fn", ["log", "log2", "log10", "pow"])
+def test_an_avx2_kernel_survives_the_matrixs_reassoc_flags(compiler, fn, tmp_path):
+    """The f64 float conversion was an FP subtraction, which reassociation cancelled."""
+    k = kernel(fn, "f64", "relaxed")
+    args = ", ".join(f"_mm256_set1_pd({v})" for v in (8.0, 2.0)[: len(k.args)])
+    source = tmp_path / "k.c"
+    source.write_text(
+        "#include <immintrin.h>\n#include <math.h>\n#include <stdio.h>\n"
+        f"{render(k, 'avx2').source}\n"
+        f'int main(void) {{ double o[4]; _mm256_storeu_pd(o, {k.name}({args})); printf("%.17g", o[0]); }}\n'
+    )
+    flags = [*configuration_matrix.load().compilers[compiler].fp["reassoc"], "-O2", "-mavx2", "-mfma"]
+    subprocess.run([compiler, *flags, str(source), "-lm", "-o", str(tmp_path / "k")], check=True)
+
+    sut = float(subprocess.run([str(tmp_path / "k")], capture_output=True, text=True, check=True).stdout)
+
+    expected = {"log": math.log(8.0), "log2": 3.0, "log10": math.log10(8.0), "pow": 64.0}[fn]
+    assert sut == pytest.approx(expected, rel=1e-13)
+
+
+def test_clang_keeps_a_strict_kernel_exact_under_associative_math():
+    k = kernel("sin", "f64", "strict")
+
+    assert "#pragma clang fp reassociate(off)" in render(k, "avx2").source

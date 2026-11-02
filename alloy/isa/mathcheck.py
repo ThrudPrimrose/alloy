@@ -279,10 +279,14 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
         return Verdict(False, "kernel build", str(exc))
     if seen is None:
         return Verdict(None, f"host cannot run {isa}/{dtype}", "")
+    return judged(k, seen, "kernel under qemu" if isa in CROSS else "kernel vs wider libm")
+
+
+def judged(k: Kernel, seen: Measured, basis: str) -> Verdict:
+    """A measurement against the kernel's record: its ulp within :data:`SLACK`, no special value off libm."""
     ok = seen.ulp <= k.error_ulp * SLACK and seen.special == 0
     specials = f", {seen.special} special values off libm" if k.specials else ""
-    detail = f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}){specials}"
-    return Verdict(ok, "kernel under qemu" if isa in CROSS else "kernel vs wider libm", detail)
+    return Verdict(ok, basis, f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}){specials}")
 
 
 def validate_kernels(isas: tuple[str, ...] = ("avx2", "avx512", "neon", "sve")) -> list[tuple[str, Verdict]]:
