@@ -85,7 +85,7 @@ def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_se
     sut = verify.run(compiled, cases.draws[0], cases.outputs)
 
     assert not isinstance(sut, str)
-    threads, places = sut["out"][:2]
+    threads, places = sut[0]["out"][:2]
     assert threads == places >= 2
 
 
@@ -121,7 +121,7 @@ def test_a_complex_output_is_judged_under_the_band_of_its_component_precision():
     expected = np.linspace(1.0, 2.0, 16) * (1 + 1j)
     reference = verify.Reference([{"Sigma": expected}], frozenset())
 
-    sut = verify.judge("band", reference, [{"Sigma": expected * (1 + 1e-15)}], [1])
+    sut = verify.judge("band", reference, [[{"Sigma": expected * (1 + 1e-15)}]], [1])
 
     assert sut.status == "pass"
 
@@ -221,18 +221,86 @@ def test_an_ungradeable_verdict_is_not_correct():
 def test_a_nondeterministic_output_is_compared_by_band_even_at_exact():
     ref = verify.Reference([{"x": np.array([1.0])}], frozenset({"x"}))
 
-    sut = verify.judge("exact", ref, [{"x": np.array([1.0 + 1e-15])}], [1])
+    sut = verify.judge("exact", ref, [[{"x": np.array([1.0 + 1e-15])}]], [1])
 
     assert sut.ok
 
 
 def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
     cases = verify.Cases([inputs.Draw({}, {})], ("x",))
-    runs: list[list[verify.Outcome]] = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}, {"x": np.array([1.0])}]]
+    runs: list[list[verify.Outcome]] = [[[{"x": np.array([1.0])}], [{"x": np.array([2.0])}], [{"x": np.array([1.0])}]]]
 
     sut = verify.reference_from(cases, runs)
 
     assert sut.nondeterministic == frozenset({"x"})
+
+
+def test_an_output_that_changes_between_the_calls_of_one_child_is_marked_nondeterministic():
+    cases = verify.Cases([inputs.Draw({}, {})], ("x",))
+    runs: list[list[verify.Outcome]] = [[[{"x": np.array([1.0])}, {"x": np.array([2.0])}]]]
+
+    sut = verify.reference_from(cases, runs)
+
+    assert sut.nondeterministic == frozenset({"x"})
+
+
+def test_one_wrong_result_among_the_calls_of_a_child_fails_the_candidate():
+    ref = verify.Reference([{"x": np.array([1.0])}], frozenset())
+    distinct: list[verify.Outcome] = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}]]
+
+    sut = verify.judge("exact", ref, distinct, [1])
+
+    assert sut.status == "fail"
+
+
+def test_a_build_wrong_only_after_its_first_call_fails_verification(tmp_path):
+    """The shape of a reduction that loses updates only once its OpenMP team is awake."""
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    (scope,) = program.scopes
+    good = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "good", {})
+    body = "static int calls; double f = ++calls > 1 ? 3.0 : 2.0; for (int64_t i = 0; i < N; ++i) out[i] = f * a[i];"
+    wrong = handwritten_archive(tmp_path, scope, body)
+    bad = dataclasses.replace(good, name="wrong", archive=wrong, object_hash="wrong")
+
+    sut = verify.verify(program, MATRIX, [ScopeReport(scope, (good, bad))], cases, tmp_path / "out")
+
+    assert sut.verdicts[scope.symbol]["wrong"].status == "fail"
+
+
+@pytest.mark.parametrize("team", [2, 3, 5])
+def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path, team):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    init, reduce_scope = program.scopes
+    wrong_factor = f"double f = omp_get_max_threads() == {team} ? 3.0 : 1.0;"
+    body = "for (int64_t j = 0; j < N; ++j) out[i] += a[i * N + j]; out[i] *= f;"
+    wrong = handwritten_archive(tmp_path, reduce_scope, f"{wrong_factor} for (int64_t i = 0; i < M; ++i) {{ {body} }}")
+    good = build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {})
+    bad = dataclasses.replace(good, name="wrong", archive=wrong, object_hash="wrong")
+    reports = [
+        ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
+        ScopeReport(reduce_scope, (good, bad)),
+    ]
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.verdicts[reduce_scope.symbol]["wrong"].status == "fail"
+
+
+def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    init, reduce_scope = program.scopes
+    body = "for (int64_t j = 0; j < N; ++j) out[i] += a[i * N + j];"
+    right = handwritten_archive(tmp_path, reduce_scope, f"for (int64_t i = 0; i < M; ++i) {{ {body} }}")
+    good = build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {})
+    hand = dataclasses.replace(good, name="hand", archive=right, object_hash="hand")
+    reports = [
+        ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
+        ScopeReport(reduce_scope, (good, hand)),
+    ]
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.verdicts[reduce_scope.symbol]["hand"].ok
 
 
 def test_a_child_starts_under_any_data_limit_of_its_parent():

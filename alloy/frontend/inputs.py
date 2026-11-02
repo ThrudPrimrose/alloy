@@ -21,10 +21,12 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True, frozen=True)
 class Draw:
-    """One fuzz iteration: the manifest's parameters as drawn (sizes and physics) and every input by name."""
+    """One fuzz iteration: the manifest's parameters as drawn (sizes and physics) and every input by name.
+    ``threads`` is the OpenMP team it runs on, by default one thread per CPU of the child's slot."""
 
     sizes: dict[str, Any]
     values: dict[str, Any]
+    threads: int | None = None
 
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=FOREIGN_RECORD)

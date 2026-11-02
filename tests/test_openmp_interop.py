@@ -32,6 +32,53 @@ int k_{name}(double *restrict a, long n) {{
 """
 #: One mark per compiler; a matrix compiler without one fails here, so a new compiler gets registered.
 MARKS = {"gcc": pytest.mark.gcc, "clang": pytest.mark.clang, "nvhpc": pytest.mark.nvhpc, "icx": pytest.mark.icx}
+#: An arg-max reduction seeded from ``omp_orig``, the form DaCe's CPF renders. Every thread waits inside the loop for
+#: its whole team, so no thread starts after another left, and the highest thread leaves last holding its own maximum;
+#: the true maximum sits in thread 0's chunk. A correct combine returns it whatever the arrival order. The wait stays a
+#: relaxed ``omp atomic``: a sequentially consistent atomic in the loop body hides the icx miscompile below.
+SEEDED_REDUCTION = """#include <omp.h>
+#include <stdint.h>
+#include <unistd.h>
+typedef struct { double value; int64_t index; } pair;
+static inline pair better(pair out, pair in) { return in.value > out.value ? in : out; }
+#pragma omp declare reduction(arg_max : pair : omp_out = better(omp_out, omp_in)) initializer(omp_priv = omp_orig)
+enum { N = 400, CALLS = 8 };
+static double a[N];
+static int entered, call;
+static _Thread_local int seen;
+
+static void wait_for_team(void) {
+    if (seen == call) return;
+    seen = call;
+#pragma omp atomic update
+    entered++;
+    for (int in_loop = 0; in_loop < omp_get_num_threads();) {
+#pragma omp atomic read
+        in_loop = entered;
+    }
+    if (omp_get_thread_num() == omp_get_num_threads() - 1) usleep(2000);
+}
+
+__attribute__((noinline)) static int64_t arg_max(void) {
+    pair best = {a[0], 0};
+    ++call;
+    entered = 0;
+#pragma omp parallel for reduction(arg_max : best) schedule(static)
+    for (int64_t i = 1; i < N; ++i) {
+        wait_for_team();
+        best = a[i] > best.value ? (pair){a[i], i} : best;
+    }
+    return best.index;
+}
+
+int main(void) {
+    for (int i = 0; i < N; ++i) a[i] = i * 1e-3;
+    a[1] = 1000.0;
+    for (int c = 0; c < CALLS; ++c)
+        if (arg_max() != 1) return 1;
+    return 0;
+}
+"""
 
 
 def main_source(names: tuple[str, ...]) -> str:
@@ -65,6 +112,16 @@ def compiler_param(names: tuple[str, ...]) -> object:
     return pytest.param(names, marks=[MARKS[n] for n in names], id="+".join(names))
 
 
+#: icx 2026.2 ``-fiopenmp`` at -O2 and above takes omp_out from the value read for omp_orig when the thread entered the
+#: region, so threads that overlap overwrite each other and the last to arrive wins. Fails here once Intel fixes it.
+ICX_LOSES_UPDATES = pytest.mark.xfail(
+    strict=True, raises=AssertionError, reason="-fiopenmp: the combine reads a stale copy of the shared value"
+)
+SEEDED_COMPILERS = [
+    pytest.param("gcc", marks=MARKS["gcc"]),
+    pytest.param("clang", marks=MARKS["clang"]),
+    pytest.param("icx", marks=[MARKS["icx"], ICX_LOSES_UPDATES]),
+]
 COMBINATIONS = [
     compiler_param(names)
     for size in (1, 2, len(MATRIX.compilers))
@@ -104,3 +161,19 @@ def test_archives_from_several_compilers_link_exactly_when_the_runtime_exports_t
         loaded = subprocess.run(["ldd", str(tmp_path / "main")], capture_output=True, text=True, check=True).stdout
         runtimes = {so for so in MATRIX.openmp_runtimes.values() if f"lib{so}.so" in loaded}
         assert runtimes == {MATRIX.openmp_runtimes[runtime_name]}
+
+
+@pytest.mark.parametrize("name", SEEDED_COMPILERS)
+def test_a_reduction_seeded_from_omp_orig_keeps_the_update_of_every_thread(tmp_path, name):
+    comp = MATRIX.compilers[name]
+    soname = MATRIX.openmp_runtimes[MATRIX.defaults.openmp_runtime]
+    library = runtime.resolve(soname, executables())
+    source, obj, binary = tmp_path / "seeded.c", tmp_path / "seeded.o", tmp_path / "seeded"
+    source.write_text(SEEDED_REDUCTION)
+    openmp = comp.openmp[MATRIX.defaults.openmp_runtime]
+    subprocess.run([comp.executables["c"], "-O3", "-fPIC", *openmp, "-c", str(source), "-o", str(obj)], check=True)
+    subprocess.run(["gcc", str(obj), *runtime.link_flags(library, soname), "-o", str(binary)], check=True)
+
+    sut = subprocess.run([str(binary)], env={**os.environ, "OMP_NUM_THREADS": str(THREADS)}, check=False)
+
+    assert sut.returncode == 0

@@ -89,6 +89,13 @@ scope at its reference archive), rebuilt by DaCe's command-cache replay (about 1
 fuzzed draws from the bench manifest. The reference runs three times per draw: an output that changes between those runs
 (a parallel reduction combining partial sums in thread order) is compared under `band` at every level.
 
+A child repeats its call (`CHILD_CALLS` times within `CHILD_CALLS_S`) and every distinct result is judged. On a cold
+team and a small draw the threads barely overlap, and a reduction that loses updates comes out right: icx 2026.2
+`-fiopenmp` at `-O2` and above (`omp_priv = omp_orig`, `argmax_with_index`) was wrong in 7% of first calls and 46% of
+later ones. A program with a reduction also runs every draw at each size of `REDUCTION_TEAMS`, compared with the
+reference at the same size: libomp combines up to 4 threads under a lock or atomically and more in a tree, so a 4-thread
+child alone never takes the path a full machine takes. The check is by sampling, so a miss stays possible.
+
 Each scope candidate runs on fuzzed inputs from HPCAgent-Bench (`hpcagent_bench.fuzz` plus the input
 distributions) and is compared against the scope's own `strict` build. Each FP level names its test:
 

@@ -191,7 +191,7 @@ def check(arms: Arms, draw: Draw, length: int) -> dict[str, Verdict]:
         first = pending.pop(first_name).result()
         if isinstance(first, str):
             raise RuntimeError(f"the reference crashed at {draw.sizes}: {first}")
-        ref = Reference([first], arms.nondeterministic)
+        ref = Reference([first[0]], arms.nondeterministic)
         verdicts = {first_name: Verdict("exact")}  # judged against itself a nondeterministic output would fail its band
         for name in list(pending):  # judged in turn, so each arm's outputs go before the next
             verdicts[name] = judge(arms.tolerances[name], ref, [pending.pop(name).result()], [length])
