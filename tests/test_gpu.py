@@ -2,11 +2,17 @@
 """GPU threadblock speculation: the compiler reports are read right, occupancy follows the SM limits, every device
 map of a bench kernel gets a shape the report ranks first, and a tie keeps the pipeline's own block."""
 
+import pathlib
 import shutil
+import sys
 
+import dace
 import pytest
+from dace.config import set_temporary
+from dace.sdfg import nodes
 
 from alloy import gpu
+from helpers import REDUCTIONS, load_program
 
 NVCC_REPORT = """\
 ptxas info    : Compiling entry function '_Z12kernel_map_1PdPKdl' for 'sm_89'
@@ -28,6 +34,67 @@ unit.hip:2:1: remark:     SGPRs Spill: 0 [-Rpass-analysis=kernel-resource-usage]
 unit.hip:2:1: remark:     VGPRs Spill: 3 [-Rpass-analysis=kernel-resource-usage]
 unit.hip:2:1: remark:     LDS Size [bytes/block]: 512 [-Rpass-analysis=kernel-resource-usage]
 """
+
+
+#: Stands in for a device compiler: answers the report recorded for the unit's block. ``spill_at`` is the block a real
+#: compiler ran out of registers at.
+RECORDED_COMPILER = """#!{python} -I
+import pathlib, re, sys
+
+unit = next(argument for argument in sys.argv if argument.endswith((".cu", ".hip")))
+found = re.search(r"__launch_bounds__\\((\\d+)[^)]*\\)\\s+(\\w+)\\s*\\(", pathlib.Path(unit).read_text())
+threads, kernel = found.groups()
+spills = int(threads) == {spill_at}
+report = {report!r}.replace("LENGTH", str(len(kernel))).replace("KERNEL", kernel)
+print(report.replace("SPILL", "64" if spills else "0").replace("WAVES", "2" if spills else "8"))
+"""
+NVCC_RECORDED = NVCC_REPORT.split("ptxas info    : Compiling entry function '_Z12kernel_map_2")[0].replace(
+    "_Z12kernel_map_1PdPKdl", "_ZLENGTHKERNELPdPKdl"
+)
+
+
+def device_pipeline(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
+    """``scale`` as one device map; its block comes from :func:`gpu.blocks`, as a bench pipeline's does."""
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+    sdfg.simplify()
+    for desc in sdfg.arrays.values():
+        desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.GPU_Device
+            node.map.gpu_block_size = [64, 1, 1]
+    gpu.blocks(shapes)(sdfg)
+    return sdfg
+
+
+def recorded_compiler(tmp_path: pathlib.Path, name: str, report: str, spill_at: int) -> None:
+    script = tmp_path / name
+    script.write_text(RECORDED_COMPILER.format(python=sys.executable, report=report, spill_at=spill_at))
+    script.chmod(0o755)
+
+
+def test_a_cuda_map_leaves_a_block_that_spills_for_one_the_compiler_reports_clean(tmp_path, monkeypatch):
+    recorded_compiler(tmp_path, "nvcc", NVCC_RECORDED.replace("8 bytes spill stores", "SPILL bytes spill stores"), 64)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
+
+    program, picks = gpu.speculate(device_pipeline, "cuda", "8.9")
+
+    (pick,) = picks.values()
+    assert pick.shape != (64, 1, 1) and pick.usage.spill_bytes == 4, "the recorded loads still spill four bytes"
+    assert [tuple(entry.map.gpu_block_size) for entry in gpu.device_maps(program)] == [pick.shape]
+
+
+def test_a_hip_map_takes_the_block_the_compiler_reports_the_most_waves_for(tmp_path, monkeypatch):
+    report = HIP_REPORT.replace("_Z12kernel_map_1Pdi", "KERNEL").replace("[waves/SIMD]: 8", "[waves/SIMD]: WAVES")
+    recorded_compiler(tmp_path, "hipcc", report.replace("VGPRs Spill: 3", "VGPRs Spill: 0"), 64)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
+
+    with set_temporary("compiler", "cuda", "chiplet_number", value=1):  # no device here to count them on
+        program, picks = gpu.speculate(device_pipeline, "hip", "gfx90a")
+
+    (pick,) = picks.values()
+    assert pick.shape != (64, 1, 1) and pick.usage.waves == 8
+    assert [tuple(entry.map.gpu_block_size) for entry in gpu.device_maps(program)] == [pick.shape]
 
 
 def test_the_nvcc_report_gives_each_kernel_its_registers_spills_and_shared_memory():
