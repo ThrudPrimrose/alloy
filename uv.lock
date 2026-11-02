@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=8afb11243d5bb2e344ff4da06bba14add030e755" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=8ec999547e2b62c7732d39d633d0b40a995f75dd" }]
 
 [[package]]
 name = "accelerate"
@@ -244,6 +244,8 @@ dependencies = [
     { name = "dace" },
     { name = "numpy" },
     { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "sympy" },
 ]
 
 [package.optional-dependencies]
@@ -256,6 +258,7 @@ bench = [
 ]
 dev = [
     { name = "hpcagent-bench" },
+    { name = "mpmath" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyright" },
@@ -266,6 +269,7 @@ dev = [
 dev-amd = [
     { name = "cupy", marker = "platform_machine == 'x86_64'" },
     { name = "hpcagent-bench" },
+    { name = "mpmath" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyright" },
@@ -276,6 +280,7 @@ dev-amd = [
 dev-nvidia = [
     { name = "cupy-cuda13x" },
     { name = "hpcagent-bench" },
+    { name = "mpmath" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyright" },
@@ -298,15 +303,18 @@ requires-dist = [
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
     { name = "dace" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=5cd488cf071ad60b95656b81f9cde1247f1d4554" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=8940394dbb51077fd21a38e2752f80afc10da37d" },
+    { name = "mpmath", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pydantic-core" },
     { name = "pyright", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.10" },
+    { name = "sympy" },
 ]
 provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "dev-nvidia", "dev-amd"]
 
@@ -1224,7 +1232,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0b1"
-source = { git = "https://github.com/spcl/dace.git?rev=8afb11243d5bb2e344ff4da06bba14add030e755#8afb11243d5bb2e344ff4da06bba14add030e755" }
+source = { git = "https://github.com/spcl/dace.git?rev=8ec999547e2b62c7732d39d633d0b40a995f75dd#8ec999547e2b62c7732d39d633d0b40a995f75dd" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1786,7 +1794,7 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "0.4.1"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=5cd488cf071ad60b95656b81f9cde1247f1d4554#5cd488cf071ad60b95656b81f9cde1247f1d4554" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=8940394dbb51077fd21a38e2752f80afc10da37d#8940394dbb51077fd21a38e2752f80afc10da37d" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
@@ -1795,7 +1803,7 @@ dependencies = [
 [[package]]
 name = "hpcagent-bench"
 version = "0.4.1"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=5cd488cf071ad60b95656b81f9cde1247f1d4554#5cd488cf071ad60b95656b81f9cde1247f1d4554" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=8940394dbb51077fd21a38e2752f80afc10da37d#8940394dbb51077fd21a38e2752f80afc10da37d" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
