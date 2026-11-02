@@ -47,7 +47,8 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   - `relaxed` has no branch and needs finite inputs in its stated range.
   - `fast` trades about half the digits for speed. Use it where a tolerance allows.
   A kernel pays off in a loop with other work: the gain is the call and its spills.
-- `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps.
+- `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps. An op with no single
+  intrinsic prints a recipe and its `code`: copy that, it holds the operand order.
 - `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction computes.
 - `command="skeleton", arguments=["avx512", "<schedule>", "f64"]`: a loop in a legal schedule; `command="schedule",
   arguments=["avx512"]` lists the schedules.

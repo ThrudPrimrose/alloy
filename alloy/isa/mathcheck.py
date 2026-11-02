@@ -6,14 +6,23 @@
 import concurrent.futures
 import dataclasses
 import pathlib
-import platform
 import re
-import shutil
 import subprocess
 import tempfile
 
 from alloy.isa.mathkernels import LEVELS, Grid, Kernel, Renderer, functions, kernel, literal, render
-from alloy.isa.validate import COMPILE_TIMEOUT, Verdict, c_compiler, c_flags, host_can_run
+from alloy.isa.validate import (
+    COMPILE_TIMEOUT,
+    CROSS,
+    HEADERS,
+    Verdict,
+    c_compiler,
+    c_flags,
+    compile_unit,
+    emulated,
+    host_can_run,
+    target_compiler,
+)
 
 __all__ = ["Measured", "compiles", "measure", "validate_kernel", "validate_kernels"]
 
@@ -21,13 +30,8 @@ SAMPLES = 1 << 17
 GATE_SAMPLES = 1 << 14
 #: A kernel's re-measured error may exceed the recorded one by this factor.
 SLACK = 1.5
-#: SVE vector length the emulated kernels run at.
-SVE_BITS = 512
 EMULATED_TIMEOUT = 600  # seconds
 LINE = re.compile(r"ULP=(\S+) ABS=(\S+) X=(\S+) Y=(\S+) SPECIAL=(\d+)")
-
-CROSS = {"neon": "armv8.2-a", "sve": "armv8.2-a+sve"}
-HEADERS = {"avx2": "immintrin.h", "avx512": "immintrin.h", "neon": "arm_neon.h", "sve": "arm_sve.h"}
 
 DRIVER = """
 #define _GNU_SOURCE
@@ -196,14 +200,6 @@ def driver(k: Kernel, isa: str, samples: int) -> tuple[str, str]:
     return filled(UNIT, holes), filled(DRIVER, holes)
 
 
-def emulated(isa: str) -> tuple[str, list[str], list[str]] | None:
-    """How this host runs an aarch64 ``isa`` under qemu: (cross compiler, build flags, launcher), or None."""
-    cc, qemu = shutil.which("aarch64-linux-gnu-gcc"), shutil.which("qemu-aarch64")
-    if isa not in CROSS or platform.machine() == "aarch64" or cc is None or qemu is None:
-        return None
-    return cc, [f"-march={CROSS[isa]}", "-static"], [qemu, "-cpu", f"max,sve{SVE_BITS}=on"]
-
-
 def built(command: list[str], k: Kernel, isa: str) -> None:
     done = subprocess.run(command, capture_output=True, text=True, check=False, timeout=COMPILE_TIMEOUT)
     if done.returncode != 0:
@@ -237,16 +233,13 @@ def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] 
 
 
 def compiles(k: Kernel, isa: str) -> bool:
-    """Whether a cross compiler is there to take ``k`` for an aarch64 ``isa``; it raises when ``k`` does not build."""
-    cc = "cc" if platform.machine() == "aarch64" else "aarch64-linux-gnu-gcc"
-    if shutil.which(cc) is None:
+    """Whether a compiler is there to take ``k`` for an aarch64 ``isa``; it raises when ``k`` does not build."""
+    cc = target_compiler(isa)
+    if cc is None:
         return False
-    source = f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n"
-    with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
-        c_file = pathlib.Path(tmp) / "k.c"
-        c_file.write_text(source)
-        flags = [f"-march={CROSS[isa]}", "-Werror=implicit-function-declaration"]
-        built([cc, "-O1", *flags, "-c", str(c_file), "-o", str(pathlib.Path(tmp) / "k.o")], k, isa)
+    compile_unit(
+        f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n", cc, [f"-march={CROSS[isa]}"]
+    )
     return True
 
 

@@ -30,7 +30,7 @@ def entry_row(op: str, entry: Entry) -> str:
         spelling = f"`{entry.intrinsic}`"
         mnemonic = f"`{entry.mnemonic}`"
     else:
-        spelling = cell(f"recipe: {' -> '.join(entry.recipe)}")
+        spelling = cell(f"recipe: {'; '.join(f'`{line}`' for line in entry.code)}")
         mnemonic = f"`{entry.mnemonic}`"
     masked = f"`{entry.masked}`" if entry.masked else "—"
     signature = f"`{entry.signature}`" if entry.signature else "—"

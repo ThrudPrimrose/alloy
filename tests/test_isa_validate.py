@@ -4,6 +4,7 @@ runs) or a tier re-measurement before an agent sees it; failures attach the cand
 
 import dataclasses
 import importlib
+import json
 import math
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from typing import Any
 import pytest
 
 from alloy.isa import load
+from alloy.isa.__main__ import main
 from alloy.isa.table import Table
 from alloy.isa.validate import (
     c_flags,
@@ -100,7 +102,9 @@ def test_every_avx512_kernel_builds_whatever_the_host_can_run(dtype, tmp_path):
         assert sut.returncode == 0, f"{op}: {sut.stderr}"
 
 
-def test_an_isa_the_host_cannot_run_is_unverified_not_wrong():
+def test_an_isa_the_host_cannot_run_is_unverified_not_wrong(monkeypatch):
+    monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
+
     verdict = validate("neon", "add", "f64", TABLE)
 
     assert verdict.ok is None
@@ -113,6 +117,14 @@ def test_the_avx512_f16_entries_are_unverified_without_fp16_hardware():
     verdict = validate("avx512", "fma", "f16", TABLE)
 
     assert verdict.ok is None
+
+
+def test_an_avx2_f16_recipe_composes_with_the_rows_full_width_load():
+    """A half-width ``code`` would not take what the f16 ``load`` row returns."""
+    sut = str(kernel_c("avx2", "f16", "add", TABLE))
+
+    assert "_mm256_castsi256_si128(va)" in sut
+    assert "_mm256_extracti128_si256(vb, 1)" in sut
 
 
 @pytest.mark.parametrize("name", ["sin-taylor7", "sin-quad-cheb13", "cos-quad-cheb12", "exp-cheb11"])
@@ -268,6 +280,67 @@ def test_an_avx512_signature_in_the_wrong_order_fails_the_gate(op, dtype, swappe
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
+def test_an_avx2_compare_spells_less_than_in_the_order_of_its_signature(dtype):
+    """The float rows hid their predicate in a note, the integer rows passed (a, b) to a greater-than."""
+    sut = validate("avx2", "lt", dtype, TABLE)
+
+    assert sut.ok is True, sut.detail
+
+
+@pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
+@pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
+def test_an_avx512_compare_spells_less_than_in_the_order_of_its_signature(dtype):
+    sut = validate("avx512", "lt", dtype, TABLE)
+
+    assert sut.ok is True, sut.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, dtype, code",
+    [
+        ("mod", "f64", ("__m256d q = _mm256_round_pd(_mm256_div_pd(b, a), 3)", "_mm256_fnmadd_pd(q, b, a)")),
+        ("mod", "f32", ("__m256 q = _mm256_round_ps(_mm256_div_ps(a, b), 3)", "_mm256_fnmadd_ps(q, a, b)")),
+        ("min", "i64", ("_mm256_blendv_epi8(b, a, _mm256_cmpgt_epi64(a, b))",)),
+        ("max", "i64", ("_mm256_blendv_epi8(a, b, _mm256_cmpgt_epi64(a, b))",)),
+        ("select", "f16", ("_mm256_or_si256(_mm256_and_si256(f, mask), _mm256_andnot_si256(mask, t))",)),
+        (
+            "mul",
+            "i64",
+            (
+                "__m256i cross = _mm256_mullo_epi32(a, b)",  # the halves of b must cross
+                "__m256i high = _mm256_slli_epi64(_mm256_add_epi64(cross, _mm256_srli_epi64(cross, 32)), 32)",
+                "_mm256_add_epi64(_mm256_mul_epu32(a, b), high)",
+            ),
+        ),
+    ],
+)
+def test_a_recipe_written_in_the_wrong_order_fails_the_gate(op, dtype, code):
+    """The kernel runs the row's ``code``, the text a reader copies, so its order is what is checked."""
+    sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, code=code))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, dtype", [("mul", "i64"), ("min", "i64"), ("max", "i64"), ("mod", "i64"), ("mod", "i32"), ("land", "i32")]
+)
+def test_a_recipe_with_no_hand_written_kernel_runs_all_the_same(op, dtype):
+    """These rows had no kernel, so they stayed unverified: their ``code`` is the kernel now."""
+    sut = validate("avx2", op, dtype, TABLE)
+
+    assert sut.ok is True, sut.detail
+
+
+def test_a_kernel_runs_the_recipe_as_the_table_writes_it():
+    sut = str(kernel_c("avx2", "f64", "mod", TABLE))
+
+    assert "_mm256_fnmadd_pd(q, vb, va);" in sut
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
 def test_a_signature_naming_an_operand_the_op_does_not_have_fails_the_gate():
     sut = validate("avx2", "add", "f64", with_row("avx2", "f64", "add", signature="(x, y) -> v"))
 
@@ -295,8 +368,76 @@ def test_a_kernel_that_skips_a_spelling_verifies_nothing():
 
 
 def test_no_x86_kernel_is_built_for_an_arm_isa():
-    assert kernel_c("neon", "f64", "add", TABLE) is None
-    assert kernel_c("sve", "f64", "add", TABLE) is None
+    assert "#include <arm_neon.h>" in str(kernel_c("neon", "f64", "add", TABLE))
+    assert "#include <arm_sve.h>" in str(kernel_c("sve", "f64", "add", TABLE))
+    assert "immintrin" not in str(kernel_c("neon", "f64", "add", TABLE))
+
+
+@pytest.mark.parametrize("isa", ["neon", "sve"])
+@pytest.mark.parametrize("dtype", ["f64", "f32", "f16", "i64", "i32"])
+def test_every_arm_row_holds_under_qemu_or_at_least_compiles(isa, dtype):
+    """A cross compile catches a wrong name or operand type; only a run under qemu earns a verified row."""
+    verdicts = {op: validate(isa, op, dtype, TABLE) for op in TABLE.isas[isa].entries(dtype)}
+
+    assert {op: verdict.detail for op, verdict in verdicts.items() if verdict.ok is False} == {}
+
+
+def test_an_arm_row_that_only_compiled_is_not_verified(monkeypatch):
+    monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
+
+    sut = validate("sve", "add", "f64", TABLE)
+
+    assert sut.ok is None
+
+
+@pytest.mark.skipif(shutil.which("aarch64-linux-gnu-gcc") is None, reason="needs the aarch64 cross compiler")
+@pytest.mark.parametrize(
+    "isa, dtype, op, wrong",
+    [
+        ("neon", "i64", "and", "vandq_u64"),  # the row's lanes load as int64x2_t
+        ("sve", "i32", "or", "svorr_u32_x"),
+        ("neon", "f64", "add", "vadd_not_an_intrinsic"),
+    ],
+)
+def test_a_row_that_does_not_compile_for_its_target_is_wrong(monkeypatch, isa, dtype, op, wrong):
+    monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
+
+    sut = validate(isa, op, dtype, with_row(isa, dtype, op, intrinsic=wrong))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(validate_module.emulated("sve") is None, reason="needs qemu-aarch64 and the cross compiler")
+@pytest.mark.parametrize(
+    "isa, dtype, op, fields",
+    [
+        ("neon", "f64", "fma", {"signature": "(c, a, b) -> v"}),
+        ("sve", "f64", "fma", {"signature": "(pg, m1, m2, add) -> v"}),
+        ("neon", "f32", "select", {"signature": "(mask, f, t) -> v"}),
+        ("sve", "f32", "select", {"signature": "(pg, f, t) -> v"}),
+        ("sve", "f64", "add", {"intrinsic": "svsub_f64_x"}),
+        (
+            "sve",
+            "f32",
+            "mod",
+            {"code": ("svfloat32_t q = svrintz_f32_x(pg, svdiv_f32_x(pg, a, b))", "svmls_f32_x(pg, b, q, a)")},
+        ),
+    ],
+)
+def test_a_wrong_arm_row_fails_under_qemu(isa, dtype, op, fields):
+    sut = validate(isa, op, dtype, with_row(isa, dtype, op, **fields))
+
+    assert sut.ok is False, sut.basis
+
+
+@pytest.mark.skipif(validate_module.emulated("neon") is None, reason="needs qemu-aarch64 and the cross compiler")
+@pytest.mark.parametrize("isa", ["neon", "sve"])
+@pytest.mark.parametrize("op", ["sin", "cos", "exp"])
+def test_the_arm_libmvec_calls_validate_under_qemu(isa, op):
+    sut = validate(isa, op, "f64", TABLE)
+
+    assert sut.ok is True, sut.basis
+    assert "qemu" in sut.basis
 
 
 def test_an_isa_the_host_lacks_is_unverified_and_not_failed(monkeypatch):
@@ -314,3 +455,19 @@ def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch):
 def test_the_alias_runs_the_same_kernels():
     assert host_can_run("avx512_256", "f64") == host_can_run("avx512", "f64")
     assert kernel_c("avx512_256", "f64", "add", TABLE) == kernel_c("avx512", "f64", "add", TABLE)
+
+
+def test_a_lookup_prints_a_recipes_operand_order(capsys):
+    assert main(["lookup", "avx2", "mod", "f64", "--no-verify"]) == 0
+
+    sut = capsys.readouterr().out
+    assert "operands:  (a, b) -> v" in sut
+    assert "_mm256_fnmadd_pd(q, b, a)" in sut
+
+
+def test_a_lookup_as_json_carries_a_recipes_code(capsys):
+    assert main(["lookup", "neon", "mod", "f64", "--no-verify", "--json"]) == 0
+
+    sut = json.loads(capsys.readouterr().out)
+    assert sut["code"] == ["float64x2_t q = vrndq_f64(vdivq_f64(a, b))", "vfmsq_f64(a, q, b)"]
+    assert sut["signature"] == "(a, b) -> v"

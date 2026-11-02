@@ -226,6 +226,10 @@ def test_embedded_broadcast_marks_only_avx512():
         ("vbslq_f64", "neon", "f64", "select"),
         ("svsel_f64", "sve", "f64", "select"),
         ("svlsl_u64_x", "sve", "i64", "shl"),
+        ("vandq_s64", "neon", "i64", "and"),
+        ("vandq_u64", "neon", "i64", "and"),
+        ("svorr_u32_m", "sve", "i32", "or"),
+        ("vshlq_u32", "neon", "i32", "shl"),
         ("_mm512_and_si512", "avx512", "i32", "and"),
         ("svld1_gather_s64index_f64", "sve", "f64", "gather"),
         ("vaddq_f16", "neon", "f16", "add"),
@@ -446,6 +450,12 @@ def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
         ('intrinsic = "_mm256_add_pd"\n', "", "exactly one of intrinsic, recipe"),
         ('intrinsic = "_mm256_add_pd"\n', 'intrinsic = "_mm256_add_pd"\nrecipe = ["a"]\n', "exactly one"),
         ("error_ulp = 7.066085e+11", "error_ulp = 0.0", "positive error_ulp"),
+        (
+            'code = ["_mm256_and_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffffLL)))"]\n',
+            "",
+            "needs code",
+        ),
+        ('_mm256_fnmadd_pd(q, b, a)"]', '_mm256_add_pd(q, b)"]', "the code never calls"),
     ],
 )
 def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):

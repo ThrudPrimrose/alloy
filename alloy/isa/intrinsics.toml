@@ -3,7 +3,8 @@
 # verified against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h). Sources:
 # the per-target ESSENTIALS sheets of the ISA docs package (Intel SDM ch.14/15, Arm NEON intrinsics
 # reference, ACLE, ACLE for SVE). Operand-order traps (NEON/SVE fma differ from Intel) are recorded
-# in `signature`/`semantics`, so no caller hardcodes an order.
+# in `signature`/`semantics`, so no caller hardcodes an order. A `recipe` names its steps; its `code`
+# is the C that runs them on the operands of `signature`: statements, then the result expression.
 #
 # `schedules` uses the matrix's tail names: scalar_remainder (separate tail loop), masked_remainder
 # (masked epilogue), full_mask (every iteration masked), sve_intrinsics (explicit predicated SVE
@@ -132,6 +133,7 @@ mnemonic = "vextractf128 + vaddpd + vunpckhpd + vaddsd"
 signature = "(v) -> s"
 semantics = "s = sum of the 4 lanes of v"
 recipe = ["_mm256_castpd256_pd128", "_mm256_extractf128_pd", "_mm_add_pd", "_mm_unpackhi_pd", "_mm_add_sd", "_mm_cvtsd_f64"]
+code = ["__m128d s2 = _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1))", "_mm_cvtsd_f64(_mm_add_sd(s2, _mm_unpackhi_pd(s2, s2)))"]
 note = "no single intrinsic: add the 128-bit halves, then horizontal; pairs (l0+l2)+(l1+l3), so the result differs from a scalar left fold: needs reassociation permission"
 
 [isa.avx2.f64.zero]
@@ -198,6 +200,7 @@ mnemonic = "vextractf128 + vaddps+vaddps + vmovshdup + vmovhlps + vaddss"
 signature = "(v) -> s"
 semantics = "s = sum of the 8 lanes of v"
 recipe = ["_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_add_ps", "_mm_movehdup_ps", "_mm_movehl_ps", "_mm_add_ps", "_mm_add_ss", "_mm_cvtss_f32"]
+code = ["__m128 s2 = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1))", "__m128 sh = _mm_movehdup_ps(s2)", "s2 = _mm_add_ps(s2, sh)", "sh = _mm_movehl_ps(sh, s2)", "_mm_cvtss_f32(_mm_add_ss(s2, sh))"]
 note = "no single intrinsic: add the 128-bit halves, then horizontal; a pairwise tree, so the result differs from a scalar left fold: needs reassociation permission"
 
 [isa.avx2.f32.zero]
@@ -1256,6 +1259,7 @@ observed = ["vandpd", "vandps"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_and_pd"]
+code = ["_mm256_and_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffffLL)))"]
 note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as integer bits"
 
 [isa.avx2.f64.neg]
@@ -1264,6 +1268,7 @@ observed = ["vxorpd", "vxorps"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm256_castsi256_pd", "_mm256_set1_epi64x", "_mm256_xor_pd"]
+code = ["_mm256_xor_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL)))"]
 note = "no native FP neg: XOR with the sign bit (0x8000...) as integer bits"
 
 [isa.avx2.f64.select]
@@ -1278,6 +1283,7 @@ mnemonic = "vdivpd+vroundpd+vfnmadd"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm256_div_pd", "_mm256_round_pd", "_mm256_fnmadd_pd"]
+code = ["__m256d q = _mm256_round_pd(_mm256_div_pd(a, b), _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)", "_mm256_fnmadd_pd(q, b, a)"]
 note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx2.f64.gather]
@@ -1292,6 +1298,7 @@ mnemonic = "storeu+scalar"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["no vector scatter before AVX-512: _mm256_storeu_pd(v) to a scratch buffer, then scalar per-lane stores; restructure to gather-on-load where possible"]
+code = ["double spill[4]", "_mm256_storeu_pd(spill, v)", "for (int j = 0; j < 4; j++) base[idx[j]] = spill[j]"]
 
 [isa.avx2.f32.sqrt]
 intrinsic = "_mm256_sqrt_ps"
@@ -1319,6 +1326,7 @@ observed = ["vandpd", "vandps"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_and_ps"]
+code = ["_mm256_and_ps(v, _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff)))"]
 note = "no native FP abs (integer _mm256_abs_epi* only): AND with 0x7fff... as integer bits"
 
 [isa.avx2.f32.neg]
@@ -1327,6 +1335,7 @@ observed = ["vxorpd", "vxorps"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm256_castsi256_ps", "_mm256_set1_epi32", "_mm256_xor_ps"]
+code = ["_mm256_xor_ps(v, _mm256_castsi256_ps(_mm256_set1_epi32((int)0x80000000U)))"]
 note = "no native FP neg: XOR with the sign bit (0x8000...) as integer bits"
 
 [isa.avx2.f32.select]
@@ -1341,6 +1350,7 @@ mnemonic = "vdivps+vroundps+vfnmadd"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm256_div_ps", "_mm256_round_ps", "_mm256_fnmadd_ps"]
+code = ["__m256 q = _mm256_round_ps(_mm256_div_ps(a, b), _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)", "_mm256_fnmadd_ps(q, b, a)"]
 note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx2.f32.gather]
@@ -1355,6 +1365,7 @@ mnemonic = "storeu+scalar"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["no vector scatter before AVX-512: _mm256_storeu_ps(v) to a scratch buffer, then scalar per-lane stores"]
+code = ["float spill[8]", "_mm256_storeu_ps(spill, v)", "for (int j = 0; j < 8; j++) base[idx[j]] = spill[j]"]
 
 [isa.avx512.f64.sqrt]
 intrinsic = "_mm512_sqrt_pd"
@@ -1385,6 +1396,7 @@ observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
+code = ["_mm512_castsi512_pd(_mm512_and_si512(_mm512_castpd_si512(v), _mm512_set1_epi64(0x7fffffffffffffffLL)))"]
 note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castpd_si512/_mm512_castsi512_pd, or use _mm512_abs_pd"
 
 [isa.avx512.f64.neg]
@@ -1393,6 +1405,7 @@ observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
+code = ["_mm512_castsi512_pd(_mm512_xor_si512(_mm512_castpd_si512(v), _mm512_set1_epi64((long long)0x8000000000000000ULL)))"]
 note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castpd_si512/_mm512_castsi512_pd"
 
 [isa.avx512.f64.select]
@@ -1407,6 +1420,7 @@ mnemonic = "vdivpd+vrndscalepd+vfnmadd"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm512_div_pd", "_mm512_roundscale_pd", "_mm512_fnmadd_pd"]
+code = ["__m512d q = _mm512_roundscale_pd(_mm512_div_pd(a, b), 0x0B)", "_mm512_fnmadd_pd(q, b, a)"]
 note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx512.f64.gather]
@@ -1453,6 +1467,7 @@ observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
+code = ["_mm512_castsi512_ps(_mm512_and_si512(_mm512_castps_si512(v), _mm512_set1_epi32(0x7fffffff)))"]
 note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castpd_si512/_mm512_castsi512_pd, or use _mm512_abs_pd"
 
 [isa.avx512.f32.neg]
@@ -1461,6 +1476,7 @@ observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
+code = ["_mm512_castsi512_ps(_mm512_xor_si512(_mm512_castps_si512(v), _mm512_set1_epi32((int)0x80000000U)))"]
 note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castpd_si512/_mm512_castsi512_pd"
 
 [isa.avx512.f32.select]
@@ -1475,6 +1491,7 @@ mnemonic = "vdivps+vrndscaleps+vfnmadd"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm512_div_ps", "_mm512_roundscale_ps", "_mm512_fnmadd_ps"]
+code = ["__m512 q = _mm512_roundscale_ps(_mm512_div_ps(a, b), 0x0B)", "_mm512_fnmadd_ps(q, b, a)"]
 note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx512.f32.gather]
@@ -1538,6 +1555,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["vdivq_f64", "vrndq_f64", "vfmsq_f64"]
+code = ["float64x2_t q = vrndq_f64(vdivq_f64(a, b))", "vfmsq_f64(a, q, b)"]
 note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f64.gather]
@@ -1545,12 +1563,14 @@ mnemonic = "ldr+ins"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+code = ["float64x2_t g = vdupq_n_f64(0)", "g = vld1q_lane_f64(base + idx[0], g, 0)", "vld1q_lane_f64(base + idx[1], g, 1)"]
 
 [isa.neon.f64.scatter]
 mnemonic = "str+ext"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["per-lane scalar stores via vst1q_lane_f64(base + idx[j], v, j)"]
+code = ["vst1q_lane_f64(base + idx[0], v, 0)", "vst1q_lane_f64(base + idx[1], v, 1)"]
 
 [isa.neon.f32.sqrt]
 intrinsic = "vsqrtq_f32"
@@ -1598,6 +1618,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["vdivq_f32", "vrndq_f32", "vfmsq_f32"]
+code = ["float32x4_t q = vrndq_f32(vdivq_f32(a, b))", "vfmsq_f32(a, q, b)"]
 note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f32.gather]
@@ -1605,12 +1626,14 @@ mnemonic = "ldr+ins"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+code = ["float32x4_t g = vdupq_n_f32(0)", "g = vld1q_lane_f32(base + idx[0], g, 0)", "g = vld1q_lane_f32(base + idx[1], g, 1)", "g = vld1q_lane_f32(base + idx[2], g, 2)", "vld1q_lane_f32(base + idx[3], g, 3)"]
 
 [isa.neon.f32.scatter]
 mnemonic = "str+ext"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["per-lane scalar stores via vst1q_lane_f32(base + idx[j], v, j)"]
+code = ["vst1q_lane_f32(base + idx[0], v, 0)", "vst1q_lane_f32(base + idx[1], v, 1)", "vst1q_lane_f32(base + idx[2], v, 2)", "vst1q_lane_f32(base + idx[3], v, 3)"]
 
 [isa.sve.f64.sqrt]
 intrinsic = "svsqrt_f64_x"
@@ -1658,6 +1681,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
+code = ["svfloat64_t q = svrintz_f64_x(pg, svdiv_f64_x(pg, a, b))", "svmls_f64_x(pg, a, q, b)"]
 note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.sve.f64.gather]
@@ -1719,6 +1743,7 @@ mnemonic = "fdiv+frintz+fmls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
+code = ["svfloat32_t q = svrintz_f32_x(pg, svdiv_f32_x(pg, a, b))", "svmls_f32_x(pg, a, q, b)"]
 note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.sve.f32.gather]
@@ -1758,6 +1783,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = add(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes; each step works on 8 lanes: load with _mm_loadu_si128 (a __m128i), step by 8, and build with -mf16c"
 
 [isa.avx2.f16.sub]
@@ -1765,6 +1791,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = sub(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_sub_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_sub_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_sub_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.mul]
@@ -1772,6 +1799,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = mul(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_mul_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_mul_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_mul_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.div]
@@ -1779,6 +1807,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = div(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_div_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_div_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_div_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.fma]
@@ -1786,6 +1815,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j]*b[j] + c[j] in f16, computed via f32; rounds twice, so not correctly rounded (about 1 f16 ulp)"
 recipe = ["_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_fmadd_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b)), _mm256_cvtph_ps(_mm256_castsi256_si128(c))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_fmadd_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(c, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.sqrt]
@@ -1793,6 +1823,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(v) -> v"
 semantics = "v[j] = sqrt(x[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_sqrt_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_sqrt_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(v))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_sqrt_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(v, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.min]
@@ -1800,6 +1831,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_min_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_min_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_min_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.max]
@@ -1807,6 +1839,7 @@ mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_max_ps", "_mm256_cvtps_ph"]
+code = ["__m128i lo = _mm256_cvtps_ph(_mm256_max_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_max_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
 [isa.avx2.f16.abs]
@@ -1814,6 +1847,7 @@ mnemonic = "vpand"
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm256_set1_epi16", "_mm256_and_si256"]
+code = ["_mm256_and_si256(v, _mm256_set1_epi16(0x7fff))"]
 note = "sign-mask AND works directly on the f16 bits - no conversion"
 
 [isa.avx2.f16.neg]
@@ -1821,6 +1855,7 @@ mnemonic = "vpxor"
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm256_set1_epi16", "_mm256_xor_si256"]
+code = ["_mm256_xor_si256(v, _mm256_set1_epi16((short)0x8000))"]
 note = "sign-bit XOR on the f16 bits"
 
 [isa.avx2.f16.select]
@@ -1828,6 +1863,7 @@ mnemonic = "vpand+vpandn+vpor"
 signature = "(mask, t, f) -> v"
 semantics = "v[j] = mask[j] ? t[j] : f[j]"
 recipe = ["_mm256_and_si256", "_mm256_andnot_si256", "_mm256_or_si256"]
+code = ["_mm256_or_si256(_mm256_and_si256(t, mask), _mm256_andnot_si256(mask, f))"]
 note = "bit select on the f16 bits: (t & mask) | (f & ~mask), mask = all-ones/0 lanes"
 
 [isa.avx512.f16.add]
@@ -1916,6 +1952,7 @@ mnemonic = "vpandq"
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
+code = ["_mm512_castsi512_ph(_mm512_and_si512(_mm512_castph_si512(v), _mm512_set1_epi16(0x7fff)))"]
 note = "AND (as integers) with 0x7fff, or _mm512_abs_ph"
 
 [isa.avx512.f16.neg]
@@ -1923,6 +1960,7 @@ mnemonic = "vpxorq"
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
+code = ["_mm512_castsi512_ph(_mm512_xor_si512(_mm512_castph_si512(v), _mm512_set1_epi16((short)0x8000)))"]
 note = "no FP16 neg: XOR (as integers) with 0x8000"
 
 [isa.avx512.f16.select]
@@ -2142,6 +2180,7 @@ mnemonic = "vpcmpeq+vpandn+vpand"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
 recipe = ["_mm256_cmpeq_epi64", "_mm256_andnot_si256", "_mm256_and_si256"]
+code = ["__m256i ones = _mm256_set1_epi64x(-1)", "_mm256_and_si256(_mm256_andnot_si256(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()), ones), _mm256_andnot_si256(_mm256_cmpeq_epi64(b, _mm256_setzero_si256()), ones))"]
 note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
 
 [isa.avx2.i64.lor]
@@ -2149,12 +2188,14 @@ mnemonic = "vpcmpeq+vpand+vpandn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
 recipe = ["_mm256_cmpeq_epi64", "_mm256_and_si256", "_mm256_andnot_si256"]
+code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()), _mm256_cmpeq_epi64(b, _mm256_setzero_si256())), _mm256_set1_epi64x(-1))"]
 
 [isa.avx2.i64.mod]
 mnemonic = "idiv+imul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int64_t x[4], y[4]", "_mm256_storeu_si256((__m256i*)x, a)", "_mm256_storeu_si256((__m256i*)y, b)", "for (int j = 0; j < 4; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm256_loadu_si256((const __m256i*)x)"]
 
 [isa.avx2.i32.and]
 intrinsic = "_mm256_and_si256"
@@ -2185,6 +2226,7 @@ mnemonic = "vpcmpeq+vpandn+vpand"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
 recipe = ["_mm256_cmpeq_epi32", "_mm256_andnot_si256", "_mm256_and_si256"]
+code = ["__m256i ones = _mm256_set1_epi32(-1)", "_mm256_and_si256(_mm256_andnot_si256(_mm256_cmpeq_epi32(a, _mm256_setzero_si256()), ones), _mm256_andnot_si256(_mm256_cmpeq_epi32(b, _mm256_setzero_si256()), ones))"]
 note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
 
 [isa.avx2.i32.lor]
@@ -2192,12 +2234,14 @@ mnemonic = "vpcmpeq+vpand+vpandn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
 recipe = ["_mm256_cmpeq_epi32", "_mm256_and_si256", "_mm256_andnot_si256"]
+code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi32(a, _mm256_setzero_si256()), _mm256_cmpeq_epi32(b, _mm256_setzero_si256())), _mm256_set1_epi32(-1))"]
 
 [isa.avx2.i32.mod]
 mnemonic = "idiv+imul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int32_t x[8], y[8]", "_mm256_storeu_si256((__m256i*)x, a)", "_mm256_storeu_si256((__m256i*)y, b)", "for (int j = 0; j < 8; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm256_loadu_si256((const __m256i*)x)"]
 
 [isa.avx512.i64.and]
 intrinsic = "_mm512_and_si512"
@@ -2241,6 +2285,7 @@ mnemonic = "idiv+imul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int64_t x[8], y[8]", "_mm512_storeu_si512(x, a)", "_mm512_storeu_si512(y, b)", "for (int j = 0; j < 8; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm512_loadu_si512(x)"]
 
 [isa.avx512.i32.and]
 intrinsic = "_mm512_and_si512"
@@ -2284,22 +2329,24 @@ mnemonic = "idiv+imul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int32_t x[16], y[16]", "_mm512_storeu_si512(x, a)", "_mm512_storeu_si512(y, b)", "for (int j = 0; j < 16; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm512_loadu_si512(x)"]
 
 [isa.neon.i64.and]
-intrinsic = "vandq_u64"
+intrinsic = "vandq_s64"
 mnemonic = "and"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] & b[j]"
 
 [isa.neon.i64.or]
-intrinsic = "vorrq_u64"
+intrinsic = "vorrq_s64"
 mnemonic = "orr"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] | b[j]"
 
 [isa.neon.i64.shl]
-intrinsic = "vshlq_u64"
-mnemonic = "ushl"
+intrinsic = "vshlq_s64"
+mnemonic = "sshl"
+observed = ["sshl", "ushl"]
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j]"
 
@@ -2308,42 +2355,47 @@ mnemonic = "neg+ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
 recipe = ["vnegq_s64", "vshlq_u64"]
+code = ["vreinterpretq_s64_u64(vshlq_u64(vreinterpretq_u64_s64(a), vnegq_s64(counts)))"]
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; only the low byte of each count is read"
 
 [isa.neon.i64.land]
 mnemonic = "cmeq+eor+and"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_u64", "veorq_u64", "vandq_u64"]
+recipe = ["vceqzq_s64", "veorq_u64", "vandq_u64"]
+code = ["uint64x2_t ones = vdupq_n_u64(~0ULL)", "vreinterpretq_s64_u64(vandq_u64(veorq_u64(vceqzq_s64(a), ones), veorq_u64(vceqzq_s64(b), ones)))"]
 note = "NEON has no vmvn on 64-bit lanes: complement with veorq against all-ones"
 
 [isa.neon.i64.lor]
 mnemonic = "cmeq+and+eor"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_u64", "vandq_u64", "veorq_u64"]
+recipe = ["vceqzq_s64", "vandq_u64", "veorq_u64"]
+code = ["vreinterpretq_s64_u64(veorq_u64(vandq_u64(vceqzq_s64(a), vceqzq_s64(b)), vdupq_n_u64(~0ULL)))"]
 
 [isa.neon.i64.mod]
 mnemonic = "sdiv+mul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int64_t x[2], y[2]", "vst1q_s64(x, a)", "vst1q_s64(y, b)", "for (int j = 0; j < 2; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "vld1q_s64(x)"]
 
 [isa.neon.i32.and]
-intrinsic = "vandq_u32"
+intrinsic = "vandq_s32"
 mnemonic = "and"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] & b[j]"
 
 [isa.neon.i32.or]
-intrinsic = "vorrq_u32"
+intrinsic = "vorrq_s32"
 mnemonic = "orr"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] | b[j]"
 
 [isa.neon.i32.shl]
-intrinsic = "vshlq_u32"
-mnemonic = "ushl"
+intrinsic = "vshlq_s32"
+mnemonic = "sshl"
+observed = ["sshl", "ushl"]
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j]"
 
@@ -2352,112 +2404,126 @@ mnemonic = "neg+ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
 recipe = ["vnegq_s32", "vshlq_u32"]
+code = ["vreinterpretq_s32_u32(vshlq_u32(vreinterpretq_u32_s32(a), vnegq_s32(counts)))"]
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; only the low byte of each count is read"
 
 [isa.neon.i32.land]
 mnemonic = "cmeq+mvn+and"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_u32", "vmvnq_u32", "vandq_u32"]
+recipe = ["vceqzq_s32", "vmvnq_u32", "vandq_u32"]
+code = ["vreinterpretq_s32_u32(vandq_u32(vmvnq_u32(vceqzq_s32(a)), vmvnq_u32(vceqzq_s32(b))))"]
 
 [isa.neon.i32.lor]
 mnemonic = "cmeq+and+mvn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_u32", "vandq_u32", "vmvnq_u32"]
+recipe = ["vceqzq_s32", "vandq_u32", "vmvnq_u32"]
+code = ["vreinterpretq_s32_u32(vmvnq_u32(vandq_u32(vceqzq_s32(a), vceqzq_s32(b))))"]
 
 [isa.neon.i32.mod]
 mnemonic = "sdiv+mul"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+code = ["int32_t x[4], y[4]", "vst1q_s32(x, a)", "vst1q_s32(y, b)", "for (int j = 0; j < 4; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "vld1q_s32(x)"]
 
 [isa.sve.i64.and]
-intrinsic = "svand_u64_x"
+intrinsic = "svand_s64_x"
 mnemonic = "and"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] & b[j] for active lanes"
 
 [isa.sve.i64.or]
-intrinsic = "svorr_u64_x"
+intrinsic = "svorr_s64_x"
 mnemonic = "orr"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] | b[j] for active lanes"
 
 [isa.sve.i64.shl]
-intrinsic = "svlsl_u64_x"
 mnemonic = "lsl"
 signature = "(pg, a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j] for active lanes"
+recipe = ["svreinterpret_u64_s64", "svlsl_u64_x", "svreinterpret_s64_u64"]
+code = ["svreinterpret_s64_u64(svlsl_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))"]
 
 [isa.sve.i64.shr]
-intrinsic = "svlsr_u64_x"
 mnemonic = "lsr"
 signature = "(pg, a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical, for active lanes"
+recipe = ["svreinterpret_u64_s64", "svlsr_u64_x", "svreinterpret_s64_u64"]
+code = ["svreinterpret_s64_u64(svlsr_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))"]
 
 [isa.sve.i64.land]
 mnemonic = "cmpne+and_b"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
-recipe = ["svcmpne_u64", "svand_b_z"]
+recipe = ["svcmpne_s64", "svand_b_z"]
+code = ["svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))"]
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
 [isa.sve.i64.lor]
 mnemonic = "cmpne+orr_b"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
-recipe = ["svcmpne_u64", "svorr_b_z"]
+recipe = ["svcmpne_s64", "svorr_b_z"]
+code = ["svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))"]
 
 [isa.sve.i64.mod]
 mnemonic = "sdiv+mls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["svdiv_s64_x", "svmls_s64_x"]
+code = ["svint64_t q = svdiv_s64_x(pg, a, b)", "svmls_s64_x(pg, a, q, b)"]
 note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1"
 
 [isa.sve.i32.and]
-intrinsic = "svand_u32_x"
+intrinsic = "svand_s32_x"
 mnemonic = "and"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] & b[j] for active lanes"
 
 [isa.sve.i32.or]
-intrinsic = "svorr_u32_x"
+intrinsic = "svorr_s32_x"
 mnemonic = "orr"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] | b[j] for active lanes"
 
 [isa.sve.i32.shl]
-intrinsic = "svlsl_u32_x"
 mnemonic = "lsl"
 signature = "(pg, a, counts) -> v"
 semantics = "v[j] = a[j] << counts[j] for active lanes"
+recipe = ["svreinterpret_u32_s32", "svlsl_u32_x", "svreinterpret_s32_u32"]
+code = ["svreinterpret_s32_u32(svlsl_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))"]
 
 [isa.sve.i32.shr]
-intrinsic = "svlsr_u32_x"
 mnemonic = "lsr"
 signature = "(pg, a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical, for active lanes"
+recipe = ["svreinterpret_u32_s32", "svlsr_u32_x", "svreinterpret_s32_u32"]
+code = ["svreinterpret_s32_u32(svlsr_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))"]
 
 [isa.sve.i32.land]
 mnemonic = "cmpne+and_b"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
-recipe = ["svcmpne_u32", "svand_b_z"]
+recipe = ["svcmpne_s32", "svand_b_z"]
+code = ["svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))"]
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
 [isa.sve.i32.lor]
 mnemonic = "cmpne+orr_b"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
-recipe = ["svcmpne_u32", "svorr_b_z"]
+recipe = ["svcmpne_s32", "svorr_b_z"]
+code = ["svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))"]
 
 [isa.sve.i32.mod]
 mnemonic = "sdiv+mls"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["svdiv_s32_x", "svmls_s32_x"]
+code = ["svint32_t q = svdiv_s32_x(pg, a, b)", "svmls_s32_x(pg, a, q, b)"]
 note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1"
 
 # Integer arithmetic, memory and compare rows, and the compare every select needs.
@@ -2479,6 +2545,7 @@ mnemonic = "vpmuludq+vpmulld+vpsllq+vpaddq"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] * b[j], low bits"
 recipe = ["_mm256_mul_epu32", "_mm256_srli_epi64", "_mm256_mullo_epi32", "_mm256_slli_epi64", "_mm256_add_epi64"]
+code = ["__m256i cross = _mm256_mullo_epi32(a, _mm256_shuffle_epi32(b, 0xB1))", "__m256i high = _mm256_slli_epi64(_mm256_add_epi64(cross, _mm256_srli_epi64(cross, 32)), 32)", "_mm256_add_epi64(_mm256_mul_epu32(a, b), high)"]
 note = "no vpmullq on AVX2: lo*lo + ((hi(a)*lo(b) + lo(a)*hi(b)) << 32)"
 
 [isa.avx2.i64.min]
@@ -2486,6 +2553,7 @@ mnemonic = "vpcmpgtq+vpblendvb"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]), signed"
 recipe = ["_mm256_cmpgt_epi64", "_mm256_blendv_epi8"]
+code = ["_mm256_blendv_epi8(a, b, _mm256_cmpgt_epi64(a, b))"]
 note = "no vpminsq on AVX2: blend on a > b"
 
 [isa.avx2.i64.max]
@@ -2493,6 +2561,7 @@ mnemonic = "vpcmpgtq+vpblendvb"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]), signed"
 recipe = ["_mm256_cmpgt_epi64", "_mm256_blendv_epi8"]
+code = ["_mm256_blendv_epi8(b, a, _mm256_cmpgt_epi64(a, b))"]
 note = "no vpmaxsq on AVX2: blend on a > b"
 
 [isa.avx2.i64.load]
@@ -2518,9 +2587,9 @@ semantics = "v[j] = s"
 [isa.avx2.i64.lt]
 intrinsic = "_mm256_cmpgt_epi64"
 mnemonic = "vpcmpgtq"
-signature = "(a, b) -> mask"
+signature = "(b, a) -> mask"
 semantics = "lane j true iff a[j] < b[j], signed"
-note = "only greater-than exists: pass (b, a); all-ones lanes"
+note = "only greater-than exists, so b goes first; all-ones lanes"
 
 [isa.avx2.i32.add]
 intrinsic = "_mm256_add_epi32"
@@ -2575,9 +2644,9 @@ semantics = "v[j] = s"
 [isa.avx2.i32.lt]
 intrinsic = "_mm256_cmpgt_epi32"
 mnemonic = "vpcmpgtd"
-signature = "(a, b) -> mask"
+signature = "(b, a) -> mask"
 semantics = "lane j true iff a[j] < b[j], signed"
-note = "only greater-than exists: pass (b, a); all-ones lanes"
+note = "only greater-than exists, so b goes first; all-ones lanes"
 
 [isa.avx512.i64.add]
 intrinsic = "_mm512_add_epi64"
@@ -2704,6 +2773,7 @@ mnemonic = "umull+mla"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] * b[j], low bits"
 recipe = ["vmovn_u64", "vmull_u32", "vmlal_u32"]
+code = ["uint64x2_t ua = vreinterpretq_u64_s64(a), ub = vreinterpretq_u64_s64(b)", "uint32x2_t al = vmovn_u64(ua), bl = vmovn_u64(ub), ah = vshrn_n_u64(ua, 32), bh = vshrn_n_u64(ub, 32)", "uint64x2_t cross = vaddq_u64(vmull_u32(al, bh), vmull_u32(ah, bl))", "vreinterpretq_s64_u64(vmlal_u32(vshlq_n_u64(cross, 32), al, bl))"]
 note = "no vmulq_s64: lo*lo + ((cross terms) << 32), or scalar per lane"
 
 [isa.neon.i64.min]
@@ -2711,12 +2781,14 @@ mnemonic = "cmgt+bsl"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]), signed"
 recipe = ["vcgtq_s64", "vbslq_s64"]
+code = ["vbslq_s64(vcgtq_s64(a, b), b, a)"]
 
 [isa.neon.i64.max]
 mnemonic = "cmgt+bsl"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]), signed"
 recipe = ["vcgtq_s64", "vbslq_s64"]
+code = ["vbslq_s64(vcgtq_s64(a, b), a, b)"]
 
 [isa.neon.i64.load]
 intrinsic = "vld1q_s64"
@@ -2907,30 +2979,30 @@ semantics = "lane j true iff a[j] < b[j], signed"
 [isa.avx2.f64.lt]
 intrinsic = "_mm256_cmp_pd"
 mnemonic = "vcmppd"
-signature = "(a, b) -> mask"
+signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
-note = "third argument _CMP_LT_OQ; all-ones lanes"
+note = "all-ones lanes"
 
 [isa.avx2.f32.lt]
 intrinsic = "_mm256_cmp_ps"
 mnemonic = "vcmpps"
-signature = "(a, b) -> mask"
+signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
-note = "third argument _CMP_LT_OQ; all-ones lanes"
+note = "all-ones lanes"
 
 [isa.avx512.f64.lt]
 intrinsic = "_mm512_cmp_pd_mask"
 mnemonic = "vcmppd"
-signature = "(a, b) -> mask"
+signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
-note = "third argument _CMP_LT_OQ; a k mask"
+note = "a k mask"
 
 [isa.avx512.f32.lt]
 intrinsic = "_mm512_cmp_ps_mask"
 mnemonic = "vcmpps"
-signature = "(a, b) -> mask"
+signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
-note = "third argument _CMP_LT_OQ; a k mask"
+note = "a k mask"
 
 [isa.neon.f64.lt]
 intrinsic = "vcltq_f64"
