@@ -13,6 +13,7 @@ failure :func:`candidates_for` names a shortlist.
 nothing, so unverified is never reported as correct.
 """
 
+import ast
 import contextlib
 import dataclasses
 import functools
@@ -583,6 +584,8 @@ def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = (), emula
 
 #: The half-width of a tier's domain, by how the domain's text names it.
 TIER_SPANS = {"pi/4": math.pi / 4, "pi/2": math.pi / 2, "ln(2)/2": math.log(2) / 2}
+#: The only syntax a tier step may hold: calls and names, no attribute, so ``eval`` reaches nothing past its names.
+TIER_SYNTAX = (ast.Expression, ast.Call, ast.Name, ast.Load, ast.Constant, ast.UnaryOp, ast.USub)
 #: What a tier's recipe steps call; ``eval`` sees only these, the recipe's own names and no builtins.
 TIER_STEPS: dict[str, Any] = {
     "mul": np.multiply,
@@ -591,6 +594,14 @@ TIER_STEPS: dict[str, Any] = {
     "div": np.divide,
     "fma": lambda p, q, r: p * q + r,
 }
+
+
+def tier_step(expression: str) -> Any:
+    """A tier step compiled, or ``ValueError`` when it is more than calls on names."""
+    tree = ast.parse(expression, mode="eval")
+    if not all(isinstance(node, TIER_SYNTAX) for node in ast.walk(tree)):
+        raise ValueError(f"tier step {expression!r}: only calls on names")
+    return compile(tree, "<tier>", "eval")
 
 
 def evaluate_tier(tier: Any) -> tuple[np.ndarray, Any]:
@@ -603,20 +614,24 @@ def evaluate_tier(tier: Any) -> tuple[np.ndarray, Any]:
     value: Any = x
     for step in tier.recipe:
         name, _, expression = step.strip().partition(" = ")
-        value = names[name.strip()] = eval(expression, {"__builtins__": {}}, names)
+        value = names[name.strip()] = eval(tier_step(expression), {"__builtins__": {}}, names)
     return x, value
+
+
+def tier_error(tier: Any) -> tuple[float, float]:
+    """A tier's worst error against libm: in units of 2^-52 at function scale, and absolute."""
+    x, approx = evaluate_tier(tier)
+    reference = {"sin": np.sin, "cos": np.cos, "exp": np.exp}[tier.op](x)
+    magnitude = np.maximum(np.abs(reference), 1.0)
+    spacing = np.nextafter(magnitude, np.inf) - magnitude
+    return float(np.max(np.abs(approx - reference) / spacing)), float(np.max(np.abs(approx - reference)))
 
 
 def validate_tier(name: str, table: Table | None = None) -> Verdict:
     """Re-measure a tier's error against libm; ok when the recorded error_ulp reproduces within slack."""
     table = table or load()
     tier = table.approx[name]
-    x, approx = evaluate_tier(tier)
-    reference = {"sin": np.sin, "cos": np.cos, "exp": np.exp}[tier.op](x)
-    magnitude = np.maximum(np.abs(reference), 1.0)
-    spacing = np.nextafter(magnitude, np.inf) - magnitude
-    ulp = float(np.max(np.abs(approx - reference) / spacing))
-    abs_err = float(np.max(np.abs(approx - reference)))
+    ulp, abs_err = tier_error(tier)
     ok = ulp <= tier.error_ulp * TIER_SLACK
     detail = f"measured {ulp:.4g} ulp (recorded {tier.error_ulp:.4g}, abs {abs_err:.3e})"
     return Verdict(ok, "tier re-measured vs libm", detail)

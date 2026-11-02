@@ -46,7 +46,7 @@ elsewhere (`embedded_broadcast = true` marks the ISAs that fuse).
 
 - **tiers** — Horner recipes in abstract-op steps (`fma`/`mul` with inline coefficients) with their error
   measured against libm in units of 2^-52: plain Taylor rungs (bad: sin-taylor7 ≈ 7e11 on [-π/2, π/2]) and
-  Chebyshev tiers on the reduced domain (sin-quad-cheb13 ≈ 8.5). `kernel` gives better polynomials.
+  Chebyshev tiers on the reduced domain (sin-quad-cheb13 ≈ 0.5). `kernel` gives whole functions, reduction included.
 - **libraries** — the vector math call per veclib (glibc libmvec `_ZGVdN4v_sin`, SVML `__svml_sin4`,
   SLEEF `Sleef_sind4_u10avx2`). `reverse` knows every name `kernel` prints, so `call __svml_sin4` or
   `_ZGVdN4v_sin` in disassembly maps back to `sin`.

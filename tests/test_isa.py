@@ -309,7 +309,7 @@ def cli(*args: str) -> subprocess.CompletedProcess:
     ("args", "expected"),
     [
         (("lookup", "avx512", "fma", "f64"), ("_mm512_fmadd_pd", "a[j]*b[j] + c[j]")),
-        (("lookup", "avx2", "sin", "f64"), ("tier sin-quad-cheb13: abs error 1.89e-15", "libmvec: _ZGVdN4v_sin")),
+        (("lookup", "avx2", "sin", "f64"), ("tier sin-quad-cheb13: abs error", "libmvec: _ZGVdN4v_sin")),
         (("reverse", "svaddv_f32"), ("reduce_add on sve/f32",)),
         (("reverse", "_ZGVdN4v_sin"), ("sin on avx2/f64", "library")),
         (("ops",), ("load", "gather", "mod", "select", "sin")),

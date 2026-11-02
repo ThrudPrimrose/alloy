@@ -154,7 +154,7 @@ body = [
 
 [cos.f64.strict]
 args = ["x"]
-result = "f"
+result = "v"
 guard = "ok"
 contract = "finite, |x| <= 1.04858e+06"
 error_ulp = 2.623
@@ -181,6 +181,7 @@ body = [
   "w = horner(t, -0.16666666666666666, 0.008333333333333333, -0.00019841269841269806, 2.7557319223971264e-06, -2.5052108382391406e-08, 1.605904347941901e-10, -7.647139121983424e-13, 2.8104687777073216e-15, -8.006069886350886e-18)",
   "s = add(r, add(re, mul(mul(r, t), w)))",
   "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 63)))",
+  "v = select(le(abs(x), 3.725290298461914e-09), 1.0, f)",
   "ok = le(abs(x), 1048576.0)",
 ]
 
@@ -229,7 +230,7 @@ body = [
 
 [cos.f32.strict]
 args = ["x"]
-result = "f"
+result = "v"
 guard = "ok"
 contract = "finite, |x| <= 8192"
 error_ulp = 2.503
@@ -256,6 +257,7 @@ body = [
   "w = horner(t, -0.1666666716337204, 0.00833333283662796, -0.00019841086759697646, 2.75364641311171e-06, -2.408019028621311e-08)",
   "s = add(r, add(re, mul(mul(r, t), w)))",
   "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 31)))",
+  "v = select(le(abs(x), 0.0001220703125), 1.0, f)",
   "ok = le(abs(x), 8192.0)",
 ]
 
@@ -1665,7 +1667,8 @@ body = [
   "pE = horner(rE, 0.5, 0.1666666666666667, 0.04166666666666667, 0.008333333333325544, 0.0013888888888883327, 0.00019841269876864356, 2.4801587327007187e-05, 2.755725283351691e-06, 2.75572718102198e-07, 2.5106274733573296e-08, 2.0915442297780116e-09)",
   "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
   "eE = frombits(iadd(bits(mE), ishl(toint(qE), 52)))",
-  "v = fma(eE, cor, eE)",
+  "p = fma(eE, cor, eE)",
+  "v = select(eq(y, 1.0), x, p)",
   "ok = mand(mand(le(2.3e-308, x), lt(x, 1.0000000000000001e+307)), le(abs(big2), 64.0))",
 ]
 
@@ -1776,7 +1779,8 @@ body = [
   "pE = horner(rE, 0.5, 0.1666666716337204, 0.04166645556688309, 0.00833331048488617, 0.0013934541493654251, 0.00019891980628017336)",
   "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
   "eE = frombits(iadd(bits(mE), ishl(toint(qE), 23)))",
-  "v = fma(eE, cor, eE)",
+  "p = fma(eE, cor, eE)",
+  "v = select(eq(y, 1.0), x, p)",
   "ok = mand(mand(le(1.2e-38, x), lt(x, 9.999999933815813e+36)), le(abs(big2), 32.0))",
 ]
 

@@ -19,6 +19,7 @@ from alloy.isa.validate import (
     c_flags,
     candidates_for,
     compile_run,
+    evaluate_tier,
     host_can_run,
     kernel_c,
     unexercised,
@@ -50,7 +51,7 @@ BAD = FakeTier(
     GOOD.op,
     GOOD.domain,
     GOOD.error_ulp,
-    tuple(step.replace("1.0000000000000024", "1.0000000000001024") for step in GOOD.recipe),
+    tuple(step.replace("p = fma(p, t, 1.0)", "p = fma(p, t, 1.0000000000001024)") for step in GOOD.recipe),
 )
 
 
@@ -132,6 +133,32 @@ def test_every_recorded_tier_error_reproduces_within_slack(name):
     verdict = validate_tier(name, TABLE)
 
     assert verdict.ok is True, verdict.detail
+
+
+@pytest.mark.parametrize(
+    "name, bound",
+    [("sin-quad-cheb13", 3e-16), ("cos-quad-cheb12", 3e-16), ("exp-cheb11", 5e-16), ("exp-cheb9", 2e-14)],
+)
+def test_a_chebyshev_tier_reaches_what_its_degree_allows(name, bound):
+    """A degree n interpolant errs by about h^(n+1) / (n+1)! / 2^n on half-width h, plus Horner's rounding: the old
+    coefficients sat 3 to 90 times above that."""
+    assert TABLE.approx[name].error_abs < bound
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "s = x.__class__",
+        "s = ().__class__.__bases__",
+        "s = x.tofile('/dev/null')",
+        "s = [p for p in x]",
+        "s = (lambda: 0)()",
+    ],
+)
+def test_a_tier_step_cannot_reach_past_the_table_s_names(step):
+    """A blank ``__builtins__`` alone does not stop an attribute walk."""
+    with pytest.raises(ValueError, match="only calls on names"):
+        evaluate_tier(FakeTier(GOOD.op, GOOD.domain, GOOD.error_ulp, (step,)))
 
 
 def test_a_tampered_tier_fails_the_gate():

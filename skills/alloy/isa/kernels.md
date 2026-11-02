@@ -18,10 +18,10 @@ Inline them only when the loop has other work: the gain over a library call is t
 | sin | f32 | strict | 2.5 | 56 | cold | any input; vector path for finite, \|x\| <= 8192 |
 | sin | f32 | relaxed | 1.95 | 25 | none | finite, \|x\| <= 8192 |
 | sin | f32 | fast | 688 | 21 | none | finite, \|x\| <= 8192 |
-| cos | f64 | strict | 2.62 | 69 | cold | any input; vector path for finite, \|x\| <= 1.04858e+06 |
+| cos | f64 | strict | 2.62 | 74 | cold | any input; vector path for finite, \|x\| <= 1.04858e+06 |
 | cos | f64 | relaxed | 1.79 | 41 | none | finite, \|x\| <= 1.04858e+06 |
 | cos | f64 | fast | 9.61e+05 | 33 | none | finite, \|x\| <= 1.04858e+06 |
-| cos | f32 | strict | 2.5 | 61 | cold | any input; vector path for finite, \|x\| <= 8192 |
+| cos | f32 | strict | 2.5 | 66 | cold | any input; vector path for finite, \|x\| <= 8192 |
 | cos | f32 | relaxed | 2.02 | 33 | none | finite, \|x\| <= 8192 |
 | cos | f32 | fast | 688 | 29 | none | finite, \|x\| <= 8192 |
 | tan | f64 | strict | 1.7 | 80 | cold | any input; vector path for finite, \|x\| <= 1.04858e+06 |
@@ -78,10 +78,10 @@ Inline them only when the loop has other work: the gain over a library call is t
 | log1p | f32 | strict | 0.885 | 58 | cold | any input; vector path for finite, x > -1 |
 | log1p | f32 | relaxed | 0.885 | 40 | none | finite, x > -1 |
 | log1p | f32 | fast | 5.79 | 38 | none | finite, x > -1 |
-| pow | f64 | strict | 1.38 | 125 | cold | any input; vector path for x positive normal, finite y, \|y*log(x)\| in exp range |
+| pow | f64 | strict | 1.38 | 128 | cold | any input; vector path for x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f64 | relaxed | 508 | 80 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f64 | fast | 1.82e+08 | 62 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
-| pow | f32 | strict | 1.3 | 107 | cold | any input; vector path for x positive normal, finite y, \|y*log(x)\| in exp range |
+| pow | f32 | strict | 1.3 | 110 | cold | any input; vector path for x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f32 | relaxed | 98.4 | 62 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f32 | fast | 225 | 56 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
 | atan | f64 | strict | 1.47 | 64 | none | any input; vector path for any input |
