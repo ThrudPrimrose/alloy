@@ -12,7 +12,7 @@ from alloy.evaluate.verify import Verdict
 from alloy.frontend.scopes import Scope
 from alloy.isa.hints import advice
 from alloy.isa.mathkernels import level_for
-from alloy.isa.table import Table, load
+from alloy.isa.table import load
 
 __all__ = ["advisable_isa", "guidance", "scope_dtype", "scope_reason"]
 
@@ -53,7 +53,6 @@ def guidance(
     verdicts: Mapping[str, Mapping[str, Verdict]],
     winners: Mapping[str, Build],
     host_isas: tuple[str, ...],
-    table: Table | None = None,
     *,
     finite_inputs: bool = False,
 ) -> dict[str, str]:
@@ -62,7 +61,7 @@ def guidance(
     isa = advisable_isa(host_isas)
     if isa is None:
         return {}
-    table = table or load()
+    table = load()
     texts = {}
     for rep in reports:
         symbol = rep.scope.symbol

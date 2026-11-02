@@ -24,9 +24,8 @@ __all__ = ["Cut", "cuts", "fissioned", "split", "vector_registers"]
 
 @dataclass(slots=True, frozen=True)
 class Cut:
-    """A node set of one top-level map's body, by position: the state's index in ``sdfg.states()``, the map entry's
-    and the set's node ids in that state; with ``nested``, the map's body is one nested SDFG (what NestForge's
-    ``expand`` shows) and ``nodes`` are ids of its top-level blocks, a straight line of states."""
+    """A node set of one top-level map's body, by state index and node ids; with ``nested``, the body is one nested
+    SDFG (what NestForge's ``expand`` shows) and ``nodes`` are ids of its top-level blocks."""
 
     state: int
     entry: int
@@ -49,8 +48,7 @@ def work(node: nodes.Node) -> int:
 
 @dataclass(slots=True, frozen=True)
 class Body:
-    """A flat map body as work/depth sees it: each code node's level (1 + its deepest producer's), each value's level
-    (its producer's) and the levels that consume it."""
+    """A flat map body as work/depth sees it: each code node's level, and each value's with the levels consuming it."""
 
     levels: dict[nodes.Node, int]
     values: tuple[tuple[int, tuple[int, ...]], ...]
@@ -69,8 +67,8 @@ class Body:
         return max((self.crossing(d, lo, hi) for d in range(lo, hi)), default=0)
 
 
-def body(state: dace.SDFGState, entry: nodes.MapEntry) -> Body:
-    inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
+def node_levels(state: dace.SDFGState, inside: SubgraphView) -> dict[nodes.Node, int]:
+    """Every node's level, walking the body in dependency order: a code node sits one past its deepest producer."""
     members = set(inside.nodes())
     levels: dict[nodes.Node, int] = {}
     pending = {n: sum(1 for e in state.in_edges(n) if e.src in members) for n in members}
@@ -84,6 +82,12 @@ def body(state: dace.SDFGState, entry: nodes.MapEntry) -> Body:
                 pending[e.dst] -= 1
                 if pending[e.dst] == 0:
                     ready.append(e.dst)
+    return levels
+
+
+def body(state: dace.SDFGState, entry: nodes.MapEntry) -> Body:
+    inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
+    levels = node_levels(state, inside)
     values = tuple(
         (levels[n], tuple(levels[e.dst] for e in state.out_edges(n) if isinstance(e.dst, nodes.CodeNode)))
         for n in inside.nodes()
@@ -177,6 +181,32 @@ def forward(
     return copied
 
 
+def forwarded(
+    sdfg: dace.SDFG, state: dace.SDFGState, value: nodes.AccessNode, piece: dict[nodes.Node, int]
+) -> tuple[int, nodes.AccessNode] | None:
+    """When ``value`` is read both in its own piece and past it: that piece, and the copy :func:`forward` made."""
+    made = max((piece[e.src] for e in state.in_edges(value) if e.src in piece), default=None)
+    if made is None:
+        return None
+    reads = [e for e in state.out_edges(value) if e.dst in piece]
+    later = [e for e in reads if piece[e.dst] > made]
+    return (made, forward(sdfg, state, value, later)) if later and len(later) < len(reads) else None
+
+
+def pieces(
+    sdfg: dace.SDFG, state: dace.SDFGState, inside: SubgraphView, upstream: set[nodes.Node], chosen: set[nodes.Node]
+) -> tuple[list[nodes.Node], list[nodes.Node]]:
+    """The nodes of the pieces before and at the set, in graph order, with the copies of the values read past them."""
+    code = [n for n in inside.nodes() if isinstance(n, nodes.CodeNode)]
+    piece = {n: 0 if n in upstream else 1 if n in chosen else 2 for n in code}
+    the_set = [n for n in inside.nodes() if n in chosen]
+    grouped: tuple[list[nodes.Node], ...] = ([n for n in code if n in upstream], the_set, [])
+    for value in [n for n in inside.nodes() if isinstance(n, nodes.AccessNode)]:
+        if (copy_of := forwarded(sdfg, state, value, piece)) is not None:
+            grouped[copy_of[0]].append(copy_of[1])
+    return grouped[0], grouped[1]
+
+
 def stage(
     sdfg: dace.SDFG, state: dace.SDFGState, entry: nodes.MapEntry, chosen: set[nodes.Node]
 ) -> tuple[nodes.NestedSDFG, set[ControlFlowBlock]]:
@@ -185,17 +215,7 @@ def stage(
     inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
     members = set(inside.nodes())
     chosen = chosen | (reach(state, chosen, members, up=True) & reach(state, chosen, members, up=False))
-    upstream = reach(state, chosen, members, up=True)
-    before: list[nodes.Node] = [n for n in inside.nodes() if n in upstream and isinstance(n, nodes.CodeNode)]
-    the_set = [n for n in inside.nodes() if n in chosen]  # graph order
-    after: list[nodes.Node] = []
-    piece = {n: 0 if n in upstream else 1 if n in chosen else 2 for n in members if isinstance(n, nodes.CodeNode)}
-    for value in [n for n in inside.nodes() if isinstance(n, nodes.AccessNode)]:
-        made = max((piece[e.src] for e in state.in_edges(value) if e.src in piece), default=None)
-        reads = [e for e in state.out_edges(value) if e.dst in piece]
-        later = [e for e in reads if made is not None and piece[e.dst] > made]
-        if made is not None and later and len(later) < len(reads):
-            (before, the_set, after)[made].append(forward(sdfg, state, value, later))
+    before, the_set = pieces(sdfg, state, inside, reach(state, chosen, members, up=True), chosen)
     inside = state.scope_subgraph(entry, include_entry=False, include_exit=False)
     body = helpers.nest_state_subgraph(sdfg, state, inside)
     (inner,) = body.sdfg.states()

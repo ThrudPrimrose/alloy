@@ -37,6 +37,7 @@ Shape = tuple[int, int, int]
 #: A rank-1 map's shapes, and a rank >= 2 map's (innermost dimension first, as ``gpu_block_size`` orders them).
 SHAPES_1D: tuple[Shape, ...] = ((64, 1, 1), (128, 1, 1), (256, 1, 1), (512, 1, 1), (1024, 1, 1))
 SHAPES_ND: tuple[Shape, ...] = ((32, 4, 1), (32, 8, 1), (16, 16, 1), (64, 4, 1), (32, 16, 1), (128, 2, 1))
+MAX_THREADS = 1024
 #: Threads per warp (CUDA) or the narrowest wavefront (HIP): an innermost dimension below it splits a coalesced row.
 WARP = 32
 #: The occupancy past which more warps hide no more latency; above it shapes tie on occupancy.
@@ -48,7 +49,7 @@ PROBE_THREADS: tuple[int, ...] = tuple(32 * m for m in range(3, 32) if m not in 
 
 @dataclass(frozen=True, slots=True)
 class SmLimits:
-    """One streaming multiprocessor of a compute capability: what bounds how many blocks reside on it."""
+    """What bounds how many blocks reside on one streaming multiprocessor."""
 
     threads: int
     blocks: int
@@ -86,8 +87,7 @@ class Usage:
 
 @dataclass(frozen=True, slots=True)
 class Pick:
-    """The shape a map takes and why: its usage there and the occupancy it reaches; ``ranked`` is every shape tried,
-    best first."""
+    """The shape a map takes and why; ``ranked`` is every shape tried, best first."""
 
     shape: Shape
     usage: Usage
@@ -104,16 +104,16 @@ def device_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
     ]
 
 
-def candidate_shapes(entry: nodes.MapEntry, max_threads: int = 1024) -> list[Shape]:
+def candidate_shapes(entry: nodes.MapEntry) -> list[Shape]:
     """The shapes a map is tried with: by its rank, without one wider than a constant extent of the map or larger than
-    ``max_threads`` threads."""
+    :data:`MAX_THREADS` threads."""
     sizes = list(reversed(entry.map.range.size()))  # innermost first, like gpu_block_size
     extents = [None if symbolic.issymbolic(size) else int(size) for size in sizes]
     shapes = SHAPES_1D if len(entry.map.params) == 1 else SHAPES_ND
 
     def fits(shape: Shape) -> bool:
         within = all(e is None or s <= int(e) for s, e in zip(shape, extents))
-        return within and shape[0] * shape[1] * shape[2] <= max_threads
+        return within and shape[0] * shape[1] * shape[2] <= MAX_THREADS
 
     kept = [shape for shape in shapes if fits(shape)]
     return kept or [min(shapes, key=lambda s: s[0] * s[1] * s[2])]
@@ -243,8 +243,7 @@ def device_code(sdfg: dace.SDFG, dialect: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DeviceMap:
-    """A device map of the pipeline's program: its map (rank and extents), its kernel's name and the block the
-    pipeline picks for it."""
+    """A device map of the pipeline's program, its kernel's name and the block the pipeline picks for it."""
 
     entry: nodes.MapEntry
     kernel: str
