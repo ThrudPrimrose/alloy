@@ -71,7 +71,9 @@ def compile(  # noqa: A001 -- DaCe's verb
         sdfg.save(str(sdfg_file))
         with job.open("wb") as handle:
             pickle.dump((sdfg_file, manifest, mode, matrix, out, finite_inputs), handle)
-        run = subprocess.run([sys.executable, "-m", "alloy.dace_backend", str(job)], check=False, capture_output=True, text=True)
+        run = subprocess.run(
+            [sys.executable, "-m", "alloy.dace_backend", str(job)], check=False, capture_output=True, text=True
+        )
     if run.returncode == NOTHING_TO_GENERATE:
         with set_temporary("compiler", "build_plugin", value=""):
             return sdfg.compile(output_file=output_file, validate=False, return_program_handle=return_program_handle)

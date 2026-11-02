@@ -154,13 +154,6 @@ def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size():
         verify.accumulation_length(outlined(), {})
 
 
-def test_the_largest_array_is_counted_at_the_largest_preset(tmp_path):
-    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
-    manifest = write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST)
-
-    assert inputs.largest_array(manifest, program.original) == 64 * 512
-
-
 def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(tmp_path):
     text = ROW_SUM_MANIFEST.replace("args:", 'constraints: ["N % 64 == 0", "M <= N"]\nargs:')
     manifest = write_manifest(tmp_path, "row_sum", text)

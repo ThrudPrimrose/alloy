@@ -192,7 +192,6 @@ def lane_of(state, node) -> str:
 
 def conflict_of(state, node) -> str:
     """The write-conflict ``node``'s output meets, on its memlet tree or past a private access node, or ``""``."""
-    import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
     from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
     from dace.sdfg import nodes  # noqa: PLC0415
 
@@ -237,7 +236,9 @@ def op_uses(sdfg) -> list[OpUse]:
             ops, skipped = expression_ops(node.code.as_string)
         dtype = lane_of(state, node) if isinstance(state, dace.SDFGState) else ""
         ordered = tuple(op for op in OP_ORDER if op in ops)
-        uses.append(OpUse(node.label, ordered, tuple(sorted(skipped)), kind == "Sum", kind if kind != "Sum" else "", dtype))
+        uses.append(
+            OpUse(node.label, ordered, tuple(sorted(skipped)), kind == "Sum", kind if kind != "Sum" else "", dtype)
+        )
     return uses
 
 
@@ -268,10 +269,7 @@ def op_spelling(
         spelling = "recipe: " + " -> ".join(entry.recipe)
     elif entry.approximations:
         libraries = ", ".join(f"{k} {v}" for k, v in entry.libraries.items()) or "a vector math library"
-        spelling = (
-            f"{kernel_summary(isa, dtype, op, recommended)}; "
-            f"or call {libraries}"
-        )
+        spelling = f"{kernel_summary(isa, dtype, op, recommended)}; or call {libraries}"
     else:
         spelling = "(no spelling)"
     return Spelling(op, spelling, entry.signature, entry.note, verdicts[op])

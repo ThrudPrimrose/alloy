@@ -52,7 +52,7 @@ def native(compiler: str, vectorized: int) -> Build:
 def pruned_reasons(
     scope: scopes.Scope, *, vectorized: int, finite_inputs: bool = False, host: tuple[str, ...] = HOST_ISAS
 ) -> dict[str, str]:
-    candidates = flips(MATRIX, scope, "c", "gcc", finite_inputs=finite_inputs, max_elements=None, isas=host)
+    candidates = flips(MATRIX, scope, "c", "gcc", finite_inputs=finite_inputs, isas=host)
     _, pruned = prune.prune(candidates, MATRIX, prune.facts(scope), [native("gcc", vectorized)], host)
     return {p.candidate.note: p.reason for p in pruned}
 
@@ -105,7 +105,7 @@ def test_fp_levels_are_pruned_where_they_have_nothing_to_rewrite():
 
 
 def test_a_compilers_default_build_is_never_pruned():
-    candidates = flips(MATRIX, only_scope(axpy), "c", "gcc", finite_inputs=False, max_elements=None, isas=HOST_ISAS)
+    candidates = flips(MATRIX, only_scope(axpy), "c", "gcc", finite_inputs=False, isas=HOST_ISAS)
 
     keep, _ = prune.prune(candidates, MATRIX, prune.facts(only_scope(axpy)), [native("gcc", 0)], HOST_ISAS)
 

@@ -26,7 +26,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
     matrix = gcc_only(tmp_path)
     scope = scope_with(outlined(), libm=False, reduction=True)
 
-    sut = one_factor_at_a_time(matrix, scope, max_elements=2**20)
+    sut = one_factor_at_a_time(matrix, scope)
 
     gcc = matrix.compilers["gcc"]
     per_language = (
@@ -83,25 +83,12 @@ def test_gccs_vector_math_is_tried_only_when_inputs_are_declared_finite(tmp_path
     assert any(c.veclib == "libmvec_fast" for c in declared)
 
 
-def test_a_narrow_index_is_tried_only_where_every_array_is_known_to_fit_it(tmp_path):
-    matrix = gcc_only(tmp_path)
-    scope = scope_with(outlined(), libm=False, reduction=True)
-
-    fits = one_factor_at_a_time(matrix, scope, max_elements=2**20)
-    overflows = one_factor_at_a_time(matrix, scope, max_elements=2**31)
-    unknown = one_factor_at_a_time(matrix, scope)
-
-    assert "int32" in {c.resolved(matrix)[0] for c in fits}
-    assert {c.resolved(matrix)[0] for c in overflows} == {"int64"}
-    assert {c.resolved(matrix)[0] for c in unknown} == {"int64"}
-
-
 def test_an_isa_is_tried_only_where_the_host_runs_it_and_the_compiler_spells_it():
     scope = scope_with(outlined(), libm=False, reduction=True)
     host = ("avx2", "avx512")
 
     def tried(compiler: str, isas: tuple[str, ...]) -> set[str]:
-        out = flips(MATRIX, scope, "c", compiler, finite_inputs=False, max_elements=None, isas=isas)
+        out = flips(MATRIX, scope, "c", compiler, finite_inputs=False, isas=isas)
         return {c.isa for c in out if c.isa}
 
     assert tried("gcc", host) == {"avx2", "avx512"}
@@ -111,7 +98,7 @@ def test_an_isa_is_tried_only_where_the_host_runs_it_and_the_compiler_spells_it(
 
 def test_an_isa_candidate_is_built_with_the_compilers_spelling_of_it():
     scope = scope_with(outlined(), libm=False, reduction=True)
-    out = flips(MATRIX, scope, "c", "clang", finite_inputs=False, max_elements=None, isas=("sve",))
+    out = flips(MATRIX, scope, "c", "clang", finite_inputs=False, isas=("sve",))
     (sve,) = [c for c in out if c.isa == "sve" and not c.tail]
 
     assert sve.flags(MATRIX)[-4:] == (
@@ -126,7 +113,7 @@ def test_an_isa_candidate_is_built_with_the_compilers_spelling_of_it():
 
 def tails(compiler: str, isas: tuple[str, ...]) -> set[tuple[str, str]]:
     scope = scope_with(outlined(), libm=False, reduction=True)
-    out = flips(MATRIX, scope, "c", compiler, finite_inputs=False, max_elements=None, isas=isas)
+    out = flips(MATRIX, scope, "c", compiler, finite_inputs=False, isas=isas)
     return {(c.tail, c.isa) for c in out if c.tail}
 
 
@@ -149,12 +136,10 @@ def test_clang_has_no_masked_epilogue_and_explicit_sve_loops_need_an_sve_host():
 
 def test_a_tail_is_built_with_the_compilers_spelling_and_names_its_config():
     scope = scope_with(outlined(), libm=False, reduction=True)
-    out = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None, isas=("avx512",))
+    out = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, isas=("avx512",))
     (full,) = [c for c in out if c.tail == "full_mask"]
     (sve,) = [
-        c
-        for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None, isas=("sve",))
-        if c.tail == "sve_intrinsics"
+        c for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=False, isas=("sve",)) if c.tail == "sve_intrinsics"
     ]
 
     assert full.flags(MATRIX)[-1] == "--param=vect-partial-vector-usage=2"

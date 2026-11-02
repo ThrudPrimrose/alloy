@@ -142,13 +142,13 @@ def test_the_heuristic_cut_widens_each_value_it_cuts_into_an_array_over_the_map(
 def test_a_scope_with_a_cut_gets_one_fissioned_rendering_per_compiler_in_a_variant_of_its_own(tmp_path):
     scope = only_scope(wide(tmp_path))
 
-    sut = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None, fission=True)
+    sut = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, fission=True)
 
     (cut,) = [c for c in sut if c.fission]
     assert cut == Candidate("c", "gcc", fission=True)
     assert cut.name(MATRIX).endswith("_fission")
     assert cut.variant_key(MATRIX) != Candidate("c", "gcc").variant_key(MATRIX)
-    assert not any(c.fission for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=False, max_elements=None))
+    assert not any(c.fission for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=False))
 
 
 @pytest.mark.gcc

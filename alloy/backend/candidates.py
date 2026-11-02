@@ -4,8 +4,6 @@
 import ctypes.util
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from alloy import machine
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.scopes import Scope
@@ -192,9 +190,7 @@ def vector_options(matrix: Matrix, cpu_flags: frozenset[str]) -> list[VectorOpti
     return out
 
 
-def one_factor_at_a_time(
-    matrix: Matrix, scope: Scope, *, finite_inputs: bool = False
-) -> list[Candidate]:
+def one_factor_at_a_time(matrix: Matrix, scope: Scope, *, finite_inputs: bool = False) -> list[Candidate]:
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
     isas = matrix.host_isas(machine.cpu_flags())
@@ -204,7 +200,5 @@ def one_factor_at_a_time(
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(
-            matrix, scope, lang, comp, finite_inputs=finite_inputs, isas=isas, fission=cut
-        )
+        for c in flips(matrix, scope, lang, comp, finite_inputs=finite_inputs, isas=isas, fission=cut)
     ]
