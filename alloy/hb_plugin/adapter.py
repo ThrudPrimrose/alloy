@@ -250,7 +250,10 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, profile: Profile | Non
     chosen = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
     if chosen != references and deadline - time.monotonic() > score_reserve():
         start = time.monotonic()
-        correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
+        try:
+            correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
+        except (OSError, RuntimeError, ValueError):
+            correct = False  # the references need no grade
         score_costs.append(time.monotonic() - start)
         if correct:
             # every deliver builds the same .so path, so the returned library is built last
@@ -276,12 +279,23 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}
-    if chosen != references:
-        judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
-        if judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct:
-            # every deliver builds the same .so path, so the returned library is built last
-            return library(task, spec, linker, chosen, deliver)
+    judge = JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+    pick = library(task, spec, linker, chosen, deliver)
+    baseline = library(task, spec, linker, references, deliver)
+    if chosen != references and faster_correct(judge, pick, baseline, task.kernel):
+        # every deliver builds the same .so path, so the returned library is built last
+        return library(task, spec, linker, chosen, deliver)
     return library(task, spec, linker, references, deliver)
+
+
+def faster_correct(judge: JudgeClient, pick: Submission, baseline: Submission, kernel: str) -> bool:
+    """Whether ``pick`` grades correct and no slower than ``baseline``; a judge that does not answer keeps the
+    references, the library that is safe without a grade."""
+    try:
+        graded, reference = judge.score(pick, kernel), judge.score(baseline, kernel)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return graded.correct and (not reference.correct or graded.speedup >= reference.speedup)
 
 
 #: A GPU image -> the dialect its device maps' register use is read in: nvcc's report on an NVIDIA device, hipcc's

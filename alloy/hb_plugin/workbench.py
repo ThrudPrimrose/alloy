@@ -92,7 +92,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, PIPELINE, request.precision, Target.CPU)
     if nothing_to_generate(sdfg, matrix):
-        raise ValueError(f"{spec.short_name}: no loop nest outlines into a scope, so Alloy has nothing to generate")
+        raise NothingToGenerate(f"{spec.short_name}: no loop nest outlines into a scope, so Alloy has nothing to generate")
     manifest = inputs.load(
         paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml",
         datatype=numpy_dtype(request.precision).__name__,
@@ -101,10 +101,12 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode)
     if result.best is None or not result.winners:
         hints = "\n\n".join((result.advice or {}).values())
-        raise ValueError(f"{spec.short_name}: Alloy picked no build for any scope (nothing was verified)\n\n{hints}")
+        raise NothingToGenerate(f"{spec.short_name}: Alloy picked no build for any scope (nothing was verified)\n\n{hints}")
     linker, best = Linker(result.program, matrix, out), out / "best"
     workspace = bench_entry(linker, result.best, result.winners, spec, request.precision)
-    subprocess.run(["make", "-C", str(best), "-B"], check=True, capture_output=True, text=True)
+    made = subprocess.run(["make", "-C", str(best), "-B"], check=False, capture_output=True, text=True)
+    if made.returncode != 0:
+        raise RuntimeError(f"make in {best} failed:\n{made.stderr[-2000:]}")
     commands = linker.commands(result.best)
     report = result.report.read_text()
     return CodegenAnswer(
@@ -117,6 +119,6 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
             ScopeChoice(symbol=s.symbol, candidate=s.candidate, compiler=s.compiler, flags=s.flags, source=s.source)
             for s in result.best.scopes
         ),
-        report=report[:REPORT_CHARS],
+        report=report[:REPORT_CHARS] + (f"\n[cut: the rest is in {result.report}]" if len(report) > REPORT_CHARS else ""),
         advice=result.advice or {},
     )

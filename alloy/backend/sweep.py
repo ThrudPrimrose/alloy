@@ -37,12 +37,11 @@ def run(
     out: pathlib.Path,
     *,
     finite_inputs: bool = False,
-    max_elements: int | None = None,
 ) -> list[ScopeReport]:
     """Build every candidate of every scope under ``out/scopes/<symbol>`` in two stages: each compiler's default
     first, then the rest minus what :func:`prune.prune` rules out given those builds. Rendered in turn (the codegen
     knobs are process-wide DaCe config), compiled in parallel (:func:`machine.compile_jobs`), duplicates marked in
-    candidate order. ``max_elements`` bounds the index widths tried (:func:`candidates.index_widths`)."""
+    candidate order."""
     reports = []
     host_isas = matrix.host_isas(machine.cpu_flags())
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
@@ -54,7 +53,7 @@ def run(
                 sources = [write_source(scope, cand, matrix, folder, renders) for cand in cands]  # noqa: B023 -- called in this iteration
                 return list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, cands))
 
-            candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs, max_elements=max_elements)
+            candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs)
             natives = [c for c in candidates if prune.is_native(c)]
             first = dict(zip(natives, built(natives), strict=True))
             rest, pruned = prune.prune(

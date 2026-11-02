@@ -4,7 +4,7 @@ reason, the do-it-yourself instruction, and hints computed from the scope's own 
 classified and mapped to the relevant intrinsics with their traps and validation status)."""
 
 from alloy.isa import load
-from alloy.isa.hints import advice, tasklet_hints
+from alloy.isa.hints import advice, expression_ops, op_uses, tasklet_hints
 
 TABLE = load()
 
@@ -44,9 +44,8 @@ def test_a_libm_tasklet_points_at_tiers_and_the_library():
     assert hint.use.ops == ("sin",)
     assert "libm" in hint.kind
     (spelling,) = hint.spellings
-    assert "sin-quad-cheb13" in spelling.spelling
     assert "_ZGVdN4v_sin" in spelling.spelling
-    assert "python -m alloy.isa kernel avx2 sin f64" in spelling.spelling
+    assert "`kernel avx2 sin f64`" in spelling.spelling
 
 
 def test_advice_carries_the_reason_the_instruction_and_the_hints():
@@ -60,11 +59,11 @@ def test_advice_carries_the_reason_the_instruction_and_the_hints():
     assert "reduce_add" in text
 
 
-def test_integer_ops_under_a_float_dtype_are_absent_not_errors():
+def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default():
     (hint,) = tasklet_hints(_integer_sdfg(), "avx2", "f64", TABLE)
 
-    spellings = {s.op for s in hint.spellings}
-    assert "and" not in spellings  # integer op, no f64 spelling
+    assert hint.use.dtype == "i64"
+    assert {s.op: s.spelling for s in hint.spellings}["and"] == "_mm256_and_si256"
 
 
 def test_min_max_logic_and_conditionals_are_recognized():
@@ -139,3 +138,44 @@ def _branchy_sdfg():
     state.add_memlet_path(a, entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(node, exit_, b, src_conn="y", memlet=dace.Memlet("b[i]"))
     return sdfg
+
+
+def test_the_shapes_the_frontend_emits_are_recognized():
+    assert "select" in expression_ops("y = ITE(c, a, b)")[0]
+    assert "mod" in expression_ops("y = py_mod(a, b)")[0]
+    assert "pow" in expression_ops("y = a ** b")[0]
+    assert "add" in expression_ops("t += x")[0]
+
+
+def test_an_operation_without_a_row_is_named_not_dropped():
+    assert expression_ops("y = a > b")[1] == {"compare"}
+    assert expression_ops("y = floor(a)")[1] == {"floor"}
+
+
+def test_a_product_fuses_only_inside_its_sum():
+    assert "fma" in expression_ops("y = a * b + c")[0]
+    assert "fma" not in expression_ops("y = (a + 1.0) * 2.0")[0]
+
+
+def test_a_negative_literal_is_no_negation():
+    assert "neg" not in expression_ops("y = -1.5")[0]
+
+
+def test_a_canonical_reduction_past_its_private_node_counts():
+    import dace
+
+    sdfg = dace.SDFG("wcr_past_private")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    sdfg.add_transient("priv", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", dict(i="0:8"))
+    node = state.add_tasklet("acc", {"x"}, {"o"}, "o = x * 2.0")
+    private, target = state.add_access("priv"), state.add_access("s")
+    state.add_memlet_path(state.add_access("a"), entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_edge(node, "o", private, None, dace.Memlet("priv[0]"))
+    state.add_memlet_path(private, exit_, target, memlet=dace.Memlet("s[0]", wcr="lambda a, b: a + b"))
+
+    (sut,) = [use for use in op_uses(sdfg) if use.tasklet == "acc"]
+
+    assert sut.reduces

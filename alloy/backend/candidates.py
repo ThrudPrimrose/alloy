@@ -18,14 +18,13 @@ RenderKey = tuple[str, tuple[tuple[str, str], ...]]
 @dataclass(slots=True, frozen=True)
 class Candidate:
     """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
-    an empty ``index_width`` / ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
+    an empty ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
     flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail; ``fission`` renders the scope with its
     maps cut by :func:`fission.cuts`."""
 
     language: str
     compiler: str
     knobs: tuple[tuple[str, str], ...] = ()
-    index_width: str = ""
     fp_level: str = ""
     cost_model: str = ""
     veclib: str = "none"
@@ -34,22 +33,21 @@ class Candidate:
     fission: bool = False
     note: str = field(default="default", compare=False)
 
-    def resolved(self, matrix: Matrix) -> tuple[str, str, str]:
-        """``(index_width, fp_level, cost_model)`` with the defaults filled in."""
+    def resolved(self, matrix: Matrix) -> tuple[str, str]:
+        """``(fp_level, cost_model)`` with the defaults filled in."""
         d = matrix.defaults
-        return self.index_width or d.index_width, self.fp_level or d.fp_level, self.cost_model or d.cost_model
+        return self.fp_level or d.fp_level, self.cost_model or d.cost_model
 
     def tolerance(self, matrix: Matrix) -> str:
         """How this candidate's outputs are compared: its FP level's tolerance."""
-        return matrix.fp_levels[self.resolved(matrix)[1]].tolerance
+        return matrix.fp_levels[self.resolved(matrix)[0]].tolerance
 
     def name(self, matrix: Matrix) -> str:
-        width, level, model = self.resolved(matrix)
+        level, model = self.resolved(matrix)
         split = "fission" if self.fission else ""
         parts = [
             self.language,
             self.compiler,
-            width,
             level,
             model,
             self.veclib,
@@ -71,21 +69,20 @@ class Candidate:
 
     def config_name(self, matrix: Matrix) -> str:
         """The build configuration, everything but the source: the column of the scope's runtime matrix."""
-        _, level, model = self.resolved(matrix)
+        level, model = self.resolved(matrix)
         return "_".join([self.compiler, level, model, self.veclib, self.isa or "native", *filter(None, (self.tail,))])
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
         params = {knob: values[0] for knob, values in matrix.knobs.items()}
         params.update(dict(self.knobs))
-        params.update(matrix.index_widths[self.resolved(matrix)[0]])
         return params
 
     def flags(self, matrix: Matrix) -> tuple[str, ...]:
         """Compile flags: language standard, build flags, then this compiler's spelling of the default OpenMP
         runtime, the FP level, the cost model, the vector library, the ISA and the loop tail."""
         comp = matrix.compilers[self.compiler]
-        _, level, model = self.resolved(matrix)
+        level, model = self.resolved(matrix)
         veclib = comp.veclib[self.veclib] if self.veclib != "none" else ()
         isa = comp.isa[self.isa] if self.isa else ()
         tail = comp.tail[self.tail] if self.tail else ()
@@ -113,19 +110,6 @@ def fp_levels(matrix: Matrix, scope: Scope, *, finite_inputs: bool) -> tuple[str
     return tuple(name for name, level in matrix.fp_levels.items() if met[level.needs])
 
 
-def index_widths(matrix: Matrix, max_elements: int | None) -> tuple[str, ...]:
-    """Index widths whose type holds every flat index below ``max_elements``, the largest array's element count at
-    the sizes the program runs at; only the default width when that is unknown (no manifest): a speculative pick
-    ships, and a narrower index would overflow at sizes nobody declared."""
-    if max_elements is None:
-        return (matrix.defaults.index_width,)
-    return tuple(
-        name
-        for name, params in matrix.index_widths.items()
-        if max_elements <= np.iinfo(np.dtype(params["index_ctype"])).max
-    )
-
-
 def flips(
     matrix: Matrix,
     scope: Scope,
@@ -133,7 +117,6 @@ def flips(
     compiler: str,
     *,
     finite_inputs: bool,
-    max_elements: int | None,
     isas: tuple[str, ...] = (),
     fission: bool = False,
 ) -> list[Candidate]:
@@ -145,11 +128,6 @@ def flips(
     out = [Candidate(language, compiler)]
     for knob, values in matrix.knobs.items():
         out += [Candidate(language, compiler, knobs=((knob, v),), note=f"{knob}={v}") for v in values[1:]]
-    out += [
-        Candidate(language, compiler, index_width=w, note=f"index width {w}")
-        for w in index_widths(matrix, max_elements)
-        if w != d.index_width
-    ]
     out += [Candidate(language, compiler, fp_level=lv, note=f"fp {lv}") for lv in levels if lv != d.fp_level]
     out += [Candidate(language, compiler, isa=i, note=f"isa {i}") for i in isas if i in comp.isa]
     out += tail_flips(matrix, language, compiler, isas)
@@ -215,7 +193,7 @@ def vector_options(matrix: Matrix, cpu_flags: frozenset[str]) -> list[VectorOpti
 
 
 def one_factor_at_a_time(
-    matrix: Matrix, scope: Scope, *, finite_inputs: bool = False, max_elements: int | None = None
+    matrix: Matrix, scope: Scope, *, finite_inputs: bool = False
 ) -> list[Candidate]:
     """:func:`flips` for every language and every usable compiler (on PATH, spelling the default runtime)."""
     usable, _ = matrix.usable_compilers()
@@ -227,6 +205,6 @@ def one_factor_at_a_time(
         for comp, spec in usable.items()
         if lang in spec.executables
         for c in flips(
-            matrix, scope, lang, comp, finite_inputs=finite_inputs, max_elements=max_elements, isas=isas, fission=cut
+            matrix, scope, lang, comp, finite_inputs=finite_inputs, isas=isas, fission=cut
         )
     ]

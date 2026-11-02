@@ -176,6 +176,7 @@ class Linker:
             call.link_flags = [*flags, f"-Wl,--wrap={call.symbol}"]
         with ExitStack() as stack:
             for path, value in (
+                (("compiler", "build_plugin"), ""),
                 (("compiler", "command_cache"), True),
                 (("compiler", "precompiled_header"), True),
                 (("compiler", "extra_cmake_args"), cmake_args(self.matrix)),
@@ -272,6 +273,8 @@ class Linker:
         sdfg = copy.deepcopy(self.program.original)
         sdfg.name = f"{self.program.original.name}_dace_default"  # pyright: ignore[reportAttributeAccessIssue]
         sdfg.build_folder = str(self.out / "programs" / "dace_default")
-        with set_temporary("compiler", "extra_cmake_args", value=cmake_args(self.matrix)):
+        with set_temporary("compiler", "build_plugin", value=""), set_temporary(
+            "compiler", "extra_cmake_args", value=cmake_args(self.matrix)
+        ):
             sdfg.compile()
         return pathlib.Path(sdfg.build_folder)

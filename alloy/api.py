@@ -24,6 +24,10 @@ from alloy.heuristics.predict import Predictions
 from alloy.report import Mode
 
 
+class NothingToGenerate(ValueError):
+    """The program has no scope Alloy can take."""
+
+
 @dataclass(slots=True, frozen=True)
 class Result:
     """The outlined program, every scope's builds, their verdicts and timings, the ``best/`` link plan (these three
@@ -57,7 +61,8 @@ def roofline_sizes(program: Program, manifest: Manifest | None, matrix: Matrix) 
     """The sizes speculative mode weighs loops and memory at: the manifest's first preset, or without one every size
     symbol grown until the program fills the final timing stage's share of the largest cache."""
     if manifest is not None:
-        return next(iter(inputs.presets(manifest)), None)
+        presets = inputs.presets(manifest)  # the largest: at the smallest every array sits in cache
+        return max(presets, key=lambda sizes: timing.footprint(program.original, sizes), default=None)
     base = dict.fromkeys(program.original.free_symbols, inputs.DERIVED_SIZES[0])
     if not base:
         return None
@@ -85,12 +90,11 @@ def generate(
     matrix = matrix or configuration_matrix.load()
     program = scopes.outline(sdfg, matrix.libm_calls)
     if not program.scopes:
-        raise ValueError(f"{sdfg.name}: no top-level loop nest to outline, so Alloy has nothing to generate")
+        raise NothingToGenerate(f"{sdfg.name}: no top-level loop nest to outline, so Alloy has nothing to generate")
     if manifest is None and mode == Mode.PROFILE:
         raise ValueError(f"{sdfg.name}: profile mode times at declared sizes, so it needs a manifest")
     out.mkdir(parents=True, exist_ok=True)
-    max_elements = None if manifest is None else inputs.largest_array(manifest, program.original)
-    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, max_elements=max_elements)
+    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs)
     timings, best, commands, predicted, picked = None, None, None, None, None
     cases = test_cases(program, manifest, iterations)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
@@ -110,6 +114,8 @@ def generate(
     elif verification is not None and manifest is not None and time_locally:
         timings = timing.time_program(Linker(program, matrix, out), reports, verification, manifest)
         winners = {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
+        if not timings.program.arms["alloy_full"].verdict.ok:  # scopes each in band can compound past it together
+            winners = {rep.scope.symbol: rep.builds[0] for rep in reports}
     if winners:
         linker = Linker(program, matrix, out)
         best = linker.write_best(winners)

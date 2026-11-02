@@ -77,6 +77,10 @@ def rendered_sdfg(scope: Scope, candidate: Candidate) -> dace.SDFG:
     return fission.fissioned(scope.sdfg) if candidate.fission else scope.sdfg
 
 
+#: :attr:`Remarks.vectorized` of a compiler that reports no vectorized loop.
+UNKNOWN_LOOPS = -1
+
+
 def sve_loops(sdfg: dace.SDFG) -> dace.SDFG:
     """A copy of ``sdfg`` with every map SVEVectorization takes rendered as an explicit SVE predicated loop."""
     vectorized = copy.deepcopy(sdfg)
@@ -169,6 +173,8 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
     proc = compile_candidate(source, obj, candidate, matrix, flags)
     obj.with_suffix(".log").write_text(proc.stderr)
     remarks = parse_remarks(proc.stderr, source)
+    if not matrix.compilers[candidate.compiler].remarks:
+        remarks = replace(remarks, vectorized=UNKNOWN_LOOPS)
     if proc.returncode != 0:
         return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
     if missing := runtime.unresolved(obj, runtime.default_library(matrix)):

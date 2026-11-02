@@ -21,7 +21,6 @@ STRICT = ConfigDict(extra="forbid")
 @dataclass(slots=True, frozen=True, config=STRICT)
 class Defaults:
     fp_level: str
-    index_width: str
     cost_model: str
     openmp_runtime: str
 
@@ -114,7 +113,6 @@ class OpenMPRuntime:
 @dataclass(slots=True, frozen=True, config=STRICT)
 class Codegen:
     knobs: dict[str, tuple[str, ...]]
-    index_widths: dict[str, dict[str, str]]
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)
@@ -150,7 +148,6 @@ class Matrix:
     tails: dict[str, Tail]
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
-    index_widths: dict[str, dict[str, str]]
     timing: Timing
 
     def host_isas(self, cpu_flags: frozenset[str]) -> tuple[str, ...]:
@@ -188,7 +185,6 @@ def check_consistency(m: Matrix) -> None:
     d = m.defaults
     for kind, value, known in (
         ("fp_level", d.fp_level, m.fp_levels),
-        ("index_width", d.index_width, m.index_widths),
         ("openmp_runtime", d.openmp_runtime, m.openmp_runtimes),
     ):
         if value not in known:
@@ -246,7 +242,6 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         tails=f.tails,
         compilers=f.compilers,
         knobs=f.codegen.knobs,
-        index_widths=f.codegen.index_widths,
         timing=f.timing,
     )
     check_consistency(matrix)

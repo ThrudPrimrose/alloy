@@ -89,7 +89,7 @@ def test_the_advice_carries_the_reason_and_the_scopes_kernels():
     texts = guidance([rep], {"s0": {"good": GOOD}}, {"s0": rep.builds[0]}, ("avx2",))
 
     assert "Reason: the scope calls libm" in texts["s0"]
-    assert "python -m alloy.isa kernel avx2 sin f64" in texts["s0"]
+    assert "`kernel avx2 sin f64`" in texts["s0"]
 
 
 def test_a_clean_program_has_no_advice():

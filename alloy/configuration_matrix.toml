@@ -6,7 +6,6 @@ schema = 1
 # Explicit defaults: the one-factor sweep starts here, and `fp_level` is the verification reference.
 [defaults]
 fp_level = "strict"
-index_width = "int64"
 cost_model = "default"
 openmp_runtime = "libomp"  # the process's one OpenMP runtime; every candidate must link against it
 
@@ -57,7 +56,7 @@ soname = "nvomp"
 # tolerance: "exact" = bit-identical to the reference build (the strict level IS that reference); "band" = HPCAgent-Bench's
 # per-precision band (hpcagent_bench.precision.TOLERANCE_MATRIX) with its accumulation floor
 # eps_acc(p) * sqrt(l) * ||ref||_inf, l = the scope's accumulation length (Scope.accumulation_length).
-# needs: the scope property a level requires ("reduction", or "finite_inputs" = declared with --finite-inputs).
+# needs: the scope property a level requires ("reduction", or "finite_inputs" = declared with finite_inputs=True).
 [fp_levels.strict]
 tolerance = "exact"
 
@@ -158,10 +157,8 @@ noerrno = ["-ffp-contract=fast", "-fno-math-errno", "-fno-trapping-math"]
 reassoc = ["-ffp-contract=fast", "-fno-math-errno", "-fno-trapping-math", "-fassociative-math", "-fno-signed-zeros"]
 fast = ["-ffast-math"]
 
-[compilers.gcc.cost_model]
+[compilers.gcc.cost_model]  # CPF's `parallel for simd` overrides the vectorizer's cost model and its off switch
 default = []
-cheap = ["-fvect-cost-model=cheap"]
-no_vec = ["-fno-tree-vectorize"]
 
 [compilers.gcc.veclib]
 libmvec_fast = ["-fopenmp-simd", "-ffast-math"]
@@ -173,9 +170,10 @@ avx512 = ["-mprefer-vector-width=512"]
 neon = ["--param=aarch64-autovec-preference=asimd-only"]
 sve = ["--param=aarch64-autovec-preference=sve-only"]
 
-# 0: scalar remainder loop; 1: masked epilogue; 2: every iteration masked. Checked by the masked operands in the asm.
+# 0 with no unmasked epilogue: scalar remainder loop; 1: masked epilogue; 2: every iteration masked. Checked by the
+# masked operands in the asm.
 [compilers.gcc.tail]
-scalar_remainder = ["--param=vect-partial-vector-usage=0"]
+scalar_remainder = ["--param=vect-partial-vector-usage=0", "--param=vect-epilogues-nomask=0"]
 masked_remainder = ["--param=vect-partial-vector-usage=1"]
 full_mask = ["--param=vect-partial-vector-usage=2"]
 sve_intrinsics = []
@@ -197,9 +195,8 @@ noerrno = ["-ffp-contract=fast", "-fno-math-errno", "-fno-trapping-math"]
 reassoc = ["-ffp-contract=fast", "-fno-math-errno", "-fno-trapping-math", "-fassociative-math", "-fno-signed-zeros"]
 fast = ["-ffast-math"]
 
-[compilers.clang.cost_model]
+[compilers.clang.cost_model]  # CPF's `parallel for simd` overrides the vectorizer's off switch
 default = []
-no_vec = ["-fno-vectorize", "-fno-slp-vectorize"]
 
 [compilers.clang.veclib]
 libmvec = ["-fveclib=libmvec", "-fno-math-errno"]
@@ -227,8 +224,9 @@ sve_intrinsics = []
 [compilers.icx]
 c = "icx"
 cpp = "icpx"
-remarks = ["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize"]
+remarks = []  # icx prints no -Rpass remark: its vectorized loop count is unknown
 line_tables = ["-gline-tables-only"]
+support_libraries = ["svml", "imf", "intlc"]  # -fp-model=fast calls __svml_* for libm in loops
 
 [compilers.icx.openmp]
 libomp = ["-fiopenmp"]
@@ -264,10 +262,10 @@ libnvomp = ["-mp"]
 libomp = ["-mp"]
 
 [compilers.nvhpc.fp]
-strict = ["-Kieee", "-Mnofma"]
-contract = ["-Kieee", "-Mfma"]
-noerrno = ["-Kieee", "-Mfma"]  # nvc has no errno switch and vectorizes libm with its own vector math
-reassoc = ["-Mfma", "-Mfprelaxed"]
+strict = ["-Kieee", "-Mnofma", "-Mvect=noassoc"]
+contract = ["-Kieee", "-Mfma", "-Mvect=noassoc"]
+noerrno = ["-Kieee", "-Mfma", "-Mvect=noassoc"]  # nvc has no errno switch and vectorizes libm with its own vector math
+reassoc = ["-Kieee", "-Mfma"]  # without -Kieee nvc folds NaN comparisons, which only the fast level may assume
 fast = ["-fast"]
 
 [compilers.nvhpc.cost_model]
@@ -277,20 +275,8 @@ no_vec = ["-Mnovect"]
 [compilers.nvhpc.isa]  # -tp names a CPU model; only the generic AVX2 one is listed
 avx2 = ["-tp=haswell"]
 
-# Readable-codegen knobs (compiler.cpu.codegen_params); the first value is DaCe's default.
+# Readable-codegen knobs (compiler.cpu.codegen_params); the first value is DaCe's default. DaCe's indices stay int64.
 [codegen.knobs]
-loop_access_form = ["indexed", "ptr_increment"]
 heap_ptr_restrict = ["restrict", "none"]
 const_scalar_abi = ["by_ref", "by_value"]
-decl_placement = ["eager", "late"]
-scalar_init_style = ["split", "fused"]
-
-# Index width moves as one axis: int32 helpers under int64 counters cost gcc its vectorization
-# (samples/index_width), so only matched pairs are candidates.
-[codegen.index_widths.int64]
-index_ctype = "int64"
-loop_index_type = "inferred"
-
-[codegen.index_widths.int32]
-index_ctype = "int32"
-loop_index_type = "int32"
+scalar_decl = ["eager", "late"]

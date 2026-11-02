@@ -159,6 +159,8 @@ def innermost_loops(code: list[Instruction]) -> list[Loop]:
         if target is not None and int(target.group(1), 16) < i.address:
             spans.append((int(target.group(1), 16), i.address))
     inner = [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
+    moving = [s for s in inner if any(s[0] <= i.address < s[1] and moves_data(i) for i in code)]
+    inner = moving or inner  # an outer latch laid out past the function's return moves nothing
     loops = []
     for start, end in inner:
         body = tuple(i for i in code if start <= i.address < end and not is_branch(i))
@@ -166,6 +168,11 @@ def innermost_loops(code: list[Instruction]) -> list[Loop]:
         lines = frozenset(i.line for i in body if i.line)
         loops.append(Loop(tuple(i for i in body if not CALL.match(i.mnemonic)), calls, lines))
     return loops
+
+
+def moves_data(i: Instruction) -> bool:
+    """Whether ``i`` reads or writes memory."""
+    return "(" in i.operands or "[" in i.operands
 
 
 @functools.lru_cache(maxsize=1, typed=True)
@@ -379,9 +386,9 @@ def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None)
 def choose(
     rep: ScopeReport, verdicts: dict[str, Verdict], predicted: Predictions, matrix: Matrix, *, finite_inputs: bool
 ) -> Build:
-    """The scope's speculative winner: among the correct distinct builds within :data:`TIE` of the fewest predicted
-    cycles per element (all of them when none is predicted), the default FP level's (:func:`fp.default_level`), then
-    the first in sweep order. Without verdicts
+    """The scope's speculative winner: among the correct distinct builds at or below the default FP level
+    (:func:`fp.default_level`) within :data:`TIE` of the fewest predicted cycles per element (all of them when none is
+    predicted), the default level's, then the first in sweep order. Without verdicts
     (no manifest) every build that compiled counts as correct."""
     scores = predicted.get(rep.scope.symbol, {})
     level = fp.default_level(matrix, rep.scope, finite_inputs=finite_inputs)
@@ -395,6 +402,9 @@ def choose(
     usable = [(order, b) for order, b in enumerate(rep.builds) if correct(b)]
     if not usable:
         return rep.builds[0]
+    levels = list(matrix.fp_levels)
+    allowed = levels[: levels.index(level) + 1]  # a scope's default level is as far as a speculative pick relaxes
+    usable = [item for item in usable if item[1].candidate.resolved(matrix)[0] in allowed] or usable
     cheapest = min(cost(b) for _, b in usable)
     tied = [(order, b) for order, b in usable if cost(b) <= cheapest * (1 + TIE)]
-    return min(tied, key=lambda item: (item[1].candidate.resolved(matrix)[1] != level, item[0]))[1]
+    return min(tied, key=lambda item: (item[1].candidate.resolved(matrix)[0] != level, item[0]))[1]

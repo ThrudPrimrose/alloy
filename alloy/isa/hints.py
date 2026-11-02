@@ -8,10 +8,13 @@ status and traps). The hints are never generic: they name the actual tasklets an
 
 import ast
 import dataclasses
+from collections import Counter
 
+from alloy.isa.mathcheck import validate_kernel
 from alloy.isa.mathkernels import LEVELS, functions, kernel, render, target_of
 from alloy.isa.ops import OPS
 from alloy.isa.table import DTYPES, Table, load
+from alloy.isa.validate import host_can_run, validate
 
 __all__ = ["Hint", "OpUse", "Spelling", "advice", "tasklet_hints"]
 
@@ -22,6 +25,7 @@ OP_NAMES: dict[type, str] = {
     ast.Mult: "mul",
     ast.Div: "div",
     ast.Mod: "mod",
+    ast.Pow: "pow",
     ast.BitAnd: "and",
     ast.BitOr: "or",
     ast.LShift: "shl",
@@ -34,6 +38,9 @@ CALL_NAMES: dict[str, str] = {
     "fabs": "abs",
     "abs": "abs",
     "fmod": "mod",
+    "py_mod": "mod",
+    "PyMod": "mod",
+    "ITE": "select",
     "sin": "sin",
     "cos": "cos",
     "exp": "exp",
@@ -101,14 +108,16 @@ OP_ORDER = (
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class OpUse:
-    """What one tasklet computes: its label, the abstract ops (and calls) it makes, and whether it
-    reduces (a summing write-conflict on an output edge)."""
+    """What one tasklet or library node computes: its label, the abstract ops, what the table cannot spell
+    (``skipped``), whether it reduces (a summing write-conflict) or under which other conflict (``conflict``), and
+    the lane it computes in (``dtype``, empty for lanes the table has no spelling for, ``""`` also for complex)."""
 
     tasklet: str
-    language: str
     ops: tuple[str, ...]
-    calls: tuple[str, ...]
+    skipped: tuple[str, ...]
     reduces: bool
+    conflict: str = ""
+    dtype: str = ""
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -132,55 +141,108 @@ class Hint:
     spellings: tuple[Spelling, ...]
 
 
-def op_uses(sdfg) -> list[OpUse]:
-    """Every tasklet of ``sdfg`` and what it computes, in SDFG order."""
+def expression_ops(code: str) -> tuple[set[str], set[str]]:
+    """The abstract ops of a Python tasklet's expressions, and what the table has no op for."""
+    ops: set[str] = set()
+    skipped: set[str] = set()
+    for child in ast.walk(ast.parse(code)):
+        if isinstance(child, ast.BinOp | ast.AugAssign):
+            name = OP_NAMES.get(type(child.op))
+            ops.add(name) if name else skipped.add(type(child.op).__name__)
+            if isinstance(child, ast.BinOp) and is_fused(child):
+                ops.add("fma")
+        elif isinstance(child, ast.UnaryOp) and isinstance(child.op, ast.USub):
+            if not isinstance(child.operand, ast.Constant):
+                ops.add("neg")
+        elif isinstance(child, ast.BoolOp):
+            ops.add("land" if isinstance(child.op, ast.And) else "lor")
+        elif isinstance(child, ast.IfExp | ast.If):
+            ops.add("select")
+        elif isinstance(child, ast.Compare):
+            skipped.add("compare")
+        elif isinstance(child, ast.Call):
+            name = ast.unparse(child.func).rsplit(".", 1)[-1]
+            ops.add(CALL_NAMES[name]) if name in CALL_NAMES else skipped.add(name)
+    return ops, skipped
+
+
+def is_fused(node: ast.BinOp) -> bool:
+    """A product summed in one expression, which an fma can fuse."""
+    if not isinstance(node.op, ast.Add | ast.Sub):
+        return False
+    return any(isinstance(side, ast.BinOp) and isinstance(side.op, ast.Mult) for side in (node.left, node.right))
+
+
+def is_copy(code: str) -> bool:
+    """A tasklet that only forwards a value: ``out = in``."""
+    body = ast.parse(code).body
+    return len(body) == 1 and isinstance(body[0], ast.Assign) and isinstance(body[0].value, ast.Name)
+
+
+def lane_of(state, node) -> str:
+    """The lane a node writes in, or ``""`` when the table has no spelling for it (complex, narrow integers)."""
+    import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
+
+    names = {dace.float64: "f64", dace.float32: "f32", dace.float16: "f16", dace.int64: "i64", dace.int32: "i32"}
+    for edge in state.out_edges(node):
+        if edge.data.data is not None:
+            return names.get(state.sdfg.arrays[edge.data.data].dtype, "")
+    return ""
+
+
+def conflict_of(state, node) -> str:
+    """The write-conflict ``node``'s output meets, on its memlet tree or past a private access node, or ``""``."""
     import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
     from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
     from dace.sdfg import nodes  # noqa: PLC0415
 
+    for edge in state.out_edges(node):
+        forwarded = state.out_edges(edge.dst) if isinstance(edge.dst, nodes.AccessNode) else []
+        walked = [edge, *state.memlet_tree(edge), *(e for f in forwarded for e in [f, *state.memlet_tree(f)])]
+        for e in walked:
+            if e.data.wcr is not None:
+                return str(detect_reduction_type(e.data.wcr)).rsplit(".", 1)[-1]
+    return ""
+
+
+def library_use(state, node) -> OpUse:
+    """A library node: its name in the advice, a reduce by its conflict, the rest as sum-of-products."""
+    from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
+    from dace.libraries.standard.nodes import Reduce  # noqa: PLC0415
+
+    if isinstance(node, Reduce):
+        kind = str(detect_reduction_type(node.wcr)).rsplit(".", 1)[-1]
+        ops, conflict = ("reduce_add",) if kind == "Sum" else (), "" if kind == "Sum" else kind
+        return OpUse(node.label, ops, (type(node).__name__,), kind == "Sum", conflict, lane_of(state, node))
+    return OpUse(node.label, ("fma", "reduce_add"), (type(node).__name__,), False, "", lane_of(state, node))
+
+
+def op_uses(sdfg) -> list[OpUse]:
+    """Every computing tasklet and library node of ``sdfg`` and what it computes, in SDFG order."""
+    import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
+    from dace.sdfg import nodes  # noqa: PLC0415
+
     uses = []
     for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.LibraryNode) and isinstance(state, dace.SDFGState):
+            uses.append(library_use(state, node))
         if not isinstance(node, nodes.Tasklet):
             continue
         ops: set[str] = set()
-        calls: tuple[str, ...] = ()
+        skipped: set[str] = set()
+        kind = conflict_of(state, node) if isinstance(state, dace.SDFGState) else ""
         if node.code.language == dace.Language.Python:
-            tree = ast.parse(node.code.as_string)
-            for child in ast.walk(tree):
-                if isinstance(child, ast.BinOp) and type(child.op) in OP_NAMES:
-                    ops.add(OP_NAMES[type(child.op)])
-                elif isinstance(child, ast.UnaryOp) and isinstance(child.op, ast.USub):
-                    ops.add("neg")
-                elif isinstance(child, ast.BoolOp):
-                    ops.add("land" if isinstance(child.op, ast.And) else "lor")
-                elif isinstance(child, ast.IfExp):
-                    ops.add("select")
-                elif isinstance(child, ast.Call):
-                    name = ast.unparse(child.func).rsplit(".", 1)[-1]
-                    if name in CALL_NAMES:
-                        ops.add(CALL_NAMES[name])
-                    calls += (name,)
-        reduces = False
-        if isinstance(state, dace.SDFGState):
-            for edge in state.out_edges(node):
-                # the summing write-conflict may sit on this edge or anywhere up its memlet tree
-                # (e.g. only on the enclosing map exit's edge); check the whole path
-                tree = {id(e): e for e in [edge, *state.memlet_tree(edge)]}.values()
-                if any(
-                    e.data.wcr is not None and detect_reduction_type(e.data.wcr) == dace.dtypes.ReductionType.Sum
-                    for e in tree
-                ):
-                    reduces = True
-                    break
-        if {"mul", "add"} <= ops or {"mul", "sub"} <= ops:
-            ops.add("fma")  # contractable pair: name the fused form too
+            if is_copy(node.code.as_string) and not kind:
+                continue
+            ops, skipped = expression_ops(node.code.as_string)
+        dtype = lane_of(state, node) if isinstance(state, dace.SDFGState) else ""
         ordered = tuple(op for op in OP_ORDER if op in ops)
-        uses.append(OpUse(node.label, str(node.code.language).split(".")[-1], ordered, calls, reduces))
+        uses.append(OpUse(node.label, ordered, tuple(sorted(skipped)), kind == "Sum", kind if kind != "Sum" else "", dtype))
     return uses
 
 
 def use_kind(use: OpUse) -> str:
-    if use.reduces:
+    if use.reduces or use.conflict:
         return "reduction"
     if any(op in functions() for op in use.ops):
         return "libm (no native instruction: inline a kernel or call the vector library)"
@@ -192,8 +254,6 @@ def op_spelling(
 ) -> Spelling | None:
     """The target spelling for one abstract op, with its trap and validation verdict, or None when the
     op is not in the table for (isa, dtype) (e.g. integer ops on a float dtype)."""
-    from alloy.isa.validate import host_can_run, validate  # noqa: PLC0415
-
     if op not in OPS:
         return kernel_spelling(isa, dtype, op, recommended)
     try:
@@ -202,21 +262,19 @@ def op_spelling(
         return None
     if op not in verdicts:
         verdicts[op] = validate(isa, op, dtype, table).ok if host_can_run(isa, dtype) else None
-    trap = entry.note if "trap" in entry.note else ""
     if entry.intrinsic:
         spelling = entry.intrinsic
     elif entry.recipe:
-        spelling = "recipe: " + " -> ".join(entry.recipe[:3]) + (" -> ..." if len(entry.recipe) > 3 else "")
+        spelling = "recipe: " + " -> ".join(entry.recipe)
     elif entry.approximations:
-        best = table.approx[entry.approximations[-1]]
         libraries = ", ".join(f"{k} {v}" for k, v in entry.libraries.items()) or "a vector math library"
         spelling = (
             f"{kernel_summary(isa, dtype, op, recommended)}; "
-            f"or tier '{entry.approximations[-1]}' ({best.error_ulp:.4g} ulp) or call {libraries}"
+            f"or call {libraries}"
         )
     else:
         spelling = "(no spelling)"
-    return Spelling(op, spelling, entry.signature, trap, verdicts[op])
+    return Spelling(op, spelling, entry.signature, entry.note, verdicts[op])
 
 
 def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
@@ -229,28 +287,32 @@ def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
         for level in LEVELS
     )
     pick = f"; take {recommended}" if recommended else ""
-    return f"inline intrinsics: {levels}{pick}; `python -m alloy.isa kernel {isa} {fn} {dtype}`"
+    return f"inline intrinsics: {levels}{pick}; ask `kernel {isa} {fn} {dtype}` for the C"
 
 
 def kernel_spelling(isa: str, dtype: str, fn: str, recommended: str = "") -> Spelling | None:
-    """The hint of a math function outside the abstract ops; its kernels are gated when generated and by CI."""
+    """The hint of a math function outside the abstract ops, with the gate's verdict on its recommended kernel."""
     if dtype not in DTYPES:
         return None
-    return Spelling(fn, kernel_summary(isa, dtype, fn, recommended), "(v) -> v", "", None)
+    level = recommended or LEVELS[0]
+    arguments = ", ".join(kernel(fn, dtype, level).args)
+    verdict = validate_kernel(fn, dtype, level, target_of(isa)).ok
+    return Spelling(fn, kernel_summary(isa, dtype, fn, recommended), f"({arguments}) -> v", "", verdict)
 
 
 def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None, recommended: str = "") -> list[Hint]:
-    """Every tasklet's do-it-yourself hints for ``(isa, dtype)`` — relevant spellings, traps, and how
-    each was validated on this host. ``recommended`` names the kernel level the build should take."""
+    """Every tasklet's do-it-yourself hints for ``isa`` in the tasklet's own lane (``dtype`` when it has none) --
+    relevant spellings, traps, and how each was validated on this host. ``recommended`` names the kernel level the
+    build should take."""
     table = table or load()
-    verdicts: dict[str, bool | None] = {}
+    verdicts: dict[tuple[str, str], dict[str, bool | None]] = {}
     hints = []
     for use in op_uses(sdfg):
+        lane = use.dtype or dtype
         ops = ("reduce_add",) + use.ops if use.reduces and "reduce_add" not in use.ops else use.ops
+        known = verdicts.setdefault((isa, lane), {})
         spellings = tuple(
-            spelling
-            for op in ops
-            if (spelling := op_spelling(table, isa, dtype, op, verdicts, recommended)) is not None
+            spelling for op in ops if (spelling := op_spelling(table, isa, lane, op, known, recommended)) is not None
         )
         hints.append(Hint(use, use_kind(use), spellings))
     return hints
@@ -272,21 +334,42 @@ def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None, 
     lines = [
         f"Reason: {reason}",
         "",
-        "Do it yourself: hand-write the loop in C with intrinsics — read the alloy skill's isa/ "
-        "pages for the machine model and traps, `python -m alloy.isa lookup` for spellings, and "
-        "verify each op with `python -m alloy.isa validate`.",
+        "Do it yourself: hand-write the loop in C with intrinsics. Spellings come from `lookup`, math functions from "
+        "`kernel`, loop shapes from `skeleton`: the `alloy_isa` tool in a benchmark, `python -m alloy.isa` elsewhere.",
         "",
         f"Relevant hints from your tasklets ({isa}/{dtype}):",
         "",
     ]
-    for hint in tasklet_hints(sdfg, isa, dtype, table, recommended):
-        use = hint.use
-        ops = ", ".join(use.ops) if use.ops else "(no recognized ops)"
-        suffix = "; reduces via summing write-conflict" if use.reduces else ""
-        lines.append(f"- tasklet '{use.tasklet}' [{hint.kind}]: {ops}{suffix}")
-        for spelling in hint.spellings:
-            sig = f" {spelling.signature}" if spelling.signature else ""
-            lines.append(f"    {spelling.op}: {spelling.spelling}{sig}  [{VERDICT_WORDS[spelling.verified]}]")
-            if spelling.trap:
-                lines.append(f"      trap: {spelling.trap}")
+    hints = tasklet_hints(sdfg, isa, dtype, table, recommended)
+    repeats = Counter((hint.use.ops, hint.use.skipped, hint.kind) for hint in hints)
+    shown: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
+    for hint in hints:
+        key = (hint.use.ops, hint.use.skipped, hint.kind)
+        if key in shown:
+            continue
+        shown.add(key)
+        lines += hint_lines(hint, repeats[key])
+    if not hints:
+        lines.append("- no tasklet or library node computes here")
     return "\n".join(lines)
+
+
+def hint_lines(hint: Hint, repeats: int) -> list[str]:
+    """One hint's lines; ``repeats`` tasklets share it."""
+    use = hint.use
+    ops = ", ".join(use.ops) if use.ops else "(no recognized ops)"
+    times = f" and {repeats - 1} more like it" if repeats > 1 else ""
+    suffix = "; reduces via summing write-conflict" if use.reduces else ""
+    if use.conflict:
+        suffix = f"; reduces via a {use.conflict} write-conflict, which the table has no reduction for"
+    if use.skipped:
+        suffix += f"; no table row for {', '.join(use.skipped)}"
+    if not use.dtype and not use.reduces:
+        suffix += "; check the lane type: the table has no complex or narrow integer rows"
+    lines = [f"- tasklet '{use.tasklet}'{times} [{hint.kind}]: {ops}{suffix}"]
+    for spelling in hint.spellings:
+        sig = f" {spelling.signature}" if spelling.signature else ""
+        lines.append(f"    {spelling.op}: {spelling.spelling}{sig}  [{VERDICT_WORDS[spelling.verified]}]")
+        if spelling.trap:
+            lines.append(f"      note: {spelling.trap}")
+    return lines

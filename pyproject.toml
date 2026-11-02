@@ -37,7 +37,6 @@ alloy = "alloy.hb_plugin"
 # Alloy as DaCe's build: SDFG.compile hands over when DaCe's compiler.build_plugin names one of these.
 [project.entry-points."dace.build_plugins"]
 alloy-speculative = "alloy.dace_backend:speculative"
-alloy-profile = "alloy.dace_backend:profile"
 
 [tool.setuptools.packages.find]
 include = ["alloy*"]

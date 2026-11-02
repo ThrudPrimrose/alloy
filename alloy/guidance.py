@@ -37,7 +37,8 @@ def scope_reason(rep: ScopeReport, verdicts: Mapping[str, Verdict], winner: Buil
 
 
 def scope_dtype(scope: Scope) -> str:
-    """The float lane the scope computes in: f64 when any container is, f32 when only f32 is, f64 by default."""
+    """The default lane of the scope's advice, for a tasklet whose own lane cannot be read: f64 when any container
+    is, f32 when only f32 is, f64 by default."""
     floats = {desc.dtype for desc in scope.sdfg.arrays.values()}
     return "f32" if dtypes.float32 in floats and dtypes.float64 not in floats else "f64"
 

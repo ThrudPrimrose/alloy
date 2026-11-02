@@ -130,19 +130,6 @@ def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | N
     return snapped
 
 
-def largest_array(manifest: Manifest, sdfg: dace.SDFG) -> int:
-    """Element count of the largest array of ``sdfg`` over the manifest's size presets: what a flat index reaches."""
-    return max(
-        (
-            int(dace.symbolic.evaluate(d.total_size, {**sizes}))
-            for sizes in presets(manifest)
-            for d in sdfg.arrays.values()
-            if {str(s) for s in dace.symbolic.pystr_to_symbolic(str(d.total_size)).free_symbols} <= sizes.keys()
-        ),
-        default=0,
-    )
-
-
 #: Calls defined on only part of the reals: an input that may reach one has a domain only a manifest states.
 DOMAIN_CALLS = frozenset(
     {
