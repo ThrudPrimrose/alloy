@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve")
     kernel_p.add_argument("function", help="sin, cos, tan, exp, exp2, exp10, expm1, log (ln), log2, log10, log1p, ...")
     kernel_p.add_argument("dtype", help="f64 or f32")
-    kernel_p.add_argument("--level", choices=("strict", "relaxed", "fast"), help="one level; default all three")
+    kernel_p.add_argument("--level", choices=LEVELS, help="one level; default all three")
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
     commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
@@ -189,6 +189,10 @@ def report_failure(verdict: Verdict) -> int:
     return 3
 
 
+#: How a verdict reads in the C comment under an answer.
+MARKS = {True: "verified", None: "unverified", False: "FAILED"}
+
+
 def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
     """The kernels as C. Exit code 3 when one fails its gate."""
     table.isa(isa)
@@ -205,8 +209,7 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
             print(f"// or call {library}: {call}")
         if verify:
             verdict = validate_kernel(k.fn, dtype, name, target)
-            mark = {True: "verified", None: "unverified", False: "FAILED"}[verdict.ok]
-            print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+            print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
             status = 3 if verdict.ok is False else status
         print()
     return status
@@ -355,8 +358,7 @@ def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bo
     print(skeleton(table, isa, schedule, dtype))
     if verify:
         verdict = verify_skeleton(isa, schedule, dtype, table)
-        mark = "verified" if verdict.ok else ("unverified" if verdict.ok is None else "FAILED")
-        print(f"// {mark}: {verdict.basis}; {verdict.detail}")
+        print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
         if verdict.ok is False:
             return 3
     return 0
