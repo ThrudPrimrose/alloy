@@ -292,9 +292,10 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}
+    judge = judge_client()
     pick = library(task, spec, linker, chosen, deliver)
     baseline = library(task, spec, linker, references, deliver)
-    better = chosen != references and faster_correct(judge_client(), pick, baseline, task.kernel)
+    better = chosen != references and faster_correct(judge, pick, baseline, task.kernel)
     # every deliver builds the same .so path, so the returned library is built last
     return library(task, spec, linker, chosen if better else references, deliver)
 
