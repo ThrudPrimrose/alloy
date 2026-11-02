@@ -132,25 +132,7 @@ def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | N
 
 #: Calls defined on only part of the reals: an input that may reach one has a domain only a manifest states.
 DOMAIN_CALLS = frozenset(
-    {
-        "sqrt",
-        "log",
-        "log2",
-        "log10",
-        "log1p",
-        "pow",
-        "asin",
-        "acos",
-        "acosh",
-        "atanh",
-        "lgamma",
-        "tgamma",
-        "fmod",
-        "py_mod",
-        "PyMod",
-        "FtnMod",
-        "CMod",
-    }
+    "sqrt log log2 log10 log1p pow asin acos acosh atanh lgamma tgamma fmod py_mod PyMod FtnMod CMod".split()
 )
 #: Sizes of the derived draws: odd, so a vector loop has a remainder, and different per draw.
 DERIVED_SIZES = (37, 61)

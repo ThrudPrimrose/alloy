@@ -32,78 +32,28 @@ OP_NAMES: dict[type, str] = {
     ast.RShift: "shr",
 }
 
-#: Function calls a tasklet may make -> abstract op names (sqrt and the transcendentals the table tiers).
+#: Function calls a tasklet may make -> abstract op names: the renamed ones, then those spelled like their op.
 CALL_NAMES: dict[str, str] = {
-    "sqrt": "sqrt",
     "fabs": "abs",
-    "abs": "abs",
     "fmod": "mod",
     "py_mod": "mod",
     "PyMod": "mod",
     "ITE": "select",
-    "sin": "sin",
-    "cos": "cos",
-    "exp": "exp",
-    "min": "min",
-    "max": "max",
     "ln": "log",
-    "log": "log",
-    "log2": "log2",
-    "log10": "log10",
-    "log1p": "log1p",
-    "exp2": "exp2",
-    "exp10": "exp10",
-    "expm1": "expm1",
-    "tan": "tan",
-    "atan": "atan",
-    "asin": "asin",
-    "acos": "acos",
-    "sinh": "sinh",
-    "cosh": "cosh",
-    "tanh": "tanh",
-    "pow": "pow",
+    **{
+        name: name
+        for name in (
+            "sqrt abs sin cos tan exp exp2 exp10 expm1 min max log log2 log10 log1p atan asin acos sinh cosh tanh pow"
+        ).split()
+    },
 }
 
 #: Ops a tasklet's arithmetic maps to, in a readable order.
-OP_ORDER = (
-    "reduce_add",
-    "fma",
-    "sin",
-    "cos",
-    "tan",
-    "exp",
-    "exp2",
-    "exp10",
-    "expm1",
-    "log",
-    "log2",
-    "log10",
-    "log1p",
-    "pow",
-    "atan",
-    "asin",
-    "acos",
-    "sinh",
-    "cosh",
-    "tanh",
-    "sqrt",
-    "mod",
-    "div",
-    "mul",
-    "add",
-    "sub",
-    "min",
-    "max",
-    "abs",
-    "neg",
-    "lt",
-    "select",
-    "and",
-    "or",
-    "shl",
-    "shr",
-    "land",
-    "lor",
+OP_ORDER = tuple(
+    (
+        "reduce_add fma sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow atan asin acos sinh cosh tanh sqrt mod "
+        "div mul add sub min max abs neg lt select and or shl shr land lor"
+    ).split()
 )
 
 
