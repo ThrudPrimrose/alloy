@@ -197,7 +197,7 @@ def pieces(
 ) -> tuple[list[nodes.Node], list[nodes.Node]]:
     """The nodes of the pieces before and at the set, in graph order, with the copies of the values read past them."""
     code = [n for n in inside.nodes() if isinstance(n, nodes.CodeNode)]
-    piece = {n: 0 if n in upstream else 1 if n in chosen else 2 for n in code}
+    piece: dict[nodes.Node, int] = {n: 0 if n in upstream else 1 if n in chosen else 2 for n in code}
     the_set = [n for n in inside.nodes() if n in chosen]
     grouped: tuple[list[nodes.Node], ...] = ([n for n in code if n in upstream], the_set, [])
     for value in [n for n in inside.nodes() if isinstance(n, nodes.AccessNode)]:
