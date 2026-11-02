@@ -2,12 +2,16 @@
 """Verify every built candidate inside the whole program: a candidate is one archive copy plus a replayed DaCe build
 (command cache + precompiled header), built in a worker process (DaCe's configuration is process-wide) while earlier
 candidates run. Every other scope keeps its reference archive, and the outputs are compared against the all-reference
-program on the same inputs."""
+program on the same inputs. A child repeats its call, and a program with a reduction runs at several team sizes: a
+reduction that loses updates shows neither on a cold team nor at every size."""
 
+import dataclasses
+import itertools
 import multiprocessing
 import os
 import pathlib
 import queue
+import time
 import traceback
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -63,41 +67,66 @@ CALL_TIMEOUT_S = 600
 #: Seconds a child that sent nothing may take to exit before it is killed.
 JOIN_GRACE_S = 5
 
-#: One program call's outputs by name, or a string describing how its child died.
-Outcome = dict[str, np.ndarray] | str
+#: Calls of a program per child. The first finds a cold team, whose threads start so far apart on a small input that
+#: each can finish before the next begins, which hides a lost update; the later ones find the team awake.
+CHILD_CALLS = 16
+
+#: Seconds a child keeps repeating: the threads of a call this long overlap on a cold team too.
+CHILD_CALLS_S = 1.0
+
+#: OpenMP team sizes every draw of a program with a reduction runs at: libomp combines a team of up to 4 under a lock
+#: or atomically and a larger one in a tree, so the last size takes the tree path a 4-thread child never reaches.
+REDUCTION_TEAMS = (2, 3, 4, 5)
+
+#: One program call's outputs by name.
+Outputs = dict[str, np.ndarray]
+
+#: The distinct outputs of one child's calls, or a string describing how the child died.
+Outcome = list[Outputs] | str
 
 
-def openmp_env(cpus: tuple[int, ...]) -> dict[str, str]:
+def openmp_env(cpus: tuple[int, ...], threads: int) -> dict[str, str]:
     # Places name the slot's CPUs: in a VM the runtime's own topology can merge two of them into one "core".
     places = ",".join(f"{{{cpu}}}" for cpu in cpus)
-    return {"OMP_NUM_THREADS": str(len(cpus)), "OMP_PROC_BIND": "close", "OMP_PLACES": places}
+    return {"OMP_NUM_THREADS": str(threads), "OMP_PROC_BIND": "close", "OMP_PLACES": places}
 
 
-def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], share: float, conn: Any) -> None:
+def child_main(
+    target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], threads: int, share: float, conn: Any
+) -> None:
     # The fork server froze the environment it started with and loads no OpenMP runtime, so the runtime the program
     # library brings in reads this child's settings.
     os.sched_setaffinity(0, cpus)
-    os.environ.update(openmp_env(cpus))
+    os.environ.update(openmp_env(cpus, threads))
     try:
-        machine.limit_memory(share, len(cpus))
+        machine.limit_memory(share, threads)
         conn.send(target(*args))
     except Exception:  # a crash is a value: the caller reports why, not an exit code
         conn.send("raised: " + "".join(traceback.format_exc().splitlines(keepends=True)[-6:]))
 
 
-def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) -> dict[str, np.ndarray]:
+def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) -> list[Outputs]:
+    """The distinct outputs of up to :data:`CHILD_CALLS` calls on ``args``, for :data:`CHILD_CALLS_S` seconds."""
     from dace.codegen import compiler
 
     # an array that crossed the process boundary may arrive as a view on the pickle buffer, which dace refuses
-    args = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
+    buffers = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
     program = compiler.load_precompiled_sdfg(folder)
-    returned = program(**args)
-    return bound_outputs(outputs, args, returned, program.sdfg.arglist())
+    declared = program.sdfg.arglist()
+    distinct: dict[bytes, Outputs] = {}
+    deadline = time.monotonic() + CHILD_CALLS_S
+    for unused in range(CHILD_CALLS):
+        result = bound_outputs(outputs, buffers, program(**buffers), declared)
+        distinct.setdefault(b"".join(value.tobytes() for value in result.values()), result)
+        if time.monotonic() > deadline:
+            break
+        for k, v in args.items():
+            if isinstance(v, np.ndarray):
+                np.copyto(buffers[k], v)
+    return list(distinct.values())
 
 
-def bound_outputs(
-    outputs: tuple[str, ...], args: dict[str, Any], returned: Any, declared: dict[str, Any]
-) -> dict[str, np.ndarray]:
+def bound_outputs(outputs: tuple[str, ...], args: dict[str, Any], returned: Any, declared: dict[str, Any]) -> Outputs:
     """Each output's value: the argument the program writes, or, for a name it does not declare, its next return
     value in order. A manifest may name a returned output, and its buffer in the draw is then never written."""
     values = iter(returned if isinstance(returned, tuple | list) else () if returned is None else (returned,))
@@ -124,13 +153,20 @@ def slot_share() -> float:
 
 
 def in_child(
-    target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], share: float, timeout: float = CALL_TIMEOUT_S
+    target: Callable[..., Any],
+    args: tuple,
+    cpus: tuple[int, ...],
+    share: float,
+    timeout: float = CALL_TIMEOUT_S,
+    threads: int | None = None,
 ) -> Any:
-    """``target(*args)`` in a fork-server child bound to ``cpus``, capped at ``share`` of the available memory and
-    killed after ``timeout`` seconds, so a crash is a value: a string describing it."""
+    """``target(*args)`` in a fork-server child bound to ``cpus`` with an OpenMP team of ``threads`` (default one per
+    CPU), capped at ``share`` of the available memory and killed after ``timeout`` seconds, so a crash is a value: a
+    string describing it."""
     ctx = child_context()
     receive, send = ctx.Pipe(duplex=False)
-    child = ctx.Process(target=child_main, args=(target, args, cpus, share, send))
+    team = len(cpus) if threads is None else threads
+    child = ctx.Process(target=child_main, args=(target, args, cpus, team, share, send))
     child.start()
     send.close()
     result = None
@@ -150,11 +186,11 @@ def in_child(
 
 
 def run(folder: pathlib.Path, draw: Draw, outputs: tuple[str, ...], cpus: tuple[int, ...] | None = None) -> Outcome:
-    """The outputs of one call of the program built in ``folder`` on a fresh copy of ``draw`` (the child unpickles
-    its own), in a child bound to ``cpus`` (default: the first core slot)."""
+    """The distinct outputs of the program built in ``folder``, repeated on fresh copies of ``draw`` (the child
+    unpickles its own), in a child bound to ``cpus`` (default: the first core slot) on the draw's team."""
     args = {**draw.values, **draw.sizes}
     slot = machine.core_slots()[0] if cpus is None else cpus
-    return in_child(call_program, (str(folder), args, outputs), slot, slot_share())
+    return in_child(call_program, (str(folder), args, outputs), slot, slot_share(), threads=draw.threads)
 
 
 class Children:
@@ -235,14 +271,15 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
     return Verdict("pass" if ok else "fail", float(err), detail)
 
 
-#: Reference runs per draw. An output that differs between them is nondeterministic -- a parallel reduction that
-#: combines its partial sums in whatever order the threads finish -- and is compared under ``band`` at every level.
+#: Reference runs per draw. An output that differs between them, or between the calls of one run, is nondeterministic
+#: -- a parallel reduction that combines its partial sums in whatever order the threads finish -- and is compared
+#: under ``band`` at every level.
 REFERENCE_RUNS = 3
 
 
 @dataclass(slots=True, frozen=True)
 class Reference:
-    outputs: list[dict[str, np.ndarray]]
+    outputs: list[Outputs]
     nondeterministic: frozenset[str]
 
 
@@ -275,26 +312,36 @@ def reference_from(cases: Cases, per_draw: list[list[Outcome]]) -> Reference:
         failed = [r for r in runs if isinstance(r, str)]
         if failed:
             raise RuntimeError(f"the reference program crashed: {failed[0]}")
-        first, *rest = (r for r in runs if not isinstance(r, str))
+        first, *rest = itertools.chain.from_iterable(r for r in runs if not isinstance(r, str))
         unstable |= {n for n in cases.outputs for r in rest if not np.array_equal(first[n], r[n], equal_nan=True)}
         outputs.append(first)
     return Reference(outputs, frozenset(unstable))
 
 
 def judge(tolerance: str, ref: Reference, vals: list[Outcome], lengths: list[int]) -> Verdict:
-    """The worst verdict over every iteration and output; nondeterministic outputs always use ``band``."""
+    """The worst verdict over every iteration, every distinct result of its child and every output; nondeterministic
+    outputs always use ``band``."""
     worst = Verdict("exact")
     for expected_outputs, val, length in zip(ref.outputs, vals, lengths, strict=True):
         if isinstance(val, str):
             return Verdict("crashed", detail=val)
-        for name, expected in expected_outputs.items():
+        for result, (name, expected) in itertools.product(val, expected_outputs.items()):
             level = "band" if name in ref.nondeterministic else tolerance
-            verdict = compare(level, expected, val[name], length, str(np.real(expected).dtype))
+            verdict = compare(level, expected, result[name], length, str(np.real(expected).dtype))
             if not verdict.ok:
                 return Verdict(verdict.status, verdict.error, f"{name}: {verdict.detail}")
             if verdict.status == "pass" and verdict.error >= worst.error:
                 worst = verdict
     return worst
+
+
+def at_team_sizes(program: Program, cases: Cases) -> Cases:
+    """``cases`` at every size of :data:`REDUCTION_TEAMS` when ``program`` reduces, else as they are: a reference and
+    a candidate are compared at one team size, as a partial sum's rounding depends on the size."""
+    if not any(scope.has_reduction for scope in program.scopes):
+        return cases
+    draws = [dataclasses.replace(d, threads=size) for d in cases.draws for size in REDUCTION_TEAMS]
+    return Cases(draws, cases.outputs)
 
 
 def verify(
@@ -304,6 +351,7 @@ def verify(
     parallel children as each is built; a duplicate object is judged on its original's outputs at its own FP level."""
     if not cases.draws or not cases.outputs:
         raise ValueError("verification needs at least one draw and one output")
+    cases = at_team_sizes(program, cases)
     linker = Linker(program, matrix, out)
     reference = {rep.scope.symbol: built(rep.builds[0]) for rep in reports}
     ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
@@ -339,7 +387,7 @@ def verify(
             pending[key] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
-    reference_runs: list[Outcome] = [*refs.outputs]
+    reference_runs: list[Outcome] = [[outputs] for outputs in refs.outputs]
     for rep in reports:
         ran[rep.scope.symbol, rep.builds[0].name] = reference_runs
     verdicts = {rep.scope.symbol: judge_scope(rep, matrix, refs, ran, lengths) for rep in reports}
