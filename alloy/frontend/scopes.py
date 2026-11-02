@@ -8,12 +8,17 @@ from typing import Any
 
 import dace
 import sympy
+from dace.libraries.blas import nodes as blas
 from dace.libraries.standard.nodes import ArgReduce, Reduce, Scan, external_call
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import passes
 
 CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+#: A BLAS node that sums products: a threaded vendor library folds them per thread, like a reduction.
+BLAS_SUM = (blas.Dot, blas.Gemm, blas.Gemv, blas.MatMul, blas.Symm, blas.Symv, blas.Syr2k, blas.Syrk)
+#: Library nodes that accumulate.
+REDUCING = (Reduce, Scan, ArgReduce, *BLAS_SUM)
 
 
 @dataclass(slots=True, frozen=True)
@@ -52,9 +57,9 @@ def called_names(sdfg: dace.SDFG) -> set[str]:
 
 
 def has_reduction(sdfg: dace.SDFG) -> bool:
-    """Whether ``sdfg`` reduces: a write-conflict-resolution memlet or a reduce/scan library node."""
+    """Whether ``sdfg`` reduces: a write-conflict-resolution memlet or a library node of :data:`REDUCING`."""
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Reduce | Scan | ArgReduce):
+        if isinstance(node, REDUCING):
             return True
     return any(
         edge.data.wcr is not None for edge, _ in sdfg.all_edges_recursive() if isinstance(edge.data, dace.Memlet)
@@ -87,9 +92,13 @@ def volume(edge: MultiConnectorEdge[dace.Memlet]) -> sympy.Expr:
     return sympy.Integer(1) * sympy.sympify(subset.num_elements())
 
 
-def library_length(state: dace.SDFGState, node: Reduce | ArgReduce | Scan) -> sympy.Expr:
-    """A reduce's input elements per output element; a scan's whole input (its longest prefix bounds the chain)."""
-    total = volume(next(e for e in state.in_edges(node) if not e.data.is_empty()))
+def library_length(state: dace.SDFGState, node: nodes.LibraryNode) -> sympy.Expr:
+    """A reduce's input elements per output element; a scan's whole input (its longest prefix bounds the chain); a BLAS
+    sum's longest input extent, which bounds how many products meet in one element."""
+    inputs = [e for e in state.in_edges(node) if not e.data.is_empty()]
+    if isinstance(node, BLAS_SUM):
+        return sympy.Max(*(sympy.sympify(extent) for e in inputs for extent in e.data.subset.size()))
+    total = volume(inputs[0])
     if isinstance(node, Scan):
         return total
     return total / volume(next(e for e in state.out_edges(node) if not e.data.is_empty()))
@@ -97,7 +106,7 @@ def library_length(state: dace.SDFGState, node: Reduce | ArgReduce | Scan) -> sy
 
 def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
     """The longest accumulation chain of ``sdfg``: the reduced map extent around each WCR edge (times a nested SDFG's
-    own length), or a reduce/scan node's :func:`library_length`. A sequential loop into a scalar does not count."""
+    own length), or a reducing library node's :func:`library_length`. A sequential loop into a scalar does not count."""
     lengths: list[sympy.Expr] = []
     for state in sdfg.states():
         scope = state.scope_dict()
@@ -109,7 +118,7 @@ def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
             elif isinstance(edge.src, nodes.NestedSDFG):
                 lengths.append(reduced_extent(edge, scope) * accumulation_length(edge.src.sdfg))
         lengths += [accumulation_length(n.sdfg) for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
-        lengths += [library_length(state, n) for n in state.nodes() if isinstance(n, Reduce | ArgReduce | Scan)]
+        lengths += [library_length(state, n) for n in state.nodes() if isinstance(n, REDUCING)]
     known = [length for length in lengths if length != 1]
     if not known:
         return sympy.Integer(1)
