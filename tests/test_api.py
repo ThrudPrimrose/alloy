@@ -87,5 +87,8 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     assert sut.verification is not None and sut.timings is not None
     verdicts = sut.verification.verdicts[scope.symbol]
     assert all(verdicts[build.name].ok for build in report.builds if not build.duplicate_of)
+    assert {"c_gcc_strict_default_none_serial", "c_clang_strict_default_none_serial"} <= set(
+        sut.timings.scopes[scope.symbol].screen
+    ), "the serial builds are screened like any other candidate"
     full = sut.timings.program.arms["alloy_full"]
     assert full.verdict.ok and math.isfinite(full.median)

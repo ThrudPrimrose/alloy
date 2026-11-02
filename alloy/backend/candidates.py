@@ -18,7 +18,7 @@ class Candidate:
     """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
     an empty ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
     flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail; ``fission`` renders the scope with its
-    maps cut by :func:`fission.cuts`."""
+    maps cut by :func:`fission.cuts`; ``serial`` builds the same source with no OpenMP region."""
 
     language: str
     compiler: str
@@ -29,6 +29,7 @@ class Candidate:
     isa: str = ""
     tail: str = ""
     fission: bool = False
+    serial: bool = False
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str]:
@@ -43,13 +44,14 @@ class Candidate:
     def name(self, matrix: Matrix) -> str:
         level, model = self.resolved(matrix)
         split = "fission" if self.fission else ""
+        threading = "serial" if self.serial else ""
         parts = [
             self.language,
             self.compiler,
             level,
             model,
             self.veclib,
-            *filter(None, (self.isa, self.tail, split)),
+            *filter(None, (self.isa, self.tail, split, threading)),
         ]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
 
@@ -68,7 +70,9 @@ class Candidate:
     def config_name(self, matrix: Matrix) -> str:
         """The build configuration, everything but the source: the column of the scope's runtime matrix."""
         level, model = self.resolved(matrix)
-        return "_".join([self.compiler, level, model, self.veclib, self.isa or "native", *filter(None, (self.tail,))])
+        threading = "serial" if self.serial else ""
+        fixed = [self.compiler, level, model, self.veclib, self.isa or "native"]
+        return "_".join(fixed + list(filter(None, (self.tail, threading))))
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
@@ -78,7 +82,8 @@ class Candidate:
 
     def flags(self, matrix: Matrix) -> tuple[str, ...]:
         """Compile flags: language standard, build flags, then this compiler's spelling of the default OpenMP
-        runtime, the FP level, the cost model, the vector library, the ISA and the loop tail."""
+        runtime (of no region at all under ``serial``), the FP level, the cost model, the vector library, the ISA and
+        the loop tail."""
         comp = matrix.compilers[self.compiler]
         level, model = self.resolved(matrix)
         veclib = comp.veclib[self.veclib] if self.veclib != "none" else ()
@@ -87,7 +92,7 @@ class Candidate:
         return (
             matrix.languages[self.language].std,
             *matrix.build_flags,
-            *comp.openmp[matrix.defaults.openmp_runtime],
+            *(comp.serial if self.serial else comp.openmp[matrix.defaults.openmp_runtime]),
             *comp.fp[level],
             *comp.cost_model[model],
             *veclib,
@@ -120,7 +125,7 @@ def flips(
 ) -> list[Candidate]:
     """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
     host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them; ``fission`` adds the fissioned
-    rendering (the scope has a cut)."""
+    rendering (the scope has a cut). The serial build comes last, so every OpenMP build precedes it in sweep order."""
     comp, d = matrix.compilers[compiler], matrix.defaults
     levels = fp_levels(matrix, scope, finite_inputs=finite_inputs)
     out = [Candidate(language, compiler)]
@@ -142,6 +147,7 @@ def flips(
         ]
     if fission:
         out.append(Candidate(language, compiler, fission=True, note="fission"))
+    out.append(Candidate(language, compiler, serial=True, note="serial"))
     return out
 
 

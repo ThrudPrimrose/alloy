@@ -151,6 +151,27 @@ def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_
     assert predict.choose(rep, verdicts, cheaper, MATRIX, finite_inputs=False) is builds[0]
 
 
+def test_a_serial_build_never_wins_a_speculative_pick_however_cheap_it_looks():
+    scope = only_scope(roots)
+    default, serial = a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", serial=True))
+    rep = ScopeReport(scope, (default, serial))
+    cheaper = {scope.symbol: {default.name: scored(2.0), serial.name: scored(1.0)}}
+
+    assert predict.choose(rep, {}, cheaper, MATRIX, finite_inputs=False) is default
+    assert predict.choose(rep, {}, {}, MATRIX, finite_inputs=False) is default
+
+
+@pytest.mark.gcc
+def test_the_model_scores_openmp_builds_only_because_it_spreads_loops_over_the_cores(tmp_path):
+    scope = only_scope(roots)
+    default = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "default", {})
+    serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
+
+    sut = predict.predictions([ScopeReport(scope, (default, serial))])
+
+    assert list(sut[scope.symbol]) == [default.name]
+
+
 @pytest.mark.gcc
 def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)

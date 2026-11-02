@@ -79,6 +79,8 @@ class Compiler:
     tail: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     support_libraries: tuple[str, ...] = ()
     line_tables: tuple[str, ...] = ()
+    #: Replaces the OpenMP runtime flags in a serial build.
+    serial: tuple[str, ...] = ()
 
     def missing_executables(self) -> list[str]:
         return [exe for exe in self.executables.values() if shutil.which(exe) is None]

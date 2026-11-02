@@ -379,9 +379,9 @@ Predictions = dict[str, dict[str, Prediction]]
 
 
 def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None) -> Predictions:
-    """The prediction of every distinct build of every scope at ``sizes`` (the loops weigh equally without), in
-    parallel (llvm-mca runs per loop)."""
-    jobs = [(rep, b) for rep in reports for b in rep.builds if not b.error and not b.duplicate_of]
+    """The prediction of every distinct OpenMP build of every scope at ``sizes`` (the loops weigh equally without), in
+    parallel (llvm-mca runs per loop). The model spreads a scope's loops over the cores, so it scores no serial build."""
+    jobs = [(rep, b) for rep in reports for b in rep.builds if not (b.error or b.duplicate_of or b.candidate.serial)]
     cut = {  # what each scope's fission builds rendered, split once per scope
         rep.scope.symbol: fission.fissioned(rep.scope.sdfg)
         for rep in reports
@@ -407,12 +407,13 @@ def choose(
     """The scope's speculative winner: among the correct distinct builds at or below the default FP level
     (:func:`fp.default_level`) within :data:`TIE` of the fewest predicted cycles per element (all of them when none is
     predicted), the default level's, then the first in sweep order. Without verdicts
-    (no manifest) every build that compiled counts as correct."""
+    (no manifest) every build that compiled counts as correct. A serial build wins only by measurement, so never here."""
     scores = predicted.get(rep.scope.symbol, {})
     level = fp.default_level(matrix, rep.scope, finite_inputs=finite_inputs)
 
     def correct(b: Build) -> bool:
-        return not b.error and not b.duplicate_of and (not verdicts or (b.name in verdicts and verdicts[b.name].ok))
+        verified = not verdicts or (b.name in verdicts and verdicts[b.name].ok)
+        return not b.error and not b.duplicate_of and not b.candidate.serial and verified
 
     def cost(b: Build) -> float:
         return scores[b.name].cycles_per_element if b.name in scores else math.inf
