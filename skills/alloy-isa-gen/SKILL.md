@@ -76,7 +76,7 @@ say so in the `clang` field — an honest refusal beats a wrong flag.
   `entry.recipe`; `unexercised` turns a kernel that skips one into "unverified". Hardcoding the name back
   makes the gate pass on any mapping. `tests/test_isa_validate.py` swaps in wrong spellings to prove this.
 - **Compare with the lane's own type and watch NaN.** An f32 lane is checked against `sqrtf`/`fmaf`, not the
-  double libm; kernels use non-dyadic inputs and negative lanes, and `TRACK_ERROR` keeps a NaN (a plain
+  double libm; kernels use non-dyadic inputs and negative lanes, and `track_error` keeps a NaN (a plain
   `>` drops it). A kernel with a constant reference proves nothing.
 - **Function definitions may have a space before the paren** (`_mm256_set1_epi64x (`) — the test's
   regex tolerates it; your grep should too (`\bname\b`).
