@@ -27,7 +27,7 @@ Per run: the program is split into scopes (each top-level nest its own translati
 and outputs (speculative mode), and links the best one per scope. Output: the linked program and the report
 ([Report format](#report-format)). The paper evaluates agents with and without the report.
 
-Alloy is a separate repository and is installed with uv. NestForge imports Alloy; Alloy never imports NestForge.
+Alloy is a separate repository and is installed with uv. Alloy never imports NestForge.
 Imports of `hpcagent_bench` stay function-local.
 
 ## Sweep axes (CPU)
@@ -111,7 +111,7 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
 - Cache: the largest cache level in `/sys/devices/system/cpu/cpu*/cache`, summed over its distinct instances
   (`shared_cpu_list`). Every timed working set is 2-4x that, so no run fits in cache.
 - Cores: the usable CPUs (`os.sched_getaffinity`, what `nproc` counts), one hardware thread per physical core
-  (`thread_siblings_list`); SMT siblings are never used. `OMP_PLACES=cores`, `OMP_PROC_BIND=close`,
+  (`thread_siblings_list`); SMT siblings are never used. `OMP_PLACES` lists the slot's CPUs, `OMP_PROC_BIND=close`,
   `OMP_NUM_THREADS` = the physical cores used.
 - Screen on 4 physical cores at the 2-4x working set.
 - Re-time the top 3 per scope on every physical core at full size.
@@ -129,18 +129,13 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
 
 Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope from the builds alone, without timing; the pick is still verified.
 
-- FP level (shared with NestForge's defaults, owner decision 2026-10-26): a scope with a reduction or scan gets
-  `contract`, never `reassoc`; without one, `fast` when the inputs are declared finite, else `noerrno`. A failed
-  verification falls back one level (`fast` to `noerrno`, `noerrno` to `contract`).
+- FP level (shared with NestForge's defaults, owner decision 2026-10-26): a scope with a reduction or scan defaults
+  to `contract`, never `reassoc`; without one, `fast` when the inputs are declared finite, else `noerrno`.
+- `predict.choose`: among the correct distinct builds at or below that level, those within 2% of the fewest predicted
+  cycles per element; of those the default level's, then the first in sweep order. Without any correct build the
+  default build ships.
 - `-ffast-math` stays on the scope's compile, never on the link line: gcc then links `crtfastmath.o`, which sets
   FTZ/DAZ for the whole process, `strict` scopes included.
-- Compiler: the one that vectorized the most distinct source loops (`file:line` from the remarks; gcc's epilogue and
-  versioned loops count once), ties broken by the widest vectors in bytes (clang `vectorization width` x element
-  size, gcc `using N byte vectors`).
-- Order: FP level, then compiler, then knobs. A failed verification lowers the FP level and keeps the compiler.
-- Rendering and knobs: chosen from build signals (vectorized loops from remarks, packed vector instruction share,
-  spills, `llvm-mca` throughput; GPU: occupancy from register and shared memory use). Evaluated as regret against
-  the timed winner.
 
 ## ISA lookup: the agent's math ISA
 
@@ -188,7 +183,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   polynomial tier against libm; a failure attaches the candidate spellings instead of endorsing a wrong
   answer. When emission is impossible, `hints.py` answers with a text reason, a do-it-yourself
   instruction, and per-tasklet hints (classified tasklets mapped to their spellings and verdicts).
-- Every spelling is verified against the clang resource headers in CI (`tests/test_isa*.py`, 282 tests);
+- Every spelling is verified against the clang resource headers in CI (`tests/test_isa*.py`);
   the table is checked-in data, regenerated per clang version when ops are added, not parsed from ISA
   PDFs. The agent-facing rule (encoded in `skills/alloy/`): candidates report first, generated pages,
   this lookup for spelling and schedules, per-target ESSENTIALS sheets for context, itemized PDFs
@@ -230,7 +225,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   Alloy's argmax run 594 s -> 97 s), never emits `omp critical`, and argmax / argmin reduce through the declared
   `arg_max_pair` / `arg_min_pair` reductions of `dace/arg_reduction.h`.
 - Budget: verify every candidate locally, screen them locally at small sizes on few threads, many runners and
-  compilers in parallel; start from each scope's local winner. Since 10-19 the judge ranks the top 5 per scope as
+  compilers in parallel; start from each scope's local winner. Since 10-19 the judge ranks every verified build per scope as
   `/profile` stubs (`Linker.stub`: the kernel's signature, the scopes before at their best, nothing after), then
   scores the selection once with `/score`. Measured on argmax_value (16 cores): Alloy 23 s (candidates compile one per core), one judge `/score`
   200-240 s, the harness grade 144 s (noop). So L2 (300 s) submits the local winner unscored (judge: correct, 1.74x
@@ -244,7 +239,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
 
 ## Report format
 
-Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 4, pydantic, refused on an
+Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 6, pydantic, refused on an
 unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
 
 0. The vectorization options: every ISA x loop tail, with the compilers that build it on this host or why none can.

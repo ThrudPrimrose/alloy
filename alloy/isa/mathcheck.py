@@ -270,7 +270,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
     """The gate on one kernel: run it where the host can, cross-compile it where it cannot."""
     k = kernel(fn, dtype, level)
     try:
-        if isa in CROSS and emulated(isa) is None:
+        if isa in CROSS and emulated(isa) is None and not host_can_run(isa, dtype):
             built = compiles(k, isa)
             basis = "cross-compiled, never run"
             return Verdict(None, basis, "no cross compiler") if built is None else Verdict(None, basis, "builds")
@@ -280,7 +280,8 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
     if seen is None:
         return Verdict(None, f"host cannot run {isa}/{dtype}", "")
     ok = seen.ulp <= k.error_ulp * SLACK and seen.special == 0
-    detail = f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}), {seen.special} special values off libm"
+    specials = f", {seen.special} special values off libm" if k.specials else ""
+    detail = f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}){specials}"
     return Verdict(ok, "kernel under qemu" if isa in CROSS else "kernel vs wider libm", detail)
 
 

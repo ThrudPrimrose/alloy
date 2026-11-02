@@ -18,6 +18,8 @@ dependencies = [
     # Bare: DaCe extended pins Alloy through its `alloy` extra (pip install "dace[alloy] @ git+...@extended"), so
     # Alloy cannot pin DaCe back. A standalone install needs DaCe extended installed first.
     "dace",
+    "sympy",
+    "pydantic-core",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +28,7 @@ bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@5cd488
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["alloy[bench]", "mypy", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+dev = ["alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
 dev-nvidia = ["alloy[dev,nvgpu]"]
 dev-amd = ["alloy[dev,amdgpu]"]
 

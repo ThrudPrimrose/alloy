@@ -9,16 +9,16 @@ import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
 
-from collections.abc import Sequence  # noqa: E402
+from collections.abc import Sequence
 
-from hpcagent_bench.categories import Language, Preset, SourceMode  # noqa: E402
-from hpcagent_bench.harness.envelope import Submission  # noqa: E402
-from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer  # noqa: E402
-from hpcagent_bench.harness.task import Task  # noqa: E402
-from hpcagent_bench.precision import Precision  # noqa: E402
-from hpcagent_bench.spec import BenchSpec  # noqa: E402
+from hpcagent_bench.categories import Language, Preset, SourceMode
+from hpcagent_bench.harness.envelope import Submission
+from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
+from hpcagent_bench.harness.task import Task
+from hpcagent_bench.precision import Precision
+from hpcagent_bench.spec import BenchSpec
 
-from alloy.hb_plugin.adapter import (  # noqa: E402 -- after the optional-extra skip
+from alloy.hb_plugin.adapter import (
     fast_size,
     pipeline_sdfg,
     ranked,

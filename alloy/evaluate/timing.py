@@ -163,7 +163,7 @@ def clock(program: Any, symbol: str) -> Callable[[], float]:
 def time_arms(folders: list[str], symbol: str, args: dict[str, Any], reps: int) -> list[list[float]]:
     """In a child: one warmup, then ``reps`` rounds calling every arm on the same buffers, reversed every other
     round; every array is reset before each call. Seconds per arm, from the scope timer or the whole call."""
-    from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
+    from dace.codegen import compiler
 
     programs = [compiler.load_precompiled_sdfg(f) for f in folders]
     clocks = [clock(p, symbol) for p in programs] if symbol else []

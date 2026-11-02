@@ -22,24 +22,28 @@ One call (`alloy_profile` or `alloy_speculative`, whichever your setup offers) a
 
 How to use it:
 
-1. Call the tool once and `score` the library it built: that is your starting point. The call builds and checks
-   every candidate of every scope, so it is slow, and a second call only repeats that work.
+1. Call the tool once and `submit` the library it built: that is your recorded starting point (`score` records
+   nothing). The call builds and checks every candidate of every scope, so it takes minutes per scope, and a second
+   call only repeats that work in a new folder.
 2. Read the report. A scope whose top candidates are close is not worth your time, because Alloy already tried what
-   a flag change would; one where the chosen candidate is far behind the roofline, or where the report notes missed
-   vectorization, is.
-3. Edit that scope's translation unit (or swap in another candidate's source from the report), change its compile
-   line in the `Makefile` if a different compiler or flag set ranked better, run `make`, and `score` again.
-   A scope in `advice` is the first place to look.
+   a flag change would; one where the report notes missed vectorization is.
+3. Edit that scope's translation unit (other candidates' sources are in `../scopes/<symbol>/variants/` next to
+   `folder`), change its compile line in the `Makefile` if a different compiler or flag set ranked better, run
+   `make`, and `score` again. A scope in `advice` is the first place to look. `alloy_profile` keeps the default build
+   unless a candidate's timing clearly beats it, so rank 1 may not be what it built.
 4. Submit the best library you measured.
 
 ## Writing intrinsics with `alloy_isa`
 
-Ask `alloy_isa` instead of recalling a spelling; every answer is checked on this machine.
+Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISAs this machine runs; `lookup`,
+`kernel` and `skeleton` answers carry a compiled check there and say `unverified` elsewhere.
 
 - `command="kernel", arguments=["avx512", "sin", "f64"]`: `sin`, `cos`, `tan`, `exp`, `exp2`, `exp10`, `expm1`, `log`
   (`ln`), `log2`, `log10`, `log1p`, `pow`, `atan`, `asin`, `acos`, `sinh`, `cosh`, `tanh` as C functions to paste
-  into the scope, replacing the library call. Each level lists its measured ulp and contract:
-  - `strict` matches libm on every input through one cold branch. It is a compile error under `-ffast-math`.
+  into the scope, replacing the library call (add `#include <immintrin.h>` and `<math.h>`). Each level lists its
+  measured ulp and contract:
+  - `strict` gives libm's special values on every input through one cold branch, within its listed ulp elsewhere.
+    It is a compile error under `-ffast-math`.
   - `relaxed` has no branch and needs finite inputs in its stated range.
   - `fast` trades about half the digits for speed. Use it where a tolerance allows.
   A kernel pays off in a loop with other work: the gain is the call and its spills.

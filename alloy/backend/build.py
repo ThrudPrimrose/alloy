@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 import dace
 from dace.codegen import cpf
 from dace.config import set_temporary
+from dace.sdfg import nodes
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
 from alloy.backend import runtime
@@ -85,6 +86,12 @@ def sve_loops(sdfg: dace.SDFG) -> dace.SDFG:
     """A copy of ``sdfg`` with every map SVEVectorization takes rendered as an explicit SVE predicated loop."""
     vectorized = copy.deepcopy(sdfg)
     vectorized.apply_transformations_repeated(SVEVectorization)
+    for node, state in vectorized.all_nodes_recursive():
+        # a scalar holds one lane: CPF would broadcast the first element to every lane of the vector
+        if isinstance(node, nodes.AccessNode) and isinstance(node.desc(vectorized), dace.data.Scalar):
+            parent = state.scope_dict()[node] if isinstance(state, dace.SDFGState) else None
+            if isinstance(parent, nodes.MapEntry) and parent.map.schedule == dace.ScheduleType.SVE_Map:
+                raise NotImplementedError(f"scalar {node.data} inside an SVE map")
     return vectorized
 
 

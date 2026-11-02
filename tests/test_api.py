@@ -75,7 +75,7 @@ def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winne
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     (scope,) = scopes.outline(sdfg, matrix.libm_calls).scopes
-    swept = one_factor_at_a_time(matrix, scope, sdfg))
+    swept = one_factor_at_a_time(matrix, scope)
 
     sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=matrix)
 

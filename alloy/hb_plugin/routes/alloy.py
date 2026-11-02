@@ -28,6 +28,7 @@ ROUTE = "alloy"
 #: The route of the ``alloy_isa`` tool: a table query, outside the modes and the device slot.
 ISA = "isa"
 ISA_COMMANDS = frozenset({"lookup", "reverse", "assist", "kernel", "schedule", "skeleton", "ops", "isas", "host"})
+MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value)
 ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels
 
 
@@ -62,8 +63,8 @@ def serve(judge: Judge, request: RouteRequest) -> None:
     spelled = request.parts[1] if len(request.parts) > 1 else ""
     if spelled == ISA:
         return isa_query(judge, request.body)
-    if spelled not in {mode.value for mode in Mode}:
-        error = f"no Alloy mode {spelled!r}; modes: {sorted(mode.value for mode in Mode)}"
+    if spelled not in MODES:
+        error = f"no Alloy mode {spelled!r}; modes: {sorted(MODES)}"
         return judge.reply(HTTPStatus.NOT_FOUND, JudgeError(error=error))
     kernel = str(request.body.get("kernel") or "")
     parent = agent_root(request.episode_id) / ROUTE / spelled / kernel.replace("/", "_")
@@ -84,7 +85,7 @@ def serve(judge: Judge, request: RouteRequest) -> None:
                 answer = future.result()
             except NothingToGenerate as err:
                 return judge.reply(HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_{spelled}: {err}"))
-            except Exception as err:  # noqa: BLE001 -- any other failure is Alloy's, reported as the judge's fault
+            except Exception as err:
                 error = f"alloy_{spelled}: {type(err).__name__}: {err}"
                 return judge.reply(HTTPStatus.INTERNAL_SERVER_ERROR, JudgeError(error=error, cause=JUDGE_FAULT_CAUSE))
     return judge.reply(HTTPStatus.OK, AlloyAnswer(result=answer))

@@ -31,7 +31,7 @@ NOTHING_TO_GENERATE = 4
 def build(job: pathlib.Path) -> pathlib.Path:
     """Run the pickled ``job`` of :func:`compile`: the folder of the program it built."""
     with job.open("rb") as handle:
-        sdfg_file, manifest, mode, matrix, out, finite_inputs = pickle.load(handle)  # noqa: S301 -- our own file
+        sdfg_file, manifest, mode, matrix, out, finite_inputs = pickle.load(handle)
     sdfg = dace.SDFG.from_file(sdfg_file)
     with set_temporary("compiler", "build_plugin", value=""):  # Alloy's own programs compile the DaCe way
         result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, finite_inputs=finite_inputs)
@@ -45,7 +45,7 @@ def build(job: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(program.build_folder)
 
 
-def compile(  # noqa: A001 -- DaCe's verb
+def compile(
     sdfg: dace.SDFG,
     *,
     manifest: Manifest | None = None,

@@ -50,7 +50,7 @@ def run(
             renders: dict[RenderKey, pathlib.Path] = {}
 
             def built(cands: list[Candidate]) -> list[Build]:
-                sources = [write_source(scope, cand, matrix, folder, renders) for cand in cands]  # noqa: B023 -- called in this iteration
+                sources = [write_source(scope, cand, matrix, folder, renders) for cand in cands]
                 return list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, cands))
 
             candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs)

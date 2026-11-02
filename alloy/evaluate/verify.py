@@ -86,7 +86,7 @@ def child_main(target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], s
 
 
 def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) -> dict[str, np.ndarray]:
-    from dace.codegen import compiler  # noqa: PLC0415 -- preloaded by the fork server
+    from dace.codegen import compiler
 
     # an array that crossed the process boundary may arrive as a view on the pickle buffer, which dace refuses
     args = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in args.items()}
@@ -216,8 +216,8 @@ def compare(tolerance: str, ref: np.ndarray, val: np.ndarray, length: int, datat
         same = ref.shape == val.shape and canonical_bytes(ref) == canonical_bytes(val)
         return Verdict("exact") if same else Verdict("fail", detail="not bit-identical to the reference")
     require_bench()
-    from hpcagent_bench.frameworks.utilities import compare_arrays  # noqa: PLC0415
-    from hpcagent_bench.precision import (  # noqa: PLC0415
+    from hpcagent_bench.frameworks.utilities import compare_arrays
+    from hpcagent_bench.precision import (
         UngradeableTolerance,
         accumulation_eps,
         precision_from_datatype,

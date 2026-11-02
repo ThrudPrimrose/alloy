@@ -26,7 +26,7 @@ from alloy.heuristics.predict import Prediction, Predictions
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 5
+SCHEMA = 6
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -41,6 +41,8 @@ class Mode(enum.StrEnum):
     PROFILE = "profile"
     #: Candidates verified, not timed; picked from the builds' reports and outputs.
     SPECULATIVE = "speculative"
+    #: Candidates verified only: a caller that times elsewhere; the rank is sweep order.
+    VERIFIED = "verified"
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -159,6 +161,8 @@ class Report:
 
     schema: int
     mode: Mode
+    openmp_runtime: str
+    skipped_compilers: dict[str, str]
     program: str
     tree: CfgNode
     vectorization: tuple[VectorChoice, ...]
@@ -202,6 +206,8 @@ def drop_reason(rep: ScopeReport, b: Build, verdict: Verdict | None, timing: Sco
         return verdict.status
     if timing is not None and arm(rep, b) not in timing.screen:
         return "not_screened"
+    if timing is not None and not timing.screen[arm(rep, b)].verdict.ok:
+        return timing.screen[arm(rep, b)].verdict.status
     return None
 
 
@@ -270,7 +276,8 @@ def scope_record(
         reason = drop_reason(rep, b, verdicts.get(b.name), timing)
         if reason is not None:
             dropped[reason] = dropped.get(reason, 0) + 1
-    top = ranked(rep, verdicts, timing, scores)[:k]
+    one_per_config = {b.candidate.config_name(matrix): b for b in reversed(ranked(rep, verdicts, timing, scores))}
+    top = sorted(one_per_config.values(), key=ranked(rep, verdicts, timing, scores).index)[:k]
     s = rep.scope
     return ScopeRecord(
         symbol=s.symbol,
@@ -402,7 +409,9 @@ def assemble(
     )
     return Report(
         schema=SCHEMA,
-        mode=Mode.SPECULATIVE if predicted is not None and timing is None else Mode.PROFILE,
+        mode=Mode.PROFILE if timing else Mode.SPECULATIVE if predicted is not None else Mode.VERIFIED,
+        openmp_runtime=matrix.defaults.openmp_runtime,
+        skipped_compilers=matrix.usable_compilers()[1],
         program=program.sdfg.name,
         tree=tree.cfg_tree(program.sdfg),
         vectorization=tuple(
@@ -501,16 +510,15 @@ def verdict_lines(v: Final) -> list[str]:
     return lines
 
 
-def markdown(r: Report, matrix: Matrix) -> str:
+def markdown(r: Report) -> str:
     """``report.md``: rendered from the record, nothing else."""
     lines = [f"# Alloy report: {r.program} ({r.mode})", "", "```", tree.render(r.tree), "```", ""]
     if r.nondeterministic_outputs:
         note = "Nondeterministic outputs (differ between reference runs, always compared by band)"
         lines += [f"{note}: {', '.join(r.nondeterministic_outputs)}", ""]
-    lines += [f"OpenMP runtime: {matrix.defaults.openmp_runtime}", ""]
-    skipped = matrix.usable_compilers()[1]
-    lines += [f"Skipped compiler {name}: {reason}" for name, reason in skipped.items()]
-    lines += [""] if skipped else []
+    lines += [f"OpenMP runtime: {r.openmp_runtime}", ""]
+    lines += [f"Skipped compiler {name}: {reason}" for name, reason in r.skipped_compilers.items()]
+    lines += [""] if r.skipped_compilers else []
     lines += vectorization_lines(r.vectorization)
     for s in r.scopes:
         lines += scope_lines(s)
@@ -534,7 +542,7 @@ def write(
     shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
     r = assemble(program, reports, matrix, verification, timing, commands, top_k, predicted, picked, advice)
     (out / "report.json").write_text(dumped_json(r))
-    (out / "report.md").write_text(markdown(r, matrix))
+    (out / "report.md").write_text(markdown(r))
     return r
 
 

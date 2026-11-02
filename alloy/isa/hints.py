@@ -11,7 +11,7 @@ import dataclasses
 from collections import Counter
 
 from alloy.isa.mathcheck import validate_kernel
-from alloy.isa.mathkernels import LEVELS, functions, kernel, render, target_of
+from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, render, target_of
 from alloy.isa.ops import OPS
 from alloy.isa.table import DTYPES, Table, load
 from alloy.isa.validate import host_can_run, validate
@@ -181,7 +181,7 @@ def is_copy(code: str) -> bool:
 
 def lane_of(state, node) -> str:
     """The lane a node writes in, or ``""`` when the table has no spelling for it (complex, narrow integers)."""
-    import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
+    import dace
 
     names = {dace.float64: "f64", dace.float32: "f32", dace.float16: "f16", dace.int64: "i64", dace.int32: "i32"}
     for edge in state.out_edges(node):
@@ -192,8 +192,8 @@ def lane_of(state, node) -> str:
 
 def conflict_of(state, node) -> str:
     """The write-conflict ``node``'s output meets, on its memlet tree or past a private access node, or ``""``."""
-    from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
-    from dace.sdfg import nodes  # noqa: PLC0415
+    from dace.frontend.operations import detect_reduction_type
+    from dace.sdfg import nodes
 
     for edge in state.out_edges(node):
         forwarded = state.out_edges(edge.dst) if isinstance(edge.dst, nodes.AccessNode) else []
@@ -206,8 +206,8 @@ def conflict_of(state, node) -> str:
 
 def library_use(state, node) -> OpUse:
     """A library node: its name in the advice, a reduce by its conflict, the rest as sum-of-products."""
-    from dace.frontend.operations import detect_reduction_type  # noqa: PLC0415
-    from dace.libraries.standard.nodes import Reduce  # noqa: PLC0415
+    from dace.frontend.operations import detect_reduction_type
+    from dace.libraries.standard.nodes import Reduce
 
     if isinstance(node, Reduce):
         kind = str(detect_reduction_type(node.wcr)).rsplit(".", 1)[-1]
@@ -218,8 +218,8 @@ def library_use(state, node) -> OpUse:
 
 def op_uses(sdfg) -> list[OpUse]:
     """Every computing tasklet and library node of ``sdfg`` and what it computes, in SDFG order."""
-    import dace  # noqa: PLC0415 -- the ISA table itself stays dace-free
-    from dace.sdfg import nodes  # noqa: PLC0415
+    import dace
+    from dace.sdfg import nodes
 
     uses = []
     for node, state in sdfg.all_nodes_recursive():
@@ -284,7 +284,9 @@ def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
         f"{level} {(k := kernel(fn, dtype, level)).error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)"
         for level in LEVELS
     )
-    pick = f"; take {recommended}" if recommended else ""
+    pick = f"; take {recommended} where the inputs hold its contract" if recommended else ""
+    if fn in NEEDS_IEEE:
+        pick += "; under reassociation no level compiles: call the library"
     return f"inline intrinsics: {levels}{pick}; ask `kernel {isa} {fn} {dtype}` for the C"
 
 

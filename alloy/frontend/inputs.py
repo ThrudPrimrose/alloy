@@ -49,8 +49,8 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
     """Parse the manifest with the bench's reader; inputs are drawn at ``datatype``. Outside the corpus, ``program``
     (``file.py:function``) names the kernel whose signature orders the inputs."""
     require_bench()
-    from hpcagent_bench import paths  # noqa: PLC0415 -- alloy never loads the bench at import time
-    from hpcagent_bench.spec import BenchSpec, KernelSite, load_yaml  # noqa: PLC0415
+    from hpcagent_bench import paths
+    from hpcagent_bench.spec import BenchSpec, KernelSite, load_yaml
 
     raw = load_yaml(path.read_text())
     if path.resolve().is_relative_to(paths.BENCHMARKS.resolve()):
@@ -72,7 +72,7 @@ def load(path: pathlib.Path, program: str | None = None, datatype: str = "float6
 def draw(manifest: Manifest, iteration: int) -> Draw:
     """Parameters from the ``fuzzed`` ranges (capped for correctness), then inputs from the bench initializer, both
     seeded by ``iteration``. A parameter stays as drawn: truncating ``dt=0.05`` would switch whole terms off."""
-    from hpcagent_bench import fuzz  # noqa: PLC0415
+    from hpcagent_bench import fuzz
 
     spec = manifest.spec
     sizes = fuzz.sample_params(
@@ -89,11 +89,11 @@ def draw(manifest: Manifest, iteration: int) -> Draw:
 def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
     """Inputs at fixed ``sizes``: a corpus kernel's through the bench's dispatch (its own ``initialize`` if any),
     else the auto-initializer."""
-    from hpcagent_bench import paths  # noqa: PLC0415
-    from hpcagent_bench.categories import Preset  # noqa: PLC0415
-    from hpcagent_bench.frameworks.benchmark import Benchmark  # noqa: PLC0415
-    from hpcagent_bench.initialize import auto_initialize  # noqa: PLC0415
-    from hpcagent_bench.precision import precision_from_datatype  # noqa: PLC0415
+    from hpcagent_bench import paths
+    from hpcagent_bench.categories import Preset
+    from hpcagent_bench.frameworks.benchmark import Benchmark
+    from hpcagent_bench.initialize import auto_initialize
+    from hpcagent_bench.precision import precision_from_datatype
 
     spec = manifest.spec
     if spec.init is None:
@@ -114,14 +114,14 @@ def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
 
 def presets(manifest: Manifest) -> list[dict[str, int]]:
     """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges."""
-    from hpcagent_bench.categories import Preset  # noqa: PLC0415
+    from hpcagent_bench.categories import Preset
 
     return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != Preset.FUZZED.text]
 
 
 def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | None:
     """``sizes`` snapped to the manifest's divisibility constraints, or ``None`` when a constraint still fails."""
-    from hpcagent_bench import fuzz  # noqa: PLC0415
+    from hpcagent_bench import fuzz
 
     snapped: dict[str, Any] = dict(sizes)
     fuzz.snap_divisible(snapped, manifest.spec.constraints)

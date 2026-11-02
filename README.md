@@ -14,8 +14,11 @@ from alloy.frontend import inputs
 from examples.two_scopes import two_scopes
 
 manifest = inputs.load(pathlib.Path("examples/two_scopes.yaml"), "examples/two_scopes.py:two_scopes")
-result = api.generate(two_scopes.to_sdfg(), pathlib.Path("out"), manifest=manifest)  # result.report: report.md
+if __name__ == "__main__":  # Alloy's worker processes re-import this script
+    result = api.generate(two_scopes.to_sdfg(), pathlib.Path("out"), manifest=manifest)  # result.report: report.md
 ```
+
+As DaCe's backend no guard is needed: set `compiler.build_plugin = alloy-speculative` and call `sdfg.compile()`.
 
 Extras: the core (outline, sweep, build) needs only DaCe. `bench` adds HPCAgent-Bench, which verification and
 timing use for manifest inputs and the tolerance band. `nvgpu` / `amdgpu` add the matching cupy build. `dev` is
@@ -37,13 +40,15 @@ Layout:
   transcendentals exp/sin/cos) spelled per ISA and dtype — f64/f32 everywhere, f16 where the hardware has it
   (AVX2 emulates through f32), i64/i32 for the integer ops — with fallback recipes where an op has no native
   instruction. `intrinsics.toml` is verified against the clang resource headers; both lookup directions;
-  `python -m alloy.isa lookup|reverse|validate|skeleton|ops|isas|schedule`. `validate.py` checks
-  every spelling with a compiled kernel (or a tier re-measurement) before an agent sees it;
+  `python -m alloy.isa host|lookup|reverse|assist|kernel|validate|skeleton|ops|isas|schedule`. `validate.py` checks
+  a row's intrinsic or recipe with a compiled kernel on x86 hosts, or re-measures its tier, before an agent sees it;
   `hints.py` builds the do-it-yourself response from a scope's tasklets when emission fails;
   `schedules.py` emits compile-and-run-verified C skeletons per loop schedule, with the compiler
   flags that ask gcc/clang for the same shape.
   This is the bridge between DaCe's auto-vectorized intrinsic code and the math an agent reasons in.
-- `alloy/`: `api` (`generate`, the entry point), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
+- `alloy/heuristics/`: what Alloy picks without timing: `predict`, `prune`, `fission`, `fp`.
+- `alloy/`: `api` (`generate`, the entry point), `dace_backend` (Alloy behind `SDFG.compile`), `gpu` (speculated
+  threadblock shapes), `guidance` (advice for the scopes left short), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
   `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,
   flag and option is in `alloy/configuration_matrix.toml`, validated by the pydantic models of
   `alloy/configuration_matrix.py`.
@@ -54,6 +59,7 @@ Layout:
 - `docs/`: design decisions with build status, measurement rules, related work.
 
 Tests: `pytest -m "not icx"` on a box without Intel oneAPI (each compiler is a pytest mark); CI installs gcc,
-clang, oneAPI and the NVIDIA HPC SDK and runs everything, including the cross-compiler OpenMP link test.
+clang, oneAPI and the NVIDIA HPC SDK and runs all but the `avx512`, `cuda` and `hip` marks, including the
+cross-compiler OpenMP link test.
 
 Notes: `docs/design.md` (decisions), `docs/measurement.md` (A/B rules), `docs/related_work.md` (citations).

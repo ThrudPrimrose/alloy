@@ -196,7 +196,7 @@ def ranked[B: Named](
                 return chosen
             try:
                 times[build.name] = time_stub({**chosen, symbol: build}, symbol)
-            except Exception as exc:  # noqa: BLE001 -- a failing stub drops out of the ranking
+            except Exception as exc:
                 print(f"alloy: stub {symbol}/{build.name} dropped: {exc}", file=sys.stderr, flush=True)
         pool = {b.name: b for b in [chosen[symbol], *candidates.get(symbol, [])]}
         print(f"alloy: {symbol}: {len(times)} stubs timed", file=sys.stderr, flush=True)

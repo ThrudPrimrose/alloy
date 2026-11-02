@@ -17,7 +17,7 @@ class AlloyProfileOptimizer(FlavorOptimizer):
     __slots__ = ()
 
     def tune(self, task: Task, pipeline: str) -> Submission:
-        from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
+        from alloy.hb_plugin import adapter
 
         return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link))
 
@@ -29,7 +29,7 @@ class AlloySpeculativeOptimizer(FlavorOptimizer):
     __slots__ = ()
 
     def tune(self, task: Task, pipeline: str) -> Submission:
-        from alloy.hb_plugin import adapter  # noqa: PLC0415 -- dace and the build stack load on first tune
+        from alloy.hb_plugin import adapter
 
         return adapter.speculative(task, pipeline, lambda code, link: self.deliver(task, code, link))
 

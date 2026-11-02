@@ -155,7 +155,7 @@ def test_a_written_report_carries_the_trees_and_renders_every_scope_and_the_verd
 
 
 def test_the_verdict_renders_the_full_compile_and_link_argv(tmp_path):
-    sut = report.markdown(a_report(tmp_path), MATRIX)
+    sut = report.markdown(a_report(tmp_path))
 
     assert "gcc -O3 -c scopes/s.c -o s.o" in sut
     assert "gcc -std=c23 program.c -o libp.so libs.a" in sut
@@ -233,7 +233,7 @@ def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_pat
 
 
 def test_the_report_lists_every_isa_and_tail_with_its_compilers_or_the_reason(tmp_path):
-    sut = report.markdown(a_report(tmp_path), MATRIX)
+    sut = report.markdown(a_report(tmp_path))
 
     assert "## Vectorization options" in sut
     assert "| avx2 |" in sut and "avx2 has no masks" in sut

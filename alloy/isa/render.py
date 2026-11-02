@@ -8,7 +8,8 @@ import pathlib
 
 from alloy.isa.mathkernels import LEVELS, functions, kernel
 from alloy.isa.mathkernels import render as render_kernel
-from alloy.isa.table import ALL_DTYPES, DTYPES, F16, Table, load
+from alloy.isa.ops import OPS
+from alloy.isa.table import ALL_DTYPES, DTYPES, F16, Entry, Table, load
 
 __all__ = ["render"]
 
@@ -16,7 +17,12 @@ __all__ = ["render"]
 DEFAULT_OUT = pathlib.Path(__file__).parent.parent.parent / "skills" / "alloy" / "isa"
 
 
-def entry_row(op: str, entry) -> str:
+def cell(text: str) -> str:
+    """``text`` safe in a markdown table cell."""
+    return text.replace("|", "\\|")
+
+
+def entry_row(op: str, entry: Entry) -> str:
     if entry.approximations:
         spelling = f"{len(entry.approximations)} polynomial tiers (see transcendentals.md)"
         mnemonic = "—"
@@ -24,17 +30,19 @@ def entry_row(op: str, entry) -> str:
         spelling = f"`{entry.intrinsic}`"
         mnemonic = f"`{entry.mnemonic}`"
     else:
-        steps = " -> ".join(entry.recipe[:3]) + (" -> ..." if len(entry.recipe) > 3 else "")
-        spelling = f"recipe: {steps}"
+        spelling = cell(f"recipe: {' -> '.join(entry.recipe)}")
         mnemonic = f"`{entry.mnemonic}`"
     masked = f"`{entry.masked}`" if entry.masked else "—"
     signature = f"`{entry.signature}`" if entry.signature else "—"
-    return f"| `{op}` | {spelling} | {mnemonic} | {signature} | {masked} |"
+    return (
+        f"| `{op}` | {spelling} | {mnemonic} | {signature} | {masked} | {cell(entry.semantics)} | {cell(entry.note)} |"
+    )
 
 
-def dtype_section(isa_name: str, dtype: str, entries: dict[str, object]) -> list[str]:
+def dtype_section(dtype: str, entries: dict[str, Entry]) -> list[str]:
     title = {"f64": "f64", "f32": "f32", F16: "f16", "i64": "i64 (integer lanes)", "i32": "i32 (integer lanes)"}[dtype]
-    lines = [f"### {title}", "", "| op | spelling | mnemonic | signature | masked |", "|---|---|---|---|---|"]
+    header = "| op | spelling | mnemonic | signature | masked | semantics | note |"
+    lines = [f"### {title}", "", header, "|---|---|---|---|---|---|---|"]
     lines += [entry_row(op, entry) for op, entry in entries.items()]
     lines.append("")
     return lines
@@ -67,23 +75,11 @@ def render_isa(table: Table, isa_name: str) -> str:
         ]
     lines += [isa.note, ""]
     for dtype in ALL_DTYPES:
-        entries = getattr(isa, dtype, {})
-        if entries:
-            lines += dtype_section(isa_name, dtype, entries)
+        if entries := isa.entries(dtype):
+            lines += dtype_section(dtype, entries)
     if isa.assists:
         lines += ["## Hardware assists", "", "| intrinsic | mnemonic | helps | note |", "|---|---|---|---|"]
-        lines += [f"| `{a.name}` | `{a.mnemonic}` | {a.helps} | {a.note} |" for a in isa.assists]
-        lines.append("")
-    traps = [
-        (op, dtype, entry)
-        for dtype in ALL_DTYPES
-        for op, entry in getattr(isa, dtype, {}).items()
-        if "trap" in entry.note
-    ]
-    if traps:
-        lines += ["## Traps", ""]
-        for op, dtype, entry in traps:
-            lines.append(f"- **{op}** ({dtype}): {entry.note}")
+        lines += [f"| `{a.name}` | `{a.mnemonic}` | {a.helps} | {cell(a.note)} |" for a in isa.assists]
         lines.append("")
     return "\n".join(lines)
 
@@ -97,9 +93,7 @@ def render_index(table: Table) -> str:
         "| op | math | kind | result |",
         "|---|---|---|---|",
     ]
-    from alloy.isa import OPS
-
-    lines += [f"| `{op.name}` | {op.semantics} | {op.kind} | {op.result} |" for op in OPS.values()]
+    lines += [f"| `{op.name}` | {cell(op.semantics)} | {op.kind} | {op.result} |" for op in OPS.values()]
     lines += [
         "",
         "Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the "
@@ -128,20 +122,23 @@ def render_kernels() -> str:
         "Every function comes as three C functions built from intrinsics; copy one into the loop's translation "
         "unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> <dtype>`.",
         "",
-        "- **strict**: matches libm on every input. NaN, infinities, signed zeros, subnormals and huge "
-        "arguments are correct; lanes the vector path cannot hold take one cold branch to scalar libm. About as "
-        "accurate as a default library call, not correctly rounded.",
+        "- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge "
+        "arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other "
+        "inputs are within the listed ulp, which is not lower than `relaxed`'s: strict guarantees the domain.",
         "- **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when "
         "the inputs are known finite and in range.",
         "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "
         "tolerance, an activation, or a first guess.",
         "",
         "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
-        "compensation; so is every `log1p`. The other `relaxed` and `fast` kernels build under both at up to 2.5 "
-        "times the listed error.",
+        "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
+        "other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
+        "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input.",
         "",
-        "Inline them only when the loop has other work: the gain over a library call is the call and its "
-        "spills. ULP is the worst sampled error against a wider libm, not a proven bound.",
+        "Inline them only when the loop has other work: the gain over a library call is the call and its spills. "
+        "It is not universal: `atan` and AVX2 `sinh` lose to the libraries, and SVML `exp` and `pow` are about even. "
+        "All kernels beat scalar libm by 4x to 13x. ULP is the worst sampled error against a wider libm, not a "
+        "proven bound.",
         "",
         "| function | dtype | level | ulp | intrinsics (avx512) | branch | contract |",
         "|---|---|---|---:|---:|---|---|",
@@ -152,7 +149,8 @@ def render_kernels() -> str:
                 k = kernel(fn, dtype, level)
                 branch = "cold" if k.guard else "none"
                 count = render_kernel(k, "avx512").intrinsics
-                lines.append(f"| {fn} | {dtype} | {level} | {k.error_ulp:.3g} | {count} | {branch} | {k.contract} |")
+                contract = cell(f"any input; vector path for {k.contract}" if level == "strict" else k.contract)
+                lines.append(f"| {fn} | {dtype} | {level} | {k.error_ulp:.3g} | {count} | {branch} | {contract} |")
     example = render_kernel(kernel("exp", "f64", "relaxed"), "avx2")
     lines += ["", "## Example: `exp`, f64, relaxed, AVX2", "", "```c", example.source, "```", ""]
     return "\n".join(lines)
@@ -162,15 +160,16 @@ def render_transcendentals(table: Table) -> str:
     lines = [
         "# Transcendentals — polynomial tiers with measured ULP (generated, do not edit)",
         "",
-        "ULP at function scale: max |approx − ref| / spacing(max(|ref|, 1.0)) against double-precision "
-        "libm on dense grids; the reference's own 0.5 ulp is the floor. Recipes are Horner schemes in "
+        "Error in units of 2^-52 at function scale: max \\|approx - ref\\| / spacing(max(\\|ref\\|, 1.0)) against "
+        "double-precision libm on dense grids, so real f64 ulp is 2x to 2.7x larger on the good tiers and f32 rows "
+        "get the same f64 figures. `kernel` gives better polynomials with true ulp. Recipes are Horner schemes in "
         "abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations.",
         "",
         "| tier | op | domain | error (ulp) | error (abs) |",
         "|---|---|---|---|---|",
     ]
     for name, tier in table.approx.items():
-        lines.append(f"| `{name}` | {tier.op} | {tier.domain} | {tier.error_ulp:.4g} | {tier.error_abs:.3g} |")
+        lines.append(f"| `{name}` | {tier.op} | {cell(tier.domain)} | {tier.error_ulp:.4g} | {tier.error_abs:.3g} |")
     lines += ["", "## Recipes", ""]
     for name, tier in table.approx.items():
         lines += [f"### {name}", "", "```", *tier.recipe, "```", ""]
@@ -185,7 +184,7 @@ def render_transcendentals(table: Table) -> str:
     for isa_name, isa in table.isas.items():
         for dtype in ("f64", "f32"):
             for op in ("exp", "sin", "cos"):
-                entry = getattr(isa, dtype)[op]
+                entry = isa.entries(dtype)[op]
                 libs = entry.libraries
                 lines.append(
                     f"| {isa_name} | {dtype} | {op} | `{libs.get('libmvec', '—')}` | "
@@ -206,7 +205,7 @@ def render(table: Table, out: pathlib.Path = DEFAULT_OUT) -> list[pathlib.Path]:
         *[(n, render_isa(table, n)) for n in table.isas],
     ]:
         path = out / f"{name}.md"
-        path.write_text(content + "\n", encoding="utf-8")
+        path.write_text(content.rstrip() + "\n", encoding="utf-8")
         written.append(path)
     return written
 
