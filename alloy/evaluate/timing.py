@@ -33,6 +33,7 @@ from alloy.evaluate.verify import (
 )
 from alloy.frontend import inputs
 from alloy.frontend.inputs import Draw, Grading, Manifest
+from alloy.frontend.scopes import Program
 from alloy.records import RECORD, Parameters
 
 REFERENCE = "reference"
@@ -230,6 +231,12 @@ def timed(
     return in_child(time_arms, ([str(arms.folders[n]) for n in names], arms.symbol, args, reps), cpus, 1.0, timeout)
 
 
+def band_compared(program: Program, verification: Verification, outputs: tuple[str, ...]) -> frozenset[str]:
+    """The outputs a timing size compares by band: those the draws saw change, or all of a program that reduces, whose
+    sums can round alike on every small draw and still differ at a size past them."""
+    return frozenset(outputs) if any(s.has_reduction for s in program.scopes) else verification.nondeterministic
+
+
 def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, manifest: Manifest) -> ScopeTiming:
     """Screen every verified distinct candidate, re-time the fastest on every core, and pick the winner: the
     fastest whose CI lies below the reference's, else the reference."""
@@ -244,7 +251,7 @@ def time_scope(linker: Linker, rep: ScopeReport, verification: Verification, man
         {REFERENCE: "exact"} | {b.name: b.candidate.tolerance(matrix) for b in verified},
         symbol,
         manifest.outputs,
-        verification.nondeterministic,
+        band_compared(linker.program, verification, manifest.outputs),
         inputs.grading(manifest),
     )
     t, cores = matrix.timing, machine.physical_cores()

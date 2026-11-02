@@ -128,6 +128,34 @@ def test_alloy_full_runs_the_build_each_scope_timing_named(tmp_path, monkeypatch
     assert sut.program.arms["alloy_full"].verdict.status == "fail"
 
 
+def test_a_sum_that_rounded_alike_on_every_draw_stays_a_candidate_at_the_larger_timing_size(tmp_path):
+    """Reversing a sum rounds differently once the rows are long; the small draws called the output reproducible."""
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    init, summing = program.scopes
+    good = build(summing, Candidate("c", "gcc"), FEW_REPS, tmp_path / "good", {})
+    body = (
+        "for (int i = 0; i < M; ++i) { double s = 0; for (int j = N - 1; j >= 0; --j) s += a[i * N + j]; out[i] = s; }"
+    )
+    reversed_sum = handwritten_archive(tmp_path, summing, body)
+    reversed_build = dataclasses.replace(good, name="reversed", archive=reversed_sum, object_hash="reversed")
+    reports = [
+        ScopeReport(init, (build(init, Candidate("c", "gcc"), FEW_REPS, tmp_path / "init", {}),)),
+        ScopeReport(summing, (good, reversed_build)),
+    ]
+    verified = verify.verify(program, FEW_REPS, reports, cases, tmp_path / "out")
+    verdicts = {
+        **verified.verdicts,
+        summing.symbol: {good.name: verify.Verdict("exact"), "reversed": verify.Verdict("exact")},
+    }
+    alike = dataclasses.replace(verified, verdicts=verdicts, nondeterministic=frozenset())
+    manifest = write_manifest(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+
+    sut = timing.time_scope(Linker(program, FEW_REPS, tmp_path / "out"), reports[1], alike, manifest)
+
+    assert sut.screen["reversed"].verdict.status == "pass", sut.screen["reversed"].verdict.detail
+    assert sut.final["reversed"].verdict.status == "pass", sut.final["reversed"].verdict.detail
+
+
 def measured(median: float, spread: float = 0.1, status: str = "pass") -> timing.Measured:
     return timing.Measured(median, median - spread, median + spread, verify.Verdict(status))  # type: ignore[arg-type]
 
