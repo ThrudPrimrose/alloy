@@ -141,6 +141,19 @@ def unchosen(node: nodes.LibraryNode) -> bool:
     return node.implementation in (None, "pure")
 
 
+def distinct_labels(sdfg: dace.SDFG) -> None:
+    """Give each tasklet of ``sdfg`` a label of its own: the frontend repeats ``_Add_`` across maps, and a rendered
+    statement is traced back to its tasklet, so to its map, by that label alone."""
+    taken: set[str] = set()
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.Tasklet):
+            base, count = node.label, 0
+            while node.label in taken:
+                count += 1
+                node.label = f"{base}_{count}"
+            taken.add(node.label)
+
+
 def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
     """Outline each top-level nest and library node of a copy of ``sdfg`` into a scope; ``libm_calls`` marks the
     scopes a vector math library could serve."""
@@ -154,6 +167,7 @@ def outline(sdfg: dace.SDFG, libm_calls: frozenset[str]) -> Program:
     scopes = []
     for call in passes.outline_to_external_calls(sdfg, library_nodes=True):
         scope_sdfg = standalone(call)
+        distinct_labels(scope_sdfg)
         scopes.append(
             Scope(
                 symbol=call.symbol,

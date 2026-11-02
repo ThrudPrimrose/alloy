@@ -38,6 +38,17 @@ def two_rows(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K]
             d[i, k] = c[i, k] + 1.0
 
 
+@dace.program
+def two_sums(
+    a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K], d: dace.float64[M, K], e: dace.float64[M, K]
+):
+    for i in dace.map[0:M]:
+        for j in dace.map[0:N]:
+            b[i, j] = a[i, j] + 1.0
+        for k in dace.map[0:K]:
+            d[i, k] = c[i, k] + e[i, k]
+
+
 def listing(*lines: tuple[int, str, str]) -> list[Instruction]:
     return [Instruction(address, mnemonic, operands) for address, mnemonic, operands in lines]
 
@@ -183,6 +194,28 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
     assert sorted(loop.weight for loop in sut.loops) == [0.25, 1.0]
     weighted = sum(loop.weight * (loop.cycles + predict.CALL_CYCLES * loop.calls) / loop.elements for loop in sut.loops)
     assert sut.compute == pytest.approx(weighted / len(machine.physical_cores()))
+
+
+@pytest.mark.gcc
+def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path):
+    scope = only_scope(two_sums)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope, {"M": 4, "N": 16, "K": 4000})
+
+    assert sut is not None
+    assert sorted(loop.weight for loop in sut.loops) == [0.004, 1.0]
+
+
+@pytest.mark.gcc
+def test_two_loops_of_one_operator_each_count_their_own_array_accesses(tmp_path):
+    scope = only_scope(two_sums)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope, {"M": 4, "N": 16, "K": 4000})
+
+    assert sut is not None
+    assert sorted(loop.bytes for loop in sut.loops) == [16.0, 24.0], "a read and a write, then two reads and a write"
 
 
 @pytest.mark.gcc
