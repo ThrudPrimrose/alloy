@@ -801,174 +801,174 @@ note = "the standardized gen_mask; the loop steps by svcntw() and never needs a 
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVdN4v_exp", svml = "_mm256_exp_pd", sleef = "Sleef_expd4_u10" }
+libraries = { libmvec = "_ZGVdN4v_exp", svml = "__svml_exp4", sleef = "Sleef_expd4_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVdN4v_sin", svml = "_mm256_sin_pd", sleef = "Sleef_sind4_u10" }
+libraries = { libmvec = "_ZGVdN4v_sin", svml = "__svml_sin4", sleef = "Sleef_sind4_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVdN4v_cos", svml = "_mm256_cos_pd", sleef = "Sleef_cosd4_u10" }
+libraries = { libmvec = "_ZGVdN4v_cos", svml = "__svml_cos4", sleef = "Sleef_cosd4_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVdN8v_expf", svml = "_mm256_exp_ps", sleef = "Sleef_expf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_expf", svml = "__svml_expf8", sleef = "Sleef_expf8_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx2.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVdN8v_sinf", svml = "_mm256_sin_ps", sleef = "Sleef_sinf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_sinf", svml = "__svml_sinf8", sleef = "Sleef_sinf8_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx2.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVdN8v_cosf", svml = "_mm256_cos_ps", sleef = "Sleef_cosf8_u10" }
+libraries = { libmvec = "_ZGVdN8v_cosf", svml = "__svml_cosf8", sleef = "Sleef_cosf8_u10avx2" }
 note = "no native transcendental on x86, and no reduction assist either (AVX-512 vreducepd/vscalefpd have none here): range-reduce in software, evaluate a tier from [approx], or call a vector math library (the sweep's veclib axis builds the libmvec calls); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f64.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVeN8v_exp", svml = "_mm512_exp_pd", sleef = "Sleef_expd8_u10avx512f" }
+libraries = { libmvec = "_ZGVeN8v_exp", svml = "__svml_exp8", sleef = "Sleef_expd8_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx512.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVeN8v_sin", svml = "_mm512_sin_pd", sleef = "Sleef_sind8_u10avx512f" }
+libraries = { libmvec = "_ZGVeN8v_sin", svml = "__svml_sin8", sleef = "Sleef_sind8_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVeN8v_cos", svml = "_mm512_cos_pd", sleef = "Sleef_cosd8_u10avx512f" }
+libraries = { libmvec = "_ZGVeN8v_cos", svml = "__svml_cos8", sleef = "Sleef_cosd8_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { libmvec = "_ZGVeN16v_expf", svml = "_mm512_exp_ps", sleef = "Sleef_expf16_u10avx512f" }
+libraries = { libmvec = "_ZGVeN16v_expf", svml = "__svml_expf16", sleef = "Sleef_expf16_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.avx512.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { libmvec = "_ZGVeN16v_sinf", svml = "_mm512_sin_ps", sleef = "Sleef_sinf16_u10avx512f" }
+libraries = { libmvec = "_ZGVeN16v_sinf", svml = "__svml_sinf16", sleef = "Sleef_sinf16_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.avx512.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { libmvec = "_ZGVeN16v_cosf", svml = "_mm512_cos_ps", sleef = "Sleef_cosf16_u10avx512f" }
+libraries = { libmvec = "_ZGVeN16v_cosf", svml = "__svml_cosf16", sleef = "Sleef_cosf16_u10avx512f" }
 note = "no native transcendental instruction, but the best assists of the four: VREDUCEPD strips multiples of 2^-M (scale by 2/pi first for sin/cos), VSCALEFPD does the 2^k scaling of exp natively, VGETEXP/VGETMANT decompose a value; VFIXUPIMMPD patches special cases (SVML uses it); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.neon.f64.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { sleef = "Sleef_expd2_u10" }
+libraries = {libmvec = "_ZGVnN2v_exp", sleef = "Sleef_expd2_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.neon.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { sleef = "Sleef_sind2_u10" }
+libraries = {libmvec = "_ZGVnN2v_sin", sleef = "Sleef_sind2_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.neon.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { sleef = "Sleef_cosd2_u10" }
+libraries = {libmvec = "_ZGVnN2v_cos", sleef = "Sleef_cosd2_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.neon.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = { sleef = "Sleef_expf4_u10" }
+libraries = {libmvec = "_ZGVnN4v_expf", sleef = "Sleef_expf4_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<23 to the exponent bits (vreinterpretq_u32_f32 + vaddq_u32); split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.neon.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = { sleef = "Sleef_sinf4_u10" }
+libraries = {libmvec = "_ZGVnN4v_sinf", sleef = "Sleef_sinf4_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<23 to the exponent bits (vreinterpretq_u32_f32 + vaddq_u32); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.neon.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = { sleef = "Sleef_cosf4_u10" }
+libraries = {libmvec = "_ZGVnN4v_cosf", sleef = "Sleef_cosf4_u10" }
 note = "no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<23 to the exponent bits (vreinterpretq_u32_f32 + vaddq_u32); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.sve.f64.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_exp" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 1023)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.sve.f64.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_sin" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 1023)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.sve.f64.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_cos" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 1023)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.sve.f32.exp]
 signature = "(v) -> v"
 semantics = "v[j] = exp(v[j])"
 approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_expf" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f32(svuint32)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 127)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; svscale_f32_x does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; split x = k*ln2 + r first (k = round(x/ln2)); the polynomial approximates exp(r) and the result scales by 2^k - a plain ln2 split loses accuracy for |x| > ~10, hi/lo ln2 constants fix that"
 
 [isa.sve.f32.sin]
 signature = "(v) -> v"
 semantics = "v[j] = sin(v[j])"
 approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_sinf" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f32(svuint32)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 127)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; svscale_f32_x does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 [isa.sve.f32.cos]
 signature = "(v) -> v"
 semantics = "v[j] = cos(v[j])"
 approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
-libraries = {  }
+libraries = { libmvec = "_ZGVsMxv_cosf" }
 note = "no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f32(svuint32)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 127)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; svscale_f32_x does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for |x| beyond a few pi"
 
 # --- Polynomial approximation tiers ([approx]): measured against double-precision
 # libm on dense grids; error_ulp = max |approx - ref| / spacing(max(|ref|, 1.0)) - ULP at function
 # scale, floored so function zeros (cos(pi/2)) stay finite. Taylor tiers use exact Taylor coefficients;
-# the quad/cheb tiers are Chebyshev fits (near-minimax) on the reduced domain. The floor of the metric
+# the quad/cheb tiers are Chebyshev fits on the reduced domain. The floor of the metric
 # is the reference's own 0.5 ulp - higher degrees do not measure better without a wider reference.
 [approx.sin-taylor7]
 op = "sin"
@@ -1025,7 +1025,7 @@ recipe = [
   "p = fma(p, t, 0.999999999991219)",
   "s = mul(x, p)",
 ]
-note = "Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
+note = "Chebyshev fit on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
 
 [approx.sin-quad-cheb13]
 op = "sin"
@@ -1042,7 +1042,7 @@ recipe = [
   "p = fma(p, t, 1.0000000000000024)",
   "s = mul(x, p)",
 ]
-note = "Chebyshev-fit near-minimax on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
+note = "Chebyshev fit on the quadrant; SLEEF u10 adds double-double reduction for ~1 ulp total"
 
 [approx.cos-taylor6]
 op = "cos"
@@ -1099,7 +1099,7 @@ recipe = [
   "p = fma(p, t, 0.9999999999035767)",
   "c = p",
 ]
-note = "Chebyshev-fit near-minimax on the quadrant"
+note = "Chebyshev fit on the quadrant"
 
 [approx.cos-quad-cheb12]
 op = "cos"
@@ -1116,7 +1116,7 @@ recipe = [
   "p = fma(p, t, 1.0000000000000024)",
   "c = p",
 ]
-note = "Chebyshev-fit near-minimax on the quadrant"
+note = "Chebyshev fit on the quadrant"
 
 [approx.exp-taylor5]
 op = "exp"
@@ -1181,7 +1181,7 @@ recipe = [
   "p = fma(p, x, 0.9999999999718296)",
   "e = p",
 ]
-note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+note = "Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
 
 [approx.exp-cheb9]
 op = "exp"
@@ -1200,7 +1200,7 @@ recipe = [
   "p = fma(p, x, 0.9999999999999974)",
   "e = p",
 ]
-note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+note = "Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
 
 [approx.exp-cheb11]
 op = "exp"
@@ -1221,7 +1221,7 @@ recipe = [
   "p = fma(p, x, 0.9999999999999883)",
   "e = p",
 ]
-note = "Chebyshev-fit near-minimax on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
+note = "Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
 
 
 

@@ -189,7 +189,7 @@ def edited(tmp_path: pathlib.Path, edit: Callable[[dict], None]) -> pathlib.Path
             lambda d: d["scopes"][0]["top"][0].update(vectorized_loops="2"),
             "scopes.0.top.0.vectorized_loops: Input should be a valid integer, got '2'",
         ),
-        (lambda d: d.update(mode="guess"), "mode: Input should be 'profile' or 'speculative', got 'guess'"),
+        (lambda d: d.update(mode="guess"), "mode: Input should be 'profile', 'speculative' or 'verified', got 'guess'"),
         (lambda d: d["tree"].update(kind="block"), "tree.kind: Input should be"),
         (lambda d: d["scopes"][0].pop("symbol"), "scopes.0.symbol: Field required"),
     ],

@@ -309,7 +309,7 @@ def verify(
     ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_candidates)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
-    with Children() as children, ProcessPoolExecutor(machine.compile_jobs()) as builders:
+    with Children() as children, ProcessPoolExecutor(machine.compile_jobs(), mp_context=child_context()) as builders:
         ref_runs = submit_reference(children, ref_program, cases)
         pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
         programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
@@ -368,5 +368,5 @@ def judge_scope(
 
 def rebuilt(linker: Linker, job: tuple[Any, ...]) -> pathlib.Path:
     """``job`` alone in a fresh builder: a dead builder fails every pending future, not only its own."""
-    with ProcessPoolExecutor(1) as builder:
+    with ProcessPoolExecutor(1, mp_context=child_context()) as builder:
         return builder.submit(linker.compile, *job).result()

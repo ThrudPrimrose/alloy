@@ -668,8 +668,9 @@ def candidates_for(isa: str, op: str, dtype: str, table: Table | None = None) ->
 
 
 def validate_transcendental(isa: str, op: str, dtype: str, table: Table, entry) -> Verdict:
-    """The library call is checked against libm when it is built here; the best tier is always re-measured."""
-    best = validate_tier(entry.approximations[-1], table)
+    """The library call is checked against libm when it is built here; every cited tier is re-measured."""
+    tiers = [validate_tier(key, table) for key in entry.approximations]
+    best = next((tier for tier in tiers if tier.ok is False), tiers[-1])
     if best.ok is False:
         return Verdict(False, best.basis, best.detail, candidates_for(isa, op, dtype, table))
     if (
@@ -718,7 +719,10 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
         return Verdict(None, f"host cannot execute {isa}/{dtype} kernels (unverified, not wrong)")
     if c_compiler() is None:
         return Verdict(None, "no C compiler on PATH (unverified, not wrong)")
-    source = kernel_c(isa, dtype, op, table)
+    try:
+        source = kernel_c(isa, dtype, op, table)
+    except ValueError as exc:  # a recipe of the wrong shape
+        return Verdict(False, "compiled kernel", str(exc), candidates_for(isa, op, dtype, table))
     if source is None:
         return Verdict(None, "no compiled validator for this entry yet (the table spelling is still in force)")
     if missing := unexercised(entry, source):

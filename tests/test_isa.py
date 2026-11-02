@@ -285,7 +285,7 @@ def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa, op, dtype
 
     assert not entry.intrinsic and not entry.recipe and not entry.mnemonic
     assert entry.approximations
-    assert entry.libraries or isa == "sve"
+    assert entry.libraries
 
 
 def test_approximation_tiers_resolve_to_positive_measured_errors():

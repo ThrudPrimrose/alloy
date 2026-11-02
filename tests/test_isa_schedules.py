@@ -191,3 +191,28 @@ def test_a_compiler_spelling_names_a_compiler_not_any_field():
 
     with pytest.raises(KeyError, match="no 'title' spelling"):
         compiler_spelling("scalar", "title", TABLE)
+
+
+@pytest.mark.parametrize("name", ["scalar_remainder", "masked_remainder", "full_mask"])
+def test_gcc_accepts_the_spelling_of_a_schedule(name, tmp_path):
+    source = tmp_path / "k.c"
+    source.write_text("void f(int n, double *a) { for (int i = 0; i < n; i++) a[i] += 1.0; }\n")
+    flags = TABLE.schedule_info[name].gcc.split(" (")[0].split()
+
+    run = subprocess.run(
+        ["gcc", "-O3", "-c", *flags, str(source), "-o", str(tmp_path / "k.o")], capture_output=True, check=False
+    )
+
+    assert run.returncode == 0, run.stderr
+
+
+def test_clang_accepts_the_spelling_of_a_masked_loop(tmp_path):
+    source = tmp_path / "k.c"
+    source.write_text("void f(int n, double *a) { for (int i = 0; i < n; i++) a[i] += 1.0; }\n")
+    flags = TABLE.schedule_info["full_mask"].clang.split()
+
+    run = subprocess.run(
+        ["clang", "-O3", "-c", *flags, str(source), "-o", str(tmp_path / "k.o")], capture_output=True, check=False
+    )
+
+    assert run.returncode == 0, run.stderr

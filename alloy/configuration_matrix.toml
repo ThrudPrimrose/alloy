@@ -136,7 +136,7 @@ probe = "mvec"
 fp_level = "fast"
 
 # Each compiler: executables per language, remark flags, line-table flags (source lines for speculative mode's loop
-# grouping; no code change, and debug sections are stripped before objects are compared), support libraries its
+# grouping; no code change but nvc -gopt, which keeps a frame pointer; debug sections are stripped before objects are compared), support libraries its
 # objects need at link time (resolved like the OpenMP runtime), and its spelling of every runtime, FP level, cost model
 # and vector library it supports. Every FP level must be spelled; a missing runtime or vector library means
 # "unsupported". A compiler whose executable is not on PATH is reported as skipped.

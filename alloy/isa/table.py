@@ -453,11 +453,6 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
     return Table(isas_map, approx, schedules, by_intrinsic, by_mnemonic, by_part, assist_hits(isas_map))
 
 
-def isas(table: Table | None = None) -> tuple[str, ...]:
-    """The ISA names the table covers (aliases not included)."""
-    return tuple((table or load()).isas)
-
-
 def lookup(isa: str, op: str, dtype: str, table: Table | None = None) -> Entry:
     """The ``(isa, op, dtype)`` entry: the spelling, signature, semantics and traps."""
     return (table or load()).entry(isa, op, dtype)

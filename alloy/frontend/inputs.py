@@ -192,11 +192,12 @@ def domain_gap(sdfg: dace.SDFG) -> str:
 
 def drawn_values(rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dtype, array: bool) -> Any:
     """Uniform values in [0, 1) at ``dtype``: both truth values for booleans, both parts for complex numbers."""
-    drawn = rng.random(shape)
+    size = shape if array else None
+    drawn = rng.random(size)
     if dtype == np.bool_:
         drawn = drawn < 0.5
     elif np.issubdtype(dtype, np.complexfloating):
-        drawn = drawn + 1j * rng.random(shape)
+        drawn = drawn + 1j * rng.random(size)
     return np.asarray(drawn).astype(dtype) if array else dtype.type(drawn)
 
 

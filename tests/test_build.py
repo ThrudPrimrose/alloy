@@ -160,4 +160,4 @@ def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_pa
 
     assert sut.archive is None
     assert "#error alloy: tail sve_intrinsics on sve cannot be rendered" in sut.source.read_text()
-    assert "sin(" in sut.source.read_text()
+    assert "inside an SVE map" in sut.source.read_text()

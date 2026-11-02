@@ -29,9 +29,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
     sut = one_factor_at_a_time(matrix, scope)
 
     gcc = matrix.compilers["gcc"]
-    per_language = (
-        1 + sum(len(v) - 1 for v in matrix.knobs.values()) + 1 + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
-    )
+    per_language = 1 + sum(len(v) - 1 for v in matrix.knobs.values()) + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
     host = matrix.host_isas(machine.cpu_flags())
     per_language += sum(1 for isa in host if isa in gcc.isa)
     per_language += sum(
