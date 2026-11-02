@@ -4,9 +4,10 @@ lookup returns it, and every other row says unverified. Masked forms, mnemonics 
 validators:
 
 - x86 entries the host can execute (AVX2+FMA, AVX-512F+DQ) are checked by a small compiled C kernel:
-  fixed inputs through the looked-up intrinsic (or its fallback recipe, hand-coded once per op and ISA
-  family — :func:`unexercised` refuses a kernel that skips a spelling, so a wrong mapping is caught
-  rather than propagated), a scalar reference, and a per-op tolerance.
+  fixed inputs, on buffers no vector boundary aligns, through the looked-up intrinsic in its signature's
+  operand order (or its fallback recipe, a list of names whose operand order is hand-coded once per op
+  and ISA family — :func:`unexercised` refuses a kernel that skips a spelling, so a wrong mapping is
+  caught rather than propagated), a scalar reference, and a per-op tolerance.
 - approximation tiers ([approx]) are re-measured in numpy against libm on their domain: the recorded
   ``error_ulp`` must reproduce within a slack, which catches transcription errors in the coefficients.
 
@@ -46,6 +47,10 @@ N_TIER = 2_000_000
 COMPILE_TIMEOUT = 120  # seconds, per compile and per run
 
 VERIFY_LINE = re.compile(r"^ALLOY-VERIFY rel=(\S+)", re.MULTILINE)
+SIGNATURE = re.compile(r"^\(([^)]*)\)")
+#: Ops whose row is one call on the kernel's operands, by the names a ``signature`` gives them.
+CALLED = frozenset({"add", "sub", "mul", "div", "min", "max", "fma", "and", "or", "shl", "shr", "sqrt"})
+CALLED |= {"load", "broadcast", "zero"}
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -95,6 +100,9 @@ X86_512 = {
     "i32": ("int32_t", "__m512i", "_mm512", "epi32"),
 }
 
+#: Why a kernel's buffers start one element past a 64-byte boundary, in the source a reader of a failure sees.
+MISALIGNED = "one element past a boundary: an aligned spelling of an unaligned row always faults"
+
 #: The per-lane error update every kernel ends with: a NaN must stick, a plain ``>`` would drop it.
 TRACK_ERROR = "double e = d / m;\n    if (isnan(e) || e > maxrel) maxrel = e;"
 
@@ -110,6 +118,16 @@ def c_flags(isa: str, dtype: str) -> list[str]:
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
 
 
+def called(entry: Entry, operands: dict[str, str]) -> str:
+    """``entry``'s intrinsic on ``operands`` in the order its ``signature`` states, so the gate runs the order a reader
+    of the row copies."""
+    match = SIGNATURE.match(entry.signature)
+    names = [name.strip() for name in match.group(1).split(",") if name.strip()] if match else []
+    if match is None or any(name not in operands for name in names):
+        raise ValueError(f"{entry.intrinsic}: the signature {entry.signature!r} names no operands of this op")
+    return f"{entry.intrinsic}({', '.join(operands[name] for name in names)})"
+
+
 def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] | None:
     """The kernel body for ``(isa, dtype, op)``, spelled with the table's own entry so a wrong mapping fails:
     (compute C, scalar-reference C), or None when the entry has no executable form here."""
@@ -121,13 +139,13 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
     s, v, p, sfx = (X86_512 if wide else X86)[dtype]
     fp = dtype in DTYPES
     bits = 512 if wide else 256
-    load = table.entry(isa, "load", dtype).intrinsic if fp else f"{p}_loadu_si{bits}"
-    iload = f"{p}_loadu_si{bits}"  # index vectors and integer lanes
-    store_fn = table.entry(isa, "store", dtype).intrinsic if fp else f"{p}_storeu_si{bits}"
+    load, store_row = table.entry(isa, "load", dtype), table.entry(isa, "store", dtype)
+    iload = f"{p}_loadu_si{bits}"  # index vectors
     cast = "" if fp else f"({v}*)"
-    decl = f"{v} va = {load}({cast}a);\n  {v} vb = {load}({cast}b);"
+    loads = {name: called(load, {"p": f"{cast}{name}"}) for name in "abc"}
+    decl = f"{v} va = {loads['a']};\n  {v} vb = {loads['b']};\n  {v} vc = {loads['c']};"
     out_ptr = f"({s}*)out" if fp else f"({v}*)out"
-    store = f"{store_fn}({out_ptr}, vr);"
+    store = f"{called(store_row, {'p': out_ptr, 'v': 'vr'})};"
     lanes_s = str(lanes)
 
     if op in ("land", "lor"):
@@ -160,18 +178,16 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
     if op == "select":
         if not fp:
             return None
-        if wide:
-            compute = f"__mmask{lanes_s} k = {p}_cmp_{sfx}_mask(va, vb, _CMP_LT_OQ);\n  {v} vr = {entry.intrinsic}(k, vb, va);"
-        else:
-            compute = f"{v} k = {p}_cmp_{sfx}(va, vb, _CMP_LT_OQ);\n  {v} vr = {entry.intrinsic}(vb, va, k);"
-        ref = "for (int j = 0; j < VL; j++) ref[j] = a[j] < b[j] ? a[j] : b[j];"
-        return f"{decl}\n  {compute}\n  {store}", ref
+        pick = called(entry, {"a": "va", "b": "vb", "k": "k", "mask": "k"})
+        test = f"__mmask{lanes_s} k = {p}_cmp_{sfx}_mask" if wide else f"{v} k = {p}_cmp_{sfx}"
+        ref = "for (int j = 0; j < VL; j++) ref[j] = a[j] < b[j] ? b[j] : a[j];"
+        return f"{decl}\n  {test}(va, vb, _CMP_LT_OQ);\n  {v} vr = {pick};\n  {store}", ref
 
     if op == "reduce_add":
         if not fp:
             return None
         if wide:
-            compute = f"{s} r = {entry.intrinsic}(va);\n  out[0] = r;"
+            compute = f"{s} r = {called(entry, {'v': 'va'})};\n  out[0] = r;"
         elif dtype == "f64":
             compute = (
                 "__m128d lo = _mm256_castpd256_pd128(va), hi = _mm256_extractf128_pd(va, 1);\n"
@@ -199,13 +215,13 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
         idx_arr = "idx" if dtype == "f64" else "idx32"  # f32 gathers index in 32-bit lanes
         idx_ld = f"{vi_t} vi = {iload}((const {vi_t}*){idx_arr});"
         if op == "gather":
-            args = f"vi, a, {scale}" if wide else f"a, vi, {scale}"
-            g = f"{idx_ld}\n  {v} vr = {entry.intrinsic}({args});"
+            g = f"{idx_ld}\n  {v} vr = {called(entry, {'base': 'a', 'idx': 'vi', 'scale': scale})};"
             return f"{decl}\n  {g}\n  {store}", "for (int j = 0; j < VL; j++) ref[j] = a[idx[j]];"
         if wide:
-            compute = f"{idx_ld}\n  {entry.intrinsic}(out, vi, va, {scale});"
+            compute = f"{idx_ld}\n  {called(entry, {'base': 'out', 'idx': 'vi', 'v': 'va', 'scale': scale})};"
         else:  # AVX2 has no scatter: the documented fallback, hand-coded
-            compute = f"{s} buf[VL];\n  {store_fn}(buf, va);\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
+            spill = called(store_row, {"p": "buf", "v": "va"})
+            compute = f"{s} buf[VL];\n  {spill};\n  for (int j = 0; j < VL; j++) out[idx[j]] = buf[j];"
         ref = "for (int j = 0; j < VL; j++) ref[j] = 0;\nfor (int j = 0; j < VL; j++) ref[idx[j]] = a[j];"
         return f"{decl}\n  {compute}", ref
 
@@ -213,11 +229,12 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
         if not wide or not fp:
             return None
         width = "64" if dtype == "f64" else "32"
+        limit = f"{p}_set1_epi{width}(n)"
         iota = ", ".join(str(j) for j in range(lanes))
         masked_load = table.entry(isa, "load", dtype).masked.split("(", 1)[0]
         compute = (
             f"__m512i iota = {p}_setr_epi{width}({iota});\n  int n = VL - 1;\n"
-            f"  __mmask{lanes_s} k = {entry.intrinsic}(iota, {p}_set1_epi{width}(n));\n"
+            f"  __mmask{lanes_s} k = {called(entry, {'iota': 'iota', 'n': limit})};\n"
             f"  {v} vr = {masked_load}(k, a);"
         )
         ref = "for (int j = 0; j < VL; j++) ref[j] = j < n ? a[j] : 0;"
@@ -232,32 +249,14 @@ def kernel_body(isa: str, dtype: str, op: str, table: Table) -> tuple[str, str] 
         ref = f"for (int j = 0; j < VL; j++) ref[j] = fmod{'' if dtype == 'f64' else 'f'}(a[j], b[j]);"
         return f"{decl}\n  {compute}\n  {store}", ref
 
-    name = entry.intrinsic
-    if not name:
+    if not entry.intrinsic:
         return None  # a recipe with no kernel written for it: unverified
-    exprs = {
-        "add": f"{name}(va, vb)",
-        "sub": f"{name}(va, vb)",
-        "mul": f"{name}(va, vb)",
-        "div": f"{name}(va, vb)",
-        "min": f"{name}(va, vb)",
-        "max": f"{name}(va, vb)",
-        "fma": f"{name}(va, vb, vb)",
-        "and": f"{name}(va, vb)",
-        "or": f"{name}(va, vb)",
-        "shl": f"{name}(va, vb)",
-        "shr": f"{name}(va, vb)",
-        "sqrt": f"{name}(va)",
-        "load": f"{name}({cast}a)",
-        "store": "vb",
-        "broadcast": f"{name}(a[0])",
-        "zero": f"{name}()",
-    }
-    if op not in exprs:
+    if op == "store":
+        return f"{decl}\n  {v} vr = vb;\n  {store}", scalar_ref(op, dtype)
+    if op not in CALLED:
         return None
-    compute = f"{v} vr = {exprs[op]};"
-    ref = scalar_ref(op, dtype)
-    return f"{decl}\n  {compute}\n  {store}", ref
+    operands = {"a": "va", "b": "vb", "c": "vc", "v": "va", "counts": "vb", "p": f"{cast}a", "s": "a[0]"}
+    return f"{decl}\n  {v} vr = {called(entry, operands)};\n  {store}", scalar_ref(op, dtype)
 
 
 def scalar_ref(op: str, dtype: str) -> str:
@@ -286,7 +285,7 @@ def scalar_ref(op: str, dtype: str) -> str:
             "div": "a[j] / b[j]",
             "min": "a[j] < b[j] ? a[j] : b[j]",
             "max": "a[j] > b[j] ? a[j] : b[j]",
-            "fma": f"fma{f}(a[j], b[j], b[j])",
+            "fma": f"fma{f}(a[j], b[j], c[j])",
             "sqrt": f"sqrt{f}(a[j])",
             "load": "a[j]",
             "store": "b[j]",
@@ -306,7 +305,7 @@ def logical_body(isa: str, dtype: str, op: str, decl: str, store: str, entry: En
         compute = (
             f"__mmask{bits} ka = {cmp}(_mm512_loadu_si512((const __m512i*)a), _mm512_setzero_si512());\n"
             f"  __mmask{bits} kb = {cmp}(_mm512_loadu_si512((const __m512i*)b), _mm512_setzero_si512());\n"
-            f"  unsigned got = {entry.intrinsic}(ka, kb), expect = 0;\n"
+            f"  unsigned got = {called(entry, {'ka': 'ka', 'kb': 'kb'})}, expect = 0;\n"
             f"  for (int j = 0; j < VL; j++) expect |= ((unsigned)(a[j] != 0) {sym} (b[j] != 0)) << j;\n"
             "  out[0] = (got == expect) ? 1 : 0;"
         )
@@ -384,23 +383,27 @@ F16_A = (1.0, 0.5, 2.0, 1.5, -0.25, 3.5, -1.25, 0.75, 2.5, -3.0, 0.125, 4.0, -0.
 F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5, -0.75, 1.0, 2.25)
 
 
-def kernel_inputs(op: str, dtype: str, lanes: int) -> tuple[str, str]:
+def kernel_inputs(op: str, dtype: str, lanes: int) -> tuple[str, str, str]:
     """Kernel inputs. Floats are not dyadic, so rounding is exercised, and alternate in sign except for
     sqrt. Integers alternate in sign, so an arithmetic shift cannot pass for a logical one, and land/lor
-    get every zero / non-zero combination."""
+    get every zero / non-zero combination. Three operands differ on every lane, so no order of fma passes for
+    another."""
     a: list[int] | list[float]
     b: list[int] | list[float]
+    c: list[int] | list[float]
     if dtype in INT_DTYPES:
         logical = op in ("land", "lor")
         high = 1 << 40 if dtype == "i64" and op in ("and", "or", "shl", "shr") else 0  # a bit past lane 32's reach
         a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) + high for j in range(lanes)]
         b = [0 if logical and j % 4 < 2 else 1 + j for j in range(lanes)]
+        c = [2 + 5 * j for j in range(lanes)]
     else:
         # every third lane is larger than b, so a compare goes both ways and a quotient passes 1
         scale = [10.0 if j % 3 == 2 else 1.0 for j in range(lanes)]
         a = [(0.5371 + 0.3 * j) * scale[j] * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
         b = [1.25 + 0.7 * j for j in range(lanes)]
-    return ", ".join(map(repr, a)), ", ".join(map(repr, b))
+        c = [0.3171 + 0.9 * j for j in range(lanes)]
+    return ", ".join(map(repr, a)), ", ".join(map(repr, b)), ", ".join(map(repr, c))
 
 
 def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
@@ -414,8 +417,8 @@ def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str |
     lanes = (16 if wide else 8) if dtype in ("f32", "i32") else (8 if wide else 4)
     s = {"f64": "double", "f32": "float", "i64": "int64_t", "i32": "int32_t", "f16": "uint16_t"}[dtype]
     if dtype == "f16":
-        h_init = ", ".join(repr(abs(v) if op == "sqrt" else v) for v in F16_A)
-        k_init = ", ".join(map(repr, F16_B))
+        h_init = ", ".join(repr(abs(v) if op == "sqrt" else v) for v in (0.0, *F16_A))
+        k_init = ", ".join(map(repr, (0.0, *F16_B)))
         mk_init = ", ".join("0xffff" if j % 2 == 0 else "0" for j in range(16))
         return f"""#include <immintrin.h>
 #include <stdint.h>
@@ -427,11 +430,13 @@ def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str |
 #endif
 #define VL 16
 int main(void) {{
-  _Float16 h[VL] = {{{h_init}}};
-  _Float16 k[VL] = {{{k_init}}};
+  _Alignas(64) _Float16 h_lanes[VL + 1] = {{{h_init}}};
+  _Alignas(64) _Float16 k_lanes[VL + 1] = {{{k_init}}};
+  _Float16 *h = h_lanes + 1, *k = k_lanes + 1;  // {MISALIGNED}
   uint16_t mk[VL] = {{{mk_init}}};
   double ref[VL] = {{0}};
-  uint16_t out16[VL] = {{0}};
+  _Alignas(64) uint16_t out_lanes[VL + 1] = {{0}};
+  uint16_t *out16 = out_lanes + 1;
   {compute}
   {ref}
   double maxrel = 0;
@@ -444,7 +449,7 @@ int main(void) {{
   printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);
   return 0;
 }}"""
-    a_init, b_init = kernel_inputs(op, dtype, lanes)
+    a_init, b_init, c_init = kernel_inputs(op, dtype, lanes)
     idx_init = ", ".join(str((3 * j + 1) % lanes) for j in range(lanes))
     return f"""#include <immintrin.h>
 #include <stdint.h>
@@ -452,12 +457,14 @@ int main(void) {{
 #include <math.h>
 #define VL {lanes}
 int main(void) {{
-  {s} a[VL] = {{{a_init}}};
-  {s} b[VL] = {{{b_init}}};
+  _Alignas(64) {s} a_lanes[VL + 1] = {{0, {a_init}}};
+  _Alignas(64) {s} b_lanes[VL + 1] = {{0, {b_init}}};
+  _Alignas(64) {s} c_lanes[VL + 1] = {{0, {c_init}}};
+  _Alignas(64) {s} out_lanes[VL + 1] = {{0}};
+  {s} *a = a_lanes + 1, *b = b_lanes + 1, *c = c_lanes + 1, *out = out_lanes + 1;  // {MISALIGNED}
   int64_t idx[VL] = {{{idx_init}}};
   int32_t idx32[VL] = {{{idx_init}}};
   double ref[VL] = {{0}};
-  {s} out[VL] = {{0}};
   {compute}
   {ref}
   double maxrel = 0;
