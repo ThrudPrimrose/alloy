@@ -2,10 +2,13 @@
 import dataclasses
 import pathlib
 
+import dace
 import numpy as np
 import pytest
+from dace.libraries.standard.nodes.scan import Scan
 
 from alloy import machine
+from alloy.backend import runtime
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import link, verify
@@ -17,6 +20,7 @@ from helpers import (
     SCALE_MANIFEST,
     build,
     handwritten_archive,
+    load_program,
     outlined,
     program_and_cases,
     write_manifest,
@@ -107,6 +111,70 @@ def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
 
     reassoc = builds[1].builds[1].name
     assert sut.verdicts[reduce_scope.symbol][reassoc].ok
+
+
+@pytest.mark.gcc
+def test_a_serial_build_of_a_parallel_map_reproduces_the_reference_outputs_bit_for_bit(tmp_path):
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    scope, _, linker, refs = reference_run(tmp_path, program, cases)
+    serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
+    assert serial.archive is not None
+    compiled = linker.compile({scope.symbol: serial.archive}, "serial")
+
+    sut = verify.judge(
+        serial.candidate.tolerance(MATRIX), refs, [verify.run(compiled, d, cases.outputs) for d in cases.draws], [1, 1]
+    )
+
+    assert sut.status == "exact"
+    assert np.array_equal(refs.outputs[0]["out"], 2.0 * cases.draws[0].values["a"])
+
+
+@pytest.mark.gcc
+def test_a_serial_build_of_a_reduction_stays_correct_through_the_whole_verification(tmp_path):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    init, reduce_scope = program.scopes
+    serial = build(reduce_scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "s", {})
+    builds = [
+        ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
+        ScopeReport(reduce_scope, (build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {}), serial)),
+    ]
+
+    sut = verify.verify(program, MATRIX, builds, cases, tmp_path / "out")
+
+    assert reduce_scope.has_reduction
+    assert sut.verdicts[reduce_scope.symbol][serial.name].ok
+    draw = cases.draws[0]
+    outputs = verify.run(sut.programs[reduce_scope.symbol, serial.name], draw, cases.outputs)
+    assert not isinstance(outputs, str), outputs
+    np.testing.assert_allclose(outputs["out"], draw.values["a"].sum(axis=1), rtol=1e-12)
+
+
+def parallel_scan() -> scopes.Program:
+    """``running_sum`` with its scan in the blocked parallel lowering, the one with a region of its own."""
+    sdfg = load_program(f"{REDUCTIONS}:running_sum").to_sdfg()
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Scan):
+            node.implementation, node.schedule = "CPU", dace.ScheduleType.CPU_Multicore
+    return scopes.outline(sdfg, MATRIX.libm_calls)
+
+
+@pytest.mark.gcc
+def test_a_serial_build_of_a_parallel_scan_runs_with_no_openmp_call_and_folds_the_running_sum(tmp_path):
+    program = parallel_scan()
+    (scope,) = program.scopes
+    manifest = write_manifest(tmp_path, "running_sum", SCALE_MANIFEST)
+    default = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "default", {})
+    serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
+    assert default.archive is not None and serial.archive is not None
+    assert "GOMP_parallel" in runtime.openmp_needs(default.archive)
+    compiled = link.Linker(program, MATRIX, tmp_path / "out").compile({scope.symbol: serial.archive}, "serial")
+    draw = inputs.draw(manifest, 0)
+
+    sut = verify.run(compiled, draw, manifest.outputs)
+
+    assert not isinstance(sut, str), sut
+    assert runtime.openmp_needs(serial.archive) == frozenset()
+    np.testing.assert_allclose(sut["out"], np.cumsum(draw.values["a"]), rtol=0, atol=1e-10)
 
 
 def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():

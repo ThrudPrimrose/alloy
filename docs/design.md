@@ -55,6 +55,12 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   - `noerrno` (`-fno-math-errno -fno-trapping-math`)
   - `reassoc`: only for scopes with a reduction or scan.
   - `fast`: never when inputs can be NaN or Inf.
+- Threading: every scope's default is its OpenMP build. `serial` (`[compilers.*] serial`) compiles the same source with
+  the runtime flags replaced by `-fopenmp-simd` (nvc spells nothing), so `simd` constructs keep their meaning and every
+  other directive is dropped. A scope with no region compiles to the default's object and drops out as its duplicate; an
+  object that still calls the runtime is a failed build naming the call, as the team such a call counts is gone with
+  its region. It is verified and timed like any other candidate. Speculative mode never scores or picks it: nothing
+  measured it, and the model spreads a scope's loops over the cores.
 - Loop tail (`[tails]`): `scalar_remainder`, `masked_remainder` (masked epilogue) and `full_mask` (every
   iteration masked) as compiler flags (gcc `--param=vect-partial-vector-usage=0/1/2`, clang
   `-prefer-predicate-over-epilogue`, which has no masked epilogue), the masked ones only on an ISA with masks the host

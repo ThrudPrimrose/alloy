@@ -182,6 +182,10 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
     if missing := runtime.unresolved(obj, runtime.default_library(matrix)):
         error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
+    # such a call would count a team whose region the build dropped
+    if candidate.serial and (calls := runtime.openmp_needs(obj)):
+        error = f"a serial build still calls {', '.join(sorted(calls))}"
+        return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
     archive = builds / f"lib{name}.a"
     subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
     return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks, masked_ops=masked_ops(obj))

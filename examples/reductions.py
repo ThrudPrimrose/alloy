@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Kernels with a known accumulation length: K for a matmul, N for a row sum, 1 for an elementwise map."""
+"""Kernels with a known accumulation length: K for a matmul, N for a row sum or a running sum, 1 for an elementwise
+map."""
 
 import dace
 import numpy as np
@@ -24,6 +25,11 @@ def square_matmul(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[
 @dace.program
 def row_sum(a: dace.float64[M, N], out: dace.float64[M]):
     out[:] = np.sum(a, axis=1)
+
+
+@dace.program
+def running_sum(a: dace.float64[N], out: dace.float64[N]):
+    out[:] = np.cumsum(a)
 
 
 @dace.program

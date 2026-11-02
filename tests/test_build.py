@@ -4,10 +4,11 @@ import subprocess
 
 import dace
 import pytest
+from dace.sdfg import nodes
 
 from alloy import configuration_matrix
-from alloy.backend import sweep
-from alloy.backend.build import masked_lines, parse_remarks
+from alloy.backend import runtime, sweep
+from alloy.backend.build import compile_source, masked_lines, parse_remarks
 from alloy.backend.candidates import Candidate
 from alloy.frontend import scopes
 from helpers import MATRIX, build, gcc_only, outlined, scope_with, variant
@@ -137,6 +138,60 @@ SVE_FULL_MASK = """\
   38:	whilelo	p7.d, x3, x0
   3c:	b.ne	20 <axpy+0x20>
 """
+
+
+@pytest.mark.parametrize(
+    "compiler, region",
+    [
+        pytest.param("gcc", "GOMP_parallel", marks=pytest.mark.gcc),
+        pytest.param("clang", "__kmpc_fork_call", marks=pytest.mark.clang),
+    ],
+)
+def test_a_serial_build_of_a_parallel_scope_has_no_openmp_call_in_its_object(tmp_path, compiler, region):
+    scope = scale_scope()
+    default = build(scope, Candidate("c", compiler), MATRIX, tmp_path / "default", {})
+
+    sut = build(scope, Candidate("c", compiler, serial=True), MATRIX, tmp_path / "serial", {})
+
+    assert default.archive is not None and sut.archive is not None
+    assert "#pragma omp parallel" in sut.source.read_text(), "the source keeps its region: the flags drop it"
+    assert region in runtime.openmp_needs(default.archive), "the scope opens a region, or this test proves nothing"
+    assert runtime.openmp_needs(sut.archive) == frozenset()
+
+
+def sequential(scope: scopes.Scope) -> scopes.Scope:
+    for node, _ in scope.sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.Sequential
+    return scope
+
+
+@pytest.mark.gcc
+def test_a_serial_build_survives_only_where_its_object_differs(tmp_path):
+    parallel, plain = scale_scope(), sequential(scale_scope())
+    default, serial = Candidate("c", "gcc"), Candidate("c", "gcc", serial=True)
+    seen: dict[str, str] = {}
+
+    first = build(parallel, default, MATRIX, tmp_path / "parallel", seen)
+    kept = build(parallel, serial, MATRIX, tmp_path / "parallel", seen)
+    seen.clear()
+    second = build(plain, default, MATRIX, tmp_path / "plain", seen)
+    dropped = build(plain, serial, MATRIX, tmp_path / "plain", seen)
+
+    assert kept.duplicate_of == "" and kept.object_hash != first.object_hash
+    assert dropped.duplicate_of == second.name
+
+
+@pytest.mark.gcc
+def test_a_serial_build_that_still_asks_the_runtime_about_its_team_fails_naming_the_call(tmp_path):
+    source = tmp_path / "variants" / "v0.c"
+    source.parent.mkdir()
+    source.write_text("#include <omp.h>\nint team(void) { return omp_get_max_threads(); }\n")
+
+    sut = compile_source(source, Candidate("c", "gcc", serial=True), MATRIX)
+
+    assert sut.archive is None
+    assert sut.error == "a serial build still calls omp_get_max_threads"
 
 
 def test_an_sve_loop_under_an_all_true_predicate_is_not_masked_and_one_under_whilelo_is():

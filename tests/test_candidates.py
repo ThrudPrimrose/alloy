@@ -1,4 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import pytest
+
 from alloy import machine
 from alloy.backend.candidates import flips, one_factor_at_a_time, vector_options
 from helpers import MATRIX, gcc_only, outlined, scope_with
@@ -30,6 +32,7 @@ def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
 
     gcc = matrix.compilers["gcc"]
     per_language = 1 + sum(len(v) - 1 for v in matrix.knobs.values()) + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
+    per_language += 1  # the serial build
     host = matrix.host_isas(machine.cpu_flags())
     per_language += sum(1 for isa in host if isa in gcc.isa)
     per_language += sum(
@@ -144,6 +147,27 @@ def test_a_tail_is_built_with_the_compilers_spelling_and_names_its_config():
     assert full.config_name(MATRIX).endswith("_avx512_full_mask")
     assert full.variant_key(MATRIX) == out[0].variant_key(MATRIX), "a flag tail renders the default source"
     assert sve.variant_key(MATRIX) != out[0].variant_key(MATRIX), "explicit SVE loops are a source of their own"
+
+
+@pytest.mark.parametrize(
+    "compiler, runtime, serial",
+    [
+        ("gcc", ("-fopenmp",), ("-fopenmp-simd",)),
+        ("clang", ("-fopenmp=libomp",), ("-fopenmp-simd",)),
+        ("icx", ("-fiopenmp",), ("-fopenmp-simd",)),
+        ("nvhpc", ("-mp",), ()),
+    ],
+)
+def test_the_sweep_tries_one_serial_build_of_the_default_source_without_the_openmp_runtime(compiler, runtime, serial):
+    scope = scope_with(outlined(), libm=False, reduction=True)
+    default, *rest = flips(MATRIX, scope, "c", compiler, finite_inputs=False)
+
+    (sut,) = [c for c in rest if c.serial]
+
+    assert sut.variant_key(MATRIX) == default.variant_key(MATRIX), "only the build changes, so it is one factor"
+    assert set(sut.flags(MATRIX)) == (set(default.flags(MATRIX)) - set(runtime)) | set(serial)
+    assert sut.name(MATRIX).endswith("_serial") and sut.config_name(MATRIX).endswith("_serial")
+    assert rest[-1] == sut, "every OpenMP build precedes it in sweep order"
 
 
 def test_each_isa_and_tail_says_which_compilers_build_it_or_why_none_can():

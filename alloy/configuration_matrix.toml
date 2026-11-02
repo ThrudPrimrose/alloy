@@ -140,11 +140,15 @@ fp_level = "fast"
 # objects need at link time (resolved like the OpenMP runtime), and its spelling of every runtime, FP level, cost model
 # and vector library it supports. Every FP level must be spelled; a missing runtime or vector library means
 # "unsupported". A compiler whose executable is not on PATH is reported as skipped.
+# serial: what replaces the OpenMP runtime flags in a build with no parallel region: `simd` constructs keep their
+# meaning, every other directive is dropped. nvc has no such mode: without -mp it drops `simd` too, which a serial loop
+# survives, so it spells nothing.
 [compilers.gcc]
 c = "gcc"
 cpp = "g++"
 remarks = ["-fopt-info-vec-optimized", "-fopt-info-vec-missed"]
 line_tables = ["-g1"]
+serial = ["-fopenmp-simd"]
 
 [compilers.gcc.openmp]
 libomp = ["-fopenmp"]
@@ -184,6 +188,7 @@ c = "clang"
 cpp = "clang++"
 remarks = ["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize"]
 line_tables = ["-gline-tables-only"]
+serial = ["-fopenmp-simd"]
 
 [compilers.clang.openmp]
 libomp = ["-fopenmp=libomp"]
@@ -226,6 +231,7 @@ c = "icx"
 cpp = "icpx"
 remarks = []  # icx prints no -Rpass remark: its vectorized loop count is unknown
 line_tables = ["-gline-tables-only"]
+serial = ["-fopenmp-simd"]
 support_libraries = ["svml", "imf", "intlc"]  # -fp-model=fast calls __svml_* for libm in loops
 
 [compilers.icx.openmp]
