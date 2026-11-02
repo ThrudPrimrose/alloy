@@ -52,18 +52,19 @@ def variant(tmp_path: pathlib.Path, old: str, new: str) -> pathlib.Path:
     return path
 
 
-def gcc_only(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
-    """The shipped matrix without its compiler sections after gcc's (they run from clang's to the codegen section)."""
+def without_compilers_from(tmp_path: pathlib.Path, section: str) -> configuration_matrix.Matrix:
+    """The shipped matrix without the compiler sections from ``section`` to the codegen section."""
     text = MATRIX.path.read_text()
-    first, last = text.index("[compilers.clang]"), text.index("[codegen.knobs]")
-    return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
+    return configuration_matrix.load(variant(tmp_path, text[text.index(section) : text.index("[codegen.knobs]")], ""))
+
+
+def gcc_only(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
+    return without_compilers_from(tmp_path, "[compilers.clang]")
 
 
 def gcc_and_clang(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
-    """The shipped matrix without its compiler sections after clang's (icx and nvhpc), the two CI always has."""
-    text = MATRIX.path.read_text()
-    first, last = text.index("[compilers.icx]"), text.index("[codegen.knobs]")
-    return configuration_matrix.load(variant(tmp_path, text[first:last], ""))
+    """The two compilers CI always has."""
+    return without_compilers_from(tmp_path, "[compilers.icx]")
 
 
 SCALE_MANIFEST = """name: scale

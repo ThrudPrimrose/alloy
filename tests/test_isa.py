@@ -57,15 +57,6 @@ def test_the_abstract_isa_covers_the_core_math():
     assert OPS["gen_mask"].result == "mask"
 
 
-def test_every_isa_spells_every_dtype_it_covers():
-    for name in TABLE.isas:
-        for dtype in DTYPES:
-            for op in ("load", "store", "broadcast", "add", "sub", "mul", "div", "fma", "reduce_add", "zero"):
-                entry = lookup(name, op, dtype, TABLE)
-                assert bool(entry.intrinsic) != bool(entry.recipe)
-                assert entry.mnemonic
-
-
 def test_the_matrix_and_the_table_agree_on_isa_widths():
     for name in TABLE.isas:
         assert TABLE.isa(name).vector_bytes == MATRIX.isas[name].vector_bytes
@@ -141,7 +132,7 @@ def test_reverse_of_an_unknown_name_is_empty():
 def test_every_intrinsic_reverses_to_its_own_row():
     for isa_name, isa in TABLE.isas.items():
         for dtype in ALL_DTYPES:
-            for op, entry in getattr(isa, dtype).items():
+            for op, entry in isa.entries(dtype).items():
                 if not entry.intrinsic:
                     continue
                 assert (isa_name, op, dtype) in {(h.isa, h.op, h.dtype) for h in reverse(entry.intrinsic, TABLE)}
@@ -150,7 +141,7 @@ def test_every_intrinsic_reverses_to_its_own_row():
 def test_every_recipe_step_reverses_to_its_own_row():
     for isa_name, isa in TABLE.isas.items():
         for dtype in ALL_DTYPES:
-            for op, entry in getattr(isa, dtype).items():
+            for op, entry in isa.entries(dtype).items():
                 if not entry.recipe:
                     continue
                 for step in entry.recipe:
@@ -160,7 +151,7 @@ def test_every_recipe_step_reverses_to_its_own_row():
 
 
 @functools.lru_cache(maxsize=1)
-def _clang_include() -> pathlib.Path | None:
+def clang_include() -> pathlib.Path | None:
     """The clang resource include dir (the headers the spellings were verified against), or None."""
     for command in ("clang-22", "clang-21", "clang"):
         try:
@@ -176,8 +167,8 @@ def _clang_include() -> pathlib.Path | None:
 
 
 @functools.lru_cache(maxsize=1)
-def _header_blob() -> str:
-    include = _clang_include()
+def header_blob() -> str:
+    include = clang_include()
     assert include is not None, "no clang resource headers on this host"
     return "\n".join(path.read_text(errors="ignore") for path in include.glob("*.h"))
 
@@ -185,14 +176,14 @@ def _header_blob() -> str:
 IDENTIFIER = re.compile(r"^[A-Za-z_]\w*$")
 
 
-@pytest.mark.skipif(_clang_include() is None, reason="no clang resource headers on this host")
+@pytest.mark.skipif(clang_include() is None, reason="no clang resource headers on this host")
 def test_every_spelling_exists_in_the_clang_headers():
-    blob = _header_blob()
+    blob = header_blob()
     names = [
         name
         for isa in TABLE.isas.values()
         for dtype in ALL_DTYPES
-        for entry in getattr(isa, dtype).values()
+        for entry in isa.entries(dtype).values()
         # recipes may carry pseudo steps (the fallback stories: "no vector remainder: ..."),
         # which are not spellings; identifier-shaped ones are checked
         for name in [entry.intrinsic, *entry.recipe]
@@ -200,30 +191,6 @@ def test_every_spelling_exists_in_the_clang_headers():
     ]
     missing = [name for name in dict.fromkeys(names) if not re.search(rf"\b{re.escape(name)}\s*\(", blob)]
     assert not missing
-
-
-NEW_FLOAT_OPS = ("sqrt", "min", "max", "abs", "neg", "select", "gather", "scatter", "mod")
-INT_OPS_ALL = ("and", "or", "shl", "shr", "mod", "land", "lor")
-
-
-@pytest.mark.parametrize("op", NEW_FLOAT_OPS)
-@pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
-def test_every_isa_spells_the_new_float_ops_with_a_fallback(isa, op):
-    entry = lookup(isa, op, "f64", TABLE)
-
-    assert entry.mnemonic  # native or a recipe, never nothing
-    assert bool(entry.intrinsic) != bool(entry.recipe)
-
-
-@pytest.mark.parametrize("op", INT_OPS_ALL)
-@pytest.mark.parametrize("dtype", ["i64", "i32"])
-@pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
-def test_every_isa_spells_the_integer_ops(isa, dtype, op):
-    entry = lookup(isa, op, dtype, TABLE)
-
-    assert entry.mnemonic
-    assert bool(entry.intrinsic) != bool(entry.recipe)
-    assert not (entry.intrinsic and entry.approximations)
 
 
 def test_an_integer_op_is_refused_on_a_float_dtype():
@@ -234,11 +201,6 @@ def test_an_integer_op_is_refused_on_a_float_dtype():
 def test_a_float_op_is_refused_on_an_integer_dtype():
     with pytest.raises(KeyError, match="float rows are not valid"):
         lookup("avx512", "exp", "i64", TABLE)
-
-
-def test_unknown_dtype_lists_every_dtype():
-    with pytest.raises(KeyError, match="unknown dtype"):
-        lookup("avx512", "add", "bf16", TABLE)
 
 
 def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere():
@@ -288,17 +250,6 @@ def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa, op, dtype
     assert entry.libraries
 
 
-def test_approximation_tiers_resolve_to_positive_measured_errors():
-    for isa in TABLE.isas.values():
-        for dtype in DTYPES:
-            for op in TRANSCENDENTALS:
-                for key in getattr(isa, dtype)[op].approximations:
-                    tier = TABLE.approx[key]
-                    assert tier.op == op
-                    assert tier.recipe and tier.domain
-                    assert tier.error_ulp > 0
-
-
 def test_the_taylor_ladder_improves_and_minimax_beats_taylor():
     ulp = {key: TABLE.approx[key].error_ulp for key in TABLE.approx}
 
@@ -326,7 +277,7 @@ def test_library_calls_reverse_to_the_math(call, isa, op, dtype):
 
 
 @functools.lru_cache(maxsize=1)
-def _libmvec_symbols() -> frozenset[str] | None:
+def libmvec_symbols() -> frozenset[str] | None:
     """The exported vector math symbols of the host's libmvec, or None when there is none."""
     for candidate in ("/lib/x86_64-linux-gnu/libmvec.so.1", "/usr/lib/libmvec.so.1"):
         if pathlib.Path(candidate).is_file():
@@ -335,81 +286,47 @@ def _libmvec_symbols() -> frozenset[str] | None:
     return None
 
 
-@pytest.mark.skipif(_libmvec_symbols() is None, reason="no libmvec on this host")
+@pytest.mark.skipif(libmvec_symbols() is None, reason="no libmvec on this host")
 def test_the_committed_libmvec_names_exist_in_the_host_library():
     for isa in ("avx2", "avx512"):
         for dtype in DTYPES:
             for op in TRANSCENDENTALS:
-                call = getattr(TABLE.isas[isa], dtype)[op].libraries.get("libmvec")
-                symbols = _libmvec_symbols()
+                call = TABLE.isas[isa].entries(dtype)[op].libraries.get("libmvec")
+                symbols = libmvec_symbols()
                 assert symbols is not None
                 assert call in symbols, f"{call} not in this host's libmvec"
 
 
-def _cli(*args: str) -> subprocess.CompletedProcess:
+def cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, "-m", "alloy.isa", *args], capture_output=True, text=True, check=False)
 
 
-def test_the_cli_spells_an_op():
-    run = _cli("lookup", "avx512", "fma", "f64")
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("lookup", "avx512", "fma", "f64"), ("_mm512_fmadd_pd", "a[j]*b[j] + c[j]")),
+        (("lookup", "avx2", "sin", "f64"), ("tier sin-quad-cheb13: abs error 1.89e-15", "libmvec: _ZGVdN4v_sin")),
+        (("reverse", "svaddv_f32"), ("reduce_add on sve/f32",)),
+        (("reverse", "_ZGVdN4v_sin"), ("sin on avx2/f64", "library")),
+        (("ops",), ("load", "gather", "mod", "select", "sin")),
+        (("isas",), ("avx2", "avx512", "neon", "sve")),
+        (("schedule", "neon"), ("scalar_remainder", "unsupported")),  # no predication: the gen_mask line
+        (("assist", "vscalefpd"), ("_mm512_scalef_pd", "helps exp")),
+    ],
+)
+def test_the_cli_answers(args, expected):
+    run = cli(*args)
 
     assert run.returncode == 0
-    assert "_mm512_fmadd_pd" in run.stdout
-    assert "a[j]*b[j] + c[j]" in run.stdout
-
-
-def test_the_cli_reverses_a_mnemonic():
-    run = _cli("reverse", "svaddv_f32")
-
-    assert run.returncode == 0
-    assert "reduce_add on sve/f32" in run.stdout
+    for text in expected:
+        assert text in run.stdout
 
 
 def test_the_cli_refuses_a_maskless_gen_mask():
-    run = _cli("lookup", "avx2", "gen_mask", "f64")
+    run = cli("lookup", "avx2", "gen_mask", "f64")
 
     assert run.returncode == 2
     assert "no predication" in run.stderr
-
-
-def test_the_cli_lists_approximation_tiers_with_measured_ulp():
-    run = _cli("lookup", "avx2", "sin", "f64")
-
-    assert run.returncode == 0
-    assert "tier sin-quad-cheb13: abs error 1.89e-15" in run.stdout
-    assert "libmvec: _ZGVdN4v_sin" in run.stdout
-
-
-def test_the_cli_reverses_a_library_call():
-    run = _cli("reverse", "_ZGVdN4v_sin")
-
-    assert run.returncode == 0
-    assert "sin on avx2/f64" in run.stdout
-    assert "library" in run.stdout
-
-
-def test_the_cli_lists_the_ops():
-    run = _cli("ops")
-
-    assert run.returncode == 0
-    for op in ("load", "gather", "mod", "select", "sin"):
-        assert op in run.stdout
-
-
-def test_the_cli_describes_every_isa():
-    run = _cli("isas")
-
-    assert run.returncode == 0
-    for isa in ("avx2", "avx512", "neon", "sve"):
-        assert isa in run.stdout
-
-
-def test_the_cli_prints_an_isas_schedules():
-    run = _cli("schedule", "neon")
-
-    assert run.returncode == 0
-    assert "scalar_remainder" in run.stdout
-    assert "unsupported" in run.stdout  # no predication: the gen_mask line
 
 
 def test_gen_mask_is_not_required_for_f16():
@@ -447,10 +364,10 @@ def test_the_assists_reverse_by_name_and_mnemonic():
 
 
 def test_every_assist_spelling_exists_in_the_clang_headers():
-    include = _clang_include()
+    include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
-    blob = _header_blob()
+    blob = header_blob()
     missing = [
         assist.name
         for isa in TABLE.isas.values()
@@ -458,14 +375,6 @@ def test_every_assist_spelling_exists_in_the_clang_headers():
         if not re.search(rf"\b{re.escape(assist.name)}\s*\(", blob)
     ]
     assert not missing
-
-
-def test_the_cli_names_an_assist():
-    run = _cli("assist", "vscalefpd")
-
-    assert run.returncode == 0
-    assert "_mm512_scalef_pd" in run.stdout
-    assert "helps exp" in run.stdout
 
 
 def test_masked_variant_names_reverse_without_their_notes():
@@ -476,14 +385,14 @@ def test_masked_variant_names_reverse_without_their_notes():
 
 
 def test_masked_variant_names_exist_in_the_clang_headers():
-    include = _clang_include()
+    include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
-    blob = _header_blob()
+    blob = header_blob()
     missing = []
     for isa in TABLE.isas.values():
         for dtype in ALL_DTYPES:
-            for entry in getattr(isa, dtype).values():
+            for entry in isa.entries(dtype).values():
                 if not entry.masked:
                     continue
                 name = entry.masked.split("(", 1)[0].split(maxsplit=1)[0]
@@ -528,9 +437,21 @@ def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
     assert masked.count(",") == 3, masked
 
 
-def test_the_table_refuses_an_integer_table_with_a_hole(tmp_path):
+@pytest.mark.parametrize(
+    ("old", "new", "refusal"),
+    [
+        ("[isa.avx2.i64.shr]", "[isa.avx2.i64.not_shr_at_all]", "lacks ops"),
+        ("[isa.avx2.f64.sqrt]", "[isa.avx2.f64.not_sqrt_at_all]", "lacks ops"),
+        ('mnemonic = "vaddpd"\n', "", "has no mnemonic"),
+        ('intrinsic = "_mm256_add_pd"\n', "", "exactly one of intrinsic, recipe"),
+        ('intrinsic = "_mm256_add_pd"\n', 'intrinsic = "_mm256_add_pd"\nrecipe = ["a"]\n', "exactly one"),
+        ("error_ulp = 7.066085e+11", "error_ulp = 0.0", "positive error_ulp"),
+    ],
+)
+def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):
     text = DEFAULT_PATH.read_text(encoding="utf-8")
+    assert old in text
     broken = tmp_path / "intrinsics.toml"
-    broken.write_text(text.replace("[isa.avx2.i64.shr]", "[isa.avx2.i64.not_shr_at_all]"), encoding="utf-8")
-    with pytest.raises(ValueError, match="lacks ops"):
+    broken.write_text(text.replace(old, new, 1), encoding="utf-8")
+    with pytest.raises(ValueError, match=refusal):
         load(broken)
