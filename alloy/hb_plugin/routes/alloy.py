@@ -11,6 +11,7 @@ import tempfile
 from collections.abc import Mapping
 from http import HTTPMethod, HTTPStatus
 
+from hpcagent_bench import config
 from hpcagent_bench.harness.judge_wire import JudgeAnswer, JudgeError
 from hpcagent_bench.harness.routes import Judge, RouteRequest, route
 from hpcagent_bench.harness.sandbox import agent_root
@@ -21,6 +22,7 @@ from hpcagent_bench.spec import BenchSpec
 from hpcagent_bench.support.bindings.contract import graded_datatype
 
 from alloy.api import NothingToGenerate
+from alloy.hb_plugin.adapter import running_sizes
 from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
 from alloy.report import Mode
 
@@ -71,14 +73,15 @@ def serve(judge: Judge, request: RouteRequest) -> None:
     kernel = str(request.body.get("kernel") or "")
     parent = agent_root(request.episode_id) / ROUTE / spelled / kernel.replace("/", "_")
     parent.mkdir(parents=True, exist_ok=True)
-    precision = precision_from_datatype(graded_datatype(BenchSpec.load(kernel), judge.cfg.datatype))
+    spec = BenchSpec.load(kernel)
+    precision = precision_from_datatype(graded_datatype(spec, judge.cfg.datatype))
+    running = running_sizes(spec, config.current().service.preset)
     with judge.device_slot() as slot:
         if slot is None:
             return None
         # each call answers from a folder of its own: a repeat never pulls the files from under a running one
-        call = CodegenRequest(
-            kernel=kernel, mode=Mode(spelled), precision=precision, folder=tempfile.mkdtemp(prefix="run", dir=parent)
-        )
+        folder = tempfile.mkdtemp(prefix="run", dir=parent)
+        call = CodegenRequest(kernel=kernel, mode=Mode(spelled), precision=precision, folder=folder, running=running)
         spawn = multiprocessing.get_context("spawn")
         with concurrent.futures.ProcessPoolExecutor(1, mp_context=spawn) as pool:
             try:

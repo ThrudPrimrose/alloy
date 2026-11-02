@@ -36,6 +36,8 @@ class CodegenRequest(pydantic.BaseModel):
     mode: Mode
     precision: Precision
     folder: str
+    #: The sizes the judge grades the kernel at.
+    running: dict[str, int]
 
 
 class CodegenAnswer(pydantic.BaseModel):
@@ -79,7 +81,7 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
         )
     manifest = manifest_of(spec, request.precision)
     out = pathlib.Path(request.folder)
-    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode)
+    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode, running=request.running)
     if result.best is None or not result.winners:
         hints = "\n\n".join((result.advice or {}).values())
         raise api.NothingToGenerate(

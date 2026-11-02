@@ -3,6 +3,7 @@
 ``/profile`` stub, and the chosen library is scored once with ``/score``."""
 
 import atexit
+import numbers
 import pathlib
 import shutil
 import sys
@@ -28,7 +29,7 @@ from hpcagent_bench.harness.scoring import resolve_kernel_timeout
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.harness.tools import JudgeClient
 from hpcagent_bench.precision import Precision, numpy_dtype
-from hpcagent_bench.spec import RUNGS, BenchSpec
+from hpcagent_bench.spec import RUNGS, BenchSpec, parse_preset
 
 from alloy import api, configuration_matrix, gpu
 from alloy.backend.build import Build
@@ -55,6 +56,7 @@ __all__ = [
     "pipeline_sdfg",
     "ranked",
     "rendered",
+    "running_sizes",
     "stub_time",
     "target_of",
     "verified",
@@ -103,6 +105,13 @@ def fast_size(token: str) -> Preset | None:
     return FAST_SIZE if preset.is_rung and RUNGS.index(FAST_SIZE) < RUNGS.index(preset) else None
 
 
+def running_sizes(spec: BenchSpec, token: str) -> dict[str, int]:
+    """The sizes a run of preset ``token`` grades ``spec`` at: its rung's, or a fuzzed run's anchor rung's, which its
+    timed draws stay within a quarter of."""
+    rung = spec.parameters.get(parse_preset(token).anchor.text, {})
+    return {name: int(value) for name, value in rung.items() if isinstance(value, numbers.Integral)}
+
+
 def manifest_of(spec: BenchSpec, precision: Precision) -> inputs.Manifest:
     """``spec``'s manifest in the corpus, inputs drawn at ``precision``."""
     path = paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml"
@@ -116,11 +125,12 @@ def generated(
     matrix: Matrix,
     out: pathlib.Path,
     mode: Mode = Mode.PROFILE,
+    running: dict[str, int] | None = None,
 ) -> api.Result:
     """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision`` and timed by nobody here; in
-    speculative mode each scope's pick is the prediction's."""
+    speculative mode each scope's pick is the prediction's at the ``running`` sizes."""
     manifest = manifest_of(spec, precision)
-    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=False)
+    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=False, running=running)
     if result.verification is None:
         raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
     return result
@@ -288,7 +298,8 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     if nothing_to_generate(sdfg, matrix):
         return rendered(task, spec, sdfg, deliver)
     out = scratch_folder(spec)
-    result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE)
+    running = running_sizes(spec, config.current().service.preset)
+    result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE, running)
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}

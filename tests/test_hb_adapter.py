@@ -10,6 +10,8 @@ import pytest
 pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
 
 from collections.abc import Sequence
+from types import SimpleNamespace
+from typing import cast
 
 from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.harness.envelope import Submission
@@ -20,6 +22,7 @@ from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
 from alloy.evaluate.verify import Verdict
+from alloy.hb_plugin import adapter
 from alloy.hb_plugin.adapter import (
     fast_size,
     faster_correct,
@@ -181,3 +184,10 @@ def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
     sut = verified(rep, {"good": Verdict("pass"), "wrong": Verdict("fail")})  # type: ignore[arg-type]
 
     assert [b.name for b in sut] == ["good"]
+
+
+def test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor() -> None:
+    spec = cast(BenchSpec, SimpleNamespace(parameters={"S": {"N": 64, "dx": 0.5}, "L": {"N": 4096}}))
+
+    assert adapter.running_sizes(spec, "S") == {"N": 64}, "a float parameter is no size"
+    assert adapter.running_sizes(spec, "L+fuzz") == {"N": 4096}
