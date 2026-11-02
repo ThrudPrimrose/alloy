@@ -13,7 +13,7 @@ import pathlib
 import queue
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
@@ -35,11 +35,13 @@ from alloy.records import RECORD
 
 @dataclass(slots=True, frozen=True)
 class Cases:
-    """The fuzz draws every candidate runs on, the program outputs compared, and how they are graded."""
+    """The fuzz draws every candidate runs on, the program outputs compared, how they are graded, and how many
+    consecutive ``draws`` are one input at different team sizes."""
 
     draws: list[Draw]
     outputs: tuple[str, ...]
     grading: Grading = Grading()
+    teams: int = 1
 
 
 #: How a candidate's outputs compared: bit-identical (``exact``), inside the band (``pass``), outside the band or not
@@ -76,8 +78,9 @@ CHILD_CALLS = 16
 CHILD_CALLS_S = 1.0
 
 #: OpenMP team sizes every draw of a program with a reduction runs at: libomp combines a team of up to 4 under a lock
-#: or atomically and a larger one in a tree, so the last size takes the tree path a 4-thread child never reaches.
-REDUCTION_TEAMS = (2, 3, 4, 5)
+#: or atomically and a larger one in a tree, so the last size takes the tree path a 4-thread child never reaches. The
+#: first two have no combine order to race on: where their values differ, the rounding follows the threads on any run.
+REDUCTION_TEAMS = (1, 2, 3, 4, 5)
 
 #: One program call's outputs by name.
 Outputs = dict[str, np.ndarray]
@@ -283,9 +286,9 @@ def compare(
     return Verdict("pass" if ok else "fail", float(err), detail)
 
 
-#: Reference runs per draw. An output that differs between them, or between the calls of one run, is nondeterministic
-#: -- a parallel reduction that combines its partial sums in whatever order the threads finish -- and is compared
-#: under ``band`` at every level.
+#: Reference runs per draw. An output that differs between them, between the calls of one run, or between the team
+#: sizes of one input is nondeterministic -- a parallel reduction whose partial sums follow the threads -- and is
+#: compared under ``band`` at every level.
 REFERENCE_RUNS = 3
 
 
@@ -298,8 +301,9 @@ class Reference:
 
 @dataclass(slots=True, frozen=True)
 class Verification:
-    """``verdicts[scope symbol][candidate name]``, the outputs the reference does not reproduce, and the program
-    built for every candidate (``programs[scope symbol, candidate name]``) and for the reference."""
+    """``verdicts[scope symbol][candidate name]``, the outputs the reference does not reproduce or whose value follows
+    its team size, and the program built for every candidate (``programs[scope symbol, candidate name]``) and for the
+    reference."""
 
     verdicts: dict[str, dict[str, Verdict]]
     nondeterministic: frozenset[str]
@@ -308,7 +312,7 @@ class Verification:
 
 
 def reference_outputs(compiled: pathlib.Path, cases: Cases) -> Reference:
-    """The reference's outputs per draw, and which outputs change between repeated runs of the same draw."""
+    """The reference's outputs per draw, and which outputs change between repeated runs or team sizes of one input."""
     with Children() as children:
         return reference_from(
             cases, [[f.result() for f in runs] for runs in submit_reference(children, compiled, cases)]
@@ -319,15 +323,29 @@ def submit_reference(children: Children, compiled: pathlib.Path, cases: Cases) -
     return [[children.submit(compiled, d, cases.outputs) for _ in range(REFERENCE_RUNS)] for d in cases.draws]
 
 
+def differing(cases: Cases, results: Iterable[Outputs]) -> set[str]:
+    """The outputs whose graded part differs between ``results``."""
+    first, *rest = results
+    want = {name: graded(cases.grading, name, first, first[name]) for name in cases.outputs}
+    return {
+        name
+        for name, value in want.items()
+        for r in rest
+        if not np.array_equal(value, graded(cases.grading, name, first, r[name]), equal_nan=True)
+    }
+
+
 def reference_from(cases: Cases, per_draw: list[list[Outcome]]) -> Reference:
     outputs, unstable = [], set()
     for runs in per_draw:
         failed = [r for r in runs if isinstance(r, str)]
         if failed:
             raise RuntimeError(f"the reference program crashed: {failed[0]}")
-        first, *rest = itertools.chain.from_iterable(r for r in runs if not isinstance(r, str))
-        unstable |= {n for n in cases.outputs for r in rest if not np.array_equal(first[n], r[n], equal_nan=True)}
-        outputs.append(first)
+        results = list(itertools.chain.from_iterable(r for r in runs if not isinstance(r, str)))
+        unstable |= differing(cases, results)
+        outputs.append(results[0])
+    for team_sizes in itertools.batched(outputs, cases.teams):
+        unstable |= differing(cases, team_sizes)
     return Reference(outputs, frozenset(unstable), cases.grading)
 
 
@@ -362,7 +380,7 @@ def at_team_sizes(program: Program, cases: Cases) -> Cases:
     if not any(scope.has_reduction for scope in program.scopes):
         return cases
     draws = [dataclasses.replace(d, threads=size) for d in cases.draws for size in REDUCTION_TEAMS]
-    return dataclasses.replace(cases, draws=draws)
+    return dataclasses.replace(cases, draws=draws, teams=len(REDUCTION_TEAMS))
 
 
 def verify(

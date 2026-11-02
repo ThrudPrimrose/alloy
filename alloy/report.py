@@ -514,7 +514,7 @@ def markdown(r: Report) -> str:
     """``report.md``: rendered from the record, nothing else."""
     lines = [f"# Alloy report: {r.program} ({r.mode})", "", "```", tree.render(r.tree), "```", ""]
     if r.nondeterministic_outputs:
-        note = "Nondeterministic outputs (differ between reference runs, always compared by band)"
+        note = "Nondeterministic outputs (differ between reference runs or team sizes, always compared by band)"
         lines += [f"{note}: {', '.join(r.nondeterministic_outputs)}", ""]
     lines += [f"OpenMP runtime: {r.openmp_runtime}", ""]
     lines += [f"Skipped compiler {name}: {reason}" for name, reason in r.skipped_compilers.items()]

@@ -10,13 +10,14 @@ from hpcagent_bench import paths
 from hpcagent_bench.frameworks.test import kernel_tolerances
 from hpcagent_bench.spec import BenchSpec
 
-from alloy import machine
+from alloy import api, machine
 from alloy.backend import runtime
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import link, timing, verify
 from alloy.frontend import inputs, scopes
 from helpers import (
+    EXAMPLE,
     MATRIX,
     PREFIX_MANIFEST,
     REDUCTIONS,
@@ -514,6 +515,136 @@ def test_an_output_that_changes_between_the_calls_of_one_child_is_marked_nondete
     sut = verify.reference_from(cases, runs)
 
     assert sut.nondeterministic == frozenset({"x"})
+
+
+def team_runs(values: dict[int, dict[str, np.ndarray]]) -> list[list[verify.Outcome]]:
+    """Three identical reference runs at each team size of ``values``, in that order."""
+    return [[[outputs] for _ in range(verify.REFERENCE_RUNS)] for outputs in values.values()]
+
+
+def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team_reproduces_it():
+    cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("sum", "scaled")))
+    runs = team_runs(
+        {team: {"sum": np.array([team * 1.0]), "scaled": np.array([2.0])} for team in verify.REDUCTION_TEAMS}
+    )
+
+    sut = verify.reference_from(cases, runs)
+
+    assert sut.nondeterministic == frozenset({"sum"})
+
+
+def test_two_draws_differing_from_each_other_are_no_nondeterminism():
+    draws = [inputs.Draw({}, {}), inputs.Draw({}, {})]
+    cases = verify.at_team_sizes(outlined(), verify.Cases(draws, ("x",)))
+    per_draw = [{"x": np.array([float(draw)])} for draw in range(len(draws)) for _ in verify.REDUCTION_TEAMS]
+
+    sut = verify.reference_from(cases, [[[outputs]] for outputs in per_draw])
+
+    assert sut.nondeterministic == frozenset()
+
+
+def test_a_team_size_changing_only_the_ungraded_tail_leaves_an_output_exact():
+    grading = inputs.Grading({"x": "count"})
+    cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("x", "count"), grading))
+    count = np.array([1], dtype=np.int64)
+    runs = team_runs({team: {"x": np.array([1.0, team * 1.0]), "count": count} for team in verify.REDUCTION_TEAMS})
+
+    sut = verify.reference_from(cases, runs)
+
+    assert sut.nondeterministic == frozenset()
+
+
+def row_sum_reference(tmp: pathlib.Path, program: scopes.Program, chunked: str, body: str) -> list[ScopeReport]:
+    """``row_sum``'s reducing scope with the reference ``chunked`` and the strict candidate ``hand`` writing ``body``."""
+    scope = program.scopes[1]
+    report = candidate_writing(tmp, scope, body)
+    good, hand = report.builds
+    (tmp / "reference").mkdir()
+    reference = dataclasses.replace(good, archive=handwritten_archive(tmp / "reference", scope, chunked))
+    return reduction_reports(tmp, program, ScopeReport(scope, (reference, hand)))
+
+
+#: ``row_sum`` the way a parallel reduction rounds, with the order fixed: one partial sum per chunk, added up last.
+CHUNKED = """for (int64_t i = 0; i < M; ++i) {{
+    int64_t chunks = {chunks};
+    for (int64_t c = 0; c < chunks; ++c) {{
+        double partial = 0.0;
+        for (int64_t j = c * N / chunks; j < (c + 1) * N / chunks; ++j) partial += a[i * N + j];
+        out[i] += partial;
+    }}
+}}"""
+TEAM_CHUNKS = CHUNKED.format(chunks="omp_get_max_threads()")
+
+
+@pytest.mark.gcc
+def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follows_the_team_size(tmp_path):
+    """The reference never shows two values at one size, so nothing but the sizes tells its rounding is thread order."""
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    reports = row_sum_reference(tmp_path, program, TEAM_CHUNKS, ROW_SUM.format(factor="1.0"))
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.nondeterministic == frozenset({"out"})
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
+
+
+@pytest.mark.gcc
+def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread(tmp_path):
+    """Two chunks at every size above 1: only the one-thread run has the left-to-right sum a serial build computes."""
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    two_chunks = CHUNKED.format(chunks="omp_get_max_threads() > 1 ? 2 : 1")
+    reports = row_sum_reference(tmp_path, program, two_chunks, ROW_SUM.format(factor="1.0"))
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        "for (int64_t i = 0; i < M; ++i) for (int64_t j = 1; j < N; ++j) out[i] += a[i * N + j];",
+        ROW_SUM.format(factor="1.0 + 1e-8"),
+    ],
+    ids=["a lost term", "ten times the band"],
+)
+def test_a_wrong_sum_fails_against_a_reference_whose_value_follows_the_team_size(tmp_path, wrong):
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    reports = row_sum_reference(tmp_path, program, TEAM_CHUNKS, wrong)
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.nondeterministic == frozenset({"out"})
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "fail"
+
+
+@pytest.mark.gcc
+def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tmp_path):
+    program = outlined()
+    manifest = inputs.load(EXAMPLE.with_suffix(".yaml"), f"{EXAMPLE}:two_scopes")
+    cases = api.test_cases(program, manifest)
+    assert cases is not None
+    reports = [
+        ScopeReport(s, (build(s, Candidate("c", "gcc"), MATRIX, tmp_path / s.symbol, {}),)) for s in program.scopes
+    ]
+
+    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
+
+    assert sut.nondeterministic == frozenset({"total"})
+
+
+@pytest.mark.gcc
+def test_a_rounding_difference_fails_a_reduction_whose_reference_reproduces_at_every_team_size(tmp_path):
+    """Every row is one thread's sum, whatever the team: this reference is exact, so a strict candidate must match."""
+    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
+    backwards = "for (int64_t i = 0; i < M; ++i) for (int64_t j = N - 1; j >= 0; --j) out[i] += a[i * N + j];"
+    report = candidate_writing(tmp_path, program.scopes[1], backwards)
+
+    sut = verify.verify(program, MATRIX, reduction_reports(tmp_path, program, report), cases, tmp_path / "out")
+
+    assert sut.nondeterministic == frozenset()
+    assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "fail"
 
 
 def test_one_wrong_result_among_the_calls_of_a_child_fails_the_candidate():
