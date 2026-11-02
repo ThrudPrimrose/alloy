@@ -63,3 +63,32 @@ clang, oneAPI and the NVIDIA HPC SDK and runs all but the `avx512`, `cuda` and `
 cross-compiler OpenMP link test.
 
 Notes: `docs/design.md` (decisions), `docs/measurement.md` (A/B rules), `docs/related_work.md` (citations).
+
+## How to extend it
+
+A run goes `frontend/scopes` (outline), `backend/candidates` (the sweep), `heuristics/prune` (drop what cannot change
+the code), `backend/sweep` and `build` (render and compile), `evaluate/verify` (fuzzed inputs), `evaluate/timing`
+(screen and final reps, link `alloy_full`), `report`. Add to the step that owns the decision.
+
+- **A compiler, FP level, ISA, tail or vector library.** Edit `alloy/configuration_matrix.toml`; add a field to its
+  pydantic model in `alloy/configuration_matrix.py` only for a new kind of setting. `one_factor_at_a_time` sweeps what
+  the file lists, and every candidate is verified, so no Python changes for a new row.
+- **A sweep axis.** Add the factor to `Candidate` and its flips to `backend/candidates.py`, then tell `heuristics/prune`
+  when the factor cannot change the object. The prune reason goes in the report, so an axis that looks useless shows up
+  there.
+- **An ISA row.** Add `[isa.<isa>.<dtype>.<op>]` to `alloy/isa/intrinsics.toml`, with the spelling checked against the
+  compiler's headers. A new op also goes in `OPS` in `alloy/isa/ops.py`, which holds the math, never a spelling. Run
+  `python -m alloy.isa validate`: a row an x86 host can run is compiled and executed before an agent sees it, and the
+  rest stay `unverified`. Do not mark a row verified by hand.
+- **A math kernel.** `alloy/isa/mathkernels.py` and `helpers/mathfit.py`, which fits the coefficients. State the level
+  (`strict`, `relaxed`, `fast`) and re-measure the ulp bound the row cites.
+- **A verification rule.** `alloy/evaluate/verify.py`. A candidate is judged by its outputs on fuzzed inputs against the
+  reference, so a new check must be able to fail a candidate that builds and runs.
+- **A hint for agents.** `alloy/isa/hints.py` reads a scope's tasklets when emission fails; `alloy/guidance.py` advises
+  on the scopes left short.
+- **A bench tool or packet.** `alloy/hb_plugin`: the tool in `tools/alloy.py`, its judge half in `routes/alloy.py`, the
+  packet in `plugin.toml`, prompt changes in `prompt/overlay.yaml`, and the agent-facing text in `skills/`. The judge
+  half runs Alloy in a process of its own, because the judge's threads never fork.
+
+After any change to what a scope builds, run the whole suite: `uv run pytest -m "not icx" -n 3 --maxfail=10`, and
+`BENCH_BRANCH=<branch> bash helpers/bump_pins.sh` when the bench or DaCe pin moves.
