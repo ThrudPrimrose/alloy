@@ -110,7 +110,7 @@ args:
 def program_and_cases(tmp: pathlib.Path, kernel: str, manifest_text: str) -> tuple[scopes.Program, verify.Cases]:
     manifest = write_manifest(tmp, kernel, manifest_text)
     program = scopes.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
-    cases = api.test_cases(program, manifest, 2)
+    cases = api.test_cases(program, manifest)
     assert cases is not None, "a manifest always gives draws"
     return program, cases
 

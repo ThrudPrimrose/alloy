@@ -173,9 +173,10 @@ def test_a_serial_build_of_a_parallel_scan_runs_with_no_openmp_call_and_folds_th
 
     sut = verify.run(compiled, draw, manifest.outputs)
 
-    assert not isinstance(sut, str), sut
+    assert not isinstance(sut, str) and sut, sut
     assert runtime.openmp_needs(serial.archive) == frozenset()
-    np.testing.assert_allclose(sut["out"], np.cumsum(draw.values["a"]), rtol=0, atol=1e-10)
+    for outputs in sut:
+        np.testing.assert_allclose(outputs["out"], np.cumsum(draw.values["a"]), rtol=0, atol=1e-10)
 
 
 def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
