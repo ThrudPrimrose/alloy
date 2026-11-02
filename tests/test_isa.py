@@ -316,6 +316,7 @@ def cli(*args: str) -> subprocess.CompletedProcess:
         (("isas",), ("avx2", "avx512", "neon", "sve")),
         (("schedule", "neon"), ("scalar_remainder", "unsupported")),  # no predication: the gen_mask line
         (("assist", "vscalefpd"), ("_mm512_scalef_pd", "helps exp")),
+        (("tiers", "sin"), ("sin-taylor7: 4 steps", "sin-quad-cheb13", "t = mul(x, x)")),
     ],
 )
 def test_the_cli_answers(args, expected):

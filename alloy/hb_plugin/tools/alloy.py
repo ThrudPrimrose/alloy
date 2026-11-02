@@ -28,7 +28,7 @@ class IsaArgs(pydantic.BaseModel):
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
-    command: Literal["lookup", "reverse", "assist", "kernel", "schedule", "skeleton", "ops", "isas", "host"]
+    command: Literal["lookup", "reverse", "assist", "kernel", "tiers", "schedule", "skeleton", "ops", "isas", "host"]
     arguments: list[str] = pydantic.Field(
         default_factory=list, description='e.g. ["avx512", "sin", "f64"] for kernel, ["vfmadd231pd"] for reverse'
     )
@@ -36,7 +36,7 @@ class IsaArgs(pydantic.BaseModel):
 
 ISA = (
     "The intrinsics reference: `kernel` returns sin, exp, log, pow and more as C intrinsics at strict, relaxed and "
-    "fast levels; `lookup` spells an op for an ISA and dtype; `reverse` names what an intrinsic or mnemonic computes; "
+    "fast levels; `tiers` lists a function's polynomial depths with their error, for picking one; `lookup` spells an op for an ISA and dtype; `reverse` names what an intrinsic or mnemonic computes; "
     "`skeleton` gives a loop in a legal schedule; `host` says which ISAs this machine runs. `lookup`, `kernel` and "
     "`skeleton` answers carry the verdict of a compiled check where this machine can run them, else say unverified."
 )

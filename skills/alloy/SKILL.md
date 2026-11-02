@@ -70,6 +70,7 @@ how; the per-ISA pages list them.
 python -m alloy.isa host                        # which ISA and dtype this machine runs: start here
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps (--json)
 python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> C (--level strict|relaxed|fast)
+python -m alloy.isa tiers <fn>                  # sin, cos, exp: every polynomial depth, its steps and error (--json)
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes (--json)
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute; takes minutes
 python -m alloy.isa skeleton <isa> <schedule> <dtype>   # the C loop shape, compiled and checked on this host

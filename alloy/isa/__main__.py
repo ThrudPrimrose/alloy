@@ -68,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("--level", choices=LEVELS, help="one level; default all three")
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
+    tiers_p = commands.add_parser("tiers", help="a function's polynomial depths, cheapest first: tiers sin")
+    tiers_p.add_argument("function", help="sin, cos or exp")
+    tiers_p.add_argument("--json", action="store_true", help="one JSON record per depth")
+
     commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
     commands.add_parser("ops", help="the abstract math ISA")
     commands.add_parser("isas", help="the covered vector ISAs and their machine models")
@@ -97,6 +101,8 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return lookup_command(table, args)
     if args.command == "kernel":
         return print_kernels(table, args.isa, args.function, args.dtype, args.level, not args.no_verify)
+    if args.command == "tiers":
+        return tiers_command(table, args)
     if args.command == "validate":
         return validate_command(table, args)
     if args.command == "skeleton":
@@ -148,6 +154,27 @@ def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
         print(f"  {library}: {call}")
     if entry.note:
         print(f"  note:      {entry.note}")
+
+
+def tiers_command(table: Table, args: argparse.Namespace) -> int:
+    """Every polynomial depth of a function, cheapest first, so the caller picks the error it can afford."""
+    function = FUNCTION_ALIASES.get(args.function, args.function)
+    tiers = sorted(
+        ((name, tier) for name, tier in table.approx.items() if tier.op == function),
+        key=lambda item: (len(item[1].recipe), -item[1].error_abs),
+    )
+    if not tiers:
+        known = sorted({tier.op for tier in table.approx.values()})
+        raise KeyError(f"{args.function!r}: no polynomial tiers; tiers exist for {known}")
+    if args.json:
+        for name, tier in tiers:
+            print(json.dumps({"name": name, "steps": len(tier.recipe), **dataclasses.asdict(tier)}))
+        return 0
+    print(f"{function}: {len(tiers)} depths; each holds on its domain only, so reduce x first or take `kernel`")
+    for name, tier in tiers:
+        print(f"{name}: {len(tier.recipe)} steps, abs error {tier.error_abs:.3g}, {tier.domain}")
+        print(f"  {'; '.join(tier.recipe)}")
+    return 0
 
 
 def lookup_command(table: Table, args: argparse.Namespace) -> int:
