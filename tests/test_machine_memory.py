@@ -1,6 +1,9 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Main-memory bandwidth: the installed modules' theoretical peak from a saved ``dmidecode -t 17``, else measured."""
 
+import concurrent.futures
+import time
+
 from alloy import machine
 
 TWO_DDR5_MODULES_ONE_EMPTY_SLOT = """# dmidecode 3.6
@@ -47,3 +50,23 @@ def test_a_saved_dmidecode_listing_is_read_from_the_file_the_variable_names(tmp_
 
 def test_a_measured_copy_moves_bytes_at_a_positive_rate():
     assert machine.stream_bandwidth(threads=1, rounds=1) > 0
+
+
+def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch):
+    """A cache does not serialize a miss: each thread's own measurement would run against the others and read low."""
+    measured = []
+
+    def stream(threads: int, rounds: int = 3) -> float:
+        measured.append(threads)
+        time.sleep(0.05)
+        return float(len(measured))
+
+    monkeypatch.setattr(machine, "memory_devices_text", lambda: "")
+    monkeypatch.setattr(machine, "stream_bandwidth", stream)
+    machine.measured_bandwidth.cache_clear()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        sut = list(pool.map(lambda unused: machine.memory_bandwidth().bytes_per_second, range(4)))
+    machine.measured_bandwidth.cache_clear()
+
+    assert sut == [1.0, 1.0, 1.0, 1.0]
+    assert len(measured) == 1

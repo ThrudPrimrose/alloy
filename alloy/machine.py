@@ -7,6 +7,7 @@ import pathlib
 import re
 import resource
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -169,12 +170,21 @@ def stream_bandwidth(threads: int, rounds: int = 3) -> float:
     return best
 
 
+MEASURING = threading.Lock()
+
+
 @functools.lru_cache(maxsize=1, typed=True)
+def measured_bandwidth() -> float:
+    return stream_bandwidth(len(physical_cores()))
+
+
 def memory_bandwidth() -> Bandwidth:
     peak = theoretical_bandwidth(memory_devices_text())
     if peak is not None:
         return Bandwidth(peak, "dmidecode")
-    return Bandwidth(stream_bandwidth(len(physical_cores())), "stream")
+    # a cache does not serialize a miss: threads measuring at once run against each other and read low
+    with MEASURING:
+        return Bandwidth(measured_bandwidth(), "stream")
 
 
 @functools.lru_cache(maxsize=1, typed=True)
