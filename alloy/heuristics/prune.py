@@ -15,6 +15,7 @@ from alloy.backend.build import Build
 from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Scope
+from alloy.isa.ops import called_name
 
 __all__ = ["Facts", "Pruned", "facts", "innermost_entries", "is_native", "prune", "smallest_element"]
 
@@ -54,7 +55,7 @@ def operations(tasklet: nodes.Tasklet) -> tuple[set[type], set[str]]:
         if isinstance(node, ast.BinOp):
             ops.add(type(node.op))
         elif isinstance(node, ast.Call):
-            calls.add(ast.unparse(node.func).rsplit(".", 1)[-1])
+            calls.add(called_name(node))
     return ops, calls
 
 

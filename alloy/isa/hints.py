@@ -12,7 +12,7 @@ from collections import Counter
 
 from alloy.isa.mathcheck import HEADERS, validate_kernel
 from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, render, target_of
-from alloy.isa.ops import OPS
+from alloy.isa.ops import OPS, called_name
 from alloy.isa.table import DTYPES, Table, load
 from alloy.isa.validate import host_can_run, validate
 
@@ -112,7 +112,7 @@ def expression_ops(code: str) -> tuple[set[str], set[str]]:
         elif isinstance(child, ast.Compare):
             ops.add("lt")
         elif isinstance(child, ast.Call):
-            name = ast.unparse(child.func).rsplit(".", 1)[-1]
+            name = called_name(child)
             ops.add(CALL_NAMES[name]) if name in CALL_NAMES else skipped.add(name)
     return ops, skipped
 

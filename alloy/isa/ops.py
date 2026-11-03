@@ -8,11 +8,18 @@ either operand position — the scalar is broadcast to all lanes (per ISA: an EV
 AVX-512 when it is the last source, an explicit ``set1``/``vdup``/``svdup`` elsewhere, see the ISA notes); and
 integer lanes are looked up under the ``i64``/``i32`` dtypes, the float ones under ``f64``/``f32``."""
 
+import ast
+
 from pydantic.dataclasses import dataclass
 
 from alloy.records import RECORD
 
-__all__ = ["AbstractOp", "OPS"]
+__all__ = ["AbstractOp", "OPS", "called_name"]
+
+
+def called_name(call: ast.Call) -> str:
+    """What a Python call names, without its module: ``numpy.sqrt(x)`` calls ``sqrt``."""
+    return ast.unparse(call.func).rsplit(".", 1)[-1]
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
