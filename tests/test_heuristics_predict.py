@@ -70,6 +70,44 @@ def test_only_a_loop_holding_no_other_loop_is_innermost_and_a_forward_branch_spa
     assert [i.address for i in sut.body] == [0x04, 0x0C]
 
 
+def test_a_jump_back_to_the_epilogue_is_no_loop_so_the_errno_fallback_past_the_return_never_counts_as_one():
+    code = listing(  # gcc's scalar sqrt: the hot loop, the return, then the out-of-line call for a negative input
+        (0x40, "vmovsd", "(%rdi,%rax,8), %xmm1"),
+        (0x45, "vucomisd", "%xmm1, %xmm2"),
+        (0x49, "ja", "0x71 <f+0x71>"),
+        (0x4B, "vsqrtsd", "%xmm1, %xmm1, %xmm0"),
+        (0x53, "vmovsd", "%xmm0, (%rsi,%rax,8)"),
+        (0x5E, "jne", "0x40 <f+0x40>"),
+        (0x60, "addq", "$0x38, %rsp"),
+        (0x64, "retq", ""),
+        (0x71, "vmovapd", "%xmm1, %xmm0"),
+    )
+    fallback = Instruction(0x8F, "callq", "0x94 <f+0x94>", "sqrt")
+    tail = listing(
+        (0xB2, "vmovsd", "%xmm0, (%rsi,%rax,8)"), (0xBD, "jne", "0x40 <f+0x40>"), (0xBF, "jmp", "0x60 <f+0x60>")
+    )
+
+    (sut,) = predict.innermost_loops([*code, fallback, *tail])
+
+    assert sut.callees == ()
+    assert [i.address for i in sut.body] == [0x40, 0x45, 0x4B, 0x53]
+
+
+def test_a_latch_laid_out_past_the_return_still_closes_its_loop():
+    code = listing(  # gcc on a triangular nest: the trip test leaves through the return, the latch follows it
+        (0x10, "vmovupd", "(%rdi,%rax,8), %ymm0"),
+        (0x16, "cmpq", "%rax, %rdx"),
+        (0x19, "jle", "0x22 <f+0x22>"),
+        (0x1B, "retq", ""),
+        (0x22, "incq", "%rax"),
+        (0x25, "jmp", "0x10 <f+0x10>"),
+    )
+
+    (sut,) = predict.innermost_loops(code)
+
+    assert [i.address for i in sut.body] == [0x10, 0x16, 0x1B, 0x22]
+
+
 @pytest.mark.parametrize(
     ("mnemonic", "operands", "moved"),
     [
@@ -202,9 +240,17 @@ def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(tmp
     assert predict.choose(rep, {}, predicted, MATRIX, finite_inputs=False).candidate.serial is serial
 
 
+def ten_cycle_loop(archive: pathlib.Path) -> dict[str, list[Instruction]]:
+    loop = (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"), (0x05, "vmovsd", "%xmm0, (%rsi,%rax,8)"), (0x0A, "jne", "0x0 <f>")
+    return {"f": listing(*loop)}
+
+
 @pytest.mark.gcc
 def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core(tmp_path, monkeypatch):
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
+    monkeypatch.setattr(machine, "max_frequency_hz", lambda: 3.0e9)
+    monkeypatch.setattr(predict, "disassembly", ten_cycle_loop)
+    monkeypatch.setattr(predict, "mca_cycles", lambda body: 10.0)
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
     sut = predict.predictions([rep], {"N": 1000}, running=True)[rep.scope.symbol]
@@ -212,7 +258,8 @@ def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core
     parallel, serial = sut[rep.builds[0].name], sut[rep.builds[1].name]
     assert (parallel.regions, parallel.elements) == (1.0, 1000.0)
     assert (serial.regions, serial.elements) == (0.0, 1000.0)
-    assert parallel.compute > serial.compute / 4, "the region's cycles come on top of the four cores' share"
+    assert parallel.compute == pytest.approx(3.91), "2.5 for the four cores' share, 470 ns at 3 GHz over 1000 elements"
+    assert serial.compute == pytest.approx(10.0)
 
 
 @pytest.mark.gcc

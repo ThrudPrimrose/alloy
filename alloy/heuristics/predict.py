@@ -68,6 +68,8 @@ TARGET = re.compile(r"\b(?:0x)?([0-9a-f]+) <")
 X86_BRANCH = re.compile(r"^j[a-z]+$|^loop")
 ARM_BRANCH = re.compile(r"^(b(\.[a-z]+)?|cbn?z|tbn?z)$")
 CALL = re.compile(r"^(call[a-z]*|bl)$")
+RETURN = re.compile(r"^ret")
+JUMP = re.compile(r"^(jmp[a-z]*|b)$")
 STACK = re.compile(r"%rsp|%rbp|\[sp\b|\[x29\b")
 NO_ACCESS = re.compile(r"^(lea|nop|prfm|prefetch)")
 SVE_LENGTH = pathlib.Path("/proc/sys/abi/sve_default_vector_length")
@@ -150,13 +152,38 @@ def is_branch(i: Instruction) -> bool:
     return bool(X86_BRANCH.match(i.mnemonic) or ARM_BRANCH.match(i.mnemonic))
 
 
+def successors(code: list[Instruction], place: int, places: dict[int, int]) -> list[int]:
+    i = code[place]
+    if RETURN.match(i.mnemonic):
+        return []
+    target = TARGET.search(i.operands) if is_branch(i) else None
+    taken = [] if target is None else [places[a] for a in (int(target.group(1), 16),) if a in places]
+    return taken if JUMP.match(i.mnemonic) or place + 1 == len(code) else [*taken, place + 1]
+
+
+def closes_loop(code: list[Instruction], places: dict[int, int], start: int, latch: int) -> bool:
+    """Whether control at ``start`` comes back to the branch at ``latch``: a real latch may sit past the function's
+    return, but a fallback jumping back to the epilogue never returns to its own branch."""
+    seen, frontier = set[int](), [places[start]]
+    while frontier:
+        place = frontier.pop()
+        if code[place].address == latch:
+            return True
+        if place not in seen:
+            seen.add(place)
+            frontier += successors(code, place, places)
+    return False
+
+
 def innermost_spans(code: list[Instruction]) -> list[tuple[int, int]]:
-    """A branch back to an earlier address spans a loop; the innermost spans hold no other."""
+    """A branch back to an earlier address it flows back from spans a loop; the innermost spans hold no other."""
+    places = {i.address: place for place, i in enumerate(code)}
     spans = []
     for i in code:
         target = TARGET.search(i.operands) if is_branch(i) else None
-        if target is not None and int(target.group(1), 16) < i.address:
-            spans.append((int(target.group(1), 16), i.address))
+        start = -1 if target is None else int(target.group(1), 16)
+        if 0 <= start < i.address and (start not in places or closes_loop(code, places, start, i.address)):
+            spans.append((start, i.address))
     return [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
 
 
