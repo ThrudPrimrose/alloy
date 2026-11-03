@@ -25,6 +25,7 @@ import sympy
 from dace.codegen.exceptions import CompilationError
 
 from alloy import machine
+from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
@@ -383,6 +384,56 @@ def at_team_sizes(program: Program, cases: Cases) -> Cases:
     return dataclasses.replace(cases, draws=draws, teams=len(REDUCTION_TEAMS))
 
 
+#: A candidate to link: its scope, its name, and the arguments of :meth:`Linker.compile`.
+LinkJob = tuple[str, str, tuple[Any, ...]]
+#: A candidate's outputs under way, or the verdict that ended it before it ran.
+Running = dict[tuple[str, str], list[Future[Outcome]] | Verdict]
+
+
+def link_jobs(reports: list[ScopeReport], reference: dict[str, Any], candidates: frozenset[Candidate]) -> list[LinkJob]:
+    """Every distinct build past each scope's first (the reference, already running), in the reference's program."""
+    return [
+        (
+            rep.scope.symbol,
+            b.name,
+            ({**reference, rep.scope.symbol: b.archive}, f"{rep.scope.symbol}_{b.name}", candidates | {b.candidate}),
+        )
+        for rep in reports
+        for b in rep.builds[1:]
+        if not (b.error or b.archive is None or b.duplicate_of)
+    ]
+
+
+def linked(linker: Linker, link: Future[pathlib.Path], job: tuple[Any, ...]) -> pathlib.Path | Verdict:
+    """The program of a finished ``link``, or the verdict of a link that failed."""
+    try:
+        return rebuilt(linker, job) if isinstance(link.exception(), BrokenProcessPool) else link.result()
+    except (CompilationError, RuntimeError, OSError, LookupError) as exc:  # link failure, or an unloadable library
+        return Verdict("link_error", detail=str(exc)[-2000:])
+
+
+def run_candidates(
+    linker: Linker,
+    jobs: list[LinkJob],
+    builders: ProcessPoolExecutor,
+    children: Children,
+    cases: Cases,
+    programs: dict[tuple[str, str], pathlib.Path],
+) -> Running:
+    """Link ``jobs`` and run each program on ``cases`` as it is built, noting it in ``programs``."""
+    building = {builders.submit(linker.compile, *job[2]): job for job in jobs}
+    running: Running = {}
+    for link in as_completed(building):
+        symbol, name, job = building[link]
+        compiled = linked(linker, link, job)
+        if isinstance(compiled, Verdict):
+            running[symbol, name] = compiled
+        else:
+            programs[symbol, name] = compiled
+            running[symbol, name] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
+    return running
+
+
 def verify(
     program: Program, matrix: Matrix, reports: list[ScopeReport], cases: Cases, out: pathlib.Path
 ) -> Verification:
@@ -396,36 +447,13 @@ def verify(
     ref_candidates = frozenset(rep.builds[0].candidate for rep in reports)
     ref_program = linker.compile(reference, "reference", ref_candidates)
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
+    programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
+    jobs = link_jobs(reports, reference, ref_candidates)
     with Children() as children, ProcessPoolExecutor(machine.compile_jobs(), mp_context=child_context()) as builders:
         ref_runs = submit_reference(children, ref_program, cases)
-        pending: dict[tuple[str, str], list[Future[Outcome]] | Verdict] = {}
-        programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
-        building: dict[Future[pathlib.Path], tuple[str, str, tuple[Any, ...]]] = {}
-        for rep in reports:
-            for b in rep.builds[1:]:  # the first build is the reference, already running
-                if b.error or b.archive is None or b.duplicate_of:
-                    continue
-                selection = {**reference, rep.scope.symbol: b.archive}
-                tag, candidates = f"{rep.scope.symbol}_{b.name}", ref_candidates | {b.candidate}
-                job = (selection, tag, candidates)
-                building[builders.submit(linker.compile, *job)] = (rep.scope.symbol, b.name, job)
-        for done in as_completed(building):
-            symbol, name, job = building[done]
-            key = symbol, name
-            try:
-                compiled = rebuilt(linker, job) if isinstance(done.exception(), BrokenProcessPool) else done.result()
-            except (
-                CompilationError,
-                RuntimeError,
-                OSError,
-                LookupError,
-            ) as exc:  # link failure, or an unloadable library
-                pending[key] = Verdict("link_error", detail=str(exc)[-2000:])
-                continue
-            programs[key] = compiled
-            pending[key] = [children.submit(compiled, d, cases.outputs) for d in cases.draws]
+        running = run_candidates(linker, jobs, builders, children, cases, programs)
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
-        ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in pending.items()}
+        ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in running.items()}
     reference_runs: list[Outcome] = [[outputs] for outputs in refs.outputs]
     for rep in reports:
         ran[rep.scope.symbol, rep.builds[0].name] = reference_runs
