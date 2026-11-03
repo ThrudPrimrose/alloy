@@ -419,6 +419,7 @@ note = "Intel order: products first, accumulator last; masked inactive lanes kee
 [isa.avx512.f32.reduce_add]
 intrinsic = "_mm512_reduce_add_ps"
 mnemonic = "vextractf32x8 + vaddps + ..."
+observed = ["vextractf64x4"]
 signature = "(v) -> s"
 semantics = "s = sum of the 16 lanes of v"
 note = "header composite, not one instruction: shuffle-add chain the compiler expands"
@@ -488,6 +489,7 @@ semantics = "p[j] = v[j], j = 0..1"
 [isa.neon.f64.broadcast]
 intrinsic = "vdupq_n_f64"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s, j = 0..1"
 
@@ -553,6 +555,7 @@ semantics = "p[j] = v[j], j = 0..3"
 [isa.neon.f32.broadcast]
 intrinsic = "vdupq_n_f32"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s, j = 0..3"
 
@@ -662,7 +665,7 @@ semantics = "p[j] = v[j] for active lanes j"
 [isa.sve.f64.broadcast]
 intrinsic = "svdup_f64"
 mnemonic = "dup"
-observed = ["mov", "dup"]
+observed = ["mov", "dup", "ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s for every lane j"
 
@@ -736,7 +739,7 @@ semantics = "p[j] = v[j] for active lanes j"
 [isa.sve.f32.broadcast]
 intrinsic = "svdup_f32"
 mnemonic = "dup"
-observed = ["mov", "dup"]
+observed = ["mov", "dup", "ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s for every lane j"
 
@@ -1643,14 +1646,14 @@ code = ["float64x2_t q = vrndq_f64(vdivq_f64(a, b))", "vfmsq_f64(a, q, b)"]
 note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f64.gather]
-mnemonic = "ldr+ins"
+mnemonic = "ld1"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead"]
 code = ["float64x2_t g = vdupq_n_f64(0)", "g = vld1q_lane_f64(base + idx[0], g, 0)", "vld1q_lane_f64(base + idx[1], g, 1)"]
 
 [isa.neon.f64.scatter]
-mnemonic = "str+ext"
+mnemonic = "str"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["per-lane scalar stores via vst1q_lane_f64(base + idx[j], v, j)"]
@@ -1706,14 +1709,14 @@ code = ["float32x4_t q = vrndq_f32(vdivq_f32(a, b))", "vfmsq_f32(a, q, b)"]
 note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f32.gather]
-mnemonic = "ldr+ins"
+mnemonic = "ld1"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
 recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead"]
 code = ["float32x4_t g = vdupq_n_f32(0)", "g = vld1q_lane_f32(base + idx[0], g, 0)", "g = vld1q_lane_f32(base + idx[1], g, 1)", "g = vld1q_lane_f32(base + idx[2], g, 2)", "vld1q_lane_f32(base + idx[3], g, 3)"]
 
 [isa.neon.f32.scatter]
-mnemonic = "str+ext"
+mnemonic = "str"
 signature = "(base, idx, v) -> void"
 semantics = "base[idx[j]] = v[j]"
 recipe = ["per-lane scalar stores via vst1q_lane_f32(base + idx[j], v, j)"]
@@ -1762,6 +1765,7 @@ note = "predicate FIRST; no activity suffix - SEL is not predicated on a second 
 
 [isa.sve.f64.mod]
 mnemonic = "fdiv+frintz+fmls"
+observed = ["fmsb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
@@ -1824,6 +1828,7 @@ note = "predicate FIRST; no activity suffix - SEL is not predicated on a second 
 
 [isa.sve.f32.mod]
 mnemonic = "fdiv+frintz+fmls"
+observed = ["fmsb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
@@ -2127,18 +2132,21 @@ note = "accumulator FIRST, like every NEON fma"
 [isa.neon.f16.load]
 intrinsic = "vld1q_f16"
 mnemonic = "ld1"
+observed = ["ldr"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j], 8 lanes"
 
 [isa.neon.f16.store]
 intrinsic = "vst1q_f16"
 mnemonic = "st1"
+observed = ["str"]
 signature = "(p, v) -> void"
 semantics = "p[j] = v[j]"
 
 [isa.neon.f16.broadcast]
 intrinsic = "vdupq_n_f16"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -2176,6 +2184,7 @@ semantics = "v[j] = a[j] / b[j] for active lanes"
 [isa.sve.f16.fma]
 intrinsic = "svmla_f16_x"
 mnemonic = "fmla"
+observed = ["fmad"]
 signature = "(pg, add, m1, m2) -> v"
 semantics = "v[j] = add[j] + m1[j]*m2[j]"
 note = "accumulator FIRST, like every SVE fma"
@@ -2225,6 +2234,7 @@ semantics = "p[j] = v[j] for active lanes"
 [isa.sve.f16.broadcast]
 intrinsic = "svdup_f16"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -2275,7 +2285,7 @@ recipe = ["_mm256_cmpeq_epi64", "_mm256_and_si256", "_mm256_andnot_si256"]
 code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()), _mm256_cmpeq_epi64(b, _mm256_setzero_si256())), _mm256_set1_epi64x(-1))"]
 
 [isa.avx2.i64.mod]
-mnemonic = "idiv+imul"
+mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2321,7 +2331,7 @@ recipe = ["_mm256_cmpeq_epi32", "_mm256_and_si256", "_mm256_andnot_si256"]
 code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi32(a, _mm256_setzero_si256()), _mm256_cmpeq_epi32(b, _mm256_setzero_si256())), _mm256_set1_epi32(-1))"]
 
 [isa.avx2.i32.mod]
-mnemonic = "idiv+imul"
+mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2330,12 +2340,14 @@ code = ["int32_t x[8], y[8]", "_mm256_storeu_si256((__m256i*)x, a)", "_mm256_sto
 [isa.avx512.i64.and]
 intrinsic = "_mm512_and_si512"
 mnemonic = "vpandq"
+observed = ["vpandd"]
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] & b[j]"
 
 [isa.avx512.i64.or]
 intrinsic = "_mm512_or_si512"
 mnemonic = "vporq"
+observed = ["vpord"]
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] | b[j]"
 
@@ -2365,7 +2377,7 @@ signature = "(ka, kb) -> k"
 semantics = "k = ka || kb, on compare masks"
 
 [isa.avx512.i64.mod]
-mnemonic = "idiv+imul"
+mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2409,7 +2421,7 @@ signature = "(ka, kb) -> k"
 semantics = "k = ka || kb, on compare masks"
 
 [isa.avx512.i32.mod]
-mnemonic = "idiv+imul"
+mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2444,6 +2456,7 @@ note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; o
 
 [isa.neon.i64.land]
 mnemonic = "cmeq+eor+and"
+observed = ["orr"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
 recipe = ["vceqzq_s64", "veorq_u64", "vandq_u64"]
@@ -2452,13 +2465,14 @@ note = "NEON has no vmvn on 64-bit lanes: complement with veorq against all-ones
 
 [isa.neon.i64.lor]
 mnemonic = "cmeq+and+eor"
+observed = ["mvn"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
 recipe = ["vceqzq_s64", "vandq_u64", "veorq_u64"]
 code = ["vreinterpretq_s64_u64(veorq_u64(vandq_u64(vceqzq_s64(a), vceqzq_s64(b)), vdupq_n_u64(~0ULL)))"]
 
 [isa.neon.i64.mod]
-mnemonic = "sdiv+mul"
+mnemonic = "sdiv+msub"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2493,6 +2507,7 @@ note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; o
 
 [isa.neon.i32.land]
 mnemonic = "cmeq+mvn+and"
+observed = ["orr"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
 recipe = ["vceqzq_s32", "vmvnq_u32", "vandq_u32"]
@@ -2506,7 +2521,7 @@ recipe = ["vceqzq_s32", "vandq_u32", "vmvnq_u32"]
 code = ["vreinterpretq_s32_u32(vmvnq_u32(vandq_u32(vceqzq_s32(a), vceqzq_s32(b))))"]
 
 [isa.neon.i32.mod]
-mnemonic = "sdiv+mul"
+mnemonic = "sdiv+msub"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
@@ -2539,7 +2554,7 @@ recipe = ["svreinterpret_u64_s64", "svlsr_u64_x", "svreinterpret_s64_u64"]
 code = ["svreinterpret_s64_u64(svlsr_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))"]
 
 [isa.sve.i64.land]
-mnemonic = "cmpne+and_b"
+mnemonic = "cmpne+and"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
 recipe = ["svcmpne_s64", "svand_b_z"]
@@ -2547,7 +2562,7 @@ code = ["svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdu
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
 [isa.sve.i64.lor]
-mnemonic = "cmpne+orr_b"
+mnemonic = "cmpne+orr"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
 recipe = ["svcmpne_s64", "svorr_b_z"]
@@ -2555,6 +2570,7 @@ code = ["svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdu
 
 [isa.sve.i64.mod]
 mnemonic = "sdiv+mls"
+observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["svdiv_s64_x", "svmls_s64_x"]
@@ -2588,7 +2604,7 @@ recipe = ["svreinterpret_u32_s32", "svlsr_u32_x", "svreinterpret_s32_u32"]
 code = ["svreinterpret_s32_u32(svlsr_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))"]
 
 [isa.sve.i32.land]
-mnemonic = "cmpne+and_b"
+mnemonic = "cmpne+and"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
 recipe = ["svcmpne_s32", "svand_b_z"]
@@ -2596,7 +2612,7 @@ code = ["svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdu
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
 [isa.sve.i32.lor]
-mnemonic = "cmpne+orr_b"
+mnemonic = "cmpne+orr"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
 recipe = ["svcmpne_s32", "svorr_b_z"]
@@ -2604,6 +2620,7 @@ code = ["svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdu
 
 [isa.sve.i32.mod]
 mnemonic = "sdiv+mls"
+observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
 recipe = ["svdiv_s32_x", "svmls_s32_x"]
@@ -2819,12 +2836,14 @@ semantics = "v[j] = max(a[j], b[j]), signed"
 [isa.avx512.i32.load]
 intrinsic = "_mm512_loadu_si512"
 mnemonic = "vmovdqu32"
+observed = ["vmovdqu64"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j]"
 
 [isa.avx512.i32.store]
 intrinsic = "_mm512_storeu_si512"
 mnemonic = "vmovdqu32"
+observed = ["vmovdqu64"]
 signature = "(p, v)"
 semantics = "p[j] = v[j]"
 
@@ -2853,7 +2872,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - b[j], wrapping"
 
 [isa.neon.i64.mul]
-mnemonic = "umull+mla"
+mnemonic = "umull+umlal"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] * b[j], low bits"
 recipe = ["vmovn_u64", "vmull_u32", "vmlal_u32"]
@@ -2889,6 +2908,7 @@ semantics = "p[j] = v[j]"
 [isa.neon.i64.broadcast]
 intrinsic = "vdupq_n_s64"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -2943,6 +2963,7 @@ semantics = "p[j] = v[j]"
 [isa.neon.i32.broadcast]
 intrinsic = "vdupq_n_s32"
 mnemonic = "dup"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -2997,6 +3018,7 @@ semantics = "p[j] = v[j]"
 [isa.sve.i64.broadcast]
 intrinsic = "svdup_s64"
 mnemonic = "mov"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -3051,6 +3073,7 @@ semantics = "p[j] = v[j]"
 [isa.sve.i32.broadcast]
 intrinsic = "svdup_s32"
 mnemonic = "mov"
+observed = ["ld1r"]
 signature = "(s) -> v"
 semantics = "v[j] = s"
 
@@ -3063,6 +3086,7 @@ semantics = "lane j true iff a[j] < b[j], signed"
 [isa.avx2.f64.lt]
 intrinsic = "_mm256_cmp_pd"
 mnemonic = "vcmppd"
+observed = ["vcmplt"]
 signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
 note = "all-ones lanes"
@@ -3070,6 +3094,7 @@ note = "all-ones lanes"
 [isa.avx2.f32.lt]
 intrinsic = "_mm256_cmp_ps"
 mnemonic = "vcmpps"
+observed = ["vcmplt"]
 signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
 note = "all-ones lanes"
@@ -3077,6 +3102,7 @@ note = "all-ones lanes"
 [isa.avx512.f64.lt]
 intrinsic = "_mm512_cmp_pd_mask"
 mnemonic = "vcmppd"
+observed = ["vcmplt"]
 signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
 note = "a k mask"
@@ -3084,6 +3110,7 @@ note = "a k mask"
 [isa.avx512.f32.lt]
 intrinsic = "_mm512_cmp_ps_mask"
 mnemonic = "vcmpps"
+observed = ["vcmplt"]
 signature = "(a, b, _CMP_LT_OQ) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
 note = "a k mask"

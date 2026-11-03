@@ -81,8 +81,10 @@ python -m alloy.isa ops | isas | schedule <isa>
 A `lookup` of an intrinsic or recipe this host can run is **numerically checked before it is returned**: a small
 compiled kernel runs the spelling against a scalar reference, and transcendental tiers are re-measured against libm.
 `host` says what runs here; NEON and SVE run under `qemu-aarch64` when that and `aarch64-linux-gnu-gcc` are on PATH.
-The check covers the intrinsic in its signature's operand order, or a recipe's `code` as written, not the masked form,
-mnemonic or note. A recipe prints that `code`: C on the operands of its `signature`, statements and then the result,
+The check covers the intrinsic in its signature's operand order or a recipe's `code` as written, an AVX-512 masked form
+(active lanes compute, inactive ones keep what the form says), and the mnemonic, looked up in the disassembly of the
+compiled row: a compiler that prints another instruction is reported and the row stays verified. A note is never
+checked. A recipe prints that `code`: C on the operands of its `signature`, statements and then the result,
 so copy it rather than rebuilding the order from the step names. The output ends in `verified:`; on failure nothing is
 printed to stdout, the exit code is 3, and stderr lists potentially relevant spellings. `unverified:` marks what did
 not run here, even if it compiled for its target; `reverse`, `assist` and `schedule` answers are not checked at all.

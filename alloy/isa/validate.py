@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Numerical validation of table entries: the intrinsic or recipe of a row is run before a lookup returns it where
-that is possible, and every row that did not run says unverified. Masked forms, mnemonics and notes are not checked.
+that is possible, and every row that did not run says unverified. An AVX-512 row's masked form runs too, a row's
+mnemonic is looked for in the disassembly of the compiled row, and notes are not checked.
 
 An entry runs natively (AVX2+FMA, AVX-512F+DQ, aarch64) or under qemu-aarch64 when that and the cross compiler are on
 PATH: fixed inputs, on buffers no vector boundary aligns, through a small compiled C kernel that calls the row in its
@@ -34,7 +35,15 @@ from alloy.isa.ops import OPS
 from alloy.isa.table import ALIASES, ALL_DTYPES, DTYPES, F16, INT_DTYPES, LANE_BYTES, SPELLED, Entry, Hit, Table, load
 from alloy.machine import cpu_flags
 
-__all__ = ["Verdict", "candidates_for", "host_can_run", "validate", "validate_all", "validate_tier"]
+__all__ = [
+    "Verdict",
+    "candidates_for",
+    "host_can_run",
+    "validate",
+    "validate_all",
+    "validate_mnemonic",
+    "validate_tier",
+]
 
 #: Per-op relative-error tolerances for the compiled kernels. IEEE ops are exactly rounded, so their
 #: tolerance is zero; order-sensitive ops (reductions, recipes) get a real band.
@@ -46,6 +55,11 @@ N_TIER = 2_000_000
 COMPILE_TIMEOUT = 120  # seconds, per compile and per run
 
 VERIFY_LINE = re.compile(r"^ALLOY-VERIFY rel=(\S+)", re.MULTILINE)
+DISASSEMBLER = "llvm-objdump"
+#: A disassembled instruction's mnemonic.
+PRINTED = re.compile(r"^\s*[0-9a-f]+:\s+(\S+)", re.MULTILINE)
+#: Words of a composite mnemonic that stand for no one instruction.
+NOT_MNEMONICS = frozenset({"op", "scalar", "storeu", "..."})
 SIGNATURE = re.compile(r"^\(([^)]*)\)")
 #: A signature's literal operand: ``(0.0) -> v``, ``(a, b, _CMP_LT_OQ) -> mask``.
 LITERAL = re.compile(r"\d[\d.]*f?|_[A-Z_]+")
@@ -417,6 +431,9 @@ def scalar_ref(k: Frame, op: str) -> str:
     return lane_ref(f"({k.scalar})({refs[op]})" if k.dtype == F16 else refs[op])
 
 
+#: The dtypes whose masked forms state their operands in C; the f16 rows name a cast in words.
+MASKED_DTYPES = frozenset({"f64", "f32"})
+
 #: Sixteen exact f16 values per operand, no zero divisor; a longer vector repeats them, and sqrt takes their size.
 F16_A = (1.0, 0.5, 2.0, 1.5, -0.25, 3.5, -1.25, 0.75, 2.5, -3.0, 0.125, 4.0, -0.5, 1.75, 0.625, -2.25)
 F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5, -0.75, 1.0, 2.25)
@@ -458,19 +475,12 @@ def kernel_inputs(op: str, dtype: str, lanes: int) -> tuple[list[Any], list[Any]
     return integer_inputs(op, dtype, lanes) if dtype in INT_DTYPES else float_inputs(op, lanes)
 
 
-def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
-    """The full C source for a validation kernel, or None for a row with no spelling to run (a transcendental)."""
-    isa = ALIASES.get(isa, isa)
-    table = table or load()
-    entry = table.entry(isa, op, dtype)
-    if entry.approximations:
-        return None
-    k = frame(isa, dtype, table)
-    compute, ref = BODIES.get(op, call_body)(k, op, entry)
-    a, b, c = kernel_inputs(op, dtype, k.lanes)
+def kernel_source(k: Frame, op: str, compute: str, ref: str) -> str:
+    """The whole C program of a kernel: ``compute`` on the inputs of ``op``, against the reference ``ref``."""
+    a, b, c = kernel_inputs(op, k.dtype, k.lanes)
     mask = "uint16_t mk[LANES];\n  for (int j = 0; j < VL; j++) mk[j] = a[j] < b[j] ? 0xffff : 0;"
     s = k.scalar
-    return f"""#include <{HEADERS[isa]}>
+    return f"""#include <{HEADERS[k.isa]}>
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
@@ -486,10 +496,73 @@ int main(void) {{
   int32_t idx32[LANES];
   for (int j = 0; j < VL; j++) idx[j] = idx32[j] = (3 * j + 1) % VL;
   double ref[LANES] = {{0}};
-  {mask if dtype == F16 else ""}
+  {mask if k.dtype == F16 else ""}
   {compute}
   {ref}
   {lane_errors("(double)out[j]", "ref[j]")}"""
+
+
+def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
+    """The full C source for a validation kernel, or None for a row with no spelling to run (a transcendental)."""
+    isa = ALIASES.get(isa, isa)
+    table = table or load()
+    entry = table.entry(isa, op, dtype)
+    if entry.approximations:
+        return None
+    k = frame(isa, dtype, table)
+    return kernel_source(k, op, *BODIES.get(op, call_body)(k, op, entry))
+
+
+#: Lanes a masked kernel keeps active: both values per byte of lanes, so neither polarity passes for the other.
+MASK_BITS = 0x5A5A
+#: The operands of a masked row that names only its function.
+MASKED_UNARY = ("src", "k", "a")
+MASKED_BINARY = ("src", "k", "a", "b")
+
+
+def masked_parts(op: str, entry: Entry) -> tuple[str, tuple[str, ...]]:
+    """A masked form's function and the operands it states, or the usual ones when it states none."""
+    name, _, rest = entry.masked.partition("(")
+    if not rest:
+        return name.strip(), MASKED_UNARY if op == "sqrt" else MASKED_BINARY
+    return name.strip(), tuple(word.strip() for word in rest.rstrip(")").split(","))
+
+
+def masked_c(isa: str, dtype: str, op: str, table: Table) -> str:
+    """A kernel of the row's masked form: active lanes compute the op, inactive ones keep what the form says, which is
+    its merge operand, the first operand of an fma, or zero."""
+    k, entry = frame(isa, dtype, table), table.entry(isa, op, dtype)
+    name, written = masked_parts(op, entry)
+    load_indices, index = indices(k, entry) if op in ("gather", "scatter") else ("", "")
+    target = "out" if op in ("store", "scatter") else "a"
+    spelled = {"src": "vc", "a": "va", "b": "vb", "c": "vc", "v": "va", "idx": index, "p": target, "base": target}
+    call = f"{name}({', '.join(spelled.get(word, word) for word in written)})"
+    mask = f"{load_indices}{k.mask} k = ({k.mask}){MASK_BITS:#x};"
+    active = f"((({MASK_BITS:#x} >> j) & 1) != 0)"
+    if op == "scatter":
+        ref = f"for (int j = 0; j < VL; j++) if ({active}) ref[idx[j]] = a[j];"
+        return kernel_source(k, op, f"{k.loads}\n  {mask}\n  {call};", ref)
+    if op == "store":
+        return kernel_source(k, op, f"{k.loads}\n  {mask}\n  {call};", lane_ref(f"{active} ? a[j] : 0"))
+    kept = "c[j]" if "src" in written else "a[j]" if op == "fma" else "0"
+    ref = lane_ref("a[idx[j]]") if op == "gather" else scalar_ref(k, op)
+    undone = f"for (int j = 0; j < VL; j++) if (!{active}) ref[j] = {kept};"
+    return kernel_source(k, op, k.stored(f"{mask}\n  {k.vector} vr = {call};"), f"{ref}\n  {undone}")
+
+
+def row_unit(isa: str, dtype: str, op: str, table: Table) -> str:
+    """The row alone in a function of opaque operands: an optimizer folds a kernel's constants, and leaves this."""
+    k = frame(isa, dtype, table)
+    compute = BODIES.get(op, call_body)(k, op, table.entry(isa, op, dtype))[0]
+    s = k.scalar
+    return f"""#include <{HEADERS[isa]}>
+#include <stdint.h>
+#define LANES {k.lanes}
+#define VL {lane_count(k)}
+void row({s} *a, {s} *b, {s} *c, {s} *out, const int64_t *idx, const int32_t *idx32, const uint16_t *mk) {{
+  (void)a; (void)b; (void)c; (void)out; (void)idx; (void)idx32; (void)mk;
+  {compute}
+}}"""
 
 
 def c_compiler() -> str | None:
@@ -545,6 +618,30 @@ def compile_unit(source: str, cc: str, flags: list[str]) -> None:
             raise RuntimeError(f"timed out after {COMPILE_TIMEOUT} s: {cc}") from None
     if build.returncode != 0:
         raise RuntimeError(f"build failed: {build.stderr.strip()[:400]}")
+
+
+def printed_mnemonics(source: str, cc: str, flags: list[str], arm: bool) -> frozenset[str]:
+    """Every mnemonic of ``source`` compiled for its target, on aarch64 with and without the disassembler's aliases: a
+    ``mov`` of a lane is an ``ins``. Empty when no disassembler is on PATH."""
+    if shutil.which(DISASSEMBLER) is None:
+        return frozenset()
+    with tempfile.TemporaryDirectory(prefix="alloy_verify_") as tmp:
+        c_file, obj = pathlib.Path(tmp) / "row.c", pathlib.Path(tmp) / "row.o"
+        c_file.write_text(source)
+        command = [cc, "-O1", *flags, "-c", str(c_file), "-o", str(obj)]
+        if subprocess.run(command, capture_output=True, check=False, timeout=COMPILE_TIMEOUT).returncode != 0:
+            raise RuntimeError(f"build failed: {' '.join(command)}")
+        listings = [
+            subprocess.run(
+                [DISASSEMBLER, "-d", "--no-show-raw-insn", *options, str(obj)],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=COMPILE_TIMEOUT,
+            ).stdout
+            for options in (((), ("-M", "no-aliases")) if arm else ((),))
+        ]
+    return frozenset(name for listing in listings for name in PRINTED.findall(listing))
 
 
 def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = (), emulator: Emulator | None = None) -> float:
@@ -778,6 +875,49 @@ def build_verdict(source: str, isa: str, op: str, dtype: str, table: Table) -> V
     return Verdict(None, basis, "compiled for the target, never run")
 
 
+def missing_mnemonics(entry: Entry, printed: frozenset[str]) -> list[str]:
+    """The words of ``entry``'s mnemonic that nothing in ``printed`` starts with; a compiler may print any ``observed``
+    form instead. A size or form suffix (``vfmadd231pd``, ``idivq``) counts as the same instruction."""
+    words = [word.split(" ")[0] for word in re.split(r"\s*\+\s*", entry.mnemonic)]
+    stated = [*(word for word in words if word and word not in NOT_MNEMONICS)]
+    if any(name.startswith(form) for name in printed for form in entry.observed):
+        return []
+    return [word for word in stated if not any(name.startswith(word) for name in printed)]
+
+
+def validate_mnemonic(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdict:
+    """Whether the row's mnemonic is what the compiler printed for it. ``False`` says the compiler chose another
+    instruction, which is no wrong answer: a lookup reports it and stays verified."""
+    table = table or load()
+    entry = table.entry(isa, op, dtype)
+    cc = target_compiler(isa)
+    if not entry.mnemonic or entry.approximations or cc is None:
+        return Verdict(None, "no mnemonic to look for")
+    printed = printed_mnemonics(row_unit(isa, dtype, op, table), cc, c_flags(isa, dtype), isa in CROSS)
+    if not printed:
+        return Verdict(None, f"no {DISASSEMBLER} on PATH")
+    missing = missing_mnemonics(entry, printed)
+    detail = f"{cc} printed no {', '.join(missing)}" if missing else "seen in the disassembly"
+    return Verdict(not missing, "disassembled row", detail)
+
+
+def checked_forms(verdict: Verdict, isa: str, op: str, dtype: str, table: Table, emulator: Emulator | None) -> Verdict:
+    """``verdict`` of a row that ran, with its masked form run and its mnemonic looked up; a wrong masked form fails the
+    row. What stays unchecked says so."""
+    entry = table.entry(isa, op, dtype)
+    notes = [verdict.detail]
+    if entry.masked and dtype in MASKED_DTYPES:
+        masked = run_verdict(masked_c(isa, dtype, op, table), isa, op, dtype, table, emulator)
+        if masked.ok is not True:
+            return dataclasses.replace(masked, detail=f"masked form {entry.masked}: {masked.detail}")
+        notes.append("masked form ran")
+    elif entry.masked:
+        notes.append("masked form unchecked")
+    if entry.mnemonic:
+        notes.append(f"mnemonic {validate_mnemonic(isa, op, dtype, table).detail}")
+    return dataclasses.replace(verdict, detail="; ".join([*notes, "note unchecked"]))
+
+
 def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdict:
     """Validate one entry: compile-and-run on the host or under qemu where possible, cross-compile where not, re-measure
     tiers, and on failure attach the candidate spellings. ``ok is None``: not verified (never reported as correct)."""
@@ -797,7 +937,8 @@ def validate(isa: str, op: str, dtype: str, table: Table | None = None) -> Verdi
     if source is None or missing:
         return Verdict(None, f"the validator kernel does not run {', '.join(missing) or 'this row'}")
     if native or emulator:
-        return run_verdict(source, isa, op, dtype, table, None if native else emulator)
+        verdict = run_verdict(source, isa, op, dtype, table, None if native else emulator)
+        return checked_forms(verdict, isa, op, dtype, table, None if native else emulator) if verdict.ok else verdict
     return build_verdict(source, isa, op, dtype, table)
 
 

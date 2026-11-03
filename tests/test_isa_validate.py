@@ -27,6 +27,7 @@ from alloy.isa.validate import (
     unexercised,
     validate,
     validate_all,
+    validate_mnemonic,
     validate_tier,
 )
 
@@ -515,3 +516,76 @@ def test_a_lookup_as_json_carries_a_recipes_code(capsys):
     sut = json.loads(capsys.readouterr().out)
     assert sut["code"] == ["float64x2_t q = vrndq_f64(vdivq_f64(a, b))", "vfmsq_f64(a, q, b)"]
     assert sut["signature"] == "(a, b) -> v"
+
+
+MASKED_ROWS = [
+    (isa, dtype, op)
+    for isa, target in TABLE.isas.items()
+    for dtype in ("f64", "f32")
+    for op, entry in target.entries(dtype).items()
+    if entry.masked
+]
+#: Rows the gate's own frame reshapes, however they compile in a loop: a zero vector stored at once is two zero
+#: registers, and a blend of two loaded vectors is a masked move.
+RESHAPED_BY_THE_FRAME = {("neon", "zero"), ("avx512", "select")}
+MNEMONIC_ROWS = [
+    (isa, dtype, op)
+    for isa, target in TABLE.isas.items()
+    for dtype in ("f64", "f32", "f16", "i64", "i32")
+    if (isa, dtype) != ("avx512", "f16")  # no FP16 kernel runs on the hosts this gate was checked on
+    for op, entry in target.entries(dtype).items()
+    if entry.mnemonic and not entry.approximations and (isa, op) not in RESHAPED_BY_THE_FRAME
+]
+
+
+@pytest.mark.avx512
+@pytest.mark.parametrize(("isa", "dtype", "op"), MASKED_ROWS)
+def test_a_masked_form_keeps_its_inactive_lanes_and_computes_its_active_ones(isa, dtype, op):
+    sut = validate(isa, op, dtype, TABLE)
+
+    assert sut.ok is True, sut.detail
+    assert "masked form ran" in sut.detail
+
+
+@pytest.mark.avx512
+def test_a_masked_form_that_keeps_the_wrong_lanes_fails_its_row():
+    rows = TABLE.isas["avx512"].f64
+    held = rows["fma"]
+    rows["fma"] = dataclasses.replace(held, masked="_mm512_mask3_fmadd_pd(a, b, c, k)")
+    try:
+        sut = validate("avx512", "fma", "f64", TABLE)
+    finally:
+        rows["fma"] = held
+
+    assert sut.ok is False
+    assert "masked form" in sut.detail
+
+
+@pytest.mark.gcc
+@pytest.mark.parametrize(("isa", "dtype", "op"), MNEMONIC_ROWS)
+def test_a_rows_mnemonic_is_what_gcc_prints_for_it(isa, dtype, op, monkeypatch):
+    monkeypatch.setattr(validate_module, "c_compiler", lambda: "gcc")
+
+    sut = validate_mnemonic(isa, op, dtype, TABLE)
+
+    assert sut.ok is not False, sut.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
+def test_a_mnemonic_the_compiler_did_not_print_is_reported_and_leaves_the_row_verified():
+    rows = TABLE.isas["avx2"].f64
+    held = rows["add"]
+    rows["add"] = dataclasses.replace(held, mnemonic="vdivpd")
+    try:
+        sut = validate("avx2", "add", "f64", TABLE)
+    finally:
+        rows["add"] = held
+
+    assert sut.ok is True
+    assert "printed no vdivpd" in sut.detail
+
+
+def test_a_verdict_says_a_note_stays_unchecked():
+    sut = validate("avx2", "add", "f64", TABLE)
+
+    assert "note unchecked" in sut.detail
