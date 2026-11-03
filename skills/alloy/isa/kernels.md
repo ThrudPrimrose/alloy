@@ -84,6 +84,12 @@ Inline them only when the loop has other work: the gain over a library call is t
 | pow | f32 | strict | 1.3 | 110 | cold | any input; vector path for x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f32 | relaxed | 98.4 | 62 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
 | pow | f32 | fast | 225 | 56 | none | x positive normal, finite y, \|y*log(x)\| in exp range |
+| fmod | f64 | strict | 0 | 30 | cold | any input; vector path for finite x, finite non-zero y, \|x/y\| < 2^52 |
+| fmod | f64 | relaxed | 0 | 16 | none | finite x, finite non-zero y, \|x/y\| < 2^52 |
+| fmod | f64 | fast | 9.01e+15 | 3 | none | finite x, finite non-zero y, \|x/y\| < 2^52; near a multiple of y it can be off by \|y\| and take the wrong sign |
+| fmod | f32 | strict | 0 | 30 | cold | any input; vector path for finite x, finite non-zero y, \|x/y\| < 2^23 |
+| fmod | f32 | relaxed | 0 | 16 | none | finite x, finite non-zero y, \|x/y\| < 2^23 |
+| fmod | f32 | fast | 1.76e+07 | 3 | none | finite x, finite non-zero y, \|x/y\| < 2^23; near a multiple of y it can be off by \|y\| and take the wrong sign |
 | atan | f64 | strict | 1.47 | 64 | none | any input; vector path for any input |
 | atan | f64 | relaxed | 1.82 | 62 | none | any input |
 | atan | f64 | fast | 7.63e+07 | 42 | none | any input |

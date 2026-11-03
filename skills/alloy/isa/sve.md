@@ -46,7 +46,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `abs` | `svabs_f64_x` | `fabs` | `(pg, v) -> v` | — | v[j] = \|x[j]\| for active lanes | native, unlike x86 |
 | `neg` | `svneg_f64_x` | `fneg` | `(pg, v) -> v` | — | v[j] = -x[j] for active lanes | native, unlike x86 |
 | `select` | `svsel_f64` | `sel` | `(pg, t, f) -> v` | — | v[j] = pg[j] ? t[j] : f[j] | predicate FIRST; no activity suffix - SEL is not predicated on a second predicate |
-| `mod` | recipe: `svfloat64_t q = svrintz_f64_x(pg, svdiv_f64_x(pg, a, b))`; `svmls_f64_x(pg, a, q, b)` | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — | v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and \|a/b\| below 2^p | no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and \|a/b\| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain |
+| `mod` | recipe: `svfloat64_t q = svrintz_f64_x(pg, svdiv_f64_x(pg, a, b))`; `svmls_f64_x(pg, a, q, b)` | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — | v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and \|a/b\| below 2^p | no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and \|a/b\| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain |
 | `gather` | `svld1_gather_s64index_f64` | `ld1d (gather)` | `(pg, base, idx) -> v` | — | v[j] = base[idx[j]] for active lanes | first-faulting svldff1_gather_... variants exist for speculative access |
 | `scatter` | `svst1_scatter_s64index_f64` | `st1d (scatter)` | `(pg, base, idx, v) -> void` | — | base[idx[j]] = v[j] for active lanes |  |
 | `lt` | `svcmplt_f64` | `fcmgt` | `(pg, a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | a predicate |
@@ -75,7 +75,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `abs` | `svabs_f32_x` | `fabs` | `(pg, v) -> v` | — | v[j] = \|x[j]\| for active lanes | native, unlike x86 |
 | `neg` | `svneg_f32_x` | `fneg` | `(pg, v) -> v` | — | v[j] = -x[j] for active lanes | native, unlike x86 |
 | `select` | `svsel_f32` | `sel` | `(pg, t, f) -> v` | — | v[j] = pg[j] ? t[j] : f[j] | predicate FIRST; no activity suffix - SEL is not predicated on a second predicate |
-| `mod` | recipe: `svfloat32_t q = svrintz_f32_x(pg, svdiv_f32_x(pg, a, b))`; `svmls_f32_x(pg, a, q, b)` | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — | v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and \|a/b\| below 2^p | no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and \|a/b\| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain |
+| `mod` | recipe: `svfloat32_t q = svrintz_f32_x(pg, svdiv_f32_x(pg, a, b))`; `svmls_f32_x(pg, a, q, b)` | `fdiv+frintz+fmls` | `(pg, a, b) -> v` | — | v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and \|a/b\| below 2^p | no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and \|a/b\| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain |
 | `gather` | `svld1_gather_s32index_f32` | `ld1w (gather)` | `(pg, base, idx) -> v` | — | v[j] = base[idx[j]] for active lanes | first-faulting svldff1_gather_... variants exist for speculative access |
 | `scatter` | `svst1_scatter_s32index_f32` | `st1w (scatter)` | `(pg, base, idx, v) -> void` | — | base[idx[j]] = v[j] for active lanes |  |
 | `lt` | `svcmplt_f32` | `fcmgt` | `(pg, a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | a predicate |
@@ -88,6 +88,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `sub` | `svsub_f16_x` | `fsub` | `(pg, a, b) -> v` | — | v[j] = a[j] - b[j] for active lanes |  |
 | `mul` | `svmul_f16_x` | `fmul` | `(pg, a, b) -> v` | — | v[j] = a[j] * b[j] for active lanes |  |
 | `div` | `svdiv_f16_x` | `fdiv` | `(pg, a, b) -> v` | — | v[j] = a[j] / b[j] for active lanes |  |
+| `gen_mask` | `svwhilelt_b16_s64` | `whilelt` | `(i, N) -> pg` | — | lane j active iff i + j < N | the standardized gen_mask; the loop steps by svcnth() and never needs a remainder loop |
 | `fma` | `svmla_f16_x` | `fmla` | `(pg, add, m1, m2) -> v` | — | v[j] = add[j] + m1[j]*m2[j] | accumulator FIRST, like every SVE fma |
 | `sqrt` | `svsqrt_f16_x` | `fsqrt` | `(pg, v) -> v` | — | v[j] = sqrt(x[j]) |  |
 | `min` | `svmin_f16_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) |  |
@@ -107,8 +108,8 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `or` | `svorr_s64_x` | `orr` | `(pg, a, b) -> v` | — | v[j] = a[j] \| b[j] for active lanes |  |
 | `shl` | recipe: `svreinterpret_s64_u64(svlsl_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))` | `lsl` | `(pg, a, counts) -> v` | — | v[j] = a[j] << counts[j] for active lanes |  |
 | `shr` | recipe: `svreinterpret_s64_u64(svlsr_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))` | `lsr` | `(pg, a, counts) -> v` | — | v[j] = a[j] >> counts[j], logical, for active lanes |  |
-| `land` | recipe: `svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+and_b` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
-| `lor` | recipe: `svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+orr_b` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
+| `land` | recipe: `svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+and` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
+| `lor` | recipe: `svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+orr` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
 | `mod` | recipe: `svint64_t q = svdiv_s64_x(pg, a, b)`; `svmls_s64_x(pg, a, q, b)` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1 |
 | `add` | `svadd_s64_x` | `add` | `(pg, a, b) -> v` | — | v[j] = a[j] + b[j], wrapping |  |
 | `sub` | `svsub_s64_x` | `sub` | `(pg, a, b) -> v` | — | v[j] = a[j] - b[j], wrapping |  |
@@ -128,8 +129,8 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `or` | `svorr_s32_x` | `orr` | `(pg, a, b) -> v` | — | v[j] = a[j] \| b[j] for active lanes |  |
 | `shl` | recipe: `svreinterpret_s32_u32(svlsl_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))` | `lsl` | `(pg, a, counts) -> v` | — | v[j] = a[j] << counts[j] for active lanes |  |
 | `shr` | recipe: `svreinterpret_s32_u32(svlsr_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))` | `lsr` | `(pg, a, counts) -> v` | — | v[j] = a[j] >> counts[j], logical, for active lanes |  |
-| `land` | recipe: `svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+and_b` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
-| `lor` | recipe: `svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+orr_b` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
+| `land` | recipe: `svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+and` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
+| `lor` | recipe: `svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+orr` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
 | `mod` | recipe: `svint32_t q = svdiv_s32_x(pg, a, b)`; `svmls_s32_x(pg, a, q, b)` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1 |
 | `add` | `svadd_s32_x` | `add` | `(pg, a, b) -> v` | — | v[j] = a[j] + b[j], wrapping |  |
 | `sub` | `svsub_s32_x` | `sub` | `(pg, a, b) -> v` | — | v[j] = a[j] - b[j], wrapping |  |

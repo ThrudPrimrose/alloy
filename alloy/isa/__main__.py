@@ -15,6 +15,7 @@ import argparse
 import dataclasses
 import json
 import platform
+import re
 import signal
 import sys
 from typing import Any
@@ -26,7 +27,7 @@ from alloy.isa.mathkernels import LEVELS, functions, libraries, library_function
 from alloy.isa.mathkernels import kernel as find
 from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
-from alloy.isa.table import ALL_DTYPES, FMA_FORM, Hit, Table, masked_form, normalized, suggestion
+from alloy.isa.table import ALL_DTYPES, FMA_FORM, NO_MATH, Hit, Table, masked_form, normalized, suggestion
 from alloy.isa.validate import Verdict, emulated, host_can_run, validate, validate_all
 
 
@@ -165,7 +166,8 @@ def tiers_command(table: Table, args: argparse.Namespace) -> int:
     )
     if not tiers:
         known = sorted({tier.op for tier in table.approx.values()})
-        raise KeyError(f"{args.function!r}: no polynomial tiers; tiers exist for {known}")
+        whole = "; `kernel` gives it whole" if function in functions() else ""
+        raise KeyError(f"{args.function!r}: no polynomial tiers; tiers exist for {known}{whole}")
     if args.json:
         for name, tier in tiers:
             print(json.dumps({"name": name, "steps": len(tier.recipe), **dataclasses.asdict(tier)}))
@@ -183,6 +185,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     refuse_width_knob(args.isa)
     function = FUNCTION_ALIASES.get(args.op, args.op)
     if function not in OPS and function not in functions():
+        if function.startswith("reduce_"):
+            raise KeyError(f"{args.op!r}: the table holds only reduce_add, so no other reduction here is verified")
         raise KeyError(
             f"{args.op!r}: neither an abstract op nor a math function{suggestion(args.op, [*OPS, *functions()])}"
         )
@@ -299,6 +303,8 @@ def hit_text(name: str, hit: Hit) -> str:
     """One hit's line; a step of a composite never claims the composite's math."""
     if hit.via == "step":
         return f"{name} may be one step of {hit.op} on {hit.isa}/{hit.dtype} ({hit.entry.mnemonic})"
+    if hit.via == "scalar":
+        return f"{name} = {hit.op} on one lane ({hit.dtype}), the scalar form of {hit.entry.mnemonic}"
     detail = {
         "intrinsic": hit.entry.intrinsic,
         "masked": hit.entry.masked,
@@ -310,8 +316,23 @@ def hit_text(name: str, hit: Hit) -> str:
     return f"{name} = {hit.op} on {hit.isa}/{hit.dtype} ({hit.via}: {detail}){semantics}"
 
 
+#: What a register in a pasted line says about its ISA.
+REGISTERS = (
+    (re.compile(r"zmm\d"), "avx512"),
+    (re.compile(r"ymm\d"), "avx2"),
+    (re.compile(r"\bz\d+\.[bhsd]|\bp\d+/[mz]"), "sve"),
+    (re.compile(r"\bv\d+\.\d*[bhsd]"), "neon"),
+)
+
+
+def narrowed(line: str, hits: tuple[Hit, ...]) -> tuple[Hit, ...]:
+    """The ``hits`` of the ISA the registers of ``line`` name; all of them when the line names none or none is left."""
+    isas = {isa for register, isa in REGISTERS if register.search(line)}
+    return tuple(hit for hit in hits if hit.isa in isas) or hits
+
+
 def print_hits(table: Table, name: str, as_json: bool = False) -> None:
-    hits = table.reverse(name)
+    hits = narrowed(name, table.reverse(name))
     token = normalized(name)
     if as_json:
         print(json.dumps([{"isa": h.isa, "dtype": h.dtype, "op": h.op, "via": h.via} for h in hits]))
@@ -322,9 +343,11 @@ def print_hits(table: Table, name: str, as_json: bool = False) -> None:
         if rule := operand_rule(token):
             print(f"{token}: {rule}")
         for hit in hits:
-            print(hit_text(name, hit))
+            print(hit_text(token, hit))
     elif table.assist(name):
         print_assists(table, name)
+    elif token in NO_MATH:
+        print(f"{token}: {NO_MATH[token]}")
     elif (found := library_function(token)) is not None:
         print(f"{token} = {found[0]} ({found[1]}) on {found[2]}: a vector math library call")
     else:

@@ -20,6 +20,12 @@ Error in units of 2^-52 at function scale: max \|approx - ref\| / spacing(max(\|
 | `exp-cheb7` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 1.894e+05 | 4.21e-11 |
 | `exp-cheb9` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 64 | 1.42e-14 |
 | `exp-cheb11` | exp | \|x\| <= ln(2)/2 after k-split: x = k*ln2 + r; scale by 2^k after | 1 | 2.22e-16 |
+| `log-taylor5` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 5.764e+09 | 1.28e-06 |
+| `log-taylor7` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 1.321e+08 | 2.93e-08 |
+| `log-taylor9` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 3.185e+06 | 7.07e-10 |
+| `log-cheb7` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 1.084e+06 | 2.41e-10 |
+| `log-cheb11` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 42 | 9.33e-15 |
+| `log-cheb13` | log | \|x\| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after | 0.75 | 1.67e-16 |
 
 ## Recipes
 
@@ -243,6 +249,80 @@ e = p
 ```
 
 Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively
+
+### log-taylor5
+
+```
+t = mul(x, x)
+p = fma(0.4, t, 0.6666666666666666)
+l = fma(mul(x, t), p, mul(2.0, x))
+```
+
+plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax
+
+### log-taylor7
+
+```
+t = mul(x, x)
+p = fma(0.2857142857142857, t, 0.4)
+p = fma(p, t, 0.6666666666666666)
+l = fma(mul(x, t), p, mul(2.0, x))
+```
+
+plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax
+
+### log-taylor9
+
+```
+t = mul(x, x)
+p = fma(0.2222222222222222, t, 0.2857142857142857)
+p = fma(p, t, 0.4)
+p = fma(p, t, 0.6666666666666666)
+l = fma(mul(x, t), p, mul(2.0, x))
+```
+
+plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax
+
+### log-cheb7
+
+```
+t = mul(x, x)
+p = fma(0.29924390479144986, t, 0.3997485051751905)
+p = fma(p, t, 0.6666681533815119)
+p = fma(p, t, 1.9999999986313182)
+l = mul(x, p)
+```
+
+Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids
+
+### log-cheb11
+
+```
+t = mul(x, x)
+p = fma(0.19608095639753054, t, 0.2217424991007749)
+p = fma(p, t, 0.28572166145875727)
+p = fma(p, t, 0.3999999489183238)
+p = fma(p, t, 0.6666666667957926)
+p = fma(p, t, 1.9999999999999472)
+l = mul(x, p)
+```
+
+Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids
+
+### log-cheb13
+
+```
+t = mul(x, x)
+p = fma(0.16837659970680488, t, 0.18121934431215214)
+p = fma(p, t, 0.22223434547517906)
+p = fma(p, t, 0.2857141602110767)
+p = fma(p, t, 0.40000000061741614)
+p = fma(p, t, 0.6666666666655292)
+p = fma(p, t, 2.0000000000000004)
+l = mul(x, p)
+```
+
+Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids
 
 ## Vector math library calls
 

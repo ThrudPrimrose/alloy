@@ -468,3 +468,99 @@ def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):
     broken.write_text(text.replace(old, new, 1), encoding="utf-8")
     with pytest.raises(ValueError, match=refusal):
         load(broken)
+
+
+@pytest.mark.parametrize(
+    ("name", "op", "dtype"),
+    [
+        ("vmulsd", "mul", "f64"),
+        ("vdivss", "div", "f32"),
+        ("vmaxsd", "max", "f64"),
+        ("vsqrtsd", "sqrt", "f64"),
+        ("vaddsd", "add", "f64"),
+        ("vmovsd", "load", "f64"),
+    ],
+)
+def test_a_scalar_instruction_reverses_to_its_op_on_one_lane(name, op, dtype):
+    sut = TABLE.reverse(name)[0]
+
+    assert (sut.op, sut.dtype, sut.via) == (op, dtype, "scalar")
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("reverse", "vmulsd"), ("mul on one lane", "the scalar form of vmulpd")),
+        (("reverse", "vzeroupper"), ("no math",)),
+        (("reverse", "vucomisd"), ("sets the flags",)),
+        (("reverse", "kmovb"), ("moves a mask",)),
+    ],
+)
+def test_the_instructions_of_a_real_loop_get_an_answer(args, expected):
+    run = cli(*args)
+
+    assert run.returncode == 0, run.stderr
+    for text in expected:
+        assert text in run.stdout
+
+
+@pytest.mark.parametrize(
+    ("line", "isa", "absent"),
+    [
+        ("fmla z0.d, p0/m, z1.d, z2.d", "sve/f64", "neon/"),
+        ("fmla v0.2d, v1.2d, v2.2d", "neon/f64", "sve/"),
+        ("vaddpd %zmm1, %zmm2, %zmm0", "avx512/f64", "avx2/"),
+        ("vaddpd %ymm1, %ymm2, %ymm0", "avx2/f64", "avx512/"),
+    ],
+)
+def test_the_registers_of_a_pasted_line_narrow_its_answer(line, isa, absent):
+    run = cli("reverse", line)
+
+    assert isa in run.stdout
+    assert absent not in run.stdout
+
+
+def test_a_pasted_line_is_answered_by_its_mnemonic_and_not_echoed():
+    run = cli("reverse", "vaddpd %zmm1, %zmm2, %zmm0")
+
+    assert "%zmm" not in run.stdout
+
+
+@pytest.mark.parametrize(
+    ("word", "meant"), [("sum", "reduce_add"), ("hsum", "reduce_add"), ("blend", "select"), ("tail", "gen_mask")]
+)
+def test_the_word_an_agent_tries_suggests_the_op_it_means(word, meant):
+    run = cli("lookup", "avx2", word, "f64", "--no-verify")
+
+    assert run.returncode == 2
+    assert f"did you mean {meant}?" in run.stderr
+
+
+def test_a_min_or_max_reduction_says_the_table_has_no_row_for_it():
+    run = cli("lookup", "avx512", "reduce_max", "f64")
+
+    assert run.returncode == 2
+    assert "only reduce_add" in run.stderr
+    assert "did you mean" not in run.stderr
+
+
+@pytest.mark.parametrize("isa", ["avx2", "neon"])
+def test_a_tail_on_a_maskless_isa_points_at_its_remainder_loop(isa):
+    run = cli("lookup", isa, "gen_mask", "f64")
+
+    assert run.returncode == 2
+    assert f"skeleton {isa} scalar_remainder f64" in run.stderr
+    assert "integer lanes" not in run.stderr
+
+
+def test_a_function_without_tiers_points_at_its_kernel():
+    run = cli("tiers", "tan")
+
+    assert run.returncode == 2
+    assert "kernel" in run.stderr
+
+
+def test_every_sve_dtype_has_a_tail_predicate():
+    sut = TABLE.entry("sve", "gen_mask", "f16")
+
+    assert sut.intrinsic == "svwhilelt_b16_s64"

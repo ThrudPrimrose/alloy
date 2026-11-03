@@ -188,6 +188,29 @@ def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy():
     assert "_mm256_fnmadd_pd(q, b, a)" in str(sut.answer)
 
 
+@pytest.mark.parametrize(
+    ("command", "arguments", "expected"),
+    [
+        ("tiers", ["log"], "log-cheb13"),
+        ("kernel", ["sve", "fmod", "f64", "--level", "relaxed", "--no-verify"], "alloy_fmod_f64_relaxed"),
+        ("reverse", ["vmulsd"], "mul on one lane"),
+        ("reverse", ["fmla z0.d, p0/m, z1.d, z2.d"], "sve/f64"),
+    ],
+)
+def test_the_isa_tool_answers_what_an_agent_reads_off_its_loop(command, arguments, expected):
+    sut = isa_call(command, arguments)
+
+    assert sut.code == HTTPStatus.OK
+    assert expected in str(sut.answer)
+
+
+def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop():
+    sut = isa_call("lookup", ["neon", "gen_mask", "f64"])
+
+    assert sut.code == HTTPStatus.BAD_REQUEST
+    assert "skeleton neon scalar_remainder f64" in str(sut.answer)
+
+
 def test_the_isa_tool_refuses_a_query_it_does_not_serve():
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
 

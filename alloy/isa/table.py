@@ -71,6 +71,38 @@ DOT_SUFFIX = re.compile(r"^([a-z0-9]+)\.[a-z]+$")
 #: An intrinsic named anywhere in free text: a bare recipe step, or a prose step or masked note citing one.
 SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_[a-z0-9]+)+)\b")
 
+#: Words an agent may use for an op; difflib would answer sum with sub.
+SYNONYMS = {
+    "sum": "reduce_add",
+    "hsum": "reduce_add",
+    "hadd": "reduce_add",
+    "blend": "select",
+    "tail": "gen_mask",
+    "mask": "gen_mask",
+    "predicate": "gen_mask",
+    "remainder": "mod",
+}
+#: A scalar x86 instruction: the packed name with ``s`` for ``p``.
+SCALAR_FORM = re.compile(r"^(v[a-z0-9]+?)s([dsh])$")
+PACKED_MOVES = {"vmovsd": "vmovupd", "vmovss": "vmovups"}
+#: Instructions of a real loop that spell no op, and what each does there.
+NO_MATH = {
+    "vzeroupper": "clears the upper vector state before SSE code or a call: no math",
+    **dict.fromkeys(
+        ("vcomisd", "vucomisd", "vcomiss", "vucomiss"),
+        "compares one lane and sets the flags: a branch on one element, often the fallback to scalar libm",
+    ),
+    **dict.fromkeys(("vmovq", "vmovd"), "moves one element between a general and a vector register: no math"),
+    **dict.fromkeys(("vmovdqa", "vmovdqa32", "vmovdqa64"), "copies a whole register: no math"),
+    **dict.fromkeys(("vpinsrq", "vpinsrd"), "puts one element into a lane: no math"),
+    **dict.fromkeys(
+        ("kmovb", "kmovw", "kmovd", "kmovq"), "moves a mask between a k register and a general one or memory"
+    ),
+    **dict.fromkeys(
+        ("kortestb", "kortestw", "kortestd", "kortestq"), "tests a mask and sets the flags: a branch on its lanes"
+    ),
+}
+
 #: SVE activity suffixes and AVX-512 masked forms that spell the same op as the row's ``_x`` or ``_mask_`` form.
 SVE_POLICY = re.compile(r"^(sv\w+)_[mz]$")
 AVX512_MASKED = re.compile(r"^(_mm\d*)_(?:maskz|mask3)_(\w+)$")
@@ -168,7 +200,8 @@ class AssistHit:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Hit:
-    """One reverse-lookup match; ``via`` ``step`` is one mnemonic of a composite, not the op's whole math."""
+    """One reverse-lookup match; ``via`` ``step`` is one mnemonic of a composite, not the op's whole math, and
+    ``scalar`` the op on one lane."""
 
     isa: str
     dtype: str
@@ -207,8 +240,11 @@ class Table:
             raise KeyError(f"{isa}/{dtype}/{op}: integer op (look under i64/i32)")
         entries = target.entries(dtype)
         if op not in entries:
-            why = f"no predication on {isa}" if op == "gen_mask" and not target.mask else f"no {isa}/{dtype} row"
-            raise KeyError(f"{isa}/{dtype}/{op}: unsupported ({why}); float rows are not valid for integer lanes")
+            if op == "gen_mask" and not target.mask:
+                tail = f"a tail is a remainder loop (`skeleton {isa} scalar_remainder {dtype}`)"
+                raise KeyError(f"{isa}/{dtype}/gen_mask: no predication on {isa}: {tail}")
+            lanes = "; float rows are not valid for integer lanes" if dtype in INT_DTYPES else ""
+            raise KeyError(f"{isa}/{dtype}/{op}: unsupported (no {isa}/{dtype} row){lanes}")
         return entries[op]
 
     def reverse(self, name: str) -> tuple[Hit, ...]:
@@ -225,7 +261,7 @@ class Table:
         return self.mnemonic_hits(token)
 
     def mnemonic_hits(self, token: str) -> tuple[Hit, ...]:
-        whole = self.by_mnemonic.get(token, ())
+        whole = self.by_mnemonic.get(token, ()) or scalar_hits(token, self.by_mnemonic)
         seen = {(h.isa, h.dtype, h.op) for h in whole}
         return whole + tuple(h for h in self.by_part.get(token, ()) if (h.isa, h.dtype, h.op) not in seen)
 
@@ -236,9 +272,21 @@ class Table:
 
 
 def suggestion(name: str, known: Iterable[str]) -> str:
-    """`` (did you mean x?)`` for the closest of ``known``, or nothing."""
-    close = difflib.get_close_matches(name, list(known), n=1)
+    """`` (did you mean x?)`` for the op ``name`` is another word for, else the closest of ``known``, or nothing."""
+    candidates = list(known)
+    close = [SYNONYMS[name]] if SYNONYMS.get(name) in candidates else difflib.get_close_matches(name, candidates, n=1)
     return f" (did you mean {close[0]}?)" if close else ""
+
+
+def scalar_hits(token: str, by_mnemonic: dict[str, tuple[Hit, ...]]) -> tuple[Hit, ...]:
+    """The rows of the packed form of a scalar x86 instruction, once per op and dtype: ``vmulsd`` is ``vmulpd``'s math
+    on one lane."""
+    m = SCALAR_FORM.match(token)
+    if m is None:
+        return ()
+    packed = PACKED_MOVES.get(token, f"{m.group(1)}p{m.group(2)}")
+    hits = (h for h in reversed(by_mnemonic.get(packed, ())) if h.dtype == FMA_DTYPE[m.group(2)])
+    return tuple(reversed({(h.op, h.dtype): dataclasses.replace(h, via="scalar") for h in hits}.values()))
 
 
 def normalized(name: str) -> str:

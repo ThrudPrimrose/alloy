@@ -16,8 +16,9 @@ class NoArgs(pydantic.BaseModel):
 
 #: Mode -> what the tool tells the model.
 MODES = {
-    "profile": "Alloy's C/C++ renderings of this kernel, every candidate verified and timed; each scope's fastest whose "
-    "timing clearly beats the default build, else the default, built into a library you can submit, with the sources, a Makefile and the report of the top candidates.",
+    "profile": "Alloy's C/C++ renderings of this kernel, every candidate verified and timed; each scope's fastest "
+    "whose timing clearly beats the default build, else the default, built into a library you can submit, with the "
+    "sources, a Makefile and the report of the top candidates.",
     "speculative": "Alloy's C/C++ renderings of this kernel, each scope's predicted best candidate (verified, not "
     "timed) built into a library you can submit, with the sources, a Makefile and the report of the top candidates.",
 }
@@ -35,8 +36,9 @@ class IsaArgs(pydantic.BaseModel):
 
 
 ISA = (
-    "The intrinsics reference: `kernel` returns sin, exp, log, pow and more as C intrinsics at strict, relaxed and "
-    "fast levels; `tiers` lists a function's polynomial depths with their error, for picking one; `lookup` spells an op for an ISA and dtype; `reverse` names what an intrinsic or mnemonic computes; "
+    "The intrinsics reference: `kernel` returns sin, exp, log, pow, fmod and more as C intrinsics at strict, relaxed "
+    "and fast levels; `tiers` lists a function's polynomial depths with their error, for picking one; `lookup` spells "
+    "an op for an ISA and dtype; `reverse` names what an intrinsic, a mnemonic or a pasted disassembly line computes; "
     "`skeleton` gives a loop in a legal schedule; `host` says which ISAs this machine runs. `lookup`, `kernel` and "
     "`skeleton` answers carry the verdict of a compiled check where this machine can run them, else say unverified."
 )

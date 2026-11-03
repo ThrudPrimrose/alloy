@@ -2181,6 +2181,14 @@ mnemonic = "fdiv"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] / b[j] for active lanes"
 
+[isa.sve.f16.gen_mask]
+intrinsic = "svwhilelt_b16_s64"
+mnemonic = "whilelt"
+observed = ["whilelo"]
+signature = "(i, N) -> pg"
+semantics = "lane j active iff i + j < N"
+note = "the standardized gen_mask; the loop steps by svcnth() and never needs a remainder loop"
+
 [isa.sve.f16.fma]
 intrinsic = "svmla_f16_x"
 mnemonic = "fmla"
