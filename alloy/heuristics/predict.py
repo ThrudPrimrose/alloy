@@ -187,17 +187,18 @@ def innermost_spans(code: list[Instruction]) -> list[tuple[int, int]]:
     return [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
 
 
+def loop_of(code: list[Instruction], start: int, end: int) -> Loop:
+    body = tuple(i for i in code if start <= i.address < end and not is_branch(i))
+    calls = tuple(i.callee for i in body if CALL.match(i.mnemonic))
+    lines = frozenset(i.line for i in body if i.line)
+    return Loop(tuple(i for i in body if not CALL.match(i.mnemonic)), calls, lines)
+
+
 def innermost_loops(code: list[Instruction]) -> list[Loop]:
     """The loops of one function holding no other loop."""
     inner = innermost_spans(code)
     moving = [s for s in inner if any(s[0] <= i.address < s[1] and moves_data(i) for i in code)]
-    loops = []
-    for start, end in moving or inner:  # an outer latch laid out past the function's return moves nothing
-        body = tuple(i for i in code if start <= i.address < end and not is_branch(i))
-        calls = tuple(i.callee for i in body if CALL.match(i.mnemonic))
-        lines = frozenset(i.line for i in body if i.line)
-        loops.append(Loop(tuple(i for i in body if not CALL.match(i.mnemonic)), calls, lines))
-    return loops
+    return [loop_of(code, *span) for span in moving or inner]  # an outer latch past the return moves nothing
 
 
 def moves_data(i: Instruction) -> bool:
@@ -433,7 +434,8 @@ Predictions = dict[str, dict[str, Prediction]]
 
 def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None, running: bool = False) -> Predictions:
     """The prediction of every distinct build of every scope at ``sizes`` (the loops weigh equally without), in parallel
-    (llvm-mca runs per loop). Without ``running``, :func:`predict`'s model, every core and no region, skips serial builds."""
+    (llvm-mca runs per loop). Without ``running``, :func:`predict`'s model, every core and no region, skips serial
+    builds."""
     jobs = [
         (rep, b)
         for rep in reports
