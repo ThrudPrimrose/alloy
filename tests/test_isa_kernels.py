@@ -15,11 +15,22 @@ from alloy.isa import load
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
 from alloy.isa.mathcheck import HEADERS, Measured, emulated, judged, measure, validate_kernel
-from alloy.isa.mathkernels import LEVELS, Kernel, Renderer, functions, kernel, kernels_for, libraries, render, spelled
+from alloy.isa.mathkernels import (
+    LEVELS,
+    NO_LIBRARY,
+    Kernel,
+    Renderer,
+    functions,
+    kernel,
+    kernels_for,
+    libraries,
+    render,
+    spelled,
+)
 from alloy.isa.validate import c_compiler, c_flags, host_can_run
 
 ALL = [(fn, dtype, level) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS]
-FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow atan asin acos sinh cosh tanh".split()
+FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow fmod atan asin acos sinh cosh tanh".split()
 
 
 def test_the_functions_an_agent_asks_for_all_have_kernels():
@@ -88,7 +99,7 @@ def test_a_wrong_coefficient_fails_the_gate():
     assert seen.ulp > 1000 * k.error_ulp
 
 
-@pytest.mark.parametrize("fn", ["sin", "exp", "log", "pow"])
+@pytest.mark.parametrize("fn", ["sin", "exp", "log", "pow", "fmod"])
 def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn):
     k = kernel(fn, "f64", "strict")
 
@@ -162,7 +173,7 @@ def test_libmvec_has_every_listed_call():
     if not candidates:
         pytest.skip("no glibc libmvec here")
     symbols = subprocess.run(["nm", "-D", str(candidates[0])], capture_output=True, text=True, check=False).stdout
-    for fn, dtype, level in ALL:
+    for fn, dtype, level in (row for row in ALL if row[0] not in NO_LIBRARY):
         for isa in ("avx2", "avx512"):
             call = libraries(fn, dtype, isa, level)["libmvec"]
             assert call in symbols, call
@@ -345,10 +356,13 @@ def strict_value(fn: str, dtype: str, args: tuple[float, ...], tmp_path: pathlib
         ("cos", "f64", (1e-9,), 1.0),
         ("pow", "f64", (3.0, 1.0), 3.0),
         ("pow", "f32", (3.0, 1.0), 3.0),
+        ("fmod", "f64", (0.7, 0.1), 0.09999999999999992),
+        ("fmod", "f64", (-0.7, 0.1), -0.09999999999999992),
+        ("fmod", "f32", (0.7, 0.1), 0.09999997913837433),
     ],
 )
 def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dtype, args, exact, tmp_path):
-    """One ulp below 1 or 3 casts to 0 or 2: the listed ulp bound does not excuse these points."""
+    """One ulp below 1 or 3 casts to 0 or 2, and 0.7/0.1 rounds up to 7: the listed bound excuses none of these."""
     sut = strict_value(fn, dtype, args, tmp_path)
 
     assert sut == exact

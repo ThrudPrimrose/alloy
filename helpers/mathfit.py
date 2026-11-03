@@ -36,6 +36,8 @@ TRIG_MAX = {"f64": 1048576.0, "f32": 8192.0}
 POW_MAX = {"f64": 64.0, "f32": 32.0}
 #: Largest |x| whose cos rounds to 1 in the lane.
 COS_ONE = {"f64": 2.0**-28, "f32": 2.0**-13}
+#: The largest finite lane: an infinite y must leave the vector path, where 0*inf would be NaN.
+LANE_MAX = {"f64": 1.7976931348623157e308, "f32": 3.4028234663852886e38}
 
 DEGREES = {  # function -> dtype -> polynomial degree per level (strict, relaxed, fast)
     "sin": {"f64": (8, 7, 4), "f32": (4, 3, 2)},
@@ -505,6 +507,34 @@ def program_pow(dtype: str, level: str) -> dict:
     return {**out, "body": body, "result": e}
 
 
+def program_fmod(dtype: str, level: str) -> dict:
+    """x - y*trunc(x/y) on magnitudes. Below 2^mantissa the lane holds the quotient's integer, which rounds up by one at
+    worst, so one correction is enough, and the remainder fits the lane: a multiple of y's last place below |y|."""
+    top = 2.0 ** MANTISSA[dtype]
+    grids = [
+        Grid(-1000.0, 1000.0, "lin", 0.5, 8.0),
+        Grid(-1000.0, 1000.0, "lin", -8.0, -0.5),
+        Grid(TINY[dtype], top / 4, "log", 0.5, 8.0),
+    ]
+    out = {"args": ("x", "y"), "contract": f"finite x, finite non-zero y, |x/y| < 2^{MANTISSA[dtype]}"}
+    if level == "fast":
+        contract = f"{out['contract']}; near a multiple of y it can be off by |y| and take the wrong sign"
+        return {
+            **out,
+            "contract": contract,
+            "grids": grids,
+            "body": ["r = fnma(trunc(div(x, y)), y, x)"],
+            "result": "r",
+        }
+    body = ["ax = abs(x)", "ay = abs(y)", "ratio = div(ax, ay)", "r = fnma(trunc(ratio), ay, ax)"]
+    body += ["t = select(lt(r, 0.0), add(r, ay), r)", f"f = {with_sign('t', 'x')}"]
+    out |= {"body": body, "result": "f"}
+    if level == "strict":
+        grids.append(Grid(TINY[dtype], HUGE[dtype], "log", 0.5, 8.0))
+        out |= strict_guard(f"mand(lt(ratio, {fmt(top)}), le(ay, {LANE_MAX[dtype]!r}))")
+    return {**out, "grids": grids}
+
+
 PROGRAMS = {
     "sin": program_sin,
     "cos": program_cos,
@@ -518,6 +548,7 @@ PROGRAMS = {
     "log10": lambda d, l: program_log_scaled(10, d, l),
     "log1p": program_log1p,
     "pow": program_pow,
+    "fmod": program_fmod,
     "atan": program_atan,
     "asin": program_asin,
     "acos": program_acos,

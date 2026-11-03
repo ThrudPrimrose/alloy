@@ -299,6 +299,8 @@ def kernels_for(fn: str, dtype: str, isa: str) -> tuple[Spelled, ...]:
 #: SLEEF functions with a 3.5-ulp variant; the rest have only the 1-ulp one.
 SLEEF_U35 = frozenset("sin cos tan exp2 exp10 log log2 atan asin acos sinh cosh tanh".split())
 LIBRARY_WIDTH = {"avx2": ("d", "4"), "avx512": ("e", "8")}
+#: Functions glibc's libmvec does not export.
+NO_LIBRARY = frozenset({"fmod"})
 
 
 def library_function(symbol: str) -> tuple[str, str, str] | None:
@@ -320,9 +322,9 @@ def library_symbols() -> dict[str, tuple[str, str, str]]:
 
 def libraries(fn: str, dtype: str, isa: str, level: str) -> dict[str, str]:
     """The library call matching ``level`` on x86, for a loop that keeps the call: the ``{name: symbol}`` pairs."""
-    if isa not in LIBRARY_WIDTH:
-        return {}
     name = ALIASES.get(fn, fn)
+    if isa not in LIBRARY_WIDTH or name in NO_LIBRARY:
+        return {}
     letter, width = LIBRARY_WIDTH[isa]
     lanes = width if dtype == "f64" else str(2 * int(width))
     suffix = "" if dtype == "f64" else "f"

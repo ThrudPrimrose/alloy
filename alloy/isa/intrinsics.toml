@@ -1284,7 +1284,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm256_div_pd", "_mm256_round_pd", "_mm256_fnmadd_pd"]
 code = ["__m256d q = _mm256_round_pd(_mm256_div_pd(a, b), _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)", "_mm256_fnmadd_pd(q, b, a)"]
-note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx2.f64.gather]
 intrinsic = "_mm256_i64gather_pd"
@@ -1351,7 +1351,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm256_div_ps", "_mm256_round_ps", "_mm256_fnmadd_ps"]
 code = ["__m256 q = _mm256_round_ps(_mm256_div_ps(a, b), _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC)", "_mm256_fnmadd_ps(q, b, a)"]
-note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no native fmod: q = trunc(a/b) via _mm256_round_{x} with _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC, then r = a - q*b; vector fmod calls live in the veclibs. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx2.f32.gather]
 intrinsic = "_mm256_i32gather_ps"
@@ -1421,7 +1421,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm512_div_pd", "_mm512_roundscale_pd", "_mm512_fnmadd_pd"]
 code = ["__m512d q = _mm512_roundscale_pd(_mm512_div_pd(a, b), 0x0B)", "_mm512_fnmadd_pd(q, b, a)"]
-note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx512.f64.gather]
 intrinsic = "_mm512_i64gather_pd"
@@ -1492,7 +1492,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["_mm512_div_ps", "_mm512_roundscale_ps", "_mm512_fnmadd_ps"]
 code = ["__m512 q = _mm512_roundscale_ps(_mm512_div_ps(a, b), 0x0B)", "_mm512_fnmadd_ps(q, b, a)"]
-note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no native fmod: q = trunc(a/b) via _mm512_roundscale_{x}(d, 0x0B) (toward zero, no exceptions), r = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.avx512.f32.gather]
 intrinsic = "_mm512_i32gather_ps"
@@ -1556,7 +1556,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["vdivq_f64", "vrndq_f64", "vfmsq_f64"]
 code = ["float64x2_t q = vrndq_f64(vdivq_f64(a, b))", "vfmsq_f64(a, q, b)"]
-note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f64.gather]
 mnemonic = "ldr+ins"
@@ -1619,7 +1619,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["vdivq_f32", "vrndq_f32", "vfmsq_f32"]
 code = ["float32x4_t q = vrndq_f32(vdivq_f32(a, b))", "vfmsq_f32(a, q, b)"]
-note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.neon.f32.gather]
 mnemonic = "ldr+ins"
@@ -1682,7 +1682,7 @@ signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f64_x", "svrintz_f64_x", "svmls_f64_x"]
 code = ["svfloat64_t q = svrintz_f64_x(pg, svdiv_f64_x(pg, a, b))", "svmls_f64_x(pg, a, q, b)"]
-note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.sve.f64.gather]
 intrinsic = "svld1_gather_s64index_f64"
@@ -1744,7 +1744,7 @@ signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
 recipe = ["svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x"]
 code = ["svfloat32_t q = svrintz_f32_x(pg, svdiv_f32_x(pg, a, b))", "svmls_f32_x(pg, a, q, b)"]
-note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. Only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
+note = "no fmod: q = svrintz(a/b) (frintz, toward zero), r = svmls(a, q, b) = a - q*b. The kernel of fmod is exact on every input (`kernel ISA fmod DTYPE`); this recipe holds only for finite b and |a/b| < 2^52 (f32: 2^23): a/b rounds, so correct with r += copysign(b, a) when sign(r) != sign(a), copysign the zero result, and call scalar fmod outside that domain"
 
 [isa.sve.f32.gather]
 intrinsic = "svld1_gather_s32index_f32"

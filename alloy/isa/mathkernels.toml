@@ -1848,6 +1848,124 @@ body = [
   "eE = frombits(iadd(bits(mE), ishl(toint(qE), 23)))",
 ]
 
+[fmod.f64.strict]
+args = ["x", "y"]
+result = "f"
+guard = "ok"
+contract = "finite x, finite non-zero y, |x/y| < 2^52"
+error_ulp = 0
+error_abs = 0
+specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-300, hi = 1125899906842624.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "ax = abs(x)",
+  "ay = abs(y)",
+  "ratio = div(ax, ay)",
+  "r = fnma(trunc(ratio), ay, ax)",
+  "t = select(lt(r, 0.0), add(r, ay), r)",
+  "f = frombits(ior(bits(t), iand(bits(x), bits(-0.0))))",
+  "ok = mand(lt(ratio, 4503599627370496.0), le(ay, 1.7976931348623157e+308))",
+]
+
+[fmod.f64.relaxed]
+args = ["x", "y"]
+result = "f"
+contract = "finite x, finite non-zero y, |x/y| < 2^52"
+error_ulp = 0
+error_abs = 0
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-300, hi = 1125899906842624.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "ax = abs(x)",
+  "ay = abs(y)",
+  "ratio = div(ax, ay)",
+  "r = fnma(trunc(ratio), ay, ax)",
+  "t = select(lt(r, 0.0), add(r, ay), r)",
+  "f = frombits(ior(bits(t), iand(bits(x), bits(-0.0))))",
+]
+
+[fmod.f64.fast]
+args = ["x", "y"]
+result = "r"
+contract = "finite x, finite non-zero y, |x/y| < 2^52; near a multiple of y it can be off by |y| and take the wrong sign"
+error_ulp = 9.007e+15
+error_abs = 8
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-300, hi = 1125899906842624.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "r = fnma(trunc(div(x, y)), y, x)",
+]
+
+[fmod.f32.strict]
+args = ["x", "y"]
+result = "f"
+guard = "ok"
+contract = "finite x, finite non-zero y, |x/y| < 2^23"
+error_ulp = 0
+error_abs = 0
+specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-30, hi = 2097152.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+  { lo = 1e-30, hi = 1e+30, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "ax = abs(x)",
+  "ay = abs(y)",
+  "ratio = div(ax, ay)",
+  "r = fnma(trunc(ratio), ay, ax)",
+  "t = select(lt(r, 0.0), add(r, ay), r)",
+  "f = frombits(ior(bits(t), iand(bits(x), bits(-0.0))))",
+  "ok = mand(lt(ratio, 8388608.0), le(ay, 3.4028234663852886e+38))",
+]
+
+[fmod.f32.relaxed]
+args = ["x", "y"]
+result = "f"
+contract = "finite x, finite non-zero y, |x/y| < 2^23"
+error_ulp = 0
+error_abs = 0
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-30, hi = 2097152.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "ax = abs(x)",
+  "ay = abs(y)",
+  "ratio = div(ax, ay)",
+  "r = fnma(trunc(ratio), ay, ax)",
+  "t = select(lt(r, 0.0), add(r, ay), r)",
+  "f = frombits(ior(bits(t), iand(bits(x), bits(-0.0))))",
+]
+
+[fmod.f32.fast]
+args = ["x", "y"]
+result = "r"
+contract = "finite x, finite non-zero y, |x/y| < 2^23; near a multiple of y it can be off by |y| and take the wrong sign"
+error_ulp = 1.765e+07
+error_abs = 8
+grids = [
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
+  { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = -8.0, yhi = -0.5 },
+  { lo = 1e-30, hi = 2097152.0, kind = "log", ylo = 0.5, yhi = 8.0 },
+]
+body = [
+  "r = fnma(trunc(div(x, y)), y, x)",
+]
+
 [atan.f64.strict]
 args = ["x"]
 result = "v"

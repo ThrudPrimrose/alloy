@@ -155,8 +155,19 @@ def reference(k: Kernel) -> str:
     return f"(ref_t){k.fn}{wide}({arguments})"
 
 
+#: Half of fmod's draws land next to a multiple of y, where x/y rounds to an integer and a plain recipe goes wrong.
+NEAR_MULTIPLE = """            if (uniform() < 0.5) {
+                lane near = (lane)(rint((double)xs[j] / (double)ys[j]) * (double)ys[j]);
+                for (int i = (int)(uniform() * 5); i > 0; i--)
+                    near = nextafter@SUFFIX@(near, uniform() < 0.5 ? -INFINITY : INFINITY);
+                xs[j] = near;
+            }"""
+
+
 def clip(k: Kernel) -> str:
-    """For ``pow``: keep y*log(x) inside the exponent's range."""
+    """What a draw of a two-argument kernel still needs: for ``pow``, y*log(x) inside the exponent's range."""
+    if k.fn == "fmod":
+        return NEAR_MULTIPLE
     if len(k.args) != 2:
         return ""
     limit = 700.0 if k.dtype == "f64" else 87.0
@@ -187,10 +198,10 @@ def driver(k: Kernel, isa: str, samples: int) -> tuple[str, str]:
         "REFTYPE": "long double" if f64 else "double",
         "KERNEL": render(k, isa).source,
         "LANES": r.fields["lanes"],
-        "SUFFIX": "" if f64 else "f",
         "CALL": f"    {r.call('store', 'vs', computed)};",
         "SAMPLES": str(samples),
         "CLIP": clip(k),
+        "SUFFIX": "" if f64 else "f",
         "REF": reference(k),
         "GRIDS": "\n".join(grid_line(g) for g in k.grids),
         "SPECIALS": ", ".join(literal(v, k.dtype) for v in k.specials or (0.0,)),
