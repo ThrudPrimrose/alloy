@@ -32,7 +32,7 @@ int k_{name}(double *restrict a, long n) {{
 """
 #: One mark per compiler; a matrix compiler without one fails here, so a new compiler gets registered.
 MARKS = {"gcc": pytest.mark.gcc, "clang": pytest.mark.clang, "nvhpc": pytest.mark.nvhpc, "icx": pytest.mark.icx}
-#: An arg-max reduction seeded from ``omp_orig``, the form DaCe's CPF renders. Every thread waits inside the loop for
+#: An arg-max reduction seeded from ``omp_orig``, a form DaCe left for its neutral pair. Every thread waits inside the loop for
 #: its whole team, so no thread starts after another left, and the highest thread leaves last holding its own maximum;
 #: the true maximum sits in thread 0's chunk. A correct combine returns it whatever the arrival order. The wait stays a
 #: relaxed ``omp atomic``: a sequentially consistent atomic in the loop body hides the icx miscompile below.
