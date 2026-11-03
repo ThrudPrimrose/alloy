@@ -8,6 +8,8 @@ import pathlib
 import dace
 import numpy as np
 import pytest
+import sympy
+from dace.libraries.standard.nodes import Scan
 
 from alloy import api, machine
 from alloy.backend.build import Build, Remarks
@@ -143,6 +145,51 @@ def test_a_vector_loop_pays_for_its_vector_math_calls_and_a_scalar_loop_for_ever
 
     assert predict.hot_calls(loop, elements=8.0) == 1
     assert predict.hot_calls(loop, elements=1.0) == 2
+
+
+def test_a_load_of_what_the_loop_stored_keeps_its_chain_where_llvm_mca_can_see_it():
+    body = listing(  # nvhpc on y[j] = c[j] * y[j-1] + x[j]: two elements per iteration, y[j-1] read back from memory
+        (0x00, "vmovsd", "-0x10(%rdx,%r9), %xmm0"),
+        (0x06, "vmulsd", "-0x8(%rdi,%r9), %xmm0, %xmm0"),
+        (0x0C, "vaddsd", "-0x8(%rsi,%r9), %xmm0, %xmm0"),
+        (0x12, "vmovsd", "%xmm0, -0x8(%rdx,%r9)"),
+        (0x18, "vmulsd", "(%rdi,%r9), %xmm0, %xmm0"),
+        (0x1E, "vaddsd", "(%rsi,%r9), %xmm0, %xmm0"),
+        (0x24, "vmovsd", "%xmm0, (%rdx,%r9)"),
+        (0x2A, "addq", "$0x10, %r9"),
+    )
+
+    sut = predict.forwarded(tuple(body))
+
+    assert (sut[0].mnemonic, sut[0].operands) == ("vmovapd", "%xmm0, %xmm0")
+    assert sut[1:] == tuple(body[1:])
+    assert predict.data_bytes(predict.Loop(sut, ())) == 48
+
+
+def test_a_load_of_another_array_or_of_a_later_element_stays_a_load():
+    body = listing(
+        (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"),
+        (0x06, "vmovsd", "0x8(%rdx,%rax,8), %xmm1"),
+        (0x0C, "vmovsd", "%xmm0, (%rdx,%rax,8)"),
+    )
+
+    assert predict.forwarded(tuple(body)) == tuple(body)
+
+
+def scan_scope() -> scopes.Scope:
+    sdfg = dace.SDFG("scan")
+    for name in "xcy":
+        sdfg.add_array(name, [N], dace.float64)
+    state = sdfg.add_state()
+    scan = Scan("scan")
+    for data, subset, connector in (("x", "1:N", "_scan_in"), ("c", "1:N", "_scan_coef"), ("y", "0", "_scan_init")):
+        state.add_edge(state.add_read(data), None, scan, connector, dace.Memlet(f"{data}[{subset}]"))
+    state.add_edge(scan, "_scan_out", state.add_write("y"), None, dace.Memlet("y[1:N]"))
+    return scopes.Scope("scan", (), "", sdfg, False, False, sympy.Integer(1))
+
+
+def test_a_library_node_touches_each_array_it_runs_over_per_element_and_a_seed_only_once():
+    assert predict.accesses_per_element(scan_scope()) == 3
 
 
 def only_scope(program: dace.program) -> scopes.Scope:

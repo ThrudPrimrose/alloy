@@ -36,6 +36,7 @@ __all__ = [
     "Predictions",
     "accesses_per_element",
     "choose",
+    "forwarded",
     "innermost_loops",
     "predict",
     "predictions",
@@ -72,6 +73,9 @@ RETURN = re.compile(r"^ret")
 JUMP = re.compile(r"^(jmp[a-z]*|b)$")
 STACK = re.compile(r"%rsp|%rbp|\[sp\b|\[x29\b")
 NO_ACCESS = re.compile(r"^(lea|nop|prfm|prefetch)")
+VECTOR_MOVE = re.compile(r"^vmov")
+#: An AT&T memory operand: its displacement and its registers.
+MEMORY = re.compile(r"^(-?(?:0x[0-9a-f]+)?)\((%[^)]+)\)$")
 SVE_LENGTH = pathlib.Path("/proc/sys/abi/sve_default_vector_length")
 
 
@@ -187,11 +191,36 @@ def innermost_spans(code: list[Instruction]) -> list[tuple[int, int]]:
     return [s for s in spans if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)]
 
 
+def moved_memory(i: Instruction, operand: str) -> tuple[int, str] | None:
+    """``(displacement, registers)`` of a vector move's memory ``operand``; a stack slot is a spill, no array."""
+    place = MEMORY.match(operand) if VECTOR_MOVE.match(i.mnemonic) and not STACK.search(operand) else None
+    return None if place is None else (int(place.group(1) or "0", 16), place.group(2))
+
+
+def forwarded(body: tuple[Instruction, ...]) -> tuple[Instruction, ...]:
+    """``body`` with a load of what it stored at a higher address, last iteration's element, as a register move: a
+    recurrence through memory is a chain llvm-mca cannot see, so the load would look free of the store. x86 only."""
+    stored: dict[str, tuple[int, str]] = {}
+    for i in body:
+        source, _, target = i.operands.rpartition(", ")
+        place = moved_memory(i, target)
+        if place is not None and source.startswith("%"):
+            stored[place[1]] = max(stored.get(place[1], (place[0], source)), (place[0], source))
+    out = []
+    for i in body:
+        source, _, target = i.operands.rpartition(", ")
+        place = moved_memory(i, source)
+        held = stored.get(place[1]) if place is not None else None
+        carried = held is not None and place is not None and place[0] < held[0]
+        out.append(Instruction(i.address, "vmovapd", f"{held[1]}, {target}", line=i.line) if carried and held else i)
+    return tuple(out)
+
+
 def loop_of(code: list[Instruction], start: int, end: int) -> Loop:
     body = tuple(i for i in code if start <= i.address < end and not is_branch(i))
     calls = tuple(i.callee for i in body if CALL.match(i.mnemonic))
     lines = frozenset(i.line for i in body if i.line)
-    return Loop(tuple(i for i in body if not CALL.match(i.mnemonic)), calls, lines)
+    return Loop(forwarded(tuple(i for i in body if not CALL.match(i.mnemonic))), calls, lines)
 
 
 def innermost_loops(code: list[Instruction]) -> list[Loop]:
@@ -290,9 +319,23 @@ def innermost_maps(sdfg: dace.SDFG) -> dict[str, MapFacts]:
     return out
 
 
+def library_accesses(sdfg: dace.SDFG) -> int:
+    """The most arrays one element of a library node touches: a seed or a result of one element is no access per
+    element."""
+    counts = [
+        sum(e.data.subset is not None and e.data.subset.num_elements() != 1 for e in edges)
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.LibraryNode)
+        for edges in ([*parent.in_edges(node), *parent.out_edges(node)],)
+    ]
+    return max(counts, default=1)
+
+
 def accesses_per_element(scope: Scope) -> int:
-    """The most array accesses one element of any of the scope's innermost maps makes."""
-    return max((f.accesses for f in innermost_maps(scope.sdfg).values()), default=1)
+    """The most array accesses one element of any of the scope's innermost maps makes, or of a library node without
+    one."""
+    known = [f.accesses for f in innermost_maps(scope.sdfg).values()]
+    return max(known) if known else max(1, library_accesses(scope.sdfg))
 
 
 def tasklet_lines(source: pathlib.Path) -> dict[int, str]:
