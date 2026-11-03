@@ -70,7 +70,7 @@ how; the per-ISA pages list them.
 python -m alloy.isa host                        # which ISA and dtype this machine runs: start here
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps (--json)
 python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> C (--level strict|relaxed|fast)
-python -m alloy.isa tiers <fn>                  # sin, cos, exp: every polynomial depth, its steps and error (--json)
+python -m alloy.isa tiers <fn>                  # sin, cos, exp, log: every polynomial depth, its steps and error (--json)
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes (--json)
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute; takes minutes
 python -m alloy.isa skeleton <isa> <schedule> <dtype>   # the C loop shape, compiled and checked on this host
@@ -174,7 +174,7 @@ The `isa/` pages are generated: `python -m alloy.isa.render` after changing the 
 workflow: the `alloy-isa-gen` skill). Never edit them by hand.
 
 Tenstorrent Tensix is out of scope for the table (no C intrinsic path). Coverage is the core op set
-plus exp/sin/cos as polynomial tiers (Taylor + Chebyshev, error measured against libm) and
+plus exp/sin/cos/log as polynomial tiers (Taylor + Chebyshev, error measured against libm) and
 per-veclib library spellings (libmvec names verified against the host's libmvec, SLEEF names per
 sleef.org); extend `alloy/isa/intrinsics.toml` (spellings verified against the clang resource headers)
 when a kernel needs more.

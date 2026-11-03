@@ -583,7 +583,7 @@ def compile_run(source: str, flags: list[str], libs: tuple[str, ...] = (), emula
 
 
 #: The half-width of a tier's domain, by how the domain's text names it.
-TIER_SPANS = {"pi/4": math.pi / 4, "pi/2": math.pi / 2, "ln(2)/2": math.log(2) / 2}
+TIER_SPANS = {"pi/4": math.pi / 4, "pi/2": math.pi / 2, "ln(2)/2": math.log(2) / 2, "3-2*sqrt(2)": 3 - 2 * math.sqrt(2)}
 #: The only syntax a tier step may hold: calls and names, no attribute, so ``eval`` reaches nothing past its names.
 TIER_SYNTAX = (ast.Expression, ast.Call, ast.Name, ast.Load, ast.Constant, ast.UnaryOp, ast.USub)
 #: What a tier's recipe steps call; ``eval`` sees only these, the recipe's own names and no builtins.
@@ -604,24 +604,38 @@ def tier_step(expression: str) -> Any:
     return compile(tree, "<tier>", "eval")
 
 
-def evaluate_tier(tier: Any) -> tuple[np.ndarray, Any]:
-    """Evaluate a tier's Horner recipe (abstract-op steps) on its domain; returns (grid, approx)."""
-    half = next((half for key, half in TIER_SPANS.items() if key in tier.domain), None)
-    if half is None:
-        raise ValueError(f"{tier}: cannot parse the domain")
-    x = np.linspace(-half, half, N_TIER)
+def run_tier(tier: Any, x: np.ndarray) -> Any:
+    """A tier's Horner recipe (abstract-op steps) at ``x``."""
     names: dict[str, Any] = {**TIER_STEPS, "x": x}
     value: Any = x
     for step in tier.recipe:
         name, _, expression = step.strip().partition(" = ")
         value = names[name.strip()] = eval(tier_step(expression), {"__builtins__": {}}, names)
-    return x, value
+    return value
+
+
+def evaluate_tier(tier: Any) -> tuple[np.ndarray, Any]:
+    """A tier on its domain: (grid, approx)."""
+    half = next((half for key, half in TIER_SPANS.items() if key in tier.domain), None)
+    if half is None:
+        raise ValueError(f"{tier}: cannot parse the domain")
+    x = np.linspace(-half, half, N_TIER)
+    return x, run_tier(tier, x)
+
+
+#: What a tier approximates on its grid; a log tier's x is (m-1)/(m+1), so it computes 2*atanh(x) = log(m).
+TIER_REFERENCES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
+    "sin": np.sin,
+    "cos": np.cos,
+    "exp": np.exp,
+    "log": lambda x: 2 * np.arctanh(x),
+}
 
 
 def tier_error(tier: Any) -> tuple[float, float]:
     """A tier's worst error against libm: in units of 2^-52 at function scale, and absolute."""
     x, approx = evaluate_tier(tier)
-    reference = {"sin": np.sin, "cos": np.cos, "exp": np.exp}[tier.op](x)
+    reference = TIER_REFERENCES[tier.op](x)
     magnitude = np.maximum(np.abs(reference), 1.0)
     spacing = np.nextafter(magnitude, np.inf) - magnitude
     return float(np.max(np.abs(approx - reference) / spacing)), float(np.max(np.abs(approx - reference)))

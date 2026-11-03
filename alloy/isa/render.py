@@ -107,7 +107,7 @@ def render_index(table: Table) -> str:
         lines.append(f"- [`{name}.md`]({name}.md) — {isa.title}")
     lines += [
         "- [`kernels.md`](kernels.md) — sin, exp, log, pow and more as intrinsics: strict, relaxed and fast",
-        "- [`transcendentals.md`](transcendentals.md) — the exp/sin/cos polynomial tiers with "
+        "- [`transcendentals.md`](transcendentals.md) — the exp/sin/cos/log polynomial tiers with "
         "measured ULP and the vector math library calls",
         "",
     ]

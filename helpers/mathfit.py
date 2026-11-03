@@ -627,6 +627,13 @@ def cos_of_root(t):
     return mp.cos(mp.sqrt(t))
 
 
+def log_ratio(t):
+    """log(m)/x as a function of t = x*x, for x = (m-1)/(m+1): 2*atanh(x)/x."""
+    return 2 * mp.atanh(mp.sqrt(t)) / mp.sqrt(t)
+
+
+#: The square of the largest |x| a log tier sees: m stays in [sqrt(1/2), sqrt(2)].
+LOG_LIMIT = (3 - 2 * mp.sqrt(2)) ** 2
 #: The tiers named Chebyshev: what each fits, on which interval, to which degree of its Horner variable.
 CHEBYSHEV_TIERS: dict[str, tuple[Callable, mp.mpf, mp.mpf, int]] = {
     "sin-quad-cheb9": (sinc, mp.mpf(0), (mp.pi / 4) ** 2, 4),
@@ -636,6 +643,9 @@ CHEBYSHEV_TIERS: dict[str, tuple[Callable, mp.mpf, mp.mpf, int]] = {
     "exp-cheb7": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 7),
     "exp-cheb9": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 9),
     "exp-cheb11": (mp.exp, -mp.log(2) / 2, mp.log(2) / 2, 11),
+    "log-cheb7": (log_ratio, mp.mpf(0), LOG_LIMIT, 3),
+    "log-cheb11": (log_ratio, mp.mpf(0), LOG_LIMIT, 5),
+    "log-cheb13": (log_ratio, mp.mpf(0), LOG_LIMIT, 6),
 }
 LITERAL = re.compile(r"-?\d+\.\d+(?:e[-+]?\d+)?")
 
@@ -662,7 +672,7 @@ def tier_block(text: str, name: str) -> str:
 
 
 def refit_tiers() -> int:
-    """Rewrite the Chebyshev tiers' coefficients, then measure each and record what it holds."""
+    """Rewrite the Chebyshev tiers' coefficients, then measure every tier and record what it holds."""
     text = DEFAULT_PATH.read_text(encoding="utf-8")
     for name, (target, lo, hi, degree) in CHEBYSHEV_TIERS.items():
         block = tier_block(text, name)
@@ -670,7 +680,7 @@ def refit_tiers() -> int:
     DEFAULT_PATH.write_text(text, encoding="utf-8")
     load.cache_clear()
     table = load()
-    for name in CHEBYSHEV_TIERS:
+    for name in table.approx:
         ulp, abs_err = tier_error(table.approx[name])
         block = tier_block(text, name)
         text = text.replace(block, recorded(block, ulp, abs_err))

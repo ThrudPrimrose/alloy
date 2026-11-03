@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from typing import Any
 
+import numpy as np
 import pytest
 
 from alloy.isa import load
@@ -22,6 +23,7 @@ from alloy.isa.validate import (
     evaluate_tier,
     host_can_run,
     kernel_c,
+    run_tier,
     unexercised,
     validate,
     validate_all,
@@ -128,7 +130,9 @@ def test_an_avx2_f16_recipe_composes_with_the_rows_full_width_load():
     assert "_mm256_extracti128_si256(vb, 1)" in sut
 
 
-@pytest.mark.parametrize("name", ["sin-taylor7", "sin-quad-cheb13", "cos-quad-cheb12", "exp-cheb11"])
+@pytest.mark.parametrize(
+    "name", ["sin-taylor7", "sin-quad-cheb13", "cos-quad-cheb12", "exp-cheb11", "log-taylor7", "log-cheb13"]
+)
 def test_every_recorded_tier_error_reproduces_within_slack(name):
     verdict = validate_tier(name, TABLE)
 
@@ -137,12 +141,25 @@ def test_every_recorded_tier_error_reproduces_within_slack(name):
 
 @pytest.mark.parametrize(
     "name, bound",
-    [("sin-quad-cheb13", 3e-16), ("cos-quad-cheb12", 3e-16), ("exp-cheb11", 5e-16), ("exp-cheb9", 2e-14)],
+    [
+        ("sin-quad-cheb13", 3e-16),
+        ("cos-quad-cheb12", 3e-16),
+        ("exp-cheb11", 5e-16),
+        ("exp-cheb9", 2e-14),
+        ("log-cheb13", 3e-16),
+    ],
 )
 def test_a_chebyshev_tier_reaches_what_its_degree_allows(name, bound):
     """A degree n interpolant errs by about h^(n+1) / (n+1)! / 2^n on half-width h, plus Horner's rounding: the old
     coefficients sat 3 to 90 times above that."""
     assert TABLE.approx[name].error_abs < bound
+
+
+def test_a_log_tier_and_its_exponent_add_up_to_the_logarithm():
+    """log(10) = 3*ln2 + log(1.25): the reduction the tier's domain states, with x = (m-1)/(m+1) = 1/9."""
+    sut = 3 * math.log(2) + float(run_tier(TABLE.approx["log-cheb13"], np.array(1 / 9)))
+
+    assert sut == pytest.approx(2.302585092994046, rel=1e-15)
 
 
 @pytest.mark.parametrize(

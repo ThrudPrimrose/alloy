@@ -14,6 +14,7 @@ from collections.abc import Iterable, Iterator
 from pydantic import ConfigDict, TypeAdapter
 from pydantic.dataclasses import dataclass
 
+from alloy.isa.mathkernels import functions
 from alloy.isa.ops import OPS
 from alloy.records import Strings
 
@@ -350,8 +351,8 @@ def checked_entry(where: str, op: str, entry: Entry, integer: bool, isa: Isa, ap
 
 def checked_tiers(approx: dict[str, Approx], path: pathlib.Path) -> None:
     for name, tier in approx.items():
-        if tier.op not in OPS:
-            raise ValueError(f"{path}: [approx.{name}].op {tier.op!r} is not an abstract op")
+        if tier.op not in OPS and tier.op not in functions():
+            raise ValueError(f"{path}: [approx.{name}].op {tier.op!r} is neither an abstract op nor a math function")
         if not tier.recipe:
             raise ValueError(f"{path}: [approx.{name}] has an empty recipe")
         if not tier.domain or not (math.isfinite(tier.error_ulp) and tier.error_ulp > 0):

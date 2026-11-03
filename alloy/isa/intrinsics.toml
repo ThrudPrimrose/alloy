@@ -1226,7 +1226,91 @@ recipe = [
 ]
 note = "Chebyshev fit on the reduced interval; AVX-512 scalef / SVE svscale do the 2^k scaling natively"
 
+[approx.log-taylor5]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 1.279805e-06
+error_ulp = 5.763728e+09
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.4, t, 0.6666666666666666)",
+  "l = fma(mul(x, t), p, mul(2.0, x))",
+]
+note = "plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax"
 
+[approx.log-taylor7]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 2.933744e-08
+error_ulp = 1.321241e+08
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.2857142857142857, t, 0.4)",
+  "p = fma(p, t, 0.6666666666666666)",
+  "l = fma(mul(x, t), p, mul(2.0, x))",
+]
+note = "plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.log-taylor9]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 7.071860e-10
+error_ulp = 3.184883e+06
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.2222222222222222, t, 0.2857142857142857)",
+  "p = fma(p, t, 0.4)",
+  "p = fma(p, t, 0.6666666666666666)",
+  "l = fma(mul(x, t), p, mul(2.0, x))",
+]
+note = "plain atanh series: cheap, inaccurate; the ladder shows why libraries use minimax"
+
+[approx.log-cheb7]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 2.406390e-10
+error_ulp = 1.083742e+06
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.29924390479144986, t, 0.3997485051751905)",
+  "p = fma(p, t, 0.6666681533815119)",
+  "p = fma(p, t, 1.9999999986313182)",
+  "l = mul(x, p)",
+]
+note = "Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids"
+
+[approx.log-cheb11]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 9.325873e-15
+error_ulp = 4.200000e+01
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.19608095639753054, t, 0.2217424991007749)",
+  "p = fma(p, t, 0.28572166145875727)",
+  "p = fma(p, t, 0.3999999489183238)",
+  "p = fma(p, t, 0.6666666667957926)",
+  "p = fma(p, t, 1.9999999999999472)",
+  "l = mul(x, p)",
+]
+note = "Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids"
+
+[approx.log-cheb13]
+op = "log"
+domain = "|x| <= 3-2*sqrt(2), x = (m-1)/(m+1), after the split v = 2^e*m with m in [sqrt(1/2), sqrt(2)]; add e*ln2 after"
+error_abs = 1.665335e-16
+error_ulp = 7.500000e-01
+recipe = [
+  "t = mul(x, x)",
+  "p = fma(0.16837659970680488, t, 0.18121934431215214)",
+  "p = fma(p, t, 0.22223434547517906)",
+  "p = fma(p, t, 0.2857141602110767)",
+  "p = fma(p, t, 0.40000000061741614)",
+  "p = fma(p, t, 0.6666666666655292)",
+  "p = fma(p, t, 2.0000000000000004)",
+  "l = mul(x, p)",
+]
+note = "Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lookup avoids"
 
 # --- sqrt/min/max/abs/neg/select/mod/gather/scatter under f64/f32; and/or/shl/shr/mod/land/lor
 # under i64/i32; the f16 arithmetic subset. Where the hardware lacks an op the entry is a

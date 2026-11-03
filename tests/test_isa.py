@@ -317,6 +317,8 @@ def cli(*args: str) -> subprocess.CompletedProcess:
         (("schedule", "neon"), ("scalar_remainder", "unsupported")),  # no predication: the gen_mask line
         (("assist", "vscalefpd"), ("_mm512_scalef_pd", "helps exp")),
         (("tiers", "sin"), ("sin-taylor7: 4 steps", "sin-quad-cheb13", "t = mul(x, x)")),
+        (("tiers", "log"), ("log-taylor5: 3 steps", "log-cheb13", "t = mul(x, x)")),
+        (("tiers", "ln"), ("log-cheb13",)),
     ],
 )
 def test_the_cli_answers(args, expected):

@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
     tiers_p = commands.add_parser("tiers", help="a function's polynomial depths, cheapest first: tiers sin")
-    tiers_p.add_argument("function", help="sin, cos or exp")
+    tiers_p.add_argument("function", help="sin, cos, exp or log (ln)")
     tiers_p.add_argument("--json", action="store_true", help="one JSON record per depth")
 
     commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
