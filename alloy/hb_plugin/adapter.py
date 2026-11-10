@@ -20,7 +20,7 @@ from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
 from hpcagent_bench.frameworks.benchmark import Benchmark
-from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME
+from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, enforce_gpu_residency, pool_gpu_transients
 from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.pipeline import judge_endpoints
@@ -153,6 +153,9 @@ def pipeline_sdfg(
         raise TypeError(f"{spec.short_name}: the dace port is not a @dace.program")
     sdfg = program.to_sdfg(simplify=False)
     PIPELINES_BY_NAME[pipeline].transform(sdfg, framework.build_context(spec, offloaded))
+    if target is Target.GPU:  # the bench's residency contract, after every GPU pipeline
+        enforce_gpu_residency(sdfg)
+        pool_gpu_transients(sdfg)
     return sdfg
 
 
