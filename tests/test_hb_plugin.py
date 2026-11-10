@@ -1,7 +1,9 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Alloy as an HPCAgent-Bench flavor plugin end to end on one kernel: every scope gets several verified
-variants, and the CPU profile and speculative flavors submit a library the judge grades correct. The ``alloy`` CI job runs it."""
+variants, and the CPU profile, speculative and reference flavors submit a library the judge grades correct and record
+the episode. The ``alloy`` CI job runs it."""
 
+import json
 import pathlib
 import threading
 from collections.abc import Callable, Iterator
@@ -71,7 +73,13 @@ def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> N
 
 
 @pytest.mark.parametrize(
-    "flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile", "dace_cpu_canon_alloy_speculative"]
+    "flavor",
+    [
+        "dace_cpu_parallel_alloy_profile",
+        "dace_cpu_canon_alloy_profile",
+        "dace_cpu_canon_alloy_speculative",
+        "dace_cpu_canon_alloy_reference",
+    ],
 )
 @pytest.mark.parametrize("kernel", [KERNEL, "atax"])  # atax's entry keeps a transient in the judge's scratch
 def test_the_flavor_submits_a_library_the_judge_grades_correct(
@@ -84,6 +92,7 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
     monkeypatch.setenv("HPCAGENT_BENCH_SHARED_DIR", str(tmp_path))
     url = make_judge(ServiceConfig(baseline=Baseline.C, oracle=Oracle.AUTO, input_mode=InputMode.ANY, repeat=3))[1]
     monkeypatch.setenv("JUDGE_URL", url)  # the optimizer scores its variants on this judge
+    monkeypatch.chdir(tmp_path)  # the episode's working folder, which its record lands in
 
     sub = optimizer_registry()[flavor](workdir=tmp_path).solve(Task(kernel, SourceMode.ANY, Language.C))
 
@@ -94,3 +103,8 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
     assert r.build_ok is True, r.detail
     assert r.correct is True, r.detail
     assert r.speedup > 0.0
+    record = json.loads((tmp_path / "alloy-episode.json").read_text())
+    assert set(record) == {"schema", "mode", "kernel", "seconds", "scopes"}
+    assert set(record["seconds"]) == {"generate", "time_stubs", "score", "total"}
+    assert all(set(scope) == {"symbol", "reference", "chosen", "note"} for scope in record["scopes"])
+    assert (record["mode"], record["kernel"]) == (flavor.rsplit("_", 1)[1], kernel)

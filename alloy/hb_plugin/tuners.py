@@ -6,7 +6,7 @@ from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import FlavorOptimizer
 from hpcagent_bench.harness.task import Task
 
-__all__ = ["AlloyProfileOptimizer", "AlloySpeculativeOptimizer", "AlloyToolStub"]
+__all__ = ["AlloyProfileOptimizer", "AlloyReferenceOptimizer", "AlloySpeculativeOptimizer", "AlloyToolStub"]
 
 
 class AlloyProfileOptimizer(FlavorOptimizer):
@@ -29,6 +29,17 @@ class AlloySpeculativeOptimizer(FlavorOptimizer):
         from alloy.hb_plugin import adapter
 
         return adapter.speculative(task, pipeline, lambda code, link: self.deliver(task, code, link))
+
+
+class AlloyReferenceOptimizer(FlavorOptimizer):
+    """Reference: the pipeline's SDFG rendered with no search, graded as the Alloy flavors are (the plain arm)."""
+
+    __slots__ = ()
+
+    def tune(self, task: Task, pipeline: str) -> Submission:
+        from alloy.hb_plugin import adapter
+
+        return adapter.reference(task, pipeline, lambda code, link: self.deliver(task, code, link))
 
 
 class AlloyToolStub(FlavorOptimizer):
