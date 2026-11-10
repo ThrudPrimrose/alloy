@@ -12,7 +12,16 @@ import dace
 import sympy
 from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation.passes.analysis import loop_analysis
 from pydantic.dataclasses import dataclass
 
@@ -29,6 +38,8 @@ class Kind(enum.StrEnum):
     LOOP = "loop"
     CONDITIONAL = "conditional"
     BRANCH = "branch"
+    #: A ``break``, ``continue`` or ``return``: a block that leaves its region and holds nothing.
+    JUMP = "jump"
     MAP = "map"
     LIBRARY = "library"
     #: An outlined scope (an ``ExternalCall``); its label is the scope's entry symbol.
@@ -135,6 +146,8 @@ def block_node(block: Any) -> CfgNode:
         return CfgNode(kind=Kind.CONDITIONAL, label=block.label, detail="", children=branches)
     if isinstance(block, LoopRegion):
         return CfgNode(kind=Kind.LOOP, label=block.label, detail=loop_detail(block), children=region_rows(block))
+    if isinstance(block, BreakBlock | ContinueBlock | ReturnBlock):
+        return CfgNode(kind=Kind.JUMP, label=block.label, detail=type(block).__name__, children=())
     assert isinstance(block, ControlFlowRegion), f"unexpected control-flow block {type(block).__name__}"
     return CfgNode(kind=Kind.BRANCH, label=block.label, detail="", children=region_rows(block))
 
