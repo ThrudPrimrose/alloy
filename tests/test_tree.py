@@ -60,3 +60,19 @@ def test_the_text_tree_has_one_row_per_node_under_the_sdfg_header():
     assert text.splitlines()[0] == f"SDFG '{sdfg.label}'"
     assert len(text.splitlines()) == len(kinds(sut))
     assert any(line.startswith("`- ") or line.startswith("|- ") for line in text.splitlines()[1:])
+
+
+@dace.program
+def first_negative(a: dace.float64[N], out: dace.int64[1]):
+    out[0] = -1
+    for i in range(N):
+        if a[i] < 0:
+            out[0] = i
+            break
+
+
+def test_a_break_is_a_jump_row_under_its_branch():
+    sut = tree.cfg_tree(first_negative.to_sdfg(simplify=False))
+
+    assert kinds(sut).count(Kind.JUMP) == 1
+    assert len(tree.render(sut).splitlines()) == len(kinds(sut))
