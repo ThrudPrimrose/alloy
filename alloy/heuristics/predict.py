@@ -325,7 +325,7 @@ def library_accesses(sdfg: dace.SDFG) -> int:
     counts = [
         sum(e.data.subset is not None and e.data.subset.num_elements() != 1 for e in edges)
         for node, parent in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.LibraryNode)
+        if isinstance(node, nodes.LibraryNode) and isinstance(parent, dace.SDFGState)
         for edges in ([*parent.in_edges(node), *parent.out_edges(node)],)
     ]
     return max(counts, default=1)

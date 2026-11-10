@@ -153,6 +153,16 @@ def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet
     assert dict(packets.resolve(packet, "c").env)["JUDGE_INPUT_MODE"] == InputMode.ANY.text
 
 
+def test_the_isa_packet_offers_the_lookup_alone_and_leaves_the_input_mode_to_the_benchmark() -> None:
+    plugins.load()
+
+    sut = packets.resolve("alloy-isa", "c")
+
+    assert sut.tools == ("alloy_isa",)
+    assert sut.skills == ("alloy-isa",)
+    assert "JUDGE_INPUT_MODE" not in dict(sut.env)
+
+
 def test_alloy_declares_the_openmp_runtime_its_candidates_link() -> None:
     alloy = next(plugin for plugin in plugins.register() if plugin.name == "alloy")
 

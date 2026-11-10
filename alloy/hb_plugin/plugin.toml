@@ -15,11 +15,12 @@ optimizers = ["dace_cpu_canon_alloy_stub", "dace_cpu_canon_alloy_speculative"]
 kernels = ["tsvc_2_vpv", "atax"]
 language = "c"
 
-# Alloy for an LLM agent: one mode tool each plus the intrinsics reference, all described by the alloy skill page; prompt/overlay.yaml says what Alloy
-# does after both prompts' intro and starts the agent's end-to-end steps from Alloy's library.
+# Alloy for an LLM agent: one mode tool each, described by the alloy skill page, plus the intrinsics reference with
+# its own page; prompt/overlay.yaml says what Alloy does after both prompts' intro and starts the agent's end-to-end
+# steps from Alloy's library.
 [packets.alloy-profile]
 name = "Alloy (profile)"
-skills = ["alloy"]
+skills = ["alloy", "alloy-isa"]
 tools = ["alloy_profile", "alloy_isa"]
 overlays = ["alloy:prompt/overlay.yaml"]
 env = { JUDGE_INPUT_MODE = "any" }  # the tool hands back a library, submitted as is
@@ -28,6 +29,12 @@ env = { JUDGE_INPUT_MODE = "any" }  # the tool hands back a library, submitted a
 extends = "alloy-profile"
 name = "Alloy (speculative)"
 tools = ["alloy_speculative", "alloy_isa"]
+
+# The intrinsics reference alone: the agent writes its own source, so the input mode stays the benchmark's.
+[packets.alloy-isa]
+name = "Alloy (ISA lookup)"
+skills = ["alloy-isa"]
+tools = ["alloy_isa"]
 
 [flavors.alloy_profile]
 name = "Alloy profile"

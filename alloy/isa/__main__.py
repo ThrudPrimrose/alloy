@@ -183,7 +183,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     """One op's entry, then its math kernels when it is a function; a function without an entry has only those. The
     gate runs first, so a failed row is never printed as the answer."""
     refuse_width_knob(args.isa)
-    function = FUNCTION_ALIASES.get(args.op, args.op)
+    op: str = args.op
+    function = FUNCTION_ALIASES.get(op, op)
     if function not in OPS and function not in functions():
         if function.startswith("reduce_"):
             raise KeyError(f"{args.op!r}: the table holds only reduce_add, so no other reduction here is verified")
