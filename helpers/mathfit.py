@@ -7,6 +7,7 @@ interpolants in high precision, rounded to the lane type. Each kernel is then me
 error across the x86 ISAs is recorded; the gate in tests/test_isa_kernels.py re-measures it."""
 
 import concurrent.futures
+import dataclasses
 import json
 import math
 import re
@@ -17,7 +18,7 @@ from collections.abc import Callable
 import mpmath as mp
 
 from alloy.isa.mathcheck import measure
-from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, Grid, Kernel
+from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, RUNGS, Grid, Kernel
 from alloy.isa.table import DEFAULT_PATH, load
 from alloy.isa.validate import tier_error
 
@@ -96,7 +97,13 @@ def coefficients(values: list[float]) -> str:
 
 
 def level_degree(family: str, dtype: str, level: str) -> int:
-    return DEGREES[family][dtype][LEVELS.index(level)]
+    """The polynomial degree of ``family`` at ``level``; a rung of RUNGS lies between ``fast`` and ``relaxed``."""
+    degrees = DEGREES[family][dtype]
+    if level in LEVELS:
+        return degrees[LEVELS.index(level)]
+    relaxed, fast = degrees[1], degrees[2]
+    step = len(RUNGS) - RUNGS.index(level)
+    return fast + round((relaxed - fast) * step / (len(RUNGS) + 1))
 
 
 def sin_poly(dtype: str, level: str) -> str:
@@ -583,6 +590,22 @@ def build(fn: str, dtype: str, level: str) -> Kernel:
     )
 
 
+def distinct(fn: str, dtype: str) -> list[Kernel]:
+    """The kernels of ``fn`` in ladder order, without the rungs whose program a named level already has."""
+    named = {level: build(fn, dtype, level) for level in LEVELS}
+    bodies = [k.body for k in named.values()]
+    rungs = []
+    for level in RUNGS:
+        k = build(fn, dtype, level)
+        if k.body not in bodies:
+            rungs.append(k)
+            bodies.append(k.body)
+    # Numbered from the cheapest up without gaps: a rung's name orders it, the listing gives its error.
+    names = RUNGS[len(RUNGS) - len(rungs) :]
+    renamed = [dataclasses.replace(k, level=name) for k, name in zip(rungs, names, strict=True)]
+    return [named["strict"], named["relaxed"], *renamed, named["fast"]]
+
+
 def measured(k: Kernel) -> tuple[Kernel, float, float, int]:
     results = [m for isa in ("avx2", "avx512") if (m := measure(k, isa)) is not None]
     if not results:
@@ -694,7 +717,7 @@ def main(argv: list[str]) -> int:
     if argv == ["tiers"]:
         return refit_tiers()
     only = argv or list(PROGRAMS)
-    kernels = [build(fn, dtype, level) for fn in only for dtype in ("f64", "f32") for level in LEVELS]
+    kernels = [k for fn in only for dtype in ("f64", "f32") for k in distinct(fn, dtype)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(measured, kernels))
     for k, ulp, abs_err, special in results:

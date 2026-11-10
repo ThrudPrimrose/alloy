@@ -11,7 +11,7 @@ import dataclasses
 from collections import Counter
 
 from alloy.isa.mathcheck import HEADERS, validate_kernel
-from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, render, target_of
+from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, ladder, render, target_of
 from alloy.isa.ops import OPS, called_name
 from alloy.isa.table import DTYPES, Table, load
 from alloy.isa.validate import host_can_run, validate
@@ -227,15 +227,15 @@ def op_spelling(
 
 
 def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
-    """One line naming ``fn``'s three kernels and the one this build should take; the C is one CLI call away."""
+    """One line naming ``fn``'s kernels and the one this build should take; the C is one CLI call away."""
     target = target_of(isa)
     if target not in HEADERS or dtype not in DTYPES:
         return f"no kernel for {isa}/{dtype}"
     levels = ", ".join(
-        f"{level} {(k := kernel(fn, dtype, level)).error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)"
-        for level in LEVELS
+        f"{k.level} {k.error_ulp:.3g} ulp ({render(k, target).intrinsics} intrinsics)" for k in ladder(fn, dtype)
     )
-    pick = f"; take {recommended} where the inputs hold its contract" if recommended else ""
+    contract = kernel(fn, dtype, recommended).contract if recommended else ""
+    pick = f"; take {recommended} where the inputs hold its contract ({contract})" if recommended else ""
     if fn in NEEDS_IEEE:
         pick += "; under reassociation no level compiles: call the library"
     return f"inline intrinsics: {levels}{pick}; ask `kernel {isa} {fn} {dtype}` for the C"

@@ -191,6 +191,7 @@ i = "s64"
 u = "u64"
 p = "svptrue_b64()"
 lanes = "svcntd()"
+max_lanes = "32"  # a 2048-bit vector
 
 [prims.sve.fields.f32]
 vec = "svfloat32_t"
@@ -202,6 +203,7 @@ i = "s32"
 u = "u32"
 p = "svptrue_b32()"
 lanes = "svcntw()"
+max_lanes = "64"
 
 [prims.sve.ops]
 set = "svdup_${f}($0)"

@@ -55,6 +55,50 @@ body = [
   "f = frombits(ixor(bits(s), ishl(toint(q), 63)))",
 ]
 
+[sin.f64.mid2]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 7.679
+error_abs = 8.882e-16
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.3183098861837907))",
+  "r1 = fnma(q, 3.141592653589793, x)",
+  "r2 = fnma(q, 1.2246467991473532e-16, r1)",
+  "r = fnma(q, -2.9947698097183397e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.1666666666666665, 0.008333333333325933, -0.00019841269836469024, 2.7557318055685783e-06, -2.505197292154555e-08, 1.6050972244135636e-10, -7.40805488954261e-13)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(s), ishl(toint(q), 63)))",
+]
+
+[sin.f64.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 2834
+error_abs = 3.151e-13
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.3183098861837907))",
+  "r1 = fnma(q, 3.141592653589793, x)",
+  "r2 = fnma(q, 1.2246467991473532e-16, r1)",
+  "r = fnma(q, -2.9947698097183397e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.16666666666658467, 0.008333333330940365, -0.0001984126870905615, 2.755712317437327e-06, -2.5036745008428295e-08, 1.550250902793809e-10)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(s), ishl(toint(q), 63)))",
+]
+
 [sin.f64.fast]
 args = ["x"]
 result = "f"
@@ -127,6 +171,28 @@ body = [
   "r = fnma(q, -3.4302490200117637e-15, r2)",
   "t = mul(r, r)",
   "w = horner(t, -0.1666666567325592, 0.008333242498338223, -0.0001982273970497772, 2.634756356201251e-06)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(s), ishl(toint(q), 31)))",
+]
+
+[sin.f32.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 8192"
+error_ulp = 80.39
+error_abs = 4.828e-06
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -8192.0, hi = 8192.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 8192.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.31830987334251404))",
+  "r1 = fnma(q, 3.1415927410125732, x)",
+  "r2 = fnma(q, -8.742277657347586e-08, r1)",
+  "r = fnma(q, -3.4302490200117637e-15, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.16666541993618011, 0.008324196562170982, -0.0001884667290141806)",
   "s = add(r, mul(mul(r, t), w))",
   "f = frombits(ixor(bits(s), ishl(toint(q), 31)))",
 ]
@@ -207,6 +273,50 @@ body = [
   "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 63)))",
 ]
 
+[cos.f64.mid2]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 7.839
+error_abs = 8.882e-16
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = add(mul(2.0, round(sub(mul(x, 0.3183098861837907), 0.5))), 1.0)",
+  "r1 = fnma(q, 1.5707963267948966, x)",
+  "r2 = fnma(q, 6.123233995736766e-17, r1)",
+  "r = fnma(q, -1.4973849048591698e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.1666666666666665, 0.008333333333325933, -0.00019841269836469024, 2.7557318055685783e-06, -2.505197292154555e-08, 1.6050972244135636e-10, -7.40805488954261e-13)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 63)))",
+]
+
+[cos.f64.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 2835
+error_abs = 3.151e-13
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = add(mul(2.0, round(sub(mul(x, 0.3183098861837907), 0.5))), 1.0)",
+  "r1 = fnma(q, 1.5707963267948966, x)",
+  "r2 = fnma(q, 6.123233995736766e-17, r1)",
+  "r = fnma(q, -1.4973849048591698e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.16666666666658467, 0.008333333330940365, -0.0001984126870905615, 2.755712317437327e-06, -2.5036745008428295e-08, 1.550250902793809e-10)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 63)))",
+]
+
 [cos.f64.fast]
 args = ["x"]
 result = "f"
@@ -279,6 +389,28 @@ body = [
   "r = fnma(q, -1.7151245100058819e-15, r2)",
   "t = mul(r, r)",
   "w = horner(t, -0.1666666567325592, 0.008333242498338223, -0.0001982273970497772, 2.634756356201251e-06)",
+  "s = add(r, mul(mul(r, t), w))",
+  "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 31)))",
+]
+
+[cos.f32.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 8192"
+error_ulp = 80.3
+error_abs = 4.861e-06
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -8192.0, hi = 8192.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 8192.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = add(mul(2.0, round(sub(mul(x, 0.31830987334251404), 0.5))), 1.0)",
+  "r1 = fnma(q, 1.5707963705062866, x)",
+  "r2 = fnma(q, -4.371138828673793e-08, r1)",
+  "r = fnma(q, -1.7151245100058819e-15, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, -0.16666541993618011, 0.008324196562170982, -0.0001884667290141806)",
   "s = add(r, mul(mul(r, t), w))",
   "f = frombits(ixor(bits(neg(s)), ishl(ishr(toint(q), 1), 31)))",
 ]
@@ -356,6 +488,75 @@ body = [
   "r = fnma(q, -1.4973849048591698e-33, r2)",
   "t = mul(r, r)",
   "w = horner(t, 0.3333333333333342, 0.13333333333284875, 0.05396825401208157, 0.02186948698379959, 0.008863263990811776, 0.0035918188899959564, 0.0014579776140282226, 0.0005801461940565908, 0.0002699784421563174, 3.186465833611605e-05, 0.00012937528530864695, -6.03554856588055e-05, 3.9137851176057556e-05)",
+  "s = add(r, mul(mul(r, t), w))",
+  "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
+  "f = select(even, s, div(-1.0, s))",
+]
+
+[tan.f64.mid3]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 993.7
+error_abs = 0.9819
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.6366197723675814))",
+  "r1 = fnma(q, 1.5707963267948966, x)",
+  "r2 = fnma(q, 6.123233995736766e-17, r1)",
+  "r = fnma(q, -1.4973849048591698e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, 0.333333333333505, 0.13333333326604788, 0.05396825830865874, 0.021869379837781606, 0.008864624011399837, 0.0035818531861519223, 0.0015027806174036313, 0.0004542659047923247, 0.0004852267072740273, -0.00016706971517064408, 0.00018056214711682645)",
+  "s = add(r, mul(mul(r, t), w))",
+  "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
+  "f = select(even, s, div(-1.0, s))",
+]
+
+[tan.f64.mid2]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 1.386e+04
+error_abs = 0.9819
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.6366197723675814))",
+  "r1 = fnma(q, 1.5707963267948966, x)",
+  "r2 = fnma(q, 6.123233995736766e-17, r1)",
+  "r = fnma(q, -1.4973849048591698e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, 0.33333333333094206, 0.133333334107682, 0.05396821280445476, 0.021870332537928062, 0.00885450820791778, 0.0036434811780420907, 0.0012744092419813065, 0.0009776580613774406, -0.000239233139426357, 0.00038783015776413745)",
+  "s = add(r, mul(mul(r, t), w))",
+  "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
+  "f = select(even, s, div(-1.0, s))",
+]
+
+[tan.f64.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 1.04858e+06"
+error_ulp = 2.692e+06
+error_abs = 0.9819
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 1048576.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.6366197723675814))",
+  "r1 = fnma(q, 1.5707963267948966, x)",
+  "r2 = fnma(q, 6.123233995736766e-17, r1)",
+  "r = fnma(q, -1.4973849048591698e-33, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, 0.3333333328694383, 0.13333342940622636, 0.05396501580688419, 0.021910677211362767, 0.00860924966270511, 0.004425315773425936, 3.364407055012814e-11, 0.0017892511715456732)",
   "s = add(r, mul(mul(r, t), w))",
   "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
   "f = select(even, s, div(-1.0, s))",
@@ -440,6 +641,52 @@ body = [
   "f = select(even, s, div(-1.0, s))",
 ]
 
+[tan.f32.mid2]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 8192"
+error_ulp = 14.71
+error_abs = 1.571
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -8192.0, hi = 8192.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 8192.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.6366197466850281))",
+  "r1 = fnma(q, 1.5707963705062866, x)",
+  "r2 = fnma(q, -4.371138828673793e-08, r1)",
+  "r = fnma(q, -1.7151245100058819e-15, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, 0.3333345949649811, 0.1332322359085083, 0.05524494871497154, 0.016405776143074036, 0.017730310559272766)",
+  "s = add(r, mul(mul(r, t), w))",
+  "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
+  "f = select(even, s, div(-1.0, s))",
+]
+
+[tan.f32.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, |x| <= 8192"
+error_ulp = 189.7
+error_abs = 1.571
+grids = [
+  { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -8192.0, hi = 8192.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.001, hi = 8192.0, kind = "near", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 0.6366197466850281))",
+  "r1 = fnma(q, 1.5707963705062866, x)",
+  "r2 = fnma(q, -4.371138828673793e-08, r1)",
+  "r = fnma(q, -1.7151245100058819e-15, r2)",
+  "t = mul(r, r)",
+  "w = horner(t, 0.3333158791065216, 0.13423192501068115, 0.046991340816020966, 0.038083359599113464)",
+  "s = add(r, mul(mul(r, t), w))",
+  "even = eq(sub(q, mul(2.0, round(mul(q, 0.5)))), 0.0)",
+  "f = select(even, s, div(-1.0, s))",
+]
+
 [tan.f32.fast]
 args = ["x"]
 result = "f"
@@ -506,6 +753,72 @@ body = [
   "r = sub(rh, rl)",
   "t = mul(r, r)",
   "p = horner(r, 0.5000000000000001, 0.16666666666666669, 0.04166666666662064, 0.008333333333329793, 0.0013888888918939168, 0.00019841269864380513, 2.4801518641395993e-05, 2.75572664186123e-06, 2.7621338669142925e-07, 2.510134692835034e-08)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp.f64.mid3]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 700"
+error_ulp = 8.146
+error_abs = 9.153e+288
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 700.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp.f64.mid2]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 700"
+error_ulp = 2.434e+04
+error_abs = 2.825e+292
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 700.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp.f64.mid1]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 700"
+error_ulp = 1.163e+06
+error_abs = 1.404e+294
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 700.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5000000014286223, 0.16666666682534356, 0.04166645680967788, 0.008333310024225292, 0.0013934541928270264, 0.0001989198131397769)",
   "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
   "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
 ]
@@ -580,6 +893,28 @@ body = [
   "e = frombits(iadd(bits(m), ishl(toint(q), 23)))",
 ]
 
+[exp.f32.mid1]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 87"
+error_ulp = 4.976
+error_abs = 2.099e+31
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -87.0, hi = 87.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 87.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.4426950216293335))",
+  "rh = fnma(q, 0.6931471824645996, x)",
+  "rl = mul(q, -1.9046542121259336e-09)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.4999973773956299, 0.16666629910469055, 0.0418371707201004, 0.008357680402696133)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 23)))",
+]
+
 [exp.f32.fast]
 args = ["x"]
 result = "e"
@@ -641,6 +976,63 @@ body = [
   "rh = fnma(q, 1.0, x)",
   "r = fnma(q, 0.0, rh)",
   "m = add(1.0, mul(r, horner(r, 0.6931471805599453, 0.240226506959101, 0.0555041086648216, 0.0096181291076051, 0.0013333558146415981, 0.00015403530444712572, 1.5252733831422688e-05, 1.321544079172308e-06, 1.0178061488425538e-07, 7.072941621934776e-09, 4.4551501803761385e-10)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp2.f64.mid3]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 1009.9"
+error_ulp = 4.812
+error_abs = 4.459e+288
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1009.8865286222745, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.0))",
+  "rh = fnma(q, 1.0, x)",
+  "r = fnma(q, 0.0, rh)",
+  "m = add(1.0, mul(r, horner(r, 0.6931471805599463, 0.24022650695910078, 0.055504108664637584, 0.009618129107617852, 0.0013333558204141327, 0.00015403530426708997, 1.5252670450809624e-05, 1.3215450204669348e-06, 1.020646529769823e-07, 7.0713011514345125e-09)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp2.f64.mid2]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 1009.9"
+error_ulp = 1.374e+04
+error_abs = 1.673e+292
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1009.8865286222745, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.0))",
+  "rh = fnma(q, 1.0, x)",
+  "r = fnma(q, 0.0, rh)",
+  "m = add(1.0, mul(r, horner(r, 0.6931471805565743, 0.24022650695886713, 0.05550410908778885, 0.009618129136935622, 0.0013333475235376947, 0.00015403472943019745, 1.5304726715749116e-05, 1.3251516330289766e-06)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp2.f64.mid1]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 1009.9"
+error_ulp = 6.879e+05
+error_abs = 7.824e+293
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1009.8865286222745, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 1.0))",
+  "rh = fnma(q, 1.0, x)",
+  "r = fnma(q, 0.0, rh)",
+  "m = add(1.0, mul(r, horner(r, 0.6931471805599453, 0.2402265093622689, 0.055504108849824686, 0.009618053734326929, 0.0013333500120002693, 0.00015462610757797552, 1.5298221267173666e-05)))",
   "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
 ]
 
@@ -763,6 +1155,63 @@ body = [
   "rh = fnma(q, 0.3010299956639812, x)",
   "r = fnma(q, -2.8037281277851704e-18, rh)",
   "m = add(1.0, mul(r, horner(r, 2.302585092994046, 2.6509490552392023, 2.034678592293477, 1.17125514890942, 0.5393829291950772, 0.20699584938666427, 0.0680893651965869, 0.01959762641385595, 0.005013916754331717, 0.0011574502953823353, 0.00024218924459878108)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp10.f64.mid3]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 304.01"
+error_ulp = 4.928
+error_abs = 4.684e+288
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 304.00613733227624, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 3.321928094887362))",
+  "rh = fnma(q, 0.3010299956639812, x)",
+  "r = fnma(q, -2.8037281277851704e-18, rh)",
+  "m = add(1.0, mul(r, horner(r, 2.302585092994049, 2.6509490552391997, 2.034678592286731, 1.171255148910973, 0.5393829315302429, 0.20699584914472846, 0.06808908226070426, 0.019597640372633965, 0.0050279090391455936, 0.0011571818408740713)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp10.f64.mid2]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 304.01"
+error_ulp = 1.374e+04
+error_abs = 1.673e+292
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 304.00613733227624, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 3.321928094887362))",
+  "rh = fnma(q, 0.3010299956639812, x)",
+  "r = fnma(q, -2.8037281277851704e-18, rh)",
+  "m = add(1.0, mul(r, horner(r, 2.3025850929828477, 2.6509490552366217, 2.034678607798679, 1.1712551524811674, 0.5393795751916968, 0.20699507666694322, 0.06832146539106042, 0.0196511240563978)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+]
+
+[exp10.f64.mid1]
+args = ["x"]
+result = "e"
+contract = "finite, |x| <= 304.01"
+error_ulp = 6.879e+05
+error_abs = 7.824e+293
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 304.00613733227624, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "q = round(mul(x, 3.321928094887362))",
+  "rh = fnma(q, 0.3010299956639812, x)",
+  "r = fnma(q, -2.8037281277851704e-18, rh)",
+  "m = add(1.0, mul(r, horner(r, 2.302585092994046, 2.6509490817586556, 2.03467859907535, 1.171245970269878, 0.539380581850398, 0.20778978293540165, 0.06829242457328198)))",
   "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
 ]
 
@@ -893,6 +1342,78 @@ body = [
   "r = sub(rh, rl)",
   "t = mul(r, r)",
   "w = horner(r, 0.5000000000000001, 0.16666666666666669, 0.04166666666662064, 0.008333333333329793, 0.0013888888918939168, 0.00019841269864380513, 2.4801518641395993e-05, 2.75572664186123e-06, 2.7621338669142925e-07, 2.510134692835034e-08)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+]
+
+[expm1.f64.mid3]
+args = ["x"]
+result = "f"
+contract = "finite, -40 <= x <= 700"
+error_ulp = 30.76
+error_abs = 8.502e+288
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "one = set(1.0)",
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+]
+
+[expm1.f64.mid2]
+args = ["x"]
+result = "f"
+contract = "finite, -40 <= x <= 700"
+error_ulp = 1789
+error_abs = 5.431e+290
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "one = set(1.0)",
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.49999999999951383, 0.16666666666662247, 0.04166666679362806, 0.008333333344872034, 0.0013888837087667207, 0.00019841222761353435, 2.486920416652337e-05, 2.761877702984587e-06)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+]
+
+[expm1.f64.mid1]
+args = ["x"]
+result = "f"
+contract = "finite, -40 <= x <= 700"
+error_ulp = 9.734e+04
+error_abs = 2.957e+292
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "one = set(1.0)",
+  "q = round(mul(x, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, x)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
   "p = add(rh, sub(mul(t, w), rl))",
   "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
   "f = add(sub(u, 1.0), mul(u, p))",
@@ -1047,6 +1568,75 @@ body = [
   "v = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
 ]
 
+[log.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 4.909
+error_abs = 3.999e-16
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.666666666666618, 0.40000000011787484, 0.28571423954752284, 0.22222882159268573, 0.18139329084810124, 0.16634817293436976))",
+  "lo = mul(s, sub(f, big))",
+  "v = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+]
+
+[log.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 609.5
+error_abs = 5.693e-14
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666666741171, 0.3999999874769565, 0.28571764621021173, 0.2219076371539249, 0.19374971137771949))",
+  "lo = mul(s, sub(f, big))",
+  "v = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+]
+
+[log.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 8.795e+04
+error_abs = 4.889e-12
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666654988318, 0.40000125594554364, 0.28550396959618013, 0.23341943388714562))",
+  "lo = mul(s, sub(f, big))",
+  "v = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+]
+
 [log.f64.fast]
 args = ["x"]
 result = "v"
@@ -1190,6 +1780,84 @@ body = [
   "s = div(f, add(2.0, f))",
   "z = mul(s, s)",
   "big = mul(z, horner(z, 0.666666666666667, 0.3999999999989322, 0.28571428628810996, 0.22222210674238516, 0.18182922513515942, 0.15330617306743305, 0.1463003136412286))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 1.4426950408889634)",
+  "he = fms(f, 1.4426950408889634, h)",
+  "lg = fnma(lo, 1.4426950408889634, he)",
+  "v = add(n, add(h, lg))",
+]
+
+[log2.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 6.928
+error_abs = 5.707e-14
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.666666666666618, 0.40000000011787484, 0.28571423954752284, 0.22222882159268573, 0.18139329084810124, 0.16634817293436976))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 1.4426950408889634)",
+  "he = fms(f, 1.4426950408889634, h)",
+  "lg = fnma(lo, 1.4426950408889634, he)",
+  "v = add(n, add(h, lg))",
+]
+
+[log2.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 879
+error_abs = 1.054e-13
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666666741171, 0.3999999874769565, 0.28571764621021173, 0.2219076371539249, 0.19374971137771949))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 1.4426950408889634)",
+  "he = fms(f, 1.4426950408889634, h)",
+  "lg = fnma(lo, 1.4426950408889634, he)",
+  "v = add(n, add(h, lg))",
+]
+
+[log2.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 1.269e+05
+error_abs = 7.099e-12
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666654988318, 0.40000125594554364, 0.28550396959618013, 0.23341943388714562))",
   "lo = mul(s, sub(f, big))",
   "h = mul(f, 1.4426950408889634)",
   "he = fms(f, 1.4426950408889634, h)",
@@ -1359,6 +2027,84 @@ body = [
   "v = add(mul(n, 0.3010299956640665), add(h, add(lg, mul(n, -8.532344317057107e-14))))",
 ]
 
+[log10.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 4.139
+error_abs = 2.848e-14
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.666666666666618, 0.40000000011787484, 0.28571423954752284, 0.22222882159268573, 0.18139329084810124, 0.16634817293436976))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 0.4342944819032518)",
+  "he = fms(f, 0.4342944819032518, h)",
+  "lg = fnma(lo, 0.4342944819032518, he)",
+  "v = add(mul(n, 0.3010299956640665), add(h, add(lg, mul(n, -8.532344317057107e-14))))",
+]
+
+[log10.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 659.8
+error_abs = 4.266e-14
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666666741171, 0.3999999874769565, 0.28571764621021173, 0.2219076371539249, 0.19374971137771949))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 0.4342944819032518)",
+  "he = fms(f, 0.4342944819032518, h)",
+  "lg = fnma(lo, 0.4342944819032518, he)",
+  "v = add(mul(n, 0.3010299956640665), add(h, add(lg, mul(n, -8.532344317057107e-14))))",
+]
+
+[log10.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, positive, normal"
+error_ulp = 7.639e+04
+error_abs = 2.148e-12
+grids = [
+  { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+  { lo = 0.99, hi = 1.01, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666654988318, 0.40000125594554364, 0.28550396959618013, 0.23341943388714562))",
+  "lo = mul(s, sub(f, big))",
+  "h = mul(f, 0.4342944819032518)",
+  "he = fms(f, 0.4342944819032518, h)",
+  "lg = fnma(lo, 0.4342944819032518, he)",
+  "v = add(mul(n, 0.3010299956640665), add(h, add(lg, mul(n, -8.532344317057107e-14))))",
+]
+
 [log10.f64.fast]
 args = ["x"]
 result = "v"
@@ -1516,6 +2262,81 @@ body = [
   "s = div(f, add(2.0, f))",
   "z = mul(s, s)",
   "big = mul(z, horner(z, 0.666666666666667, 0.3999999999989322, 0.28571428628810996, 0.22222210674238516, 0.18182922513515942, 0.15330617306743305, 0.1463003136412286))",
+  "lo = mul(s, sub(f, big))",
+  "f1 = add(mul(n, 0.6931471805598903), add(f, add(c, sub(mul(n, 5.497923018708371e-14), lo))))",
+]
+
+[log1p.f64.mid3]
+args = ["x"]
+result = "f1"
+contract = "finite, x > -1"
+error_ulp = 4.863
+error_abs = 1.92e-15
+grids = [
+  { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "y = add(1.0, x)",
+  "c = div(sub(x, sub(y, 1.0)), y)",
+  "ix = iadd(bits(y), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.666666666666618, 0.40000000011787484, 0.28571423954752284, 0.22222882159268573, 0.18139329084810124, 0.16634817293436976))",
+  "lo = mul(s, sub(f, big))",
+  "f1 = add(mul(n, 0.6931471805598903), add(f, add(c, sub(mul(n, 5.497923018708371e-14), lo))))",
+]
+
+[log1p.f64.mid2]
+args = ["x"]
+result = "f1"
+contract = "finite, x > -1"
+error_ulp = 609.4
+error_abs = 5.693e-14
+grids = [
+  { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "y = add(1.0, x)",
+  "c = div(sub(x, sub(y, 1.0)), y)",
+  "ix = iadd(bits(y), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666666741171, 0.3999999874769565, 0.28571764621021173, 0.2219076371539249, 0.19374971137771949))",
+  "lo = mul(s, sub(f, big))",
+  "f1 = add(mul(n, 0.6931471805598903), add(f, add(c, sub(mul(n, 5.497923018708371e-14), lo))))",
+]
+
+[log1p.f64.mid1]
+args = ["x"]
+result = "f1"
+contract = "finite, x > -1"
+error_ulp = 8.795e+04
+error_abs = 4.889e-12
+grids = [
+  { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "y = add(1.0, x)",
+  "c = div(sub(x, sub(y, 1.0)), y)",
+  "ix = iadd(bits(y), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666654988318, 0.40000125594554364, 0.28550396959618013, 0.23341943388714562))",
   "lo = mul(s, sub(f, big))",
   "f1 = add(mul(n, 0.6931471805598903), add(f, add(c, sub(mul(n, 5.497923018708371e-14), lo))))",
 ]
@@ -1704,6 +2525,102 @@ body = [
   "eE = frombits(iadd(bits(mE), ishl(toint(qE), 52)))",
 ]
 
+[pow.f64.mid3]
+args = ["x", "y"]
+result = "eE"
+contract = "x positive normal, finite y, |y*log(x)| in exp range"
+error_ulp = 508.1
+error_abs = 3.261e+285
+grids = [
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = -1.0, yhi = 1.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.666666666666618, 0.40000000011787484, 0.28571423954752284, 0.22222882159268573, 0.18139329084810124, 0.16634817293436976))",
+  "lo = mul(s, sub(f, big))",
+  "lg = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+  "big2 = mul(y, lg)",
+  "qE = round(mul(big2, 1.4426950408889634))",
+  "rEh = fnma(qE, 0.6931471805599453, big2)",
+  "rEl = mul(qE, 2.3190468138462996e-17)",
+  "rE = sub(rEh, rEl)",
+  "tE = mul(rE, rE)",
+  "pE = horner(rE, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
+  "eE = frombits(iadd(bits(mE), ishl(toint(qE), 52)))",
+]
+
+[pow.f64.mid2]
+args = ["x", "y"]
+result = "eE"
+contract = "x positive normal, finite y, |y*log(x)| in exp range"
+error_ulp = 2.97e+04
+error_abs = 7.879e+286
+grids = [
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = -1.0, yhi = 1.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666666741171, 0.3999999874769565, 0.28571764621021173, 0.2219076371539249, 0.19374971137771949))",
+  "lo = mul(s, sub(f, big))",
+  "lg = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+  "big2 = mul(y, lg)",
+  "qE = round(mul(big2, 1.4426950408889634))",
+  "rEh = fnma(qE, 0.6931471805599453, big2)",
+  "rEl = mul(qE, 2.3190468138462996e-17)",
+  "rE = sub(rEh, rEl)",
+  "tE = mul(rE, rE)",
+  "pE = horner(rE, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
+  "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
+  "eE = frombits(iadd(bits(mE), ishl(toint(qE), 52)))",
+]
+
+[pow.f64.mid1]
+args = ["x", "y"]
+result = "eE"
+contract = "x positive normal, finite y, |y*log(x)| in exp range"
+error_ulp = 2.031e+06
+error_abs = 4.217e+288
+grids = [
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
+  { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = -1.0, yhi = 1.0 },
+]
+body = [
+  "ix = iadd(bits(x), 2638147582215219)",
+  "n = tofloat(isub(ishr(ix, 52), 1023))",
+  "m = frombits(iadd(iand(ix, 4503599627370495), 4604544271217802189))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666666654988318, 0.40000125594554364, 0.28550396959618013, 0.23341943388714562))",
+  "lo = mul(s, sub(f, big))",
+  "lg = add(mul(n, 0.6931471805598903), add(f, sub(mul(n, 5.497923018708371e-14), lo)))",
+  "big2 = mul(y, lg)",
+  "qE = round(mul(big2, 1.4426950408889634))",
+  "rEh = fnma(qE, 0.6931471805599453, big2)",
+  "rEl = mul(qE, 2.3190468138462996e-17)",
+  "rE = sub(rEh, rEl)",
+  "tE = mul(rE, rE)",
+  "pE = horner(rE, 0.5000000014286223, 0.16666666682534356, 0.04166645680967788, 0.008333310024225292, 0.0013934541928270264, 0.0001989198131397769)",
+  "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
+  "eE = frombits(iadd(bits(mE), ishl(toint(qE), 52)))",
+]
+
 [pow.f64.fast]
 args = ["x", "y"]
 result = "eE"
@@ -1812,6 +2729,38 @@ body = [
   "rE = sub(rEh, rEl)",
   "tE = mul(rE, rE)",
   "pE = horner(rE, 0.5, 0.16666573286056519, 0.04166654869914055, 0.008363774046301842, 0.0013926926767453551)",
+  "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
+  "eE = frombits(iadd(bits(mE), ishl(toint(qE), 23)))",
+]
+
+[pow.f32.mid1]
+args = ["x", "y"]
+result = "eE"
+contract = "x positive normal, finite y, |y*log(x)| in exp range"
+error_ulp = 98.44
+error_abs = 4.958e+24
+grids = [
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
+  { lo = 0.1, hi = 10.0, kind = "lin", ylo = -13.852813852813853, yhi = 13.852813852813853 },
+  { lo = 1e-30, hi = 1e+30, kind = "logp", ylo = -1.0, yhi = 1.0 },
+]
+body = [
+  "ix = iadd(bits(x), 4913933)",
+  "n = tofloat(isub(ishr(ix, 23), 127))",
+  "m = frombits(iadd(iand(ix, 8388607), 1060439283))",
+  "f = sub(m, 1.0)",
+  "s = div(f, add(2.0, f))",
+  "z = mul(s, s)",
+  "big = mul(z, horner(z, 0.6666343212127686, 0.4086703062057495))",
+  "lo = mul(s, sub(f, big))",
+  "lg = add(mul(n, 0.693145751953125), add(f, sub(mul(n, 1.428606765330187e-06), lo)))",
+  "big2 = mul(y, lg)",
+  "qE = round(mul(big2, 1.4426950216293335))",
+  "rEh = fnma(qE, 0.6931471824645996, big2)",
+  "rEl = mul(qE, -1.9046542121259336e-09)",
+  "rE = sub(rEh, rEl)",
+  "tE = mul(rE, rE)",
+  "pE = horner(rE, 0.4999973773956299, 0.16666629910469055, 0.0418371707201004, 0.008357680402696133)",
   "mE = add(1.0, add(rEh, sub(mul(tE, pE), rEl)))",
   "eE = frombits(iadd(bits(mE), ishl(toint(qE), 23)))",
 ]
@@ -2011,6 +2960,72 @@ body = [
   "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
 ]
 
+[atan.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 33.43
+error_abs = 3.712e-15
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963267948966), set(0.0))",
+  "ofl = select(far, set(6.123233995736766e-17), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.33333333333332626, 0.1999999999959214, -0.1428571424624242, 0.11111109588812151, -0.09090877961062305, 0.07691918168507478, -0.06663419329668824, 0.05863286474672126, -0.05181214787102932, 0.04496719683638329, -0.036869860119106854, 0.027062211437280544, -0.01670153054543788, 0.008087643323903021, -0.002824597798638422, 0.0006247442673069874, -6.518974599389494e-05)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
+[atan.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 7708
+error_abs = 8.558e-13
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963267948966), set(0.0))",
+  "ofl = select(far, set(6.123233995736766e-17), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.3333333333316827, 0.19999999935142282, -0.14285710020067355, 0.11110999508742127, -0.09089368031943441, 0.07679381276430296, -0.06595124596280294, 0.05606687035291111, -0.04494995162541376, 0.03165803796192987, -0.01798369324520612, 0.0074572473304224075, -0.0019608268978377713, 0.0002420321329492996)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
+[atan.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 1.89e+06
+error_abs = 2.098e-10
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963267948966), set(0.0))",
+  "ofl = select(far, set(6.123233995736766e-17), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.33333333293301176, 0.19999990275947271, -0.14285317963907304, 0.1110470678864422, -0.09036742342070782, 0.0741749696430051, -0.05760716083128117, 0.038327445983064846, -0.019261081322765883, 0.00620725453378005, -0.0009362994719496015)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
 [atan.f64.fast]
 args = ["x"]
 result = "v"
@@ -2078,6 +3093,72 @@ body = [
   "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
 ]
 
+[atan.f32.mid3]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 6.668
+error_abs = 3.975e-07
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1e+30, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963705062866), set(0.0))",
+  "ofl = select(far, set(-4.371138828673793e-08), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.3333326578140259, 0.1999346762895584, -0.141764298081398, 0.1039426177740097, -0.06689080595970154, 0.029852263629436493, -0.006343974266201258)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
+[atan.f32.mid2]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 39.63
+error_abs = 2.362e-06
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1e+30, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963705062866), set(0.0))",
+  "ofl = select(far, set(-4.371138828673793e-08), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.3333290219306946, 0.1996854990720749, -0.13896125555038452, 0.09229299426078796, -0.04486639052629471, 0.010578669607639313)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
+[atan.f32.mid1]
+args = ["x"]
+result = "v"
+contract = "any input"
+error_ulp = 262.4
+error_abs = 1.564e-05
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1e+30, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(1.0, a)",
+  "u = select(far, div(-1.0, a), a)",
+  "off = select(far, set(1.5707963705062866), set(0.0))",
+  "ofl = select(far, set(-4.371138828673793e-08), set(0.0))",
+  "t = mul(u, u)",
+  "w = horner(t, -0.3333047032356262, 0.1985442042350769, -0.1301778107881546, 0.06834405660629272, -0.01802321895956993)",
+  "s = add(off, add(u, add(ofl, mul(mul(u, t), w))))",
+  "v = frombits(ior(bits(s), iand(bits(x), bits(-0.0))))",
+]
+
 [atan.f32.fast]
 args = ["x"]
 result = "v"
@@ -2141,6 +3222,66 @@ body = [
   "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
 ]
 
+[asin.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 9.88
+error_abs = 1.097e-15
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.1666666666666695, 0.07499999999726302, 0.044642857578717755, 0.030381917485400308, 0.022373010066676288, 0.017337192543712077, 0.014140941807431192, 0.0102896411236249, 0.015445133336819308, -0.006822043980671263, 0.027871289137110143)))",
+  "g = select(far, sub(1.5707963267948966, sub(add(w, w), 6.123233995736766e-17)), w)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[asin.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 2077
+error_abs = 2.306e-13
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666666666738633, 0.07499999953429712, 0.044642906474584965, 0.030379945210024933, 0.022412417726695433, 0.016902683886393575, 0.01686409027396012, 0.001067506315036312, 0.02834674523183333)))",
+  "g = select(far, sub(1.5707963267948966, sub(add(w, w), 6.123233995736766e-17)), w)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[asin.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 5.565e+05
+error_abs = 6.179e-11
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666666686085643, 0.07499992404401838, 0.04464766388813485, 0.030269138728589183, 0.023611817008891752, 0.010574415516912909, 0.030974540371355073)))",
+  "g = select(far, sub(1.5707963267948966, sub(add(w, w), 6.123233995736766e-17)), w)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
 [asin.f64.fast]
 args = ["x"]
 result = "v"
@@ -2198,6 +3339,26 @@ body = [
   "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
   "s = select(far, sqrt(z), a)",
   "w = add(s, mul(mul(s, z), horner(z, 0.16666673123836517, 0.07498855143785477, 0.045001380145549774, 0.026554541662335396, 0.03808502480387688)))",
+  "g = select(far, sub(1.5707963705062866, sub(add(w, w), -4.371138828673793e-08)), w)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[asin.f32.mid1]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 7.528
+error_abs = 4.487e-07
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666562855243683, 0.0751328095793724, 0.042074866592884064, 0.04546545073390007)))",
   "g = select(far, sub(1.5707963705062866, sub(add(w, w), -4.371138828673793e-08)), w)",
   "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
 ]
@@ -2267,6 +3428,72 @@ body = [
   "v = select(far, select(lt(x, 0.0), low, add(w, w)), mid)",
 ]
 
+[acos.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 7.992
+error_abs = 1.257e-15
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.1666666666666695, 0.07499999999726302, 0.044642857578717755, 0.030381917485400308, 0.022373010066676288, 0.017337192543712077, 0.014140941807431192, 0.0102896411236249, 0.015445133336819308, -0.006822043980671263, 0.027871289137110143)))",
+  "w2 = frombits(ior(bits(w), iand(bits(x), bits(-0.0))))",
+  "mid = sub(1.5707963267948966, sub(w2, 6.123233995736766e-17))",
+  "low = sub(3.141592653589793, sub(add(w, w), 1.2246467991473532e-16))",
+  "v = select(far, select(lt(x, 0.0), low, add(w, w)), mid)",
+]
+
+[acos.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 1676
+error_abs = 2.305e-13
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666666666738633, 0.07499999953429712, 0.044642906474584965, 0.030379945210024933, 0.022412417726695433, 0.016902683886393575, 0.01686409027396012, 0.001067506315036312, 0.02834674523183333)))",
+  "w2 = frombits(ior(bits(w), iand(bits(x), bits(-0.0))))",
+  "mid = sub(1.5707963267948966, sub(w2, 6.123233995736766e-17))",
+  "low = sub(3.141592653589793, sub(add(w, w), 1.2246467991473532e-16))",
+  "v = select(far, select(lt(x, 0.0), low, add(w, w)), mid)",
+]
+
+[acos.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 3.9e+05
+error_abs = 6.179e-11
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666666686085643, 0.07499992404401838, 0.04464766388813485, 0.030269138728589183, 0.023611817008891752, 0.010574415516912909, 0.030974540371355073)))",
+  "w2 = frombits(ior(bits(w), iand(bits(x), bits(-0.0))))",
+  "mid = sub(1.5707963267948966, sub(w2, 6.123233995736766e-17))",
+  "low = sub(3.141592653589793, sub(add(w, w), 1.2246467991473532e-16))",
+  "v = select(far, select(lt(x, 0.0), low, add(w, w)), mid)",
+]
+
 [acos.f64.fast]
 args = ["x"]
 result = "v"
@@ -2328,6 +3555,28 @@ body = [
   "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
   "s = select(far, sqrt(z), a)",
   "w = add(s, mul(mul(s, z), horner(z, 0.16666673123836517, 0.07498855143785477, 0.045001380145549774, 0.026554541662335396, 0.03808502480387688)))",
+  "w2 = frombits(ior(bits(w), iand(bits(x), bits(-0.0))))",
+  "mid = sub(1.5707963705062866, sub(w2, -4.371138828673793e-08))",
+  "low = sub(3.1415927410125732, sub(add(w, w), -8.742277657347586e-08))",
+  "v = select(far, select(lt(x, 0.0), low, add(w, w)), mid)",
+]
+
+[acos.f32.mid1]
+args = ["x"]
+result = "v"
+contract = "|x| <= 1 or NaN out"
+error_ulp = 5.271
+error_abs = 4.688e-07
+grids = [
+  { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "far = lt(0.5, a)",
+  "z = select(far, mul(0.5, sub(1.0, a)), mul(a, a))",
+  "s = select(far, sqrt(z), a)",
+  "w = add(s, mul(mul(s, z), horner(z, 0.16666562855243683, 0.0751328095793724, 0.042074866592884064, 0.04546545073390007)))",
   "w2 = frombits(ior(bits(w), iand(bits(x), bits(-0.0))))",
   "mid = sub(1.5707963705062866, sub(w2, -4.371138828673793e-08))",
   "low = sub(3.1415927410125732, sub(add(w, w), -8.742277657347586e-08))",
@@ -2413,6 +3662,93 @@ body = [
   "h = sub(mul(0.5, e), mul(0.5, i))",
   "b = mul(a, a)",
   "sm = add(a, mul(mul(a, b), horner(b, 0.1666666666666663, 0.008333333333360515, 0.00019841269809566648, 2.7557332743306003e-06, 2.5049503805057475e-08, 1.6290047203302096e-10)))",
+  "g = select(lt(1.0, a), h, sm)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[sinh.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 9.481
+error_abs = 4.577e+288
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "i = div(1.0, e)",
+  "h = sub(mul(0.5, e), mul(0.5, i))",
+  "b = mul(a, a)",
+  "sm = add(a, mul(mul(a, b), horner(b, 0.1666666666666663, 0.008333333333360515, 0.00019841269809566648, 2.7557332743306003e-06, 2.5049503805057475e-08, 1.6290047203302096e-10)))",
+  "g = select(lt(1.0, a), h, sm)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[sinh.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 2.721e+04
+error_abs = 1.482e+292
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "i = div(1.0, e)",
+  "h = sub(mul(0.5, e), mul(0.5, i))",
+  "b = mul(a, a)",
+  "sm = add(a, mul(mul(a, b), horner(b, 0.16666666666698407, 0.008333333317464362, 0.0001984128253011599, 2.755377026364149e-06, 2.545670657152382e-08)))",
+  "g = select(lt(1.0, a), h, sm)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
+[sinh.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 1.298e+06
+error_abs = 7.022e+293
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5000000014286223, 0.16666666682534356, 0.04166645680967788, 0.008333310024225292, 0.0013934541928270264, 0.0001989198131397769)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "i = div(1.0, e)",
+  "h = sub(mul(0.5, e), mul(0.5, i))",
+  "b = mul(a, a)",
+  "sm = add(a, mul(mul(a, b), horner(b, 0.16666666646842135, 0.00833333967591706, 0.00019838101968683888, 2.8062802582276946e-06)))",
   "g = select(lt(1.0, a), h, sm)",
   "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
 ]
@@ -2507,6 +3843,35 @@ body = [
   "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
 ]
 
+[sinh.f32.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 87"
+error_ulp = 214.2
+error_abs = 9.782e+30
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -87.0, hi = 87.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-30, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950216293335))",
+  "rh = fnma(q, 0.6931471824645996, a)",
+  "rl = mul(q, -1.9046542121259336e-09)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.4999973773956299, 0.16666629910469055, 0.0418371707201004, 0.008357680402696133)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 23)))",
+  "i = div(1.0, e)",
+  "h = sub(mul(0.5, e), mul(0.5, i))",
+  "b = mul(a, a)",
+  "sm = add(a, mul(mul(a, b), horner(b, 0.16664151847362518, 0.008534176275134087)))",
+  "g = select(lt(1.0, a), h, sm)",
+  "v = frombits(ior(bits(g), iand(bits(x), bits(-0.0))))",
+]
+
 [sinh.f32.fast]
 args = ["x"]
 result = "v"
@@ -2585,6 +3950,75 @@ body = [
   "v = add(mul(0.5, e), div(0.5, e))",
 ]
 
+[cosh.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 8.299
+error_abs = 4.577e+288
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "v = add(mul(0.5, e), div(0.5, e))",
+]
+
+[cosh.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 2.434e+04
+error_abs = 1.482e+292
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "v = add(mul(0.5, e), div(0.5, e))",
+]
+
+[cosh.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 700"
+error_ulp = 1.163e+06
+error_abs = 7.022e+293
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, a)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.5000000014286223, 0.16666666682534356, 0.04166645680967788, 0.008333310024225292, 0.0013934541928270264, 0.0001989198131397769)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 52)))",
+  "v = add(mul(0.5, e), div(0.5, e))",
+]
+
 [cosh.f64.fast]
 args = ["x"]
 result = "v"
@@ -2652,6 +4086,29 @@ body = [
   "r = sub(rh, rl)",
   "t = mul(r, r)",
   "p = horner(r, 0.5, 0.16666573286056519, 0.04166654869914055, 0.008363774046301842, 0.0013926926767453551)",
+  "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
+  "e = frombits(iadd(bits(m), ishl(toint(q), 23)))",
+  "v = add(mul(0.5, e), div(0.5, e))",
+]
+
+[cosh.f32.mid1]
+args = ["x"]
+result = "v"
+contract = "finite, |x| <= 87"
+error_ulp = 5.11
+error_abs = 9.782e+30
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -87.0, hi = 87.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "q = round(mul(a, 1.4426950216293335))",
+  "rh = fnma(q, 0.6931471824645996, a)",
+  "rl = mul(q, -1.9046542121259336e-09)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "p = horner(r, 0.4999973773956299, 0.16666629910469055, 0.0418371707201004, 0.008357680402696133)",
   "m = add(1.0, add(rh, sub(mul(t, p), rl)))",
   "e = frombits(iadd(bits(m), ishl(toint(q), 23)))",
   "v = add(mul(0.5, e), div(0.5, e))",
@@ -2731,6 +4188,93 @@ body = [
   "r = sub(rh, rl)",
   "t = mul(r, r)",
   "w = horner(r, 0.5000000000000001, 0.16666666666666669, 0.04166666666662064, 0.008333333333329793, 0.0013888888918939168, 0.00019841269864380513, 2.4801518641395993e-05, 2.75572664186123e-06, 2.7621338669142925e-07, 2.510134692835034e-08)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+  "g = div(f, add(f, 2.0))",
+  "h = select(le(20.0, a), set(1.0), g)",
+  "v = frombits(ior(bits(h), iand(bits(x), bits(-0.0))))",
+]
+
+[tanh.f64.mid3]
+args = ["x"]
+result = "v"
+contract = "finite"
+error_ulp = 21.25
+error_abs = 5.899e-16
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "d = add(a, a)",
+  "one = set(1.0)",
+  "q = round(mul(d, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, d)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.5, 0.16666666666646782, 0.0416666666666501, 0.008333333354971901, 0.0013888888906916628, 0.00019841206274785362, 2.4801534341237888e-05, 2.7626466044935e-06, 2.7614931875440477e-07)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+  "g = div(f, add(f, 2.0))",
+  "h = select(le(20.0, a), set(1.0), g)",
+  "v = frombits(ior(bits(h), iand(bits(x), bits(-0.0))))",
+]
+
+[tanh.f64.mid2]
+args = ["x"]
+result = "v"
+contract = "finite"
+error_ulp = 1198
+error_abs = 3.324e-14
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "d = add(a, a)",
+  "one = set(1.0)",
+  "q = round(mul(d, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, d)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.49999999999951383, 0.16666666666662247, 0.04166666679362806, 0.008333333344872034, 0.0013888837087667207, 0.00019841222761353435, 2.486920416652337e-05, 2.761877702984587e-06)",
+  "p = add(rh, sub(mul(t, w), rl))",
+  "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
+  "f = add(sub(u, 1.0), mul(u, p))",
+  "g = div(f, add(f, 2.0))",
+  "h = select(le(20.0, a), set(1.0), g)",
+  "v = frombits(ior(bits(h), iand(bits(x), bits(-0.0))))",
+]
+
+[tanh.f64.mid1]
+args = ["x"]
+result = "v"
+contract = "finite"
+error_ulp = 6.462e+04
+error_abs = 1.794e-12
+grids = [
+  { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
+  { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
+]
+body = [
+  "a = abs(x)",
+  "d = add(a, a)",
+  "one = set(1.0)",
+  "q = round(mul(d, 1.4426950408889634))",
+  "rh = fnma(q, 0.6931471805599453, d)",
+  "rl = mul(q, 2.3190468138462996e-17)",
+  "r = sub(rh, rl)",
+  "t = mul(r, r)",
+  "w = horner(r, 0.5, 0.16666666722219042, 0.041666666722201, 0.008333297067428719, 0.001388885263392293, 0.00019900441465296745, 2.4860745193047496e-05)",
   "p = add(rh, sub(mul(t, w), rl))",
   "u = frombits(iadd(bits(one), ishl(toint(q), 52)))",
   "f = add(sub(u, 1.0), mul(u, p))",

@@ -20,16 +20,18 @@ from alloy.isa.mathkernels import (
     NO_LIBRARY,
     Kernel,
     Renderer,
+    cheapest,
     functions,
     kernel,
     kernels_for,
+    ladder,
     libraries,
     render,
     spelled,
 )
 from alloy.isa.validate import c_compiler, c_flags, host_can_run
 
-ALL = [(fn, dtype, level) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS]
+ALL = [(fn, dtype, k.level) for fn in functions() for dtype in ("f64", "f32") for k in ladder(fn, dtype)]
 FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow fmod atan asin acos sinh cosh tanh".split()
 
 
@@ -366,3 +368,59 @@ def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dty
     sut = strict_value(fn, dtype, args, tmp_path)
 
     assert sut == exact
+
+
+@pytest.mark.parametrize("fn", functions())
+@pytest.mark.parametrize("dtype", ["f64", "f32"])
+def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn, dtype):
+    sut = [k for k in ladder(fn, dtype) if not k.guard]
+
+    errors = [k.error_ulp for k in sut]
+    costs = [render(k, "avx2").intrinsics for k in sut]
+    assert errors == sorted(errors)
+    assert costs == sorted(costs, reverse=True)
+
+
+def test_a_tolerance_picks_the_cheapest_kernel_that_holds_it():
+    sut = cheapest("sin", "f64", "avx2", max_ulp=10.0)
+
+    assert sut.kernel.error_ulp <= 10.0
+    assert sut.intrinsics < spelled("sin", "f64", "relaxed", "avx2").intrinsics
+    cheaper = [k for k in ladder("sin", "f64") if render(k, "avx2").intrinsics < sut.intrinsics]
+    assert cheaper and all(k.error_ulp > 10.0 for k in cheaper)
+
+
+def test_an_absolute_tolerance_picks_by_the_absolute_error():
+    sut = cheapest("sin", "f64", "avx512", max_abs=1e-9)
+
+    assert sut.kernel.error_abs <= 1e-9
+    assert sut.kernel.level not in ("strict", "relaxed")
+
+
+def test_a_tolerance_no_kernel_holds_names_the_most_accurate_one():
+    with pytest.raises(KeyError, match="no kernel within the bound; the most accurate is strict"):
+        cheapest("pow", "f64", "avx2", max_ulp=0.1)
+
+
+def test_a_rung_a_function_lacks_names_the_ones_it_has():
+    with pytest.raises(KeyError, match="log f32 has no mid1 rung \\(it has: strict, relaxed, fast\\)"):
+        kernel("log", "f32", "mid1")
+
+
+def test_the_cli_lists_the_ladder_and_answers_a_bound_with_one_kernel(capsys):
+    assert main(["kernel", "avx2", "sin", "f64", "--no-verify"]) == 0
+    listing = capsys.readouterr().out
+    assert main(["kernel", "avx2", "sin", "f64", "--max-ulp", "10", "--no-verify"]) == 0
+    bounded = capsys.readouterr().out
+
+    assert "// ladder: strict" in listing and "mid1" in listing
+    picked = cheapest("sin", "f64", "avx2", max_ulp=10.0).kernel.name
+    assert f"static inline __m256d {picked}(" in bounded
+    assert bounded.count("static inline") == 1
+
+
+def test_a_strict_sve_kernel_spills_into_arrays_of_constant_size():
+    sut = spelled("sin", "f64", "strict", "sve").source
+
+    assert "double xs[32], vs[32], bads[32];" in sut
+    assert "[svcntd()]" not in sut

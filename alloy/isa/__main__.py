@@ -23,7 +23,17 @@ from typing import Any
 from alloy.isa import ALIASES, OPS, load
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
-from alloy.isa.mathkernels import LEVELS, functions, libraries, library_function, render, target_of
+from alloy.isa.mathkernels import (
+    LADDER,
+    LEVELS,
+    cheapest,
+    functions,
+    ladder,
+    libraries,
+    library_function,
+    render,
+    target_of,
+)
 from alloy.isa.mathkernels import kernel as find
 from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
@@ -43,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
-    lookup_p.add_argument("--level", choices=LEVELS, help="for a math function: one kernel level; default all three")
+    lookup_p.add_argument("--level", choices=LADDER, help="for a math function: one kernel level; default all three")
     lookup_p.add_argument("--json", action="store_true", help="the row and its verdict as JSON")
 
     reverse_p = commands.add_parser(
@@ -66,7 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     kernel_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve")
     kernel_p.add_argument("function", help="sin, cos, tan, exp, exp2, exp10, expm1, log (ln), log2, log10, log1p, ...")
     kernel_p.add_argument("dtype", help="f64 or f32")
-    kernel_p.add_argument("--level", choices=LEVELS, help="one level; default all three")
+    kernel_p.add_argument("--level", choices=LADDER, help="one level; default strict, relaxed and fast")
+    kernel_p.add_argument("--max-ulp", type=float, help="the cheapest kernel within this many ulp")
+    kernel_p.add_argument(
+        "--max-abs", type=float, help="the cheapest kernel within this absolute error, the worst over its whole range"
+    )
     kernel_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
 
     tiers_p = commands.add_parser("tiers", help="a function's polynomial depths, cheapest first: tiers sin")
@@ -101,7 +115,11 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
     if args.command == "lookup":
         return lookup_command(table, args)
     if args.command == "kernel":
-        return print_kernels(table, args.isa, args.function, args.dtype, args.level, not args.no_verify)
+        level = args.level
+        if args.max_ulp is not None or args.max_abs is not None:
+            picked = cheapest(args.function, args.dtype, args.isa, max_ulp=args.max_ulp, max_abs=args.max_abs)
+            level = picked.kernel.level
+        return print_kernels(table, args.isa, args.function, args.dtype, level, not args.no_verify)
     if args.command == "tiers":
         return tiers_command(table, args)
     if args.command == "validate":
@@ -226,11 +244,22 @@ def report_failure(verdict: Verdict) -> int:
 MARKS = {True: "verified", None: "unverified", False: "FAILED"}
 
 
+def ladder_line(function: str, dtype: str, target: str) -> str:
+    """Every kernel of ``function`` with its error and its cost, most accurate first."""
+    return "; ".join(
+        f"{k.level} {k.error_ulp:.3g} ulp, {k.error_abs:.2g} abs, {render(k, target).intrinsics} intrinsics"
+        for k in ladder(function, dtype)
+    )
+
+
 def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
     """The kernels as C. Exit code 3 when one fails its gate."""
     table.isa(isa)
     target = target_of(isa)
     status = 0
+    if not level:
+        print(f"// ladder: {ladder_line(function, dtype, target)}")
+        print("// --level <name> gives one; --max-ulp N or --max-abs E gives the cheapest that holds the bound\n")
     for name in (level,) if level else LEVELS:
         k = find(function, dtype, name)
         spelled = render(k, target)

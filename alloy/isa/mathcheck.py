@@ -10,7 +10,7 @@ import re
 import subprocess
 import tempfile
 
-from alloy.isa.mathkernels import LEVELS, Grid, Kernel, Renderer, functions, kernel, literal, render
+from alloy.isa.mathkernels import Grid, Kernel, Renderer, functions, kernel, ladder, literal, render
 from alloy.isa.validate import (
     COMPILE_TIMEOUT,
     CROSS,
@@ -278,7 +278,11 @@ def judged(k: Kernel, seen: Measured, basis: str) -> Verdict:
 def validate_kernels() -> list[tuple[str, Verdict]]:
     """Every kernel on every ISA; (id, verdict) pairs."""
     ids = [
-        (fn, dtype, level, isa) for fn in functions() for dtype in ("f64", "f32") for level in LEVELS for isa in HEADERS
+        (fn, dtype, k.level, isa)
+        for fn in functions()
+        for dtype in ("f64", "f32")
+        for k in ladder(fn, dtype)
+        for isa in HEADERS
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         verdicts = list(pool.map(lambda key: validate_kernel(*key), ids))

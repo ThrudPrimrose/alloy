@@ -6,7 +6,7 @@ table; never edit the pages by hand."""
 import argparse
 import pathlib
 
-from alloy.isa.mathkernels import LEVELS, functions, kernel
+from alloy.isa.mathkernels import functions, kernel, ladder
 from alloy.isa.mathkernels import render as render_kernel
 from alloy.isa.ops import OPS
 from alloy.isa.table import ALL_DTYPES, DTYPES, F16, Entry, Table, load
@@ -119,8 +119,9 @@ def render_kernels() -> str:
     lines = [
         "# Math kernels — functions as intrinsics (generated, do not edit)",
         "",
-        "Every function comes as three C functions built from intrinsics; copy one into the loop's translation "
-        "unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> <dtype>`.",
+        "Every function comes as a ladder of C functions built from intrinsics; copy one into the loop's "
+        "translation unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> "
+        "<dtype>`; add `--max-ulp N` or `--max-abs E` for the cheapest one that holds a bound.",
         "",
         "- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge "
         "arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other "
@@ -129,6 +130,8 @@ def render_kernels() -> str:
         "the inputs are known finite and in range.",
         "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "
         "tolerance, an activation, or a first guess.",
+        "- **mid3, mid2, mid1**: the rungs between `relaxed` and `fast`, `relaxed`'s program at lower degrees. A "
+        "function has only the rungs whose degree differs, numbered from the cheapest up.",
         "",
         "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
         "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
@@ -145,8 +148,8 @@ def render_kernels() -> str:
     ]
     for fn in functions():
         for dtype in DTYPES:
-            for level in LEVELS:
-                k = kernel(fn, dtype, level)
+            for k in ladder(fn, dtype):
+                level = k.level
                 branch = "cold" if k.guard else "none"
                 count = render_kernel(k, "avx512").intrinsics
                 contract = cell(f"any input; vector path for {k.contract}" if level == "strict" else k.contract)
