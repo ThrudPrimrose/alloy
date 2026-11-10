@@ -135,16 +135,19 @@ def render_kernels() -> str:
         "",
         "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
         "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
-        "other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
+        "`relaxed` `pow` carries its logarithm as a double word and refuses the same way: take the next rung down "
+        "there. The other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
         "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input.",
         "",
         "Inline them only when the loop has other work: the gain over a library call is the call and its spills. "
         "It is not universal: `atan` and AVX2 `sinh` lose to the libraries, and SVML `exp` and `pow` are about even. "
-        "All kernels beat scalar libm by 4x to 13x. ULP is the worst sampled error against a wider libm, not a "
-        "proven bound.",
+        "All kernels beat scalar libm by 4x to 13x. `python -m alloy.isa time <isa> <function> <dtype>` measures "
+        "every rung and the library calls on the machine at hand. ULP is the worst error against a wider libm: over "
+        "every input of the range for a one-argument f32 kernel (marked `all`), sampled for the others, where it is "
+        "not a proven bound.",
         "",
-        "| function | dtype | level | ulp | intrinsics (avx512) | branch | contract |",
-        "|---|---|---|---:|---:|---|---|",
+        "| function | dtype | level | ulp | inputs | intrinsics (avx512) | branch | contract |",
+        "|---|---|---|---:|---|---:|---|---|",
     ]
     for fn in functions():
         for dtype in DTYPES:
@@ -153,7 +156,10 @@ def render_kernels() -> str:
                 branch = "cold" if k.guard else "none"
                 count = render_kernel(k, "avx512").intrinsics
                 contract = cell(f"any input; vector path for {k.contract}" if level == "strict" else k.contract)
-                lines.append(f"| {fn} | {dtype} | {level} | {k.error_ulp:.3g} | {count} | {branch} | {contract} |")
+                basis = "all" if k.exhaustive else "sampled"
+                lines.append(
+                    f"| {fn} | {dtype} | {level} | {k.error_ulp:.3g} | {basis} | {count} | {branch} | {contract} |"
+                )
     example = render_kernel(kernel("exp", "f64", "relaxed"), "avx2")
     lines += ["", "## Example: `exp`, f64, relaxed, AVX2", "", "```c", example.source, "```", ""]
     return "\n".join(lines)

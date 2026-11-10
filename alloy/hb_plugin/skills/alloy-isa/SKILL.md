@@ -23,6 +23,8 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   - The answer's `ladder` line lists every rung between `relaxed` and `fast` with its error and intrinsic count.
     With a tolerance in hand, ask for the cheapest kernel that holds it: `arguments=["avx512", "sin", "f64",
     "--max-ulp", "100"]`, or `"--max-abs", "1e-9"` for a bounded function.
+- `command="time", arguments=["avx512", "sin", "f64"]`: nanoseconds per element of every rung and of the library
+  calls, measured on this machine, when the intrinsic count is not enough to choose.
   A kernel pays off in a loop with other work: the gain is the call and its spills.
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps. An op with no single
   intrinsic prints a recipe and its `code`: copy that, it holds the operand order.

@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import mpmath as mp
 
-from alloy.isa.mathcheck import measure
+from alloy.isa.mathcheck import measure, measure_exhaustive
 from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, RUNGS, Grid, Kernel
 from alloy.isa.table import DEFAULT_PATH, load
 from alloy.isa.validate import tier_error
@@ -81,15 +81,61 @@ def truncated(value, dtype: str) -> tuple[float, float]:
     return float(hi), fl(mp.mpf(value) - hi, dtype)
 
 
-def fit(target, lo, hi, degree: int, dtype: str) -> list[float]:
-    """The degree-``degree`` Chebyshev interpolant of ``target`` on [lo, hi], in monomials rounded to the lane."""
-    n = degree + 1
-    half, mid = (mp.mpf(hi) - lo) / 2, (mp.mpf(hi) + lo) / 2
-    nodes = [mid + half * mp.cos(mp.pi * (2 * i + 1) / (2 * n)) for i in range(n)]
-    nodes = [node if abs(node) > mp.mpf(10) ** -40 else mp.mpf(10) ** -40 for node in nodes]
-    system = mp.matrix([[node**j for j in range(n)] for node in nodes])
-    values = mp.matrix([target(node) for node in nodes])
-    return [fl(c, dtype) for c in mp.lu_solve(system, values)]
+#: Points the minimax fit sees an error on, Chebyshev-spaced so the interval's ends are dense.
+FIT_POINTS = 1024
+#: Digits the fit works in: enough for a degree-19 monomial system over a lane's 17.
+FIT_DIGITS = 60
+
+
+def alternation(errors: list, count: int) -> list[int] | None:
+    """The indices of ``count`` extrema of ``errors`` with alternating signs, or None when it has fewer."""
+    peaks: list[int] = []
+    for index, error in enumerate(errors):
+        if peaks and (errors[peaks[-1]] > 0) == (error > 0):
+            if abs(error) > abs(errors[peaks[-1]]):
+                peaks[-1] = index
+        else:
+            peaks.append(index)
+    while len(peaks) > count:
+        peaks.pop(0 if abs(errors[peaks[0]]) < abs(errors[peaks[-1]]) else -1)
+    return peaks if len(peaks) == count else None
+
+
+def minimax(powers: dict[int, list], values: list, exponents: list[int], weights: list) -> list:
+    """The coefficients of ``exponents`` whose polynomial leaves the smallest largest weighted error on ``values``
+    (Remez)."""
+    count = len(exponents) + 1
+    reference = [round((FIT_POINTS - 1) * (1 - mp.cos(mp.pi * i / (count - 1))) / 2) for i in range(count)]
+    solved = [mp.mpf(0)] * len(exponents)
+    for _ in range(40):
+        system = mp.matrix(
+            [[*(powers[e][g] for e in exponents), (-1) ** k / weights[g]] for k, g in enumerate(reference)]
+        )
+        *solved, level = mp.lu_solve(system, mp.matrix([values[g] for g in reference]))
+        errors = [
+            weights[g] * (values[g] - mp.fsum(c * powers[e][g] for c, e in zip(solved, exponents, strict=True)))
+            for g in range(FIT_POINTS)
+        ]
+        peaks = alternation(errors, count)
+        if peaks is None or peaks == reference or max(abs(e) for e in errors) <= abs(level) * mp.mpf("1.001"):
+            break
+        reference = peaks
+    return solved
+
+
+def fit(target, lo, hi, degree: int, dtype: str, weight=None) -> list[float]:
+    """The degree-``degree`` minimax polynomial of ``target`` on [lo, hi], in monomials rounded to the lane.
+    ``weight`` is what the kernel multiplies the polynomial's error by on its way to the result's relative error."""
+    with mp.workdps(FIT_DIGITS):
+        half, mid = (mp.mpf(hi) - lo) / 2, (mp.mpf(hi) + lo) / 2
+        nodes = [mid + half * mp.cos(mp.pi * g / (FIT_POINTS - 1)) for g in range(FIT_POINTS)]
+        nodes = [node if abs(node) > mp.mpf(10) ** -40 else mp.mpf(10) ** -40 for node in nodes]
+        powers = {e: [node**e for node in nodes] for e in range(degree + 1)}
+        values = [target(node) for node in nodes]
+        weights = [abs(weight(node)) if weight else mp.mpf(1) for node in nodes]
+        floor = max(weights) * mp.mpf(10) ** -9  # a weight of zero would leave its point's error unbounded
+        weights = [max(w, floor) for w in weights]
+        return [fl(c, dtype) for c in minimax(powers, values, list(range(degree + 1)), weights)]
 
 
 def coefficients(values: list[float]) -> str:
@@ -109,7 +155,14 @@ def level_degree(family: str, dtype: str, level: str) -> int:
 def sin_poly(dtype: str, level: str) -> str:
     u = (mp.pi / 2) ** 2
     return coefficients(
-        fit(lambda t: (mp.sin(mp.sqrt(t)) / mp.sqrt(t) - 1) / t, 0, u, level_degree("sin", dtype, level), dtype)
+        fit(
+            lambda t: (mp.sin(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
+            0,
+            u,
+            level_degree("sin", dtype, level),
+            dtype,
+            lambda t: t * mp.sqrt(t) / mp.sin(mp.sqrt(t)),
+        )
     )
 
 
@@ -180,7 +233,14 @@ def program_cos(dtype: str, level: str) -> dict:
 def program_tan(dtype: str, level: str) -> dict:
     inv = fl(2 / mp.pi, dtype)
     u = (mp.pi / 4) ** 2
-    poly = fit(lambda t: (mp.tan(mp.sqrt(t)) / mp.sqrt(t) - 1) / t, 0, u, level_degree("tan", dtype, level), dtype)
+    poly = fit(
+        lambda t: (mp.tan(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
+        0,
+        u,
+        level_degree("tan", dtype, level),
+        dtype,
+        lambda t: t * mp.sqrt(t) / mp.tan(mp.sqrt(t)),
+    )
     body = [f"q = round(mul(x, {fmt(inv)}))", *reduce("q", "x", mp.pi / 2, dtype, level), "t = mul(r, r)"]
     tail = "add(re, mul(mul(r, t), w))" if level == "strict" else "mul(mul(r, t), w)"
     body += [f"w = horner(t, {coefficients(poly)})", f"s = add(r, {tail})"]
@@ -205,6 +265,7 @@ def exp_core(arg: str, dtype: str, level: str, tag: str = "") -> tuple[list[str]
         mp.log(2) / 2 * 1.01,
         level_degree("exp", dtype, level),
         dtype,
+        lambda r: r * r / mp.exp(r),
     )
     a, b, _ = split(mp.log(2), dtype)
     inv = fl(1 / mp.log(2), dtype)
@@ -244,7 +305,14 @@ def exp_like(fn: str, base, dtype: str, level: str) -> dict:
     """2^x and 10^x: reduce on the base's log2, then 1 + r*Q(r)."""
     unit = mp.log(2) / mp.log(base)
     half = unit / 2 * mp.mpf("1.01")
-    poly = fit(lambda r: (mp.power(base, r) - 1) / r, -half, half, level_degree(fn, dtype, level), dtype)
+    poly = fit(
+        lambda r: (mp.power(base, r) - 1) / r,
+        -half,
+        half,
+        level_degree(fn, dtype, level),
+        dtype,
+        lambda r: r / mp.power(base, r),
+    )
     a, b, _ = split(unit, dtype)
     inv = fl(1 / unit, dtype)
     top = EXP_MAX[dtype] / float(mp.log(base))
@@ -267,6 +335,7 @@ def program_expm1(dtype: str, level: str) -> dict:
         mp.log(2) / 2 * 1.01,
         level_degree("expm1", dtype, level),
         dtype,
+        lambda r: r * r / mp.expm1(r),
     )
     a, b, _ = split(mp.log(2), dtype)
     inv = fl(1 / mp.log(2), dtype)
@@ -299,7 +368,12 @@ def log_core(arg: str, dtype: str, level: str) -> list[str]:
     one = bias << mantissa
     limit = ((mp.sqrt(2) - 1) / (mp.sqrt(2) + 1)) ** 2 * mp.mpf("1.01")
     poly = fit(
-        lambda z: (mp.atanh(mp.sqrt(z)) / mp.sqrt(z) - 1) / z * 2, 0, limit, level_degree("log", dtype, level), dtype
+        lambda z: (mp.atanh(mp.sqrt(z)) / mp.sqrt(z) - 1) / z * 2,
+        0,
+        limit,
+        level_degree("log", dtype, level),
+        dtype,
+        lambda z: z,
     )
     return [
         f"ix = iadd(bits({arg}), {one - half})",
@@ -370,7 +444,14 @@ def inverse_grids(dtype: str, unit: bool) -> list[Grid]:
 
 
 def program_atan(dtype: str, level: str) -> dict:
-    poly = fit(lambda t: (mp.atan(mp.sqrt(t)) / mp.sqrt(t) - 1) / t, 0, 1, level_degree("atan", dtype, level), dtype)
+    poly = fit(
+        lambda t: (mp.atan(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
+        0,
+        1,
+        level_degree("atan", dtype, level),
+        dtype,
+        lambda t: t * mp.sqrt(t) / mp.atan(mp.sqrt(t)),
+    )
     hi, lo = split(mp.pi / 2, dtype, 2)
     body = [
         "a = abs(x)",
@@ -387,7 +468,14 @@ def program_atan(dtype: str, level: str) -> dict:
 
 
 def asin_core(x: str, dtype: str, level: str) -> list[str]:
-    poly = fit(lambda t: (mp.asin(mp.sqrt(t)) / mp.sqrt(t) - 1) / t, 0, 0.25, level_degree("asin", dtype, level), dtype)
+    poly = fit(
+        lambda t: (mp.asin(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
+        0,
+        0.25,
+        level_degree("asin", dtype, level),
+        dtype,
+        lambda t: t * mp.sqrt(t) / mp.asin(mp.sqrt(t)),
+    )
     return [
         f"a = abs({x})",
         "far = lt(0.5, a)",
@@ -430,7 +518,14 @@ def program_acos(dtype: str, level: str) -> dict:
 
 
 def program_sinh(dtype: str, level: str) -> dict:
-    poly = fit(lambda t: (mp.sinh(mp.sqrt(t)) / mp.sqrt(t) - 1) / t, 0, 1, level_degree("sinh", dtype, level), dtype)
+    poly = fit(
+        lambda t: (mp.sinh(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
+        0,
+        1,
+        level_degree("sinh", dtype, level),
+        dtype,
+        lambda t: t * mp.sqrt(t) / mp.sinh(mp.sqrt(t)),
+    )
     lines, e = exp_core("a", dtype, level)
     body = ["a = abs(x)", *lines]
     body += [
@@ -490,7 +585,7 @@ def program_pow(dtype: str, level: str) -> dict:
         Grid(TINY[dtype], HUGE[dtype], "logp", -1.0, 1.0),
     ]
     out = {"args": ("x", "y"), "grids": grids, "contract": "x positive normal, finite y, |y*log(x)| in exp range"}
-    if level == "strict":
+    if level in ("strict", "relaxed"):  # y magnifies the logarithm's rounding, so it is carried as a double word
         double_log = [
             "two = add(2.0, f)",
             "twol = add(sub(2.0, two), f)",  # what the rounded 2 + f lost: y magnifies it
@@ -507,9 +602,11 @@ def program_pow(dtype: str, level: str) -> dict:
             "ee = fms(y, ph, big2)",
             "cor = add(ee, mul(y, pl))",
         ]
-        body = [*core[:-1], *double_log, *tail, f"p = fma({e}, cor, {e})", "v = select(eq(y, 1.0), x, p)"]
+        body = [*core[:-1], *double_log, *tail, f"p = fma({e}, cor, {e})"]
+        if level == "relaxed":
+            return {**out, "body": body, "result": "p"}
         guard = f"mand({positive('x', dtype)}, le(abs(big2), {fmt(limit)}))"
-        return {**out, **strict_guard(guard), "body": body, "result": "v"}
+        return {**out, **strict_guard(guard), "body": [*body, "v = select(eq(y, 1.0), x, p)"], "result": "v"}
     body = [*core, f"lg = add(mul(n, {fmt(hi)}), add(f, sub(mul(n, {fmt(lo)}), lo)))", "big2 = mul(y, lg)", *tail]
     return {**out, "body": body, "result": e}
 
@@ -610,6 +707,8 @@ def measured(k: Kernel) -> tuple[Kernel, float, float, int]:
     results = [m for isa in ("avx2", "avx512") if (m := measure(k, isa)) is not None]
     if not results:
         raise RuntimeError("this host runs neither AVX2 nor AVX-512")
+    if k.exhaustive and (every := measure_exhaustive(k, "avx2")) is not None:
+        results.append(every)
     return k, max(m.ulp for m in results), max(m.abs for m in results), max(m.special for m in results)
 
 
@@ -620,6 +719,8 @@ def toml_entry(k: Kernel, ulp: float, abs_err: float) -> str:
         lines.append(f"guard = {json.dumps(k.guard)}")
     lines += [f"contract = {json.dumps(k.contract)}", f"error_ulp = {ulp:.4g}"]
     lines.append(f"error_abs = {abs_err:.4g}")
+    if k.exhaustive:
+        lines.append("exhaustive = true")
     if k.specials:
         lines.append("specials = [" + ", ".join(toml_float(v) for v in k.specials) + "]")
     lines.append("grids = [")
@@ -716,14 +817,18 @@ def refit_tiers() -> int:
 def main(argv: list[str]) -> int:
     if argv == ["tiers"]:
         return refit_tiers()
+    exhaustive = "--exhaustive" in argv
+    argv = [arg for arg in argv if arg != "--exhaustive"]
     only = argv or list(PROGRAMS)
     kernels = [k for fn in only for dtype in ("f64", "f32") for k in distinct(fn, dtype)]
+    if exhaustive:  # 2^32 inputs: a one-argument f32 kernel is checked on each, in about a minute
+        kernels = [dataclasses.replace(k, exhaustive=k.dtype == "f32" and len(k.args) == 1) for k in kernels]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(measured, kernels))
     for k, ulp, abs_err, special in results:
         print(f"{k.fn:6} {k.dtype} {k.level:8} {ulp:11.4g} ulp  abs {abs_err:9.3g}  special-bad {special}")
     if not argv:
-        header = "# Generated by `python helpers/mathfit.py`; do not edit.\n\n"
+        header = "# Generated by `python helpers/mathfit.py --exhaustive`; do not edit.\n\n"
         text = "\n\n".join(toml_entry(k, ulp, abs_err) for k, ulp, abs_err, _ in results)
         KERNELS_PATH.write_text(header + text + "\n")
     return 0

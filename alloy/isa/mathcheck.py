@@ -5,6 +5,7 @@
 
 import concurrent.futures
 import dataclasses
+import os
 import pathlib
 import re
 import subprocess
@@ -24,13 +25,14 @@ from alloy.isa.validate import (
     target_compiler,
 )
 
-__all__ = ["Measured", "compiles", "measure", "validate_kernel", "validate_kernels"]
+__all__ = ["Measured", "compiles", "measure", "measure_exhaustive", "validate_kernel", "validate_kernels"]
 
 SAMPLES = 1 << 17
 GATE_SAMPLES = 1 << 14
 #: A kernel's re-measured error may exceed the recorded one by this factor.
 SLACK = 1.5
 EMULATED_TIMEOUT = 600  # seconds
+EXHAUSTIVE_TIMEOUT = 1800  # seconds
 LINE = re.compile(r"ULP=(\S+) ABS=(\S+) X=(\S+) Y=(\S+) SPECIAL=(\d+)")
 
 DRIVER = """
@@ -117,6 +119,61 @@ int main(void) {
             }
     }
     printf("ULP=%.6g ABS=%.6g X=%.17g Y=%.17g SPECIAL=%ld\\n", max_ulp, max_abs, worst_x, worst_y, special);
+    return 0;
+}
+"""
+
+#: Every f32 input of a one-argument kernel, in parallel: each thread fills vectors from its share of the 2^32 bit
+#: patterns, keeping the finite ones the kernel's range holds.
+EXHAUSTIVE = """
+#define _GNU_SOURCE
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+void alloy_run(const float *xs, const float *ys, float *vs);
+int alloy_lanes(void);
+#define MAX_LANES 64
+static int inside(double x) { double a = fabs(x); (void)a; return @INSIDE@; }
+static double ulps(float v, double r) {
+    float rounded = (float)r;
+    if ((isnan(rounded) && isnan(v)) || v == rounded) return 0;
+    if (isnan(v) || isnan(rounded) || isinf(v) || isinf(rounded)) return INFINITY;
+    float m = fabsf(rounded);
+    return fabs((double)v - r) / (double)(nextafterf(m, INFINITY) - m);
+}
+int main(void) {
+    int lanes = alloy_lanes();
+    double max_ulp = 0, max_abs = 0, worst_x = 0;
+    #pragma omp parallel
+    {
+        float xs[MAX_LANES], ys[MAX_LANES] = {0}, vs[MAX_LANES];
+        double top = 0, top_abs = 0, at = 0;
+        int n = 0;
+        #pragma omp for schedule(static) nowait
+        for (int64_t bits = 0; bits < ((int64_t)1 << 32); bits++) {
+            uint32_t pattern = (uint32_t)bits;
+            float x;
+            memcpy(&x, &pattern, sizeof x);
+            if (!isfinite(x) || !inside(x)) continue;
+            xs[n++] = x;
+            if (n < lanes) continue;
+            n = 0;
+            alloy_run(xs, ys, vs);
+            for (int j = 0; j < lanes; j++) {
+                double r = @REF@, u = ulps(vs[j], r), a = isfinite(u) ? fabs((double)vs[j] - r) : INFINITY;
+                if (u > top) { top = u; at = xs[j]; }
+                if (a > top_abs) top_abs = a;
+            }
+        }
+        /* at most lanes - 1 inputs per thread stay unrun: their neighbors in value ran */
+        #pragma omp critical
+        {
+            if (top > max_ulp) { max_ulp = top; worst_x = at; }
+            if (top_abs > max_abs) max_abs = top_abs;
+        }
+    }
+    printf("ULP=%.6g ABS=%.6g X=%.17g Y=0 SPECIAL=0\\n", max_ulp, max_abs, worst_x);
     return 0;
 }
 """
@@ -235,6 +292,46 @@ def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] 
         exe = folder / "k"
         run = subprocess.run(
             [*launcher, str(exe)], capture_output=True, text=True, check=False, timeout=EMULATED_TIMEOUT
+        )
+    match = LINE.search(run.stdout)
+    if match is None:
+        raise RuntimeError(f"{k.name} on {isa} printed nothing: {run.stderr[:300]}")
+    ulp, abs_err, x, y, special = match.groups()
+    return Measured(float(ulp), float(abs_err), float(x), float(y), int(special))
+
+
+def inside(k: Kernel) -> str:
+    """The C condition for an input in ``k``'s range: every finite one for a guarded kernel, else its grids' union."""
+    if k.guard:
+        return "1"
+    terms = []
+    for g in k.grids:
+        subject = "x" if g.kind in ("lin", "logp") else "a"
+        terms.append(f"({literal(g.lo, 'f64')} <= {subject} && {subject} <= {literal(g.hi, 'f64')})")
+    return " || ".join(terms)
+
+
+def measure_exhaustive(k: Kernel, isa: str, threads: int = 4) -> Measured | None:
+    """``k`` on every f32 input of its range, against double libm; None when the host cannot run ``isa``."""
+    if k.dtype != "f32" or len(k.args) != 1:
+        raise ValueError(f"{k.name}: only a one-argument f32 kernel has few enough inputs")
+    if not host_can_run(isa, k.dtype) or c_compiler() is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
+        folder = pathlib.Path(tmp)
+        unit, _ = driver(k, isa, 0)
+        (folder / "k.c").write_text(unit)
+        (folder / "d.c").write_text(filled(EXHAUSTIVE, {"INSIDE": inside(k), "REF": f"{k.fn}((double)xs[j])"}))
+        cc, machine = str(c_compiler()), c_flags(isa, k.dtype)
+        built([cc, "-O2", *machine, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")], k, isa)
+        built([cc, "-O2", "-fopenmp", str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")], k, isa)
+        run = subprocess.run(
+            [str(folder / "k")],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=EXHAUSTIVE_TIMEOUT,
+            env={**os.environ, "OMP_NUM_THREADS": str(threads)},
         )
     match = LINE.search(run.stdout)
     if match is None:

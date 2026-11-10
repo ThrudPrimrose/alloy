@@ -30,7 +30,7 @@ ROUTE = "alloy"
 #: The route of the ``alloy_isa`` tool: a table query, outside the modes and the device slot.
 ISA = "isa"
 ISA_COMMANDS = frozenset(
-    {"lookup", "reverse", "assist", "kernel", "tiers", "schedule", "skeleton", "ops", "isas", "host"}
+    {"lookup", "reverse", "assist", "kernel", "tiers", "time", "schedule", "skeleton", "ops", "isas", "host"}
 )
 MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value)
 ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels

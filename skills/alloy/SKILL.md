@@ -71,6 +71,7 @@ python -m alloy.isa host                        # which ISA and dtype this machi
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps (--json)
 python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> C (--level strict|relaxed|fast)
 python -m alloy.isa kernel <isa> <fn> <dtype> --max-ulp 100   # the cheapest rung of the ladder within a bound (or --max-abs)
+python -m alloy.isa time <isa> <fn|all> <dtype>   # ns per element of every rung and of the library calls, measured here
 python -m alloy.isa tiers <fn>                  # sin, cos, exp, log: every polynomial depth, its steps and error (--json)
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes (--json)
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute; takes minutes

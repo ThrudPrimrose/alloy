@@ -30,6 +30,7 @@ __all__ = [
     "kernel",
     "kernels_for",
     "ladder",
+    "needs_ieee",
     "level_for",
     "libraries",
     "render",
@@ -71,7 +72,8 @@ class Grid:
 @dataclasses.dataclass(slots=True, frozen=True)
 class Kernel:
     """One program. ``body`` is SSA in abstract primitives over ``args``; ``guard`` names the mask of lanes the
-    vector path computes (empty = no branch). ``error_ulp`` and ``error_abs`` are measured on ``grids``."""
+    vector path computes (empty = no branch). ``error_ulp`` and ``error_abs`` are measured on ``grids``, and on
+    every input of the range besides when ``exhaustive``."""
 
     fn: str
     dtype: str
@@ -85,6 +87,7 @@ class Kernel:
     specials: tuple[float, ...]
     error_ulp: float
     error_abs: float
+    exhaustive: bool = False
 
     @property
     def name(self) -> str:
@@ -124,6 +127,7 @@ def load_kernels() -> dict[tuple[str, str, str], Kernel]:
                     tuple(k.get("specials", ())),
                     k["error_ulp"],
                     k["error_abs"],
+                    k.get("exhaustive", False),
                 )
     return out
 
@@ -269,11 +273,20 @@ REASSOCIATING = frozenset({"reassoc", "fast"})
 NEEDS_IEEE = frozenset({"log1p"})
 
 
-def refuse_reassociation(advice: str) -> tuple[str, ...]:
+#: Kernels below ``strict`` that carry a double word, which reassociation folds away just the same.
+COMPENSATED = frozenset({("pow", "relaxed")})
+
+
+def needs_ieee(k: Kernel) -> bool:
+    """Whether ``k`` refuses a reassociating translation unit."""
+    return k.level == "strict" or k.fn in NEEDS_IEEE or (k.fn, k.level) in COMPENSATED
+
+
+def refuse_reassociation(advice: str, level: str = "strict") -> tuple[str, ...]:
     """The preprocessor lines that refuse a reassociating translation unit."""
     return (
         "#if defined(__FAST_MATH__) || defined(__ASSOCIATIVE_MATH__)",
-        f'#error "strict math kernels need IEEE semantics: drop -ffast-math here, or {advice}"',
+        f'#error "{level} math kernels need IEEE semantics: drop -ffast-math here, or {advice}"',
         "#endif",
     )
 
@@ -287,9 +300,10 @@ def render(k: Kernel, isa: str) -> Spelled:
     r = Renderer(isa, k.dtype)
     vec = r.fields["vec"]
     params = ", ".join(f"{vec} {name}" for name in k.args)
-    refuses = k.level == "strict" or k.fn in NEEDS_IEEE
-    advice = "call the library" if k.fn in NEEDS_IEEE else "use the relaxed kernel"
-    lines = [*(refuse_reassociation(advice) if refuses else ()), f"static inline {vec} {k.name}({params}) {{"]
+    refuses = needs_ieee(k)
+    below = "the next rung down" if (k.fn, k.level) in COMPENSATED else "the relaxed kernel"
+    advice = "call the library" if k.fn in NEEDS_IEEE else f"use {below}"
+    lines = [*(refuse_reassociation(advice, k.level) if refuses else ()), f"static inline {vec} {k.name}({params}) {{"]
     lines += [*(NO_REASSOCIATION if refuses else ()), *(r.statement(line) for line in k.body)]
     if k.guard:
         lines += cold_path(k, r)

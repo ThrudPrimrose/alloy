@@ -11,7 +11,7 @@ import dataclasses
 from collections import Counter
 
 from alloy.isa.mathcheck import HEADERS, validate_kernel
-from alloy.isa.mathkernels import LEVELS, NEEDS_IEEE, functions, kernel, ladder, render, target_of
+from alloy.isa.mathkernels import COMPENSATED, LEVELS, NEEDS_IEEE, functions, kernel, ladder, render, target_of
 from alloy.isa.ops import OPS, called_name
 from alloy.isa.table import DTYPES, Table, load
 from alloy.isa.validate import host_can_run, validate
@@ -238,6 +238,8 @@ def kernel_summary(isa: str, dtype: str, fn: str, recommended: str = "") -> str:
     pick = f"; take {recommended} where the inputs hold its contract ({contract})" if recommended else ""
     if fn in NEEDS_IEEE:
         pick += "; under reassociation no level compiles: call the library"
+    elif (fn, recommended) in COMPENSATED:
+        pick += f"; under reassociation {recommended} does not compile: take the next rung down"
     return f"inline intrinsics: {levels}{pick}; ask `kernel {isa} {fn} {dtype}` for the C"
 
 

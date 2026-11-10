@@ -3,6 +3,7 @@
 at its recorded error, and the gate is shown to fail on a broken kernel."""
 
 import dataclasses
+import json
 import math
 import pathlib
 import re
@@ -14,7 +15,7 @@ from alloy import configuration_matrix
 from alloy.isa import load
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
-from alloy.isa.mathcheck import HEADERS, Measured, emulated, judged, measure, validate_kernel
+from alloy.isa.mathcheck import HEADERS, Measured, emulated, inside, judged, measure, validate_kernel
 from alloy.isa.mathkernels import (
     LEVELS,
     NO_LIBRARY,
@@ -26,9 +27,11 @@ from alloy.isa.mathkernels import (
     kernels_for,
     ladder,
     libraries,
+    needs_ieee,
     render,
     spelled,
 )
+from alloy.isa.mathtime import time_function
 from alloy.isa.validate import c_compiler, c_flags, host_can_run
 
 ALL = [(fn, dtype, k.level) for fn in functions() for dtype in ("f64", "f32") for k in ladder(fn, dtype)]
@@ -139,7 +142,15 @@ def test_log1p_refuses_fast_math_at_every_level():
         measure(kernel("log1p", "f64", "relaxed"), host_isa(), 1 << 10, ("-ffast-math",))
 
 
-@pytest.mark.parametrize("fn", ["sin", "exp", "log", "pow", "atan"])
+def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives():
+    below = next(k for k in ladder("pow", "f64") if not needs_ieee(k))
+
+    with pytest.raises(RuntimeError, match="IEEE semantics.*use the next rung down"):
+        measure(kernel("pow", "f64", "relaxed"), host_isa(), 1 << 10, ("-ffast-math",))
+    assert measured(below, 1 << 14, ("-ffast-math",)).ulp <= 3 * below.error_ulp
+
+
+@pytest.mark.parametrize("fn", ["sin", "exp", "log", "atan"])
 def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn):
     k = kernel(fn, "f64", "relaxed")
 
@@ -303,7 +314,7 @@ def test_a_kernel_at_its_record_passes_the_verdict():
 @pytest.mark.parametrize("fn", ["log", "log2", "log10", "pow"])
 def test_an_avx2_kernel_survives_the_matrixs_reassoc_flags(compiler, fn, tmp_path):
     """The f64 float conversion was an FP subtraction, which reassociation cancelled."""
-    k = kernel(fn, "f64", "relaxed")
+    k = next(k for k in ladder(fn, "f64") if not needs_ieee(k))
     args = ", ".join(f"_mm256_set1_pd({v})" for v in (8.0, 2.0)[: len(k.args)])
     source = tmp_path / "k.c"
     source.write_text(
@@ -373,7 +384,7 @@ def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dty
 @pytest.mark.parametrize("fn", functions())
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn, dtype):
-    sut = [k for k in ladder(fn, dtype) if not k.guard]
+    sut = [k for k in ladder(fn, dtype) if k.level != "strict"]
 
     errors = [k.error_ulp for k in sut]
     costs = [render(k, "avx2").intrinsics for k in sut]
@@ -398,7 +409,9 @@ def test_an_absolute_tolerance_picks_by_the_absolute_error():
 
 
 def test_a_tolerance_no_kernel_holds_names_the_most_accurate_one():
-    with pytest.raises(KeyError, match="no kernel within the bound; the most accurate is strict"):
+    with pytest.raises(
+        KeyError, match="pow f64: no kernel within the bound; the most accurate is (strict|relaxed) at 1"
+    ):
         cheapest("pow", "f64", "avx2", max_ulp=0.1)
 
 
@@ -424,3 +437,52 @@ def test_a_strict_sve_kernel_spills_into_arrays_of_constant_size():
 
     assert "double xs[32], vs[32], bads[32];" in sut
     assert "[svcntd()]" not in sut
+
+
+def test_a_relaxed_pow_carries_its_logarithm_as_a_double_word():
+    sut = kernel("pow", "f64", "relaxed")
+
+    assert sut.error_ulp < 2.0
+    assert not sut.guard
+
+
+@pytest.mark.parametrize("fn", [fn for fn in functions() if len(kernel(fn, "f32", "relaxed").args) == 1])
+def test_a_one_argument_f32_kernel_is_measured_on_every_input_of_its_range(fn):
+    assert all(k.exhaustive for k in ladder(fn, "f32"))
+
+
+@pytest.mark.parametrize("key", [("pow", "f32"), ("fmod", "f32"), ("sin", "f64")])
+def test_a_kernel_with_too_many_inputs_stays_sampled_and_says_so(key, capsys):
+    assert not any(k.exhaustive for k in ladder(*key))
+
+    assert main(["kernel", "avx2", key[0], key[1], "--level", "relaxed", "--no-verify"]) == 0
+    assert "ulp sampled;" in capsys.readouterr().out
+
+
+def test_an_unguarded_kernel_is_checked_inside_its_grids_and_a_guarded_one_everywhere():
+    assert inside(kernel("sin", "f32", "strict")) == "1"
+    assert inside(kernel("exp", "f32", "relaxed")).startswith("(-1.0 <= x && x <= 1.0) || (-87.0 <= x && x <= 87.0)")
+
+
+needs_avx2 = pytest.mark.skipif(not host_can_run("avx2", "f64"), reason="host does not run AVX2")
+
+
+@needs_avx2
+def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls():
+    sut = time_function("exp", "f64", "avx2")
+
+    names = [row.name for row in sut]
+    assert names[: len(ladder("exp", "f64"))] == [k.level for k in ladder("exp", "f64")]
+    assert "libm (scalar)" in names
+    assert all(0.0 < row.ns < 1000.0 for row in sut)
+    by_name = {row.name: row.ns for row in sut}
+    assert by_name["fast"] < by_name["libm (scalar)"]
+
+
+@needs_avx2
+def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys):
+    assert main(["time", "avx2", "exp", "f64", "--json"]) == 0
+
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {r["name"] for r in records} >= {"strict", "relaxed", "fast", "libm (scalar)"}
+    assert all(r["function"] == "exp" and r["ns"] > 0 for r in records)

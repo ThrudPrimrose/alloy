@@ -35,6 +35,7 @@ from alloy.isa.mathkernels import (
     target_of,
 )
 from alloy.isa.mathkernels import kernel as find
+from alloy.isa.mathtime import ELEMENTS, time_function
 from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
 from alloy.isa.table import ALL_DTYPES, FMA_FORM, NO_MATH, Hit, Table, masked_form, normalized, suggestion
@@ -87,6 +88,14 @@ def main(argv: list[str] | None = None) -> int:
     tiers_p.add_argument("function", help="sin, cos, exp or log (ln)")
     tiers_p.add_argument("--json", action="store_true", help="one JSON record per depth")
 
+    time_p = commands.add_parser(
+        "time", help="what an element costs here with each kernel and library call: time <isa> <function|all> <dtype>"
+    )
+    time_p.add_argument("isa", help="avx2 or avx512: an ISA this host runs")
+    time_p.add_argument("function", help="a math function, or all")
+    time_p.add_argument("dtype", help="f64 or f32")
+    time_p.add_argument("--json", action="store_true", help="one JSON record per way to compute the function")
+
     commands.add_parser("host", help="which ISA and dtype this host runs, so which answers come back verified")
     commands.add_parser("ops", help="the abstract math ISA")
     commands.add_parser("isas", help="the covered vector ISAs and their machine models")
@@ -122,6 +131,8 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return print_kernels(table, args.isa, args.function, args.dtype, level, not args.no_verify)
     if args.command == "tiers":
         return tiers_command(table, args)
+    if args.command == "time":
+        return time_command(table, args)
     if args.command == "validate":
         return validate_command(table, args)
     if args.command == "skeleton":
@@ -173,6 +184,25 @@ def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
         print(f"  {library}: {call}")
     if entry.note:
         print(f"  note:      {entry.note}")
+
+
+def time_command(table: Table, args: argparse.Namespace) -> int:
+    """Nanoseconds per element of every kernel of a function next to the library calls, measured now on this host."""
+    table.isa(args.isa)
+    names = functions() if args.function == "all" else (find(args.function, args.dtype, LEVELS[0]).fn,)
+    for fn in names:
+        rows = time_function(fn, args.dtype, args.isa)
+        if not rows:
+            raise KeyError(f"this host does not run {args.isa}/{args.dtype}, so nothing can be timed here")
+        if args.json:
+            for row in rows:
+                print(json.dumps({"function": fn, "dtype": args.dtype, "isa": args.isa, **dataclasses.asdict(row)}))
+            continue
+        print(f"{fn} {args.dtype} on {args.isa}: ns per element of y[i] += {fn}(x[i]), {ELEMENTS} elements in cache")
+        for row in rows:
+            error = "" if row.error_ulp is None else f", {row.error_ulp:.3g} ulp, {row.intrinsics} intrinsics"
+            print(f"  {row.name}: {row.ns:.2f} ns{error}")
+    return 0
 
 
 def tiers_command(table: Table, args: argparse.Namespace) -> int:
@@ -265,7 +295,8 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
         spelled = render(k, target)
         branch = "one cold branch to scalar libm" if k.guard else "no branch"
         scope = f"any input; vector path for {k.contract}" if name == "strict" else f"contract: {k.contract}"
-        print(f"// {name}: {k.error_ulp:.4g} ulp; {spelled.intrinsics} intrinsics; {branch}; {scope}")
+        basis = "over every input of its range" if k.exhaustive else "sampled"
+        print(f"// {name}: {k.error_ulp:.4g} ulp {basis}; {spelled.intrinsics} intrinsics; {branch}; {scope}")
         print(spelled.source)
         for library, call in libraries(function, dtype, target, name).items():
             print(f"// or call {library}: {call}")
