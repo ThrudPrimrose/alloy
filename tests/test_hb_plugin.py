@@ -71,7 +71,13 @@ def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> N
 
 
 @pytest.mark.parametrize(
-    "flavor", ["dace_cpu_parallel_alloy_profile", "dace_cpu_canon_alloy_profile", "dace_cpu_canon_alloy_speculative"]
+    "flavor",
+    [
+        "dace_cpu_parallel_alloy_profile",
+        "dace_cpu_canon_alloy_profile",
+        "dace_cpu_canon_alloy_speculative",
+        "dace_cpu_canon_alloy_none",
+    ],
 )
 @pytest.mark.parametrize("kernel", [KERNEL, "atax"])  # atax's entry keeps a transient in the judge's scratch
 def test_the_flavor_submits_a_library_the_judge_grades_correct(

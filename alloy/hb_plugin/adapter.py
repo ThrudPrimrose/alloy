@@ -285,6 +285,14 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     return library(task, spec, linker, chosen if correct else references, deliver)
 
 
+def reference(task: Task, pipeline: str, deliver: Deliver) -> Submission:
+    """``pipeline``'s program as CPF renders it with no scope outlined: the column Alloy's modes are compared to,
+    graded by the same judge on the same draws."""
+    refuse_restricted(task)
+    spec = BenchSpec.load(task.kernel)
+    return rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
+
+
 def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy's speculative mode on ``task``'s kernel after ``pipeline``: each scope's predicted pick, verified and
     never timed, if ``/score`` grades it correct, else every scope's reference. A GPU task's device maps take their
