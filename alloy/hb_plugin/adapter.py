@@ -30,6 +30,7 @@ from hpcagent_bench.harness.task import Task
 from hpcagent_bench.harness.tools import JudgeClient
 from hpcagent_bench.precision import Precision, numpy_dtype
 from hpcagent_bench.spec import RUNGS, BenchSpec, parse_preset
+from pydantic.dataclasses import dataclass
 
 from alloy import api, configuration_matrix, gpu
 from alloy.backend.build import Build
@@ -38,12 +39,17 @@ from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, execution_order
 from alloy.evaluate.verify import Verdict
 from alloy.frontend import inputs, scopes
+from alloy.records import RECORD, dumped_json
 from alloy.report import Mode
 
 __all__ = [
     "DEVICES",
     "DIALECT",
     "Deliver",
+    "EPISODE_RECORD",
+    "Episode",
+    "EpisodeScope",
+    "EpisodeSeconds",
     "FAST_SIZE",
     "Named",
     "PROFILE_REPS",
@@ -55,6 +61,8 @@ __all__ = [
     "optimize",
     "pipeline_sdfg",
     "ranked",
+    "record_episode",
+    "reference",
     "rendered",
     "running_sizes",
     "stub_time",
@@ -73,6 +81,62 @@ DEVICES = {Target.CPU: dace.dtypes.DeviceType.CPU, Target.GPU: dace.dtypes.Devic
 
 #: Builds a library submission from a rendered unit and what it links against.
 Deliver = Callable[[str, Sequence[str]], Submission]
+#: The episode's record, written into its working folder (the tuner runs each episode in its own).
+EPISODE_RECORD = "alloy-episode.json"
+
+
+@dataclass(slots=True, frozen=True, config=RECORD)
+class EpisodeSeconds:
+    """Wall seconds of an episode's stages: Alloy's generate, the stub timings, the final scoring, and the whole."""
+
+    generate: float
+    time_stubs: float
+    score: float
+    total: float
+
+
+@dataclass(slots=True, frozen=True, config=RECORD)
+class EpisodeScope:
+    """A scope's reference build, the build delivered for it, and the delivered candidate's note."""
+
+    symbol: str
+    reference: str
+    chosen: str
+    note: str
+
+
+@dataclass(slots=True, frozen=True, config=RECORD)
+class Episode:
+    """One episode of an Alloy flavor: its mode (``profile``, ``speculative`` or ``none``), kernel, stage
+    seconds and every scope's delivered build."""
+
+    schema: int
+    mode: str
+    kernel: str
+    seconds: EpisodeSeconds
+    scopes: tuple[EpisodeScope, ...]
+
+
+def record_episode(
+    mode: str,
+    task: Task,
+    started: float,
+    generate: float = 0.0,
+    time_stubs: float = 0.0,
+    score: float = 0.0,
+    references: dict[str, Build] | None = None,
+    delivered: dict[str, Build] | None = None,
+) -> None:
+    """Write the episode's :class:`Episode` to :data:`EPISODE_RECORD` in the working folder; ``started`` is the
+    episode's ``time.monotonic()`` start, ``delivered`` the build delivered per scope of ``references``."""
+    refs, picks = references or {}, delivered or {}
+    scopes = tuple(
+        EpisodeScope(symbol, build.name, picks[symbol].name, picks[symbol].candidate.note)
+        for symbol, build in refs.items()
+    )
+    seconds = EpisodeSeconds(generate, time_stubs, score, time.monotonic() - started)
+    episode = Episode(1, mode, task.kernel, seconds, scopes)
+    (pathlib.Path.cwd() / EPISODE_RECORD).write_text(dumped_json(episode))
 
 
 def pipeline_sdfg(
@@ -247,9 +311,13 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
-        return rendered(task, spec, sdfg, deliver)
+        submission = rendered(task, spec, sdfg, deliver)
+        record_episode(Mode.PROFILE.value, task, started)
+        return submission
     out = scratch_folder(spec)
+    generating = time.monotonic()
     result = generated(sdfg, spec, task.precision, matrix, out)
+    generate = time.monotonic() - generating
     verification = result.verification
     assert verification is not None, "generated() refuses an unverified result"
     linker, judge = Linker(result.program, matrix, out), judge_client()
@@ -274,23 +342,32 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
 
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     candidates = {rep.scope.symbol: verified(rep, verification.verdicts[rep.scope.symbol]) for rep in result.scopes}
+    ranking = time.monotonic()
     chosen = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
+    scoring = time.monotonic()
     correct = False
     if chosen != references and deadline - time.monotonic() > score_reserve():
         try:
             correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
         except (OSError, RuntimeError, ValueError):
             pass  # the references need no grade
+    score = time.monotonic() - scoring
+    delivered = chosen if correct else references
     # every deliver builds the same .so path, so the returned library is built last
-    return library(task, spec, linker, chosen if correct else references, deliver)
+    submission = library(task, spec, linker, delivered, deliver)
+    record_episode(Mode.PROFILE.value, task, started, generate, scoring - ranking, score, references, delivered)
+    return submission
 
 
 def reference(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """``pipeline``'s program as CPF renders it with no scope outlined: the column Alloy's modes are compared to,
     graded by the same judge on the same draws."""
+    started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
-    return rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
+    submission = rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
+    record_episode("none", task, started)
+    return submission
 
 
 def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
@@ -299,24 +376,34 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     speculated threadblock shapes instead (:func:`speculative_gpu`)."""
     if target_of(task) is Target.GPU:
         return speculative_gpu(task, pipeline)
+    started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
     matrix = configuration_matrix.load()
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
-        return rendered(task, spec, sdfg, deliver)
+        submission = rendered(task, spec, sdfg, deliver)
+        record_episode(Mode.SPECULATIVE.value, task, started)
+        return submission
     out = scratch_folder(spec)
     running = running_sizes(spec, config.current().service.preset)
+    generating = time.monotonic()
     result = generated(sdfg, spec, task.precision, matrix, out, Mode.SPECULATIVE, running)
+    generate = time.monotonic() - generating
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}
     judge = judge_client()
+    scoring = time.monotonic()
     pick = library(task, spec, linker, chosen, deliver)
     baseline = library(task, spec, linker, references, deliver)
     better = chosen != references and faster_correct(judge, pick, baseline, task.kernel)
+    score = time.monotonic() - scoring
+    delivered = chosen if better else references
     # every deliver builds the same .so path, so the returned library is built last
-    return library(task, spec, linker, chosen if better else references, deliver)
+    submission = library(task, spec, linker, delivered, deliver)
+    record_episode(Mode.SPECULATIVE.value, task, started, generate, 0.0, score, references, delivered)
+    return submission
 
 
 def faster_correct(judge: JudgeClient, pick: Submission, baseline: Submission, kernel: str) -> bool:
