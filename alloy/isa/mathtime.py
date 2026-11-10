@@ -30,6 +30,7 @@ DRIVER = """
 typedef @C@ lane;
 void alloy_bench(const lane *xs, const lane *x2, lane *ys, int n);
 #define N @ELEMENTS@
+#define PASSES 1024  /* a rep lasts milliseconds, well above a scheduler tick's jitter */
 static lane xs[N], x2[N], ys[N];
 static uint64_t state = 0x9e3779b97f4a7c15ULL;
 static double uniform(void) {
@@ -47,11 +48,12 @@ int main(void) {
         x2[i] = (lane)(@YLO@ + (@YHI@ - @YLO@) * uniform());
     }
     double best = INFINITY;
+    for (int pass = 0; pass < PASSES; pass++) alloy_bench(xs, x2, ys, N);  /* the clock and the caches settle */
     for (int rep = 0; rep < 9; rep++) {
         for (int i = 0; i < N; i++) ys[i] = 0;  /* the sum stays finite: no rep pays for an overflow */
         double start = now();
-        for (int pass = 0; pass < 64; pass++) alloy_bench(xs, x2, ys, N);
-        double each = (now() - start) / (64.0 * N);
+        for (int pass = 0; pass < PASSES; pass++) alloy_bench(xs, x2, ys, N);
+        double each = (now() - start) / ((double)PASSES * N);
         if (each < best) best = each;
     }
     printf("NS=%.4f SINK=%g\\n", best * 1e9, (double)ys[7]);
