@@ -20,7 +20,7 @@ from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
 from hpcagent_bench.frameworks.benchmark import Benchmark
-from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, PipelineContext
+from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME
 from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.pipeline import judge_endpoints
@@ -43,7 +43,6 @@ from alloy.records import RECORD, dumped_json
 from alloy.report import Mode
 
 __all__ = [
-    "DEVICES",
     "DIALECT",
     "Deliver",
     "EPISODE_RECORD",
@@ -76,8 +75,6 @@ PROFILE_REPS = 5
 FAST_SIZE = Preset.M
 #: Task language -> the CPF dialect the library is rendered in.
 DIALECT = {Language.C: "c", Language.CPP: "c++"}
-#: A target -> the device its pipeline targets.
-DEVICES = {Target.CPU: dace.dtypes.DeviceType.CPU, Target.GPU: dace.dtypes.DeviceType.GPU}
 
 #: Builds a library submission from a rendered unit and what it links against.
 Deliver = Callable[[str, Sequence[str]], Submission]
@@ -146,15 +143,16 @@ def pipeline_sdfg(
     target: Target = Target.CPU,
     offloaded: Callable[[dace.SDFG], None] | None = None,
 ) -> dace.SDFG:
-    """The kernel's SDFG at ``precision`` after the bench's DaCe pipeline ``pipeline`` for ``target``; ``offloaded``
-    runs on a GPU program between its offload and its tiling (``PipelineContext.offloaded``)."""
+    """The kernel's SDFG at ``precision`` after the bench's DaCe pipeline ``pipeline`` for ``target``, run with the
+    symbol facts the bench's own flavor passes it; ``offloaded`` runs on a GPU program between its offload and its
+    tiling (``PipelineContext.offloaded``)."""
     framework = framework_class(f"dace_{target.text}")(f"dace_{target.text}")
     framework.set_datatype(precision.value)
     program, _ = framework.implementations(Benchmark(spec.short_name))[0]
     if not isinstance(program, DaceProgram):
         raise TypeError(f"{spec.short_name}: the dace port is not a @dace.program")
     sdfg = program.to_sdfg(simplify=False)
-    PIPELINES_BY_NAME[pipeline].transform(sdfg, PipelineContext(device=DEVICES[target], offloaded=offloaded))
+    PIPELINES_BY_NAME[pipeline].transform(sdfg, framework.build_context(spec, offloaded))
     return sdfg
 
 
