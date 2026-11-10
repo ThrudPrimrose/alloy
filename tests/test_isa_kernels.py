@@ -486,3 +486,11 @@ def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys):
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert {r["name"] for r in records} >= {"strict", "relaxed", "fast", "libm (scalar)"}
     assert all(r["function"] == "exp" and r["ns"] > 0 for r in records)
+
+
+def test_the_advice_for_pow_says_its_recommended_kernel_steps_down_under_reassociation():
+    sut = kernel_summary("avx2", "f64", "pow", "relaxed")
+
+    assert "take relaxed where the inputs hold its contract" in sut
+    assert "under reassociation relaxed does not compile: take the next rung down" in sut
+    assert "does not compile" not in kernel_summary("avx2", "f64", "exp", "relaxed")

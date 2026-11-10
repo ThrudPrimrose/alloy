@@ -137,7 +137,9 @@ def render_kernels() -> str:
         "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
         "`relaxed` `pow` carries its logarithm as a double word and refuses the same way: take the next rung down "
         "there. The other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
-        "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input.",
+        "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input. A rung "
+        "below `relaxed` misses a bounded function's bound by up to its absolute error: its `cos(0)` may be "
+        "0.99999999998 or 1.00000000000007, so clamp before `acos` or `sqrt(1 - c*c)`.",
         "",
         "Inline them only when the loop has other work: the gain over a library call is the call and its spills. "
         "It is not universal: `atan` and AVX2 `sinh` lose to the libraries, and SVML `exp` and `pow` are about even. "
