@@ -46,9 +46,8 @@ jobs:
 
       - name: gcc
         run: |
-          # A hosted runner's resolver drops out for seconds at a time ("Temporary failure resolving"); apt gives up
-          # on the first miss unless told to retry.
-          echo 'Acquire::Retries "8";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          # The runner's mirror list names Canonical hosts only; when their DNS is down no job installs anything.
+          echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           # OpenBLAS + LAPACKE: the BLAS/LAPACK library-node headers a scope includes (OMEN's Norb-sized products)
           sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev libsleef-dev gcc-aarch64-linux-gnu
@@ -125,9 +124,8 @@ jobs:
           sudo sysctl -w kernel.perf_event_paranoid=1
       - name: gcc
         run: |
-          # A hosted runner's resolver drops out for seconds at a time ("Temporary failure resolving"); apt gives up
-          # on the first miss unless told to retry.
-          echo 'Acquire::Retries "8";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          # The runner's mirror list names Canonical hosts only; when their DNS is down no job installs anything.
+          echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
