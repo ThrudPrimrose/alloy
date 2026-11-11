@@ -105,12 +105,13 @@ class EpisodeScope:
 @dataclass(slots=True, frozen=True, config=RECORD)
 class Episode:
     """One episode of an Alloy flavor: its mode (``profile``, ``speculative`` or ``none``), kernel, stage
-    seconds and every scope's delivered build."""
+    seconds, the number of stub timings it took and every scope's delivered build."""
 
     schema: int
     mode: str
     kernel: str
     seconds: EpisodeSeconds
+    stubs: int
     scopes: tuple[EpisodeScope, ...]
 
 
@@ -118,22 +119,28 @@ def record_episode(
     mode: str,
     task: Task,
     started: float,
+    submission: Submission,
     generate: float = 0.0,
     time_stubs: float = 0.0,
     score: float = 0.0,
+    stubs: int = 0,
     references: dict[str, Build] | None = None,
     delivered: dict[str, Build] | None = None,
 ) -> None:
-    """Write the episode's :class:`Episode` to :data:`EPISODE_RECORD` in the working folder; ``started`` is the
-    episode's ``time.monotonic()`` start, ``delivered`` the build delivered per scope of ``references``."""
+    """Write the episode's :class:`Episode` to :data:`EPISODE_RECORD` beside ``submission``'s library (the episode's
+    folder); ``started`` is the episode's ``time.monotonic()`` start, ``stubs`` the stub timings it took,
+    ``delivered`` the build delivered per scope of ``references``."""
     refs, picks = references or {}, delivered or {}
     scopes = tuple(
         EpisodeScope(symbol, build.name, picks[symbol].name, picks[symbol].candidate.note)
         for symbol, build in refs.items()
     )
     seconds = EpisodeSeconds(generate, time_stubs, score, time.monotonic() - started)
-    episode = Episode(1, mode, task.kernel, seconds, scopes)
-    (pathlib.Path.cwd() / EPISODE_RECORD).write_text(dumped_json(episode))
+    episode = Episode(1, mode, task.kernel, seconds, stubs, scopes)
+    assert submission.library is not None, "an Alloy flavor delivers a library"
+    library = pathlib.Path(submission.library)
+    folder = library if library.is_dir() else library.parent
+    (folder / EPISODE_RECORD).write_text(dumped_json(episode))
 
 
 def pipeline_sdfg(
@@ -274,6 +281,7 @@ def ranked[B: Named](
         times: dict[str, float] = {}
         for build in [chosen[symbol], *(b for b in candidates.get(symbol, []) if b is not chosen[symbol])]:
             if not affordable():
+                print(f"alloy: {symbol}: time budget spent, later stubs stay untimed", file=sys.stderr, flush=True)
                 return chosen
             try:
                 times[build.name] = time_stub({**chosen, symbol: build}, symbol)
@@ -313,7 +321,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         submission = rendered(task, spec, sdfg, deliver)
-        record_episode(Mode.PROFILE.value, task, started)
+        record_episode(Mode.PROFILE.value, task, started, submission)
         return submission
     out = scratch_folder(spec)
     generating = time.monotonic()
@@ -356,7 +364,18 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     delivered = chosen if correct else references
     # every deliver builds the same .so path, so the returned library is built last
     submission = library(task, spec, linker, delivered, deliver)
-    record_episode(Mode.PROFILE.value, task, started, generate, scoring - ranking, score, references, delivered)
+    record_episode(
+        Mode.PROFILE.value,
+        task,
+        started,
+        submission,
+        generate,
+        scoring - ranking,
+        score,
+        len(stub_costs),
+        references,
+        delivered,
+    )
     return submission
 
 
@@ -367,7 +386,7 @@ def reference(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
     submission = rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
-    record_episode("none", task, started)
+    record_episode("none", task, started, submission)
     return submission
 
 
@@ -384,7 +403,7 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         submission = rendered(task, spec, sdfg, deliver)
-        record_episode(Mode.SPECULATIVE.value, task, started)
+        record_episode(Mode.SPECULATIVE.value, task, started, submission)
         return submission
     out = scratch_folder(spec)
     running = running_sizes(spec, config.current().service.preset)
@@ -403,7 +422,7 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     delivered = chosen if better else references
     # every deliver builds the same .so path, so the returned library is built last
     submission = library(task, spec, linker, delivered, deliver)
-    record_episode(Mode.SPECULATIVE.value, task, started, generate, 0.0, score, references, delivered)
+    record_episode(Mode.SPECULATIVE.value, task, started, submission, generate, 0.0, score, 0, references, delivered)
     return submission
 
 
