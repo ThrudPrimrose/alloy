@@ -67,8 +67,9 @@ def unresolved(obj: pathlib.Path, library: pathlib.Path) -> list[str]:
 
 
 def link_flags(library: pathlib.Path, soname: str) -> list[str]:
-    """Link ``library`` and find it again at load time."""
-    return [f"-L{library.parent}", f"-l{soname}", f"-Wl,-rpath,{library.parent}"]
+    """Link ``library`` and find it again at load time; the rpath is a DT_RUNPATH, which ``LD_LIBRARY_PATH`` beats (a
+    DT_RPATH would load this runtime beside the one the grading process runs on, the second pinned to one core)."""
+    return [f"-L{library.parent}", f"-l{soname}", f"-Wl,-rpath,{library.parent}", "-Wl,--enable-new-dtags"]
 
 
 def resolve(soname: str, compiler_executables: list[str]) -> pathlib.Path:
