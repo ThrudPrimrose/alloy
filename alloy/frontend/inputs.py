@@ -190,7 +190,13 @@ def domain_gap(sdfg: dace.SDFG) -> str:
     ]
     if integers:
         return f"integer argument {integers[0]}"
-    plain = {str(e) for d in sdfg.arrays.values() if not d.transient for e in d.shape}
+    plain = {
+        str(s)
+        for d in sdfg.arrays.values()
+        if not d.transient
+        for e in d.shape
+        for s in dace.symbolic.pystr_to_symbolic(e).free_symbols
+    }
     loose = sorted(str(s) for s in sdfg.free_symbols if str(s) not in plain)
     return f"symbol {loose[0]} is no array extent" if loose else ""
 
@@ -211,7 +217,11 @@ def derived_draw(sdfg: dace.SDFG, iteration: int) -> Draw:
     uniform in [0, 1) at its dtype, seeded by ``iteration``. Only valid for an ``sdfg`` without a :func:`domain_gap`."""
     size = DERIVED_SIZES[iteration % len(DERIVED_SIZES)]
     sizes = {name: size for name in sdfg.arglist() if name in sdfg.free_symbols}
-    numeric: dict[dace.symbol | str, int | float] = {k: v for k, v in sizes.items()}  # noqa: C416 -- widens types
+    # a size symbol specialized to a constant still names array extents
+    constants: dict[dace.symbol | str, int | float] = {
+        k: int(v) for k, v in sdfg.constants.items() if isinstance(v, (int, np.integer))
+    }
+    numeric: dict[dace.symbol | str, int | float] = {**constants, **sizes}
     rng = np.random.default_rng(iteration)
     values: dict[str, Any] = {}
     for name, desc in data_arguments(sdfg).items():

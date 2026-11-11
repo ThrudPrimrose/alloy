@@ -188,6 +188,8 @@ def occupancy(usage: Usage, shape: Shape, dialect: str, arch: str) -> float:
         digits = arch.removeprefix("gfx")
         most = MAX_WAVES.get(f"gfx{digits[:2] if len(digits) >= 4 else digits[:1]}", 8)
         return (usage.waves or 0) / most
+    if arch not in SM_LIMITS:
+        raise ValueError(f"compute capability {arch} has no entry in SM_LIMITS; add its limits from the CUDA guide")
     return cuda_occupancy(usage, shape[0] * shape[1] * shape[2], SM_LIMITS[arch])
 
 
@@ -270,7 +272,8 @@ def identified(pipeline: Pipeline, dialect: str) -> dict[int, DeviceMap]:
             if threads in place and kernel is not None:
                 i, entry = place[threads]
                 default = defaults[i] if i < len(defaults) else (0, 0, 0)
-                found[ordinal] = DeviceMap(entry, kernel.group(1), (default[0], default[1], default[2]))
+                d = (*default, 1, 1)[:3]  # a block size may name fewer than three dimensions
+                found[ordinal] = DeviceMap(entry, kernel.group(1), (d[0], d[1], d[2]))
                 batch += 1
         if batch < len(PROBE_THREADS):
             return found

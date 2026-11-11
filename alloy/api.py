@@ -147,11 +147,11 @@ def generate(
         sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
         predicted = predict.predictions(reports, sizes, known is not None)
         winners = predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs)
-        picked = {symbol: b.name for symbol, b in winners.items()}
     elif verification is not None and manifest is not None and time_locally:
         timings = timing.time_program(linker, reports, verification, manifest)
         winners = timed_winners(reports, timings)
     if winners:
+        picked = {symbol: b.name for symbol, b in winners.items()}
         best = linker.write_best(winners)
         commands = linker.commands(best)
     verdicts = verification.verdicts if verification else {}

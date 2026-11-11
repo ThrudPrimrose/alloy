@@ -43,6 +43,8 @@ def largest_cache_bytes() -> int:
             key = ((index / "level").read_text().strip(), (index / "shared_cpu_list").read_text().strip())
             sizes[key] = int(size[:-1]) * 1024
     if not sizes:
+        if (l3 := os.sysconf("SC_LEVEL3_CACHE_SIZE")) > 0:  # containers and some aarch64 VMs hide sysfs cache
+            return l3
         raise RuntimeError("/sys/devices/system/cpu/cpu*/cache lists no cache")
     top = max(level for level, unused in sizes)
     return sum(size for (level, unused), size in sizes.items() if level == top)
@@ -198,3 +200,10 @@ def max_frequency_hz() -> float:
     if not mhz:
         raise RuntimeError("neither cpufreq nor /proc/cpuinfo gives a CPU clock")
     return max(float(m) for m in mhz) * 1e6
+
+
+def pin_worker(cpus: set[int]) -> None:
+    """Confine a worker process to ``cpus``; an empty set (unreadable topology) leaves it unpinned. Lives here, not in
+    the route module, because a spawned worker imports the module that defines its initializer."""
+    if cpus:
+        os.sched_setaffinity(0, cpus)

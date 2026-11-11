@@ -69,3 +69,23 @@ def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap():
     sut = inputs.domain_gap(sdfg)
 
     assert "K" in sut
+
+
+def test_a_size_padded_by_one_is_still_an_array_extent():
+    sdfg = dace.SDFG("padded")
+    sdfg.add_array("a", ["N + 1"], dace.float64)
+
+    sut = inputs.domain_gap(sdfg)
+
+    assert sut == ""
+
+
+def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant():
+    sdfg = dace.SDFG("specialized")
+    sdfg.add_array("a", ["N"], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    sdfg.add_constant("N", 10)
+
+    sut = inputs.derived_draw(sdfg, 0)
+
+    assert sut.values["a"].shape == (10,)

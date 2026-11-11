@@ -191,6 +191,8 @@ def check_consistency(m: Matrix) -> None:
     ):
         if value not in known:
             raise ValueError(f"{m.path}: defaults.{kind} {value!r} is not declared")
+    if empty := sorted(k for k, values in m.knobs.items() if not values):
+        raise ValueError(f"{m.path}: codegen knob {empty[0]} lists no values")
     if not any("cpp" in comp.executables for comp in m.compilers.values()):
         raise ValueError(f"{m.path}: no compiler spells cpp, and the scope timers build as C++")
     for name, comp in m.compilers.items():

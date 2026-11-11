@@ -178,7 +178,17 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
     if not matrix.compilers[candidate.compiler].remarks:
         remarks = replace(remarks, vectorized=UNKNOWN_LOOPS)
     if proc.returncode != 0:
-        return Build(candidate, name, params, source, None, flags, "", remarks, error=proc.stderr.strip()[-2000:])
+        return Build(
+            candidate,
+            name,
+            params,
+            source,
+            None,
+            flags,
+            "",
+            remarks,
+            error=(proc.stderr.strip() or proc.stdout.strip() or f"exit status {proc.returncode}")[-2000:],
+        )
     if missing := runtime.unresolved(obj, runtime.default_library(matrix)):
         error = f"the {matrix.defaults.openmp_runtime} runtime does not export {', '.join(missing)}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
