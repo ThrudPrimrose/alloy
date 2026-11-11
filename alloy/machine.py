@@ -70,10 +70,6 @@ def available_memory() -> int:
 TIMING_COPIES = 8
 
 
-#: Data segment of a child before any work: DaCe, NumPy and their threaded libraries.
-CHILD_BASELINE_BYTES = 1 << 30
-
-
 def timing_memory_cap() -> int:
     """Bytes one timed program may touch: its copies alive at once, and a verifying child's share of memory."""
     return min(available_memory() // TIMING_COPIES, available_memory() // (len(core_slots()) * 3))
@@ -89,11 +85,21 @@ def openmp_stack_bytes() -> int:
     return int(text[:-1]) * units[text[-1]] if text[-1] in units else int(text) << 10
 
 
+def data_segment_bytes() -> int:
+    """This process's data segment now (``VmData``): every private writable mapping ``RLIMIT_DATA`` counts, the
+    address space a runtime only reserved included (a GPU runtime's reservation can reach tens of GiB)."""
+    for line in pathlib.Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmData:"):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError("/proc/self/status has no VmData")
+
+
 def limit_memory(share: float, threads: int) -> None:
-    """Cap this process and its children (``RLIMIT_DATA``) at ``share`` of the available memory plus the stacks of
-    ``threads`` OpenMP workers, so an oversized run fails instead of exhausting the machine. Never raises a cap."""
+    """Cap this process and its children (``RLIMIT_DATA``) at what it holds now plus ``share`` of the available
+    memory and the stacks of ``threads`` OpenMP workers, so an oversized run fails instead of exhausting the machine.
+    Never raises a cap."""
     soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
-    limit = int(share * available_memory()) + CHILD_BASELINE_BYTES + threads * openmp_stack_bytes()
+    limit = data_segment_bytes() + int(share * available_memory()) + threads * openmp_stack_bytes()
     caps = [cap for cap in (soft, hard) if cap != resource.RLIM_INFINITY]
     limit = min([limit, *caps])
     resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))

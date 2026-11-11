@@ -1,6 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import dataclasses
 import pathlib
+import subprocess
+import sys
 
 import dace
 import numpy as np
@@ -720,3 +722,21 @@ def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path):
 def test_a_child_starts_under_any_data_limit_of_its_parent():
     """``limit_memory`` runs first in every child: with no limit set at all it must still set one."""
     assert verify.in_child(int, (), machine.core_slots()[0], 1.0) == 0
+
+
+#: A child that already holds more address space than its share: a GPU runtime's reservation, made here by hand.
+RESERVED_THEN_CAPPED = """
+import mmap, sys
+import numpy as np
+from alloy import machine
+held = mmap.mmap(-1, 4 << 30, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)  # private: VmData counts it
+machine.limit_memory((256 << 20) / machine.available_memory(), 1)
+np.ones(16 << 20)  # 128 MiB, inside the share
+"""
+
+
+def test_the_cap_counts_from_what_the_child_already_holds():
+    """A child whose data segment already exceeds its share (4 GiB reserved, never touched) still allocates within
+    the share: a cap at the share alone made every later ``dlopen`` fail to map its data segment."""
+    done = subprocess.run([sys.executable, "-c", RESERVED_THEN_CAPPED], capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
