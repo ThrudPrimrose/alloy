@@ -20,7 +20,12 @@ from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
 from hpcagent_bench.frameworks.benchmark import Benchmark
-from hpcagent_bench.frameworks.dace_framework import PIPELINES_BY_NAME, enforce_gpu_residency, pool_gpu_transients
+from hpcagent_bench.frameworks.dace_framework import (
+    PIPELINES_BY_NAME,
+    DaceFramework,
+    enforce_gpu_residency,
+    pool_gpu_transients,
+)
 from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.pipeline import judge_endpoints
@@ -154,6 +159,8 @@ def pipeline_sdfg(
     symbol facts the bench's own flavor passes it; ``offloaded`` runs on a GPU program between its offload and its
     tiling (``PipelineContext.offloaded``)."""
     framework = framework_class(f"dace_{target.text}")(f"dace_{target.text}")
+    if not isinstance(framework, DaceFramework):
+        raise TypeError(f"dace_{target.text} is not a DaCe framework")
     framework.set_datatype(precision.value)
     program, _ = framework.implementations(Benchmark(spec.short_name))[0]
     if not isinstance(program, DaceProgram):
