@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import dataclasses
+import os
 import pathlib
 import subprocess
 import sys
@@ -740,3 +741,41 @@ def test_the_cap_counts_from_what_the_child_already_holds():
     the share: a cap at the share alone made every later ``dlopen`` fail to map its data segment."""
     done = subprocess.run([sys.executable, "-c", RESERVED_THEN_CAPPED], capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr
+
+
+#: The judge image's case: numpy's OpenBLAS starts the OpenMP runtime in the fork server, before any child exists.
+#: Run in a fresh interpreter, whose fork server first imports ``started_runtime`` (written to the test's folder).
+STARTED_IN_THE_FORK_SERVER = """
+import sys
+from alloy import machine
+from alloy.evaluate import verify
+import started_runtime
+verify.FORK_SERVER_PRELOAD = (*verify.FORK_SERVER_PRELOAD, "started_runtime")
+print(*verify.in_child(started_runtime.team, (), machine.core_slots()[0], 1.0, threads=3))
+"""
+
+STARTED_RUNTIME = """import ctypes, os
+RUNTIME = {library!r}
+ctypes.CDLL(RUNTIME, mode=os.RTLD_GLOBAL).omp_get_max_threads()  # starts it, as OpenBLAS does at import
+
+
+def team():
+    lib = ctypes.CDLL(RUNTIME, mode=os.RTLD_NOLOAD)
+    return lib.omp_get_max_threads(), lib.omp_get_proc_bind()
+"""
+
+
+def test_a_child_gets_its_team_from_a_runtime_the_fork_server_already_started(tmp_path):
+    """``OMP_NUM_THREADS`` set in the child reaches no runtime started before it; the child still runs on its own
+    team, and the runtime binds no thread, so a thread stays on the cores of its child."""
+    executables = [exe for comp in MATRIX.compilers.values() for exe in comp.executables.values()]
+    library = runtime.resolve(MATRIX.openmp_runtimes[MATRIX.defaults.openmp_runtime], executables)
+    (tmp_path / "started_runtime.py").write_text(STARTED_RUNTIME.format(library=str(library)))
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(tmp_path), os.environ.get("PYTHONPATH")]))}
+
+    done = subprocess.run(
+        [sys.executable, "-c", STARTED_IN_THE_FORK_SERVER], capture_output=True, text=True, env=env, check=False
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == ["3", "0"]  # omp_proc_bind_false

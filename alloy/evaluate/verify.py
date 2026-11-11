@@ -5,12 +5,14 @@ candidates run. Every other scope keeps its reference archive, and the outputs a
 program on the same inputs. A child repeats its call, and a program with a reduction runs at several team sizes: a
 reduction that loses updates shows neither on a cold team nor at every size."""
 
+import ctypes
 import dataclasses
 import itertools
 import multiprocessing
 import os
 import pathlib
 import queue
+import re
 import time
 import traceback
 from collections.abc import Callable, Iterable
@@ -96,13 +98,27 @@ def openmp_env(cpus: tuple[int, ...], threads: int) -> dict[str, str]:
     return {"OMP_NUM_THREADS": str(threads), "OMP_PROC_BIND": "close", "OMP_PLACES": places}
 
 
+#: The file of an OpenMP runtime as ``/proc/self/maps`` names it (wheels bundle ``libgomp-<hash>.so.1.0.0``).
+OPENMP_RUNTIME_FILE = re.compile(r"/lib(?:gomp|omp|iomp5|nvomp)(?:-[0-9a-f]+)?\.so[.0-9]*$")
+
+
+def set_team(threads: int) -> None:
+    """``threads`` as the team of every OpenMP runtime this process already maps: such a runtime read its settings
+    in the fork server, so ``OMP_NUM_THREADS`` reaches only a runtime loaded later."""
+    with open("/proc/self/maps") as maps:
+        mapped = {line.split()[-1] for line in maps if OPENMP_RUNTIME_FILE.search(line.rstrip())}
+    for path in mapped:
+        ctypes.CDLL(path, mode=os.RTLD_NOLOAD).omp_set_num_threads(threads)
+
+
 def child_main(
     target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], threads: int, share: float, conn: Any
 ) -> None:
-    # The fork server froze the environment it started with and loads no OpenMP runtime, so the runtime the program
-    # library brings in reads this child's settings.
+    # A runtime the program library brings in reads this child's settings; one the fork server's numpy already
+    # started read the fork server's, and takes the team from set_team.
     os.sched_setaffinity(0, cpus)
     os.environ.update(openmp_env(cpus, threads))
+    set_team(threads)
     try:
         machine.limit_memory(share, threads)
         conn.send(target(*args))
@@ -144,11 +160,15 @@ def bound_outputs(outputs: tuple[str, ...], args: dict[str, Any], returned: Any,
     return result
 
 
+#: The modules the fork server imports before its first child (a failed import is silently skipped there).
+FORK_SERVER_PRELOAD = ("alloy.evaluate.fork_server",)
+
+
 def child_context() -> Any:
     """Children come from a fork server that imported dace once, never from this (threaded) process: a fork of a
     threaded parent can deadlock the child."""
     ctx = multiprocessing.get_context("forkserver")
-    ctx.set_forkserver_preload(["dace", "numpy"])
+    ctx.set_forkserver_preload(list(FORK_SERVER_PRELOAD))
     return ctx
 
 
