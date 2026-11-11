@@ -80,6 +80,23 @@ def test_a_constant_innermost_extent_is_a_known_trip_count_and_a_symbolic_one_is
     assert prune.facts(only_scope(axpy)).trip_counts == (None,)
 
 
+def test_a_map_around_a_nested_sdfg_counts_the_nested_innermost_map_not_itself():
+    inner = dace.SDFG("inner")
+    inner.add_array("x", [64], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "one", {"j": "0:64"}, {}, "o = 1.0", {"o": dace.Memlet("x[j]")}, external_edges=True
+    )
+    sdfg = dace.SDFG("outer")
+    sdfg.add_array("x", [N, 64], dace.float64)
+    state = sdfg.add_state()
+    entry, leave = state.add_map("rows", {"i": "0:N"})
+    nested = state.add_nested_sdfg(inner, set(), {"x"})
+    state.add_nedge(entry, nested, dace.Memlet())
+    state.add_memlet_path(nested, leave, state.add_write("x"), src_conn="x", memlet=dace.Memlet("x[i, 0:64]"))
+
+    assert prune.trip_counts(sdfg) == (64,)
+
+
 def test_when_no_compiler_vectorizes_every_vector_cell_but_explicit_sve_loops_is_pruned():
     sut = pruned_reasons(only_scope(axpy), vectorized=0)
 

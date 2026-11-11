@@ -13,6 +13,7 @@ from http import HTTPMethod, HTTPStatus
 
 from hpcagent_bench import config
 from hpcagent_bench.harness.judge_wire import JudgeAnswer, JudgeError
+from hpcagent_bench.harness.native_call import grading_cpus
 from hpcagent_bench.harness.routes import Judge, RouteRequest, route
 from hpcagent_bench.harness.sandbox import agent_root
 from hpcagent_bench.harness.service import JUDGE_FAULT_CAUSE
@@ -24,6 +25,7 @@ from hpcagent_bench.support.bindings.contract import graded_datatype
 from alloy.api import NothingToGenerate
 from alloy.hb_plugin.adapter import running_sizes
 from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
+from alloy.machine import pin_worker
 from alloy.report import Mode
 
 ROUTE = "alloy"
@@ -83,7 +85,10 @@ def serve(judge: Judge, request: RouteRequest) -> None:
         folder = tempfile.mkdtemp(prefix="run", dir=parent)
         call = CodegenRequest(kernel=kernel, mode=Mode(spelled), precision=precision, folder=folder, running=running)
         spawn = multiprocessing.get_context("spawn")
-        with concurrent.futures.ProcessPoolExecutor(1, mp_context=spawn) as pool:
+        cpus = grading_cpus(slot.index)  # the slot's cores only, as a graded child; empty = unreadable, unpinned
+        with concurrent.futures.ProcessPoolExecutor(
+            1, mp_context=spawn, initializer=pin_worker, initargs=(cpus,)
+        ) as pool:
             try:
                 with openmp_environment("alloy"):  # the worker starts, in libomp's context, at the first submit
                     future = pool.submit(codegen, call)

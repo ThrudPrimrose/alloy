@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import ctypes
 import dataclasses
+import os
 import shutil
 import subprocess
 
@@ -94,6 +95,20 @@ def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path
     as_c |= {k: v.ctypes.data_as(ctypes.c_void_p) for k, v in arrays.items()}
     getattr(library, program.sdfg.name)(*(as_c[name] for name in sut.arguments))
     np.testing.assert_allclose(arrays["out"], arrays["a"].sum(axis=1), rtol=1e-12)
+
+
+def test_an_edited_best_makefile_rebuilds_every_archive_and_the_library(tmp_path):
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    winners = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
+    Linker(program, MATRIX, tmp_path).write_best(winners)
+    best = tmp_path / "best"
+    subprocess.run(["make", "-C", str(best)], check=True, capture_output=True)
+    later = (best / "Makefile").stat().st_mtime + 10
+    os.utime(best / "Makefile", (later, later))
+
+    sut = subprocess.run(["make", "-C", str(best), "-n"], check=True, capture_output=True, text=True).stdout
+
+    assert all(f"{symbol}.o" in sut for symbol in winners) and f"lib{program.sdfg.name}.so" in sut
 
 
 def test_the_timer_of_a_complex_scope_declares_its_entry_as_dace_does(tmp_path):

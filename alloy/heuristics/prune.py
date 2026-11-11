@@ -81,12 +81,13 @@ def extent(begin: object, end: object, step: object) -> int | None:
 
 
 def innermost_entries(state: dace.SDFGState) -> list[nodes.MapEntry]:
-    """The maps of ``state`` holding no other map."""
+    """The maps of ``state`` holding no other map nor a nested SDFG (whose own maps are innermost)."""
     children = state.scope_children()
     return [
         node
         for node in state.nodes()
-        if isinstance(node, nodes.MapEntry) and not any(isinstance(n, nodes.MapEntry) for n in children[node])
+        if isinstance(node, nodes.MapEntry)
+        and not any(isinstance(n, nodes.MapEntry | nodes.NestedSDFG) for n in children[node])
     ]
 
 
@@ -98,7 +99,7 @@ def smallest_element(sdfg: dace.SDFG) -> int:
 def trip_counts(sdfg: dace.SDFG) -> tuple[int | None, ...]:
     """The vectorizable trip count of every innermost map (its last dimension); a sequential loop counts as unknown."""
     counts: list[int | None] = []
-    for block in sdfg.all_control_flow_blocks():
+    for block in sdfg.all_control_flow_blocks(recursive=True):
         if isinstance(block, LoopRegion):
             counts.append(None)
         if isinstance(block, dace.SDFGState):

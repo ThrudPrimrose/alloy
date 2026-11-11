@@ -1,7 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Alloy's optimizer flavors: they tune a DaCe pipeline's SDFG and deliver the library the judge grades."""
 
-from hpcagent_agent.tools import http_json
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import FlavorOptimizer
 from hpcagent_bench.harness.task import Task
@@ -48,7 +47,9 @@ class AlloyToolStub(FlavorOptimizer):
     __slots__ = ()
 
     def tune(self, task: Task, pipeline: str) -> Submission:
-        answer = http_json.post_judge("/alloy/speculative", {"kernel": task.kernel})
+        from alloy.hb_plugin.tools.alloy import poster
+
+        answer = poster("speculative")({"kernel": task.kernel})
         if "error" in answer:
             raise RuntimeError(f"alloy_speculative: {answer['error']}")
         result = answer["result"]

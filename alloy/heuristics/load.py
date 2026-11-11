@@ -74,7 +74,7 @@ def of_map(entry: nodes.MapEntry, state: dace.SDFGState, children: dict[Any, lis
     if entry.map.schedule == ScheduleType.CPU_Persistent:
         return Load(regions=float(where.forks)) + body
     whole = body.repeated(count)
-    return Load(1.0, whole.elements, whole.elements / min(where.cores, count)) if shares else whole
+    return Load(1.0, whole.elements, whole.elements / min(where.cores, count)) if shares and count > 0 else whole
 
 
 def of_library(node: nodes.LibraryNode, state: dace.SDFGState, where: Where) -> Load:

@@ -95,7 +95,7 @@ def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_se
 
     assert not isinstance(sut, str)
     threads, places = sut[0]["out"][:2]
-    assert threads == places >= 2
+    assert threads == places == len(machine.core_slots()[0])  # the slot's team, not the parent's 1
 
 
 def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
@@ -270,6 +270,14 @@ def test_exact_tells_a_signed_zero_apart_but_not_two_nans():
     assert verify.compare("exact", plus, minus, 1, "float64").status == "fail"
     assert verify.compare("exact", plus, plus.copy(), 1, "float64").status == "exact"
     assert verify.compare("exact", np.array([np.nan]), np.array([-np.nan]), 1, "float64").status == "exact"
+
+
+def test_exact_tells_a_nan_apart_from_a_zero():
+    assert verify.compare("exact", np.array([np.nan]), np.array([0.0]), 1, "float64").status == "fail"
+    assert (
+        verify.compare("exact", np.array([0.0], np.float32), np.array([np.nan], np.float32), 1, "float32").status
+        == "fail"
+    )
 
 
 def test_verification_refuses_an_empty_draw_list():

@@ -20,6 +20,7 @@ from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle
 from hpcagent_bench.config import SubmitFeedback
 from hpcagent_bench.harness import tools
 from hpcagent_bench.harness.envelope import Submission
+from hpcagent_bench.harness.judge_scheduler import DeviceSlot
 from hpcagent_bench.harness.judge_wire import GradeAnswer, JudgeAnswer
 from hpcagent_bench.harness.routes import ROUTES, RouteRequest
 from hpcagent_bench.harness.sandbox import AGENT_FOLDERS_LOG, AgentFolderLine
@@ -40,8 +41,8 @@ class FakeJudge:
         self.code, self.answer = code, payload.to_json()
 
     @contextlib.contextmanager
-    def device_slot(self) -> Iterator[object]:
-        yield object()
+    def device_slot(self) -> Iterator[DeviceSlot]:
+        yield DeviceSlot("cpu", 0)
 
 
 def call(mode: str, shared: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> FakeJudge:

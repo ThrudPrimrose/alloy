@@ -175,13 +175,17 @@ def pipeline_sdfg(
 
 def verified(rep: ScopeReport, verdicts: dict[str, Verdict]) -> list[Build]:
     """``rep``'s builds other than its reference that verified, in Alloy's build order."""
-    return [build for build in rep.builds[1:] if build.name in verdicts and verdicts[build.name].ok]
+    return [
+        build
+        for build in rep.builds[1:]
+        if build.name in verdicts and verdicts[build.name].ok and not build.duplicate_of
+    ]
 
 
 def fast_size(token: str) -> Preset | None:
-    """The size a stub is timed at on a run of preset ``token``: :data:`FAST_SIZE` when the run is larger, else None."""
-    preset = Preset.parse(token.partition("+")[0])
-    return FAST_SIZE if preset.is_rung and RUNGS.index(FAST_SIZE) < RUNGS.index(preset) else None
+    """The size a stub is timed at on a run of preset ``token``: :data:`FAST_SIZE` when the run (a fuzzed one's
+    anchor) is larger, else None."""
+    return FAST_SIZE if RUNGS.index(FAST_SIZE) < RUNGS.index(parse_preset(token).anchor) else None
 
 
 def running_sizes(spec: BenchSpec, token: str) -> dict[str, int]:
@@ -422,9 +426,12 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     chosen = {**references, **(result.winners or {})}
     judge = judge_client()
     scoring = time.monotonic()
-    pick = library(task, spec, linker, chosen, deliver)
-    baseline = library(task, spec, linker, references, deliver)
-    better = chosen != references and faster_correct(judge, pick, baseline, task.kernel)
+    better = chosen != references and faster_correct(
+        judge,
+        lambda: library(task, spec, linker, chosen, deliver),
+        lambda: library(task, spec, linker, references, deliver),
+        task.kernel,
+    )
     score = time.monotonic() - scoring
     delivered = chosen if better else references
     # every deliver builds the same .so path, so the returned library is built last
@@ -433,11 +440,14 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     return submission
 
 
-def faster_correct(judge: JudgeClient, pick: Submission, baseline: Submission, kernel: str) -> bool:
+def faster_correct(
+    judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], Submission], kernel: str
+) -> bool:
     """Whether ``pick`` grades correct and no slower than ``baseline``; a judge that does not answer keeps the
-    references, the library that is safe without a grade."""
+    references, the library that is safe without a grade. Each is built just before its grade: both share one .so."""
     try:
-        graded, reference = judge.score(pick, kernel), judge.score(baseline, kernel)
+        graded = judge.score(pick(), kernel)
+        reference = judge.score(baseline(), kernel)
     except (OSError, RuntimeError, ValueError):
         return False
     return graded.correct and (not reference.correct or graded.speedup >= reference.speedup)

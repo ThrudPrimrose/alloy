@@ -247,7 +247,7 @@ def canonical_bytes(values: np.ndarray) -> bytes:
     """The bytes of ``values`` with every NaN one pattern, so -0.0 differs from 0.0 and NaN payloads do not count."""
     if not np.issubdtype(values.dtype, np.inexact):
         return values.tobytes()
-    return np.where(np.isnan(values), 0, values).tobytes()
+    return np.where(np.isnan(values), values.dtype.type(np.nan), values).tobytes()
 
 
 def compare(

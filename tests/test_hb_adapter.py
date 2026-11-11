@@ -37,6 +37,7 @@ from alloy.hb_plugin.adapter import (
 @dataclasses.dataclass(frozen=True, slots=True)
 class Fake:
     name: str
+    duplicate_of: str = ""
 
 
 def always() -> bool:
@@ -105,22 +106,16 @@ def test_a_profile_without_a_time_is_refused() -> None:
         stub_time(answer)
 
 
-@pytest.mark.parametrize(
-    ("token", "size"), [("XL", Preset.M), ("L+fuzz", Preset.M), ("M", None), ("S", None), ("fuzzed", None)]
-)
+#: A bare fuzzed run, seeded or not, anchors at XL.
+FUZZED_XL = (("fuzzed", Preset.M), ("fuzzed:42", Preset.M))
+
+
+FAST_SIZES = [("XL", Preset.M), ("L+fuzz", Preset.M), ("M", None), ("S", None), *FUZZED_XL, ("M+fuzz:7", None)]
+
+
+@pytest.mark.parametrize(("token", "size"), FAST_SIZES)
 def test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token: str, size: Preset | None) -> None:
     assert fast_size(token) is size
-
-
-if __name__ == "__main__":
-    test_each_scope_keeps_its_fastest_stub_over_the_best_prefix()
-    test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail()
-    test_the_ranking_stops_when_the_budget_does()
-    test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count()
-    test_a_gpu_stub_time_is_the_device_time_per_repetition()
-    test_a_profile_without_a_time_is_refused()
-    for token, size in (("XL", Preset.M), ("L+fuzz", Preset.M), ("M", None), ("S", None), ("fuzzed", None)):
-        test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token, size)
 
 
 def as_source(code: str, link: Sequence[str]) -> Submission:
@@ -163,18 +158,30 @@ PICK = Submission(language=Language.C, source="pick")
 BASE = Submission(language=Language.C, source="base")
 
 
-@pytest.mark.parametrize(
-    ("scores", "expected"),
-    [
-        ({"pick": (True, 2.0), "base": (True, 1.0)}, True),
-        ({"pick": (True, 0.5), "base": (True, 1.0)}, False),
-        ({"pick": (False, 9.0), "base": (True, 1.0)}, False),
-        ({"pick": None, "base": (True, 1.0)}, False),
-        ({"pick": (True, 0.5), "base": (False, 1.0)}, True),
-    ],
-)
+PICK_CASES = [
+    ({"pick": (True, 2.0), "base": (True, 1.0)}, True),
+    ({"pick": (True, 0.5), "base": (True, 1.0)}, False),
+    ({"pick": (False, 9.0), "base": (True, 1.0)}, False),
+    ({"pick": None, "base": (True, 1.0)}, False),
+    ({"pick": (True, 0.5), "base": (False, 1.0)}, True),
+]
+
+
+@pytest.mark.parametrize(("scores", "expected"), PICK_CASES)
 def test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected) -> None:
-    assert faster_correct(Judge(scores), PICK, BASE, "k") is expected  # type: ignore[arg-type]
+    assert faster_correct(Judge(scores), lambda: PICK, lambda: BASE, "k") is expected  # type: ignore[arg-type]
+
+
+def test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share() -> None:
+    shared = Submission(language=Language.C, source="unbuilt")
+
+    def build(source: str) -> Submission:
+        shared.source = source
+        return shared
+
+    judge = Judge({"pick": (True, 2.0), "base": (True, 1.0)})
+
+    assert faster_correct(judge, lambda: build("pick"), lambda: build("base"), "k")  # type: ignore[arg-type]
 
 
 def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
@@ -186,8 +193,57 @@ def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
     assert [b.name for b in sut] == ["good"]
 
 
+def test_a_duplicate_build_is_not_offered_to_the_stub_ranking() -> None:
+    builds = [Fake("first"), Fake("again", duplicate_of="first")]
+    rep = dataclasses.make_dataclass("Rep", [("builds", list)])([Fake("ref"), *builds])
+
+    sut = verified(rep, {"first": Verdict("pass"), "again": Verdict("pass")})  # type: ignore[arg-type]
+
+    assert [b.name for b in sut] == ["first"]
+
+
 def test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor() -> None:
     spec = cast(BenchSpec, SimpleNamespace(parameters={"S": {"N": 64, "dx": 0.5}, "L": {"N": 4096}}))
 
     assert adapter.running_sizes(spec, "S") == {"N": 64}, "a float parameter is no size"
     assert adapter.running_sizes(spec, "L+fuzz") == {"N": 4096}
+
+
+def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(monkeypatch) -> None:
+    from hpcagent_agent.tools import http_json
+
+    from alloy.hb_plugin.tools.alloy import SWEEP_TIMEOUT_S
+    from alloy.hb_plugin.tuners import AlloyToolStub
+
+    timeouts: list[float] = []
+
+    def call_json(url: str, data: bytes, timeout: float) -> dict[str, object]:
+        timeouts.append(timeout)
+        return {"result": {"library": "lib.so", "workspace_bytes": "0"}}
+
+    monkeypatch.setattr(http_json, "call_json", call_json)
+
+    AlloyToolStub("alloy_stub").tune(Task("k", SourceMode.ANY, Language.C), "canon_cpu")
+
+    assert timeouts == [SWEEP_TIMEOUT_S]
+
+
+if __name__ == "__main__":
+    test_each_scope_keeps_its_fastest_stub_over_the_best_prefix()
+    test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail()
+    test_the_ranking_stops_when_the_budget_does()
+    test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count()
+    test_a_gpu_stub_time_is_the_device_time_per_repetition()
+    test_a_profile_without_a_time_is_refused()
+    for token, size in FAST_SIZES:
+        test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token, size)
+    test_a_library_whose_entry_keeps_a_transient_asks_for_its_scratch()
+    test_a_library_without_transients_asks_for_no_scratch()
+    for scores, expected in PICK_CASES:
+        test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected)
+    test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share()
+    test_a_failed_verdict_is_not_offered_to_the_stub_ranking()
+    test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
+    test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
+    with pytest.MonkeyPatch.context() as patch:
+        test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch)

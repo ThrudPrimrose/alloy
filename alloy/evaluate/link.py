@@ -223,9 +223,9 @@ class Linker:
         lines = [f"all: {commands.library}", ""]
         for r in plan.scopes:
             compile_line = shlex.join(commands.compile[r.symbol])
-            lines += [f"lib{r.symbol}.a: {r.source}", f"\t{compile_line}", f"\tar rcs $@ {r.symbol}.o", ""]
+            lines += [f"lib{r.symbol}.a: {r.source} Makefile", f"\t{compile_line}", f"\tar rcs $@ {r.symbol}.o", ""]
         link_line = shlex.join(commands.link)
-        return "\n".join([*lines, f"{commands.library}: program.c {archives}", f"\t{link_line}", ""])
+        return "\n".join([*lines, f"{commands.library}: program.c {archives} Makefile", f"\t{link_line}", ""])
 
     def stub(self, selection: dict[str, Build], symbol: str) -> dace.SDFG:
         """The program, same signature, running the scopes before ``symbol`` and ``symbol`` from ``selection``; later
