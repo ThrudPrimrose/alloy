@@ -690,12 +690,15 @@ def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path, te
 
 
 def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path):
+    """The reference sums each row with an ``omp simd`` reduction; the serial sum reassociates it, so it is graded
+    at ``reassoc``."""
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     init, reduce_scope = program.scopes
     body = "for (int64_t j = 0; j < N; ++j) out[i] += a[i * N + j];"
     right = handwritten_archive(tmp_path, reduce_scope, f"for (int64_t i = 0; i < M; ++i) {{ {body} }}")
     good = build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {})
-    hand = dataclasses.replace(good, name="hand", archive=right, object_hash="hand")
+    reassoc = Candidate("c", "gcc", fp_level="reassoc")
+    hand = dataclasses.replace(good, name="hand", candidate=reassoc, archive=right, object_hash="hand")
     reports = [
         ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
         ScopeReport(reduce_scope, (good, hand)),
