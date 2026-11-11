@@ -125,6 +125,42 @@ def test_reverse_reads_disassembly_spellings(name, isa, op, dtype):
     assert (isa, op, dtype) in {(h.isa, h.op, h.dtype) for h in reverse(name, TABLE)}
 
 
+@pytest.mark.parametrize("name", ["svadd_f64_m", "svadd_f64_z", "_mm512_maskz_add_pd", "_mm512_mask3_fmadd_pd"])
+def test_reverse_of_a_policy_variant_is_not_duplicated(name):
+    hits = [(h.isa, h.op, h.dtype) for h in reverse(name, TABLE)]
+
+    assert len(hits) == len(set(hits)) == 1
+
+
+@pytest.mark.parametrize("dtype", ["i64", "i32"])
+def test_sve_integer_mod_is_zero_for_a_zero_divisor_like_the_other_targets(dtype):
+    code = " ".join(TABLE.entry("sve", "mod", dtype).code)
+
+    assert f"svcmpeq_n_s{dtype[1:]}(pg, b, 0)" in code
+
+
+@pytest.mark.parametrize(("isa", "dtype", "op"), [("avx512", "f32", "abs"), ("avx512", "f32", "neg")])
+def test_a_note_names_intrinsics_of_its_own_lane_type(isa, dtype, op):
+    assert "_pd" not in TABLE.entry(isa, op, dtype).note
+
+
+@pytest.mark.parametrize("dtype", ["f64", "f32"])
+def test_the_avx2_max_note_describes_max(dtype):
+    assert "min(" not in TABLE.entry("avx2", "max", dtype).note
+
+
+def test_the_avx2_f16_note_matches_its_256_bit_code():
+    note = TABLE.entry("avx2", "add", "f16").note
+
+    assert "_mm_loadu_si128" not in note and "-mf16c" in note
+
+
+def test_the_kernel_page_does_not_claim_strict_is_never_more_accurate():
+    from alloy.isa.render import render_kernels
+
+    assert "not lower than" not in render_kernels()
+
+
 def test_reverse_of_an_unknown_name_is_empty():
     assert reverse("_mm512_wibbel_pd", TABLE) == ()
 

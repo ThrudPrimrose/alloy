@@ -251,9 +251,10 @@ class Table:
         """Every ``(isa, op, dtype)`` an intrinsic, recipe step, library call or mnemonic spells, or an empty tuple.
         A mnemonic takes any letter case, operands and an EVEX ``.z``; one step of a composite matches the composite."""
         token = normalized(name)
-        hits = self.by_intrinsic.get(token) or self.by_intrinsic.get(masked_form(token), ())
-        signed = UNSIGNED_BITWISE.sub(r"\1_s\2\3", masked_form(token))
-        if hits := hits if signed == token else hits + self.by_intrinsic.get(signed, ()):
+        masked = masked_form(token)
+        hits = self.by_intrinsic.get(token) or self.by_intrinsic.get(masked, ())
+        signed = UNSIGNED_BITWISE.sub(r"\1_s\2\3", masked)
+        if hits := hits if signed == masked else hits + self.by_intrinsic.get(signed, ()):
             return hits
         token = token.lower()
         if (m := FMA_FORM.match(token)) is not None:

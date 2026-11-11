@@ -2,7 +2,7 @@
 
 Every function comes as a ladder of C functions built from intrinsics; copy one into the loop's translation unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> <dtype>`; add `--max-ulp N` or `--max-abs E` for the cheapest one that holds a bound.
 
-- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other inputs are within the listed ulp, which is not lower than `relaxed`'s: strict guarantees the domain.
+- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other inputs are within the listed ulp: strict guarantees the domain.
 - **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when the inputs are known finite and in range.
 - **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a tolerance, an activation, or a first guess.
 - **mid3, mid2, mid1**: the rungs between `relaxed` and `fast`, `relaxed`'s program at lower degrees. A function has only the rungs whose degree differs, numbered from the cheapest up.

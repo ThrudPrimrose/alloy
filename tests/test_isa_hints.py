@@ -125,7 +125,7 @@ def integer_sdfg():
 
 def test_the_shapes_the_frontend_emits_are_recognized():
     assert "select" in expression_ops("y = ITE(c, a, b)")[0]
-    assert "mod" in expression_ops("y = py_mod(a, b)")[0]
+    assert "mod" in expression_ops("y = CMod(a, b)")[0]
     assert "pow" in expression_ops("y = a ** b")[0]
     assert "add" in expression_ops("t += x")[0]
 
@@ -133,6 +133,17 @@ def test_the_shapes_the_frontend_emits_are_recognized():
 def test_an_operation_without_a_row_is_named_not_dropped():
     assert "lt" in expression_ops("y = a > b")[0]
     assert expression_ops("y = floor(a)")[1] == {"floor"}
+
+
+def test_floored_modulo_has_no_truncated_mod_row():
+    assert expression_ops("y = py_mod(a, b)") == (set(), {"py_mod"})
+    assert expression_ops("y = PyMod(a, b)") == (set(), {"PyMod"})
+
+
+def test_only_ordering_compares_map_to_lt():
+    assert expression_ops("y = a == b") == (set(), {"Eq"})
+    assert expression_ops("y = a <= b") == (set(), {"LtE"})
+    assert expression_ops("y = a < b < c") == ({"lt"}, set())
 
 
 def test_a_product_fuses_only_inside_its_sum():

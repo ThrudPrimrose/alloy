@@ -1338,7 +1338,7 @@ intrinsic = "_mm256_max_pd"
 mnemonic = "vmaxpd"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "not IEEE minNum: min(NaN,x)=x, min(x,NaN)=NaN, equal zeros return the second operand; pass the possibly-NaN value first or blend explicitly"
+note = "not IEEE maxNum: max(NaN,x)=x, max(x,NaN)=NaN, equal zeros return the second operand; pass the possibly-NaN value first or blend explicitly"
 
 [isa.avx2.f64.abs]
 mnemonic = "vandpd"
@@ -1405,7 +1405,7 @@ intrinsic = "_mm256_max_ps"
 mnemonic = "vmaxps"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "not IEEE minNum: min(NaN,x)=x, min(x,NaN)=NaN, equal zeros return the second operand; pass the possibly-NaN value first or blend explicitly"
+note = "not IEEE maxNum: max(NaN,x)=x, max(x,NaN)=NaN, equal zeros return the second operand; pass the possibly-NaN value first or blend explicitly"
 
 [isa.avx2.f32.abs]
 mnemonic = "vandps"
@@ -1555,7 +1555,7 @@ signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
 recipe = ["_mm512_and_si512"]
 code = ["_mm512_castsi512_ps(_mm512_and_si512(_mm512_castps_si512(v), _mm512_set1_epi32(0x7fffffff)))"]
-note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castpd_si512/_mm512_castsi512_pd, or use _mm512_abs_pd"
+note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castps_si512/_mm512_castsi512_ps, or use _mm512_abs_ps"
 
 [isa.avx512.f32.neg]
 mnemonic = "vpxord"
@@ -1564,7 +1564,7 @@ signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
 recipe = ["_mm512_xor_si512"]
 code = ["_mm512_castsi512_ps(_mm512_xor_si512(_mm512_castps_si512(v), _mm512_set1_epi32((int)0x80000000U)))"]
-note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castpd_si512/_mm512_castsi512_pd"
+note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castps_si512/_mm512_castsi512_ps"
 
 [isa.avx512.f32.select]
 intrinsic = "_mm512_mask_blend_ps"
@@ -1873,7 +1873,7 @@ signature = "(a, b) -> v"
 semantics = "v[j] = add(a[j], b[j]) in f16, computed via f32"
 recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
-note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes; each step works on 8 lanes: load with _mm_loadu_si128 (a __m128i), step by 8, and build with -mf16c"
+note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes; build with -mf16c"
 
 [isa.avx2.f16.sub]
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
@@ -2581,9 +2581,9 @@ mnemonic = "sdiv+mls"
 observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["svdiv_s64_x", "svmls_s64_x"]
-code = ["svint64_t q = svdiv_s64_x(pg, a, b)", "svmls_s64_x(pg, a, q, b)"]
-note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1"
+recipe = ["svdiv_s64_x", "svmls_s64_x", "svcmpeq_n_s64", "svsel_s64"]
+code = ["svint64_t q = svdiv_s64_x(pg, a, b)", "svsel_s64(svcmpeq_n_s64(pg, b, 0), svdup_s64(0), svmls_s64_x(pg, a, q, b))"]
+note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1"
 
 [isa.sve.i32.and]
 intrinsic = "svand_s32_x"
@@ -2631,9 +2631,9 @@ mnemonic = "sdiv+mls"
 observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["svdiv_s32_x", "svmls_s32_x"]
-code = ["svint32_t q = svdiv_s32_x(pg, a, b)", "svmls_s32_x(pg, a, q, b)"]
-note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1"
+recipe = ["svdiv_s32_x", "svmls_s32_x", "svcmpeq_n_s32", "svsel_s32"]
+code = ["svint32_t q = svdiv_s32_x(pg, a, b)", "svsel_s32(svcmpeq_n_s32(pg, b, 0), svdup_s32(0), svmls_s32_x(pg, a, q, b))"]
+note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1"
 
 # Integer arithmetic, memory and compare rows, and the compare every select needs.
 

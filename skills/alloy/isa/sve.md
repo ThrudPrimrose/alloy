@@ -110,7 +110,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `shr` | recipe: `svreinterpret_s64_u64(svlsr_u64_x(pg, svreinterpret_u64_s64(a), svreinterpret_u64_s64(counts)))` | `lsr` | `(pg, a, counts) -> v` | — | v[j] = a[j] >> counts[j], logical, for active lanes |  |
 | `land` | recipe: `svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+and` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
 | `lor` | recipe: `svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))` | `cmpne+orr` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
-| `mod` | recipe: `svint64_t q = svdiv_s64_x(pg, a, b)`; `svmls_s64_x(pg, a, q, b)` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1 |
+| `mod` | recipe: `svint64_t q = svdiv_s64_x(pg, a, b)`; `svsel_s64(svcmpeq_n_s64(pg, b, 0), svdup_s64(0), svmls_s64_x(pg, a, q, b))` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1 |
 | `add` | `svadd_s64_x` | `add` | `(pg, a, b) -> v` | — | v[j] = a[j] + b[j], wrapping |  |
 | `sub` | `svsub_s64_x` | `sub` | `(pg, a, b) -> v` | — | v[j] = a[j] - b[j], wrapping |  |
 | `mul` | `svmul_s64_x` | `mul` | `(pg, a, b) -> v` | — | v[j] = a[j] * b[j], low bits |  |
@@ -131,7 +131,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `shr` | recipe: `svreinterpret_s32_u32(svlsr_u32_x(pg, svreinterpret_u32_s32(a), svreinterpret_u32_s32(counts)))` | `lsr` | `(pg, a, counts) -> v` | — | v[j] = a[j] >> counts[j], logical, for active lanes |  |
 | `land` | recipe: `svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+and` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) && (b[j] != 0) | yields a predicate; svsel turns it into 0/1 lanes |
 | `lor` | recipe: `svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))` | `cmpne+orr` | `(pg, a, b) -> pg` | — | lane j active iff (a[j] != 0) \|\| (b[j] != 0) |  |
-| `mod` | recipe: `svint32_t q = svdiv_s32_x(pg, a, b)`; `svmls_s32_x(pg, a, q, b)` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0 and does not trap on INT_MIN / -1 |
+| `mod` | recipe: `svint32_t q = svdiv_s32_x(pg, a, b)`; `svsel_s32(svcmpeq_n_s32(pg, b, 0), svdup_s32(0), svmls_s32_x(pg, a, q, b))` | `sdiv+mls` | `(pg, a, b) -> v` | — | v[j] = a[j] % b[j], truncated (sign of a) | q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1 |
 | `add` | `svadd_s32_x` | `add` | `(pg, a, b) -> v` | — | v[j] = a[j] + b[j], wrapping |  |
 | `sub` | `svsub_s32_x` | `sub` | `(pg, a, b) -> v` | — | v[j] = a[j] - b[j], wrapping |  |
 | `mul` | `svmul_s32_x` | `mul` | `(pg, a, b) -> v` | — | v[j] = a[j] * b[j], low bits |  |

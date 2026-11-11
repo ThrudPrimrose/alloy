@@ -125,7 +125,7 @@ def render_kernels() -> str:
         "",
         "- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge "
         "arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other "
-        "inputs are within the listed ulp, which is not lower than `relaxed`'s: strict guarantees the domain.",
+        "inputs are within the listed ulp: strict guarantees the domain.",
         "- **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when "
         "the inputs are known finite and in range.",
         "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "

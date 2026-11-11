@@ -36,8 +36,7 @@ OP_NAMES: dict[type, str] = {
 CALL_NAMES: dict[str, str] = {
     "fabs": "abs",
     "fmod": "mod",
-    "py_mod": "mod",
-    "PyMod": "mod",
+    "CMod": "mod",
     "ITE": "select",
     "ln": "log",
     **{
@@ -110,7 +109,9 @@ def expression_ops(code: str) -> tuple[set[str], set[str]]:
         elif isinstance(child, ast.IfExp | ast.If):
             ops.add("select")
         elif isinstance(child, ast.Compare):
-            ops.add("lt")
+            # The table has only `lt`; a > b is lt(b, a).
+            other = {type(op).__name__ for op in child.ops if not isinstance(op, ast.Lt | ast.Gt)}
+            ops.add("lt") if not other else skipped.update(other)
         elif isinstance(child, ast.Call):
             name = called_name(child)
             ops.add(CALL_NAMES[name]) if name in CALL_NAMES else skipped.add(name)
