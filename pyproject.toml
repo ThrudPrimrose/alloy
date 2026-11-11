@@ -28,7 +28,7 @@ bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@8415e2
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-xdist", "ruff==0.15.10"]
+dev = ["alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.15.10"]
 dev-nvidia = ["alloy[dev,nvgpu]"]
 dev-amd = ["alloy[dev,amdgpu]"]
 
@@ -65,6 +65,8 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
+# A hung child or compiler fails its test with a traceback instead of eating the CI job budget.
+timeout = 900
 # One mark per compiler in the matrix; deselect the ones a box lacks, e.g. -m "not icx".
 markers = [
     "gcc: needs gcc on PATH",

@@ -185,7 +185,8 @@ def test_libmvec_has_every_listed_call():
     candidates = list(pathlib.Path("/lib").glob("*/libmvec.so.1"))
     if not candidates:
         pytest.skip("no glibc libmvec here")
-    symbols = subprocess.run(["nm", "-D", str(candidates[0])], capture_output=True, text=True, check=False).stdout
+    run = subprocess.run(["nm", "-D", str(candidates[0])], capture_output=True, text=True, check=True)
+    symbols = {re.sub(r"@@?.*$", "", line.split()[-1]) for line in run.stdout.splitlines() if line.split()}
     for fn, dtype, level in (row for row in ALL if row[0] not in NO_LIBRARY):
         for isa in ("avx2", "avx512"):
             call = libraries(fn, dtype, isa, level)["libmvec"]

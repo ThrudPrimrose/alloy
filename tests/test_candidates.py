@@ -24,25 +24,18 @@ def test_reassociation_is_tried_only_where_something_reduces():
     assert all(c.fp_level != "reassoc" for c in one_factor_at_a_time(MATRIX, libm_scope))
 
 
-def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path):
+def test_the_candidates_are_exactly_what_the_matrix_lists(tmp_path, monkeypatch):
+    monkeypatch.setattr(machine, "cpu_flags", lambda: frozenset({"sse2", "avx", "avx2", "fma"}))  # zen3
     matrix = gcc_only(tmp_path)
     scope = scope_with(outlined(), libm=False, reduction=True)
 
     sut = one_factor_at_a_time(matrix, scope)
 
-    gcc = matrix.compilers["gcc"]
-    per_language = 1 + sum(len(v) - 1 for v in matrix.knobs.values()) + (len(gcc.fp) - 2) + (len(gcc.cost_model) - 1)
-    per_language += 1  # the serial build
-    host = matrix.host_isas(machine.cpu_flags())
-    per_language += sum(1 for isa in host if isa in gcc.isa)
-    per_language += sum(
-        1 if not tail.isas else sum(1 for isa in tail.isas if isa in host and isa in gcc.isa)
-        for name, tail in matrix.tails.items()
-        if name in gcc.tail
-    )
+    notes = ["default", "heap_ptr_restrict=none", "const_scalar_abi=by_value", "scalar_decl=late"]
+    notes += ["fp contract", "fp reciprocal", "fp noerrno", "fp reassoc", "isa avx2", "tail scalar_remainder", "serial"]
     assert {c.compiler for c in sut} == {"gcc"}
     assert {c.resolved(matrix)[0] for c in sut} == {"strict", "contract", "reciprocal", "noerrno", "reassoc"}
-    assert len(sut) == len(matrix.languages) * per_language
+    assert [(c.language, c.note) for c in sut] == [(lang, note) for lang in ("c", "cpp") for note in notes]
 
 
 def test_fast_math_is_tried_only_when_inputs_are_declared_finite(tmp_path):

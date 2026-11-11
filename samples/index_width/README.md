@@ -5,6 +5,9 @@ Two DaCe knobs set the integer width of the generated index math:
 - `compiler.cpu.codegen_params.index_ctype`: type of the `<array>_idx` helpers (`int64` default, `int32`).
 - `compiler.cpu.codegen_params.loop_index_type`: type of map loop counters (`inferred` = `int64_t` here, `int32`).
 
+Both knobs were removed from DaCe extended in `452cbb931e` and are absent at Alloy's pin; `run.py` exits with a
+message unless DaCe extended `1c1cdc14d4` (the commit the results below were measured on) is installed.
+
 Four arms per kernel, code in `code/<kernel>/<arm>.cpp`:
 
 | arm | helpers | counters |

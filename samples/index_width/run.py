@@ -17,7 +17,7 @@ from collections.abc import Callable
 import dace
 import kernels
 import numpy as np
-from dace.config import set_temporary
+from dace.config import Config, set_temporary
 
 HERE = pathlib.Path(__file__).parent
 COMPILERS = {"gcc": "g++", "clang": "clang++"}
@@ -28,6 +28,8 @@ ARMS = {
     "all32": ("int32", "int32"),
 }
 FLAGS = "-O3 -march=native"
+#: Last DaCe extended commit with both knobs (452cbb931e removed them).
+NEEDS_DACE = "1c1cdc14d4"
 Inputs = dict[str, np.ndarray | int]
 
 
@@ -144,7 +146,18 @@ def time_size(progs: dict, factory: Callable, reps: int) -> dict[str, tuple[floa
     return {arm: median_ci([t * 1e3 for t in ts[1:]]) for arm, ts in times.items()}
 
 
+def require_knobs() -> None:
+    try:
+        for knob in ("index_ctype", "loop_index_type"):
+            Config.get_metadata("compiler", "cpu", "codegen_params", knob)
+    except KeyError as missing:
+        raise SystemExit(
+            f"this DaCe has no codegen_params.{missing.args[0]}; install dace extended {NEEDS_DACE}"
+        ) from None
+
+
 def main() -> None:
+    require_knobs()
     parser = argparse.ArgumentParser()
     parser.add_argument("--reps", type=int, default=20)
     parser.add_argument("--kernels", nargs="*", default=list(KERNELS))

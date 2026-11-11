@@ -352,8 +352,9 @@ def fixed(a: dace.float64[256], out: dace.float64[256]):
 @pytest.mark.gcc
 @pytest.mark.parametrize(("running", "serial"), [({"N": 16}, True), ({"N": 10**9}, False), (None, False), ({}, False)])
 def test_a_declared_size_decides_the_picks_thread_count_and_an_open_one_keeps_the_parallel_pick(
-    tmp_path, running, serial
+    tmp_path, monkeypatch, running, serial
 ):
+    monkeypatch.setattr(machine, "physical_cores", lambda: (0, 1, 2, 3))  # a team pays off on any host
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     matrix = gcc_only(tmp_path)
 
@@ -381,16 +382,26 @@ def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path
 
 
 @pytest.mark.gcc
-def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(tmp_path):
+def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(tmp_path, monkeypatch):
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+    maps = predict.innermost_maps(scope.sdfg)
+    first = {maps[t]: n for n, t in sorted(predict.tasklet_lines(built.source).items(), reverse=True) if t in maps}
+    assert len(first) == 2, "a statement line of each map"
+    copy = (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"), (0x05, "vmovsd", "%xmm0, (%rsi,%rax,8)")
+    loops = {
+        str(n): [*(Instruction(a, m, o, line=n) for a, m, o in copy), Instruction(0x0A, "jne", "0x0 <f>")]
+        for n in first.values()
+    }
+    monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
+    monkeypatch.setattr(predict, "disassembly", lambda archive: loops)
+    monkeypatch.setattr(predict, "mca_cycles", lambda body: 10.0)
 
     sut = predict.predict(built, scope, {"M": 4, "N": 64, "K": 16})
 
     assert sut is not None
     assert sorted(loop.weight for loop in sut.loops) == [0.25, 1.0]
-    weighted = sum(loop.weight * (loop.cycles + predict.CALL_CYCLES * loop.calls) / loop.elements for loop in sut.loops)
-    assert sut.compute == pytest.approx(weighted / len(machine.physical_cores()))
+    assert sut.compute == pytest.approx(3.125), "(1.0 + 0.25) * 10 cycles per element, over four cores"
 
 
 @pytest.mark.gcc

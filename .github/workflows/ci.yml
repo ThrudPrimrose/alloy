@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# bash -eo pipefail: a failing stage of a piped step fails the step
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -50,7 +55,7 @@ jobs:
           echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           # OpenBLAS + LAPACKE: the BLAS/LAPACK library-node headers a scope includes (OMEN's Norb-sized products)
-          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev libsleef-dev gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev libsleef-dev gcc-aarch64-linux-gnu qemu-user
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
 
