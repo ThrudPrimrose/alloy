@@ -558,10 +558,11 @@ def predictions(
 def choose(
     rep: ScopeReport, verdicts: dict[str, Verdict], predicted: Predictions, matrix: Matrix, *, finite_inputs: bool
 ) -> Build:
-    """The scope's speculative winner: among the correct distinct builds at or below the default FP level
-    (:func:`fp.default_level`) within :data:`TIE` of the fewest predicted cycles per element (all of them when none is
-    predicted), the default level's, then the first in sweep order. Without verdicts
-    (no manifest) every build that compiled counts as correct. A serial build counts only at a size that decides it."""
+    """The scope's speculative winner: among the correct distinct builds (any FP level the sweep built: its
+    requirement met, its verdict inside the band) within :data:`TIE` of the fewest predicted cycles per element (all
+    of them when none is predicted), the default FP level's (:func:`fp.default_level`), then the first in sweep
+    order. Without verdicts (no manifest) every build that compiled counts as correct, up to the default FP level. A
+    serial build counts only at a size that decides it."""
     scores = predicted.get(rep.scope.symbol, {})
     level = fp.default_level(matrix, rep.scope, finite_inputs=finite_inputs)
 
@@ -576,9 +577,10 @@ def choose(
     usable = [(order, b) for order, b in enumerate(rep.builds) if correct(b)]
     if not usable:
         return rep.builds[0]
-    levels = list(matrix.fp_levels)
-    allowed = levels[: levels.index(level) + 1]  # a scope's default level is as far as a speculative pick relaxes
-    usable = [item for item in usable if item[1].candidate.resolved(matrix)[0] in allowed] or usable
+    if not verdicts:  # no band checked a build: an unverified pick relaxes no further than the default level
+        levels = list(matrix.fp_levels)
+        allowed = levels[: levels.index(level) + 1]
+        usable = [item for item in usable if item[1].candidate.resolved(matrix)[0] in allowed] or usable
     cheapest = min(cost(b) for _, b in usable)
     tied = [(order, b) for order, b in usable if cost(b) <= cheapest * (1 + TIE)]
     return min(tied, key=lambda item: (item[1].candidate.resolved(matrix)[0] != level, item[0]))[1]

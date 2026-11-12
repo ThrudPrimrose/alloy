@@ -156,11 +156,13 @@ it, without recompiling. Sizes, cores and repetitions come from `[timing]` in th
 
 Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope from the builds alone, without timing; the pick is still verified.
 
-- FP level (shared with NestForge's defaults, owner decision 2026-10-26): a scope with a reduction or scan defaults
-  to `contract`, never `reassoc`; without one, `fast` when the inputs are declared finite, else `noerrno`.
-- `predict.choose`: among the correct distinct builds at or below that level, those within 2% of the fewest predicted
-  cycles per element; of those the default level's, then the first in sweep order. Without any correct build the
-  default build ships.
+- FP level (owner decision 2026-11-12, replacing the 2026-10-26 cap at the default level): a pick may take any FP
+  level whose requirement the scope meets (`reassoc` for a scope with a reduction or scan, `fast` only with inputs
+  declared finite), as long as its verdict passes within the band. The default level, `contract` for a scope with a
+  reduction or scan, else `fast` when the inputs are declared finite, else `noerrno` (shared with NestForge's
+  defaults), only breaks ties; without verdicts (no manifest) a pick relaxes no further than it.
+- `predict.choose`: among the correct distinct builds, those within 2% of the fewest predicted cycles per element;
+  of those the default level's, then the first in sweep order. Without any correct build the default build ships.
 - Bench delivery (`hb_plugin.adapter.graded_pick`, speculative and profile mode): the pick ships only if `/score`
   grades it correct and no slower than the plain program (no scope outlined, what `alloy_none` delivers); else the
   plain program ships, and the episode record names `none` as every scope's build.

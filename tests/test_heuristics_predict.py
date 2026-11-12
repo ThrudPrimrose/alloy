@@ -272,6 +272,22 @@ def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_
     assert predict.choose(rep, verdicts, cheaper, MATRIX, finite_inputs=False) is builds[0]
 
 
+def test_a_reduction_takes_a_verified_reassociated_build_predicted_cheapest_and_a_tie_its_default_level():
+    """Only reassociation vectorizes an FP sum: capped at ``contract``, a reduction never took the build that does."""
+    sdfg = load_program(f"{REDUCTIONS}:row_sum").to_sdfg()
+    scope = next(s for s in scopes.outline(sdfg, MATRIX.libm_calls).scopes if s.has_reduction)
+    strict, contract, reassoc = (a_build(Candidate("c", "gcc", fp_level=lv)) for lv in ("", "contract", "reassoc"))
+    rep = ScopeReport(scope, (strict, contract, reassoc))
+    verdicts = {b.name: Verdict("pass") for b in rep.builds}
+    cheaper = {scope.symbol: {strict.name: scored(2.0), contract.name: scored(2.0), reassoc.name: scored(0.5)}}
+    tie = {scope.symbol: {b.name: scored(1.0) for b in rep.builds}}
+
+    assert predict.choose(rep, verdicts, cheaper, MATRIX, finite_inputs=False) is reassoc
+    assert predict.choose(rep, verdicts, tie, MATRIX, finite_inputs=False) is contract
+    rejected = verdicts | {reassoc.name: Verdict("fail")}
+    assert predict.choose(rep, rejected, cheaper, MATRIX, finite_inputs=False) is contract
+
+
 def test_a_serial_build_never_wins_a_speculative_pick_however_cheap_it_looks():
     scope = only_scope(roots)
     default, serial = a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", serial=True))
