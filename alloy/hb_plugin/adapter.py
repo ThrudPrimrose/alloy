@@ -14,7 +14,7 @@ from typing import Protocol
 
 import dace
 from dace.frontend.python.parser import DaceProgram
-from hpcagent_agent.tools.http_json import judge_rank, judge_timeout
+from hpcagent_agent.tools.http_json import judge_rank, terminal_timeout
 from hpcagent_bench import config, paths
 from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
@@ -306,7 +306,9 @@ def ranked[B: Named](
 
 
 def judge_client() -> JudgeClient:
-    return JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=judge_timeout())
+    """A client that waits for a grade as long as the router lets the judge take: given up early, a slow kernel's
+    ``/score`` reads as no grade and the references are delivered in place of the pick."""
+    return JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=terminal_timeout())
 
 
 def refuse_restricted(task: Task) -> None:

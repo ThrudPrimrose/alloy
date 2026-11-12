@@ -228,6 +228,19 @@ def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(mon
     assert timeouts == [SWEEP_TIMEOUT_S]
 
 
+def test_a_grade_slower_than_one_judge_call_is_still_read(monkeypatch) -> None:
+    """A large kernel's ``/score`` outlasts an ordinary judge call (300 s): the client gave up, the judge logged the
+    grade as abandoned, and the pick was dropped for the references (s4112, vag)."""
+    from hpcagent_agent.tools import http_json
+
+    monkeypatch.setenv("JUDGE_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv(http_json.UPSTREAM_TIMEOUT_ENV, "5400")
+
+    sut = adapter.judge_client()
+
+    assert sut.timeout == http_json.terminal_timeout() and sut.timeout > 5400
+
+
 if __name__ == "__main__":
     test_each_scope_keeps_its_fastest_stub_over_the_best_prefix()
     test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail()
@@ -247,3 +260,5 @@ if __name__ == "__main__":
     test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
     with pytest.MonkeyPatch.context() as patch:
         test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch)
+    with pytest.MonkeyPatch.context() as patch:
+        test_a_grade_slower_than_one_judge_call_is_still_read(patch)
