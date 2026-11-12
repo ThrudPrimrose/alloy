@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import dace
 import sympy
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 
 from alloy.backend.build import Build
@@ -59,7 +60,7 @@ def operations(tasklet: nodes.Tasklet) -> tuple[set[type], set[str]]:
     return ops, calls
 
 
-def sums(edge: dace.sdfg.graph.MultiConnectorEdge) -> bool:
+def sums(edge: MultiConnectorEdge[dace.Memlet]) -> bool:
     return edge.data.wcr is not None and "+" in str(edge.data.wcr)
 
 
