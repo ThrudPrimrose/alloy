@@ -324,8 +324,8 @@ def scratch_folder(spec: BenchSpec) -> pathlib.Path:
 
 
 def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
-    """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct, else
-    every scope's reference (CPF's default rendering with no scope)."""
+    """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
+    slower than the references, else every scope's reference (CPF's default rendering with no scope)."""
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -348,7 +348,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     stub_costs: list[float] = []
 
     def score_reserve() -> float:
-        # the selection's final score plus the harness's own grade
+        # the selection's score plus the harness's own grade; the references' score needs one stub cost more
         return 2 * max(stub_costs, default=0.0)
 
     def affordable_stub() -> bool:
@@ -367,14 +367,16 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     ranking = time.monotonic()
     chosen = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
     scoring = time.monotonic()
-    correct = False
-    if chosen != references and deadline - time.monotonic() > score_reserve():
-        try:
-            correct = judge.score(library(task, spec, linker, chosen, deliver), task.kernel).correct
-        except (OSError, RuntimeError, ValueError):
-            pass  # the references need no grade
+    left = deadline - time.monotonic()
+    delivered = graded_pick(
+        judge,
+        chosen if left > score_reserve() else references,
+        references,
+        lambda selection: library(task, spec, linker, selection, deliver),
+        task.kernel,
+        compare=left > score_reserve() + max(stub_costs, default=0.0),
+    )
     score = time.monotonic() - scoring
-    delivered = chosen if correct else references
     # every deliver builds the same .so path, so the returned library is built last
     submission = library(task, spec, linker, delivered, deliver)
     record_episode(
@@ -428,31 +430,44 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     chosen = {**references, **(result.winners or {})}
     judge = judge_client()
     scoring = time.monotonic()
-    better = chosen != references and faster_correct(
-        judge,
-        lambda: library(task, spec, linker, chosen, deliver),
-        lambda: library(task, spec, linker, references, deliver),
-        task.kernel,
+    delivered = graded_pick(
+        judge, chosen, references, lambda selection: library(task, spec, linker, selection, deliver), task.kernel
     )
     score = time.monotonic() - scoring
-    delivered = chosen if better else references
     # every deliver builds the same .so path, so the returned library is built last
     submission = library(task, spec, linker, delivered, deliver)
     record_episode(Mode.SPECULATIVE.value, task, started, submission, generate, 0.0, score, 0, references, delivered)
     return submission
 
 
+def graded_pick[B](
+    judge: JudgeClient,
+    chosen: dict[str, B],
+    references: dict[str, B],
+    build: Callable[[dict[str, B]], Submission],
+    kernel: str,
+    compare: bool = True,
+) -> dict[str, B]:
+    """``chosen`` if ``/score`` grades it correct and, when ``compare``, no slower than ``references``; else the
+    references. Without ``compare`` (no time for a second grade) a correct pick is kept ungraded against them."""
+    if chosen == references:
+        return references
+    baseline = (lambda: build(references)) if compare else None
+    return chosen if faster_correct(judge, lambda: build(chosen), baseline, kernel) else references
+
+
 def faster_correct(
-    judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], Submission], kernel: str
+    judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], Submission] | None, kernel: str
 ) -> bool:
-    """Whether ``pick`` grades correct and no slower than ``baseline``; a judge that does not answer keeps the
-    references, the library that is safe without a grade. Each is built just before its grade: both share one .so."""
+    """Whether ``pick`` grades correct and no slower than ``baseline`` (if any); a judge that does not answer keeps
+    the references, the library that is safe without a grade. Each is built just before its grade: both share one
+    .so."""
     try:
         graded = judge.score(pick(), kernel)
-        reference = judge.score(baseline(), kernel)
+        reference = judge.score(baseline(), kernel) if baseline is not None else None
     except (OSError, RuntimeError, ValueError):
         return False
-    return graded.correct and (not reference.correct or graded.speedup >= reference.speedup)
+    return graded.correct and (reference is None or not reference.correct or graded.speedup >= reference.speedup)
 
 
 #: A GPU image -> the dialect its device maps' register use is read in: nvcc's report on an NVIDIA device, hipcc's

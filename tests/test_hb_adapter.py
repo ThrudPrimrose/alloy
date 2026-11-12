@@ -26,6 +26,7 @@ from alloy.hb_plugin import adapter
 from alloy.hb_plugin.adapter import (
     fast_size,
     faster_correct,
+    graded_pick,
     pipeline_sdfg,
     ranked,
     rendered,
@@ -184,6 +185,23 @@ def test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_shar
     assert faster_correct(judge, lambda: build("pick"), lambda: build("base"), "k")  # type: ignore[arg-type]
 
 
+PROFILE_CASES = [((True, 0.53), "base"), ((True, 2.0), "pick")]
+
+
+@pytest.mark.parametrize(("pick", "expected"), PROFILE_CASES)
+def test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, expected) -> None:
+    """A stub is timed at the fast size and the graded run is larger: a pick 0.53x the references at the graded
+    size was delivered for being correct (s115, s119)."""
+    judge = Judge({"pick": pick, "base": (True, 1.0)})
+
+    def build(selection: dict[str, Fake]) -> Submission:
+        return Submission(language=Language.C, source=selection["r"].name)
+
+    sut = graded_pick(judge, {"r": Fake("pick")}, {"r": Fake("base")}, build, "k")  # type: ignore[arg-type]
+
+    assert sut["r"].name == expected
+
+
 def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
     builds = [Fake("good"), Fake("wrong")]
     rep = dataclasses.make_dataclass("Rep", [("builds", list)])([Fake("ref"), *builds])
@@ -255,6 +273,8 @@ if __name__ == "__main__":
     for scores, expected in PICK_CASES:
         test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected)
     test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share()
+    for pick, expected in PROFILE_CASES:
+        test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, expected)
     test_a_failed_verdict_is_not_offered_to_the_stub_ranking()
     test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
     test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
