@@ -779,3 +779,18 @@ def test_a_child_gets_its_team_from_a_runtime_the_fork_server_already_started(tm
 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == ["3", "0"]  # omp_proc_bind_false
+
+
+def read_setting(*key: str) -> object:
+    return dace.config.Config.get(*key)
+
+
+def test_a_builder_has_the_dace_settings_its_parent_made_in_memory():
+    """A builder is a fork-server child, which starts from the configuration files: a setting an embedding caller
+    made in memory reached the reference, built in this process, but not the candidates built in the builders."""
+    key = ("compiler", "cpu", "args")
+    with dace.config.set_temporary(*key, value="-O2 -DSEEN_BY_BUILDERS"):
+        with verify.builder_pool(1) as sut:
+            seen = sut.submit(read_setting, *key).result()
+
+    assert seen == "-O2 -DSEEN_BY_BUILDERS"

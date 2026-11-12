@@ -25,6 +25,7 @@ import numpy as np
 import pydantic.dataclasses
 import sympy
 from dace.codegen.exceptions import CompilationError
+from dace.config import Config
 
 from alloy import machine
 from alloy.backend.candidates import Candidate
@@ -170,6 +171,23 @@ def child_context() -> Any:
     ctx = multiprocessing.get_context("forkserver")
     ctx.set_forkserver_preload(list(FORK_SERVER_PRELOAD))
     return ctx
+
+
+def apply_config(settings: dict[str, Any], path: tuple[str, ...] = ()) -> None:
+    """Set every DaCe setting of ``settings`` (:meth:`Config.nondefaults`' nesting) in this process."""
+    for key, value in settings.items():
+        if isinstance(value, dict):
+            apply_config(value, (*path, key))
+        else:
+            Config.set(*path, key, value=value)
+
+
+def builder_pool(workers: int) -> ProcessPoolExecutor:
+    """Builder processes with the DaCe settings this process holds now: a fork-server child starts from the
+    configuration files, not from what was set here in memory, and would build candidates unlike the reference."""
+    return ProcessPoolExecutor(
+        workers, mp_context=child_context(), initializer=apply_config, initargs=(Config.nondefaults(),)
+    )
 
 
 def slot_share() -> float:
@@ -469,9 +487,9 @@ def verify(
     lengths = [accumulation_length(program, d.sizes) for d in cases.draws]
     programs = {(rep.scope.symbol, rep.builds[0].name): ref_program for rep in reports}
     jobs = link_jobs(reports, reference, ref_candidates)
-    with Children() as children, ProcessPoolExecutor(machine.compile_jobs(), mp_context=child_context()) as builders:
+    with Children() as children, builder_pool(machine.compile_jobs()) as pool:
         ref_runs = submit_reference(children, ref_program, cases)
-        running = run_candidates(linker, jobs, builders, children, cases, programs)
+        running = run_candidates(linker, jobs, pool, children, cases, programs)
         refs = reference_from(cases, [[f.result() for f in runs] for runs in ref_runs])
         ran = {k: v if isinstance(v, Verdict) else [f.result() for f in v] for k, v in running.items()}
     reference_runs: list[Outcome] = [[outputs] for outputs in refs.outputs]
@@ -503,5 +521,5 @@ def judge_scope(
 
 def rebuilt(linker: Linker, job: tuple[Any, ...]) -> pathlib.Path:
     """``job`` alone in a fresh builder: a dead builder fails every pending future, not only its own."""
-    with ProcessPoolExecutor(1, mp_context=child_context()) as builder:
+    with builder_pool(1) as builder:
         return builder.submit(linker.compile, *job).result()
