@@ -56,7 +56,7 @@ REGION_NS = 470.0
 TIE = 0.02
 #: Cycles per call in a loop: llvm-mca cannot see a callee, so one call per vector ranks above one per element.
 CALL_CYCLES = 30.0
-SOURCE_LINE = re.compile(r"^; .*:(\d+)$")
+SOURCE_LINE = re.compile(r"^; (.*):(\d+)$")
 #: A rendered statement's trailing comment: the label of the tasklet it renders.
 TASKLET_COMMENT = re.compile(r";\s*//\s*([A-Za-z_]\w*)\s*$")
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)\s*(.*?)\s*$")
@@ -129,7 +129,9 @@ class Prediction:
     elements: float = 0.0
 
 
-def disassembly(archive: pathlib.Path) -> dict[str, list[Instruction]]:
+def disassembly(archive: pathlib.Path, source: pathlib.Path) -> dict[str, list[Instruction]]:
+    """Every function's instructions, each with its line in ``source``: a line of another file (code a header inlined)
+    is 0, so it cannot name the statement of ``source`` with the same number."""
     listing = subprocess.run(
         ["llvm-objdump", "-d", "-r", "-l", "--no-show-raw-insn", str(archive)],
         capture_output=True,
@@ -143,7 +145,7 @@ def disassembly(archive: pathlib.Path) -> dict[str, list[Instruction]]:
         if (head := FUNCTION.match(line)) is not None:
             current, source_line = functions.setdefault(head.group(1), []), 0
         elif (position := SOURCE_LINE.match(line)) is not None:
-            source_line = int(position.group(1))
+            source_line = int(position.group(2)) if pathlib.Path(position.group(1)).name == source.name else 0
         elif (reloc := RELOCATION.match(line)) is not None:
             if current and CALL.match(current[-1].mnemonic):
                 last = current[-1]
@@ -476,7 +478,9 @@ def predict(
     load = load_of(rendered, sizes or {}, cores) if running else None
     if build.candidate.serial and load is None:
         return None
-    machine_loops = [loop for code in disassembly(build.archive).values() for loop in innermost_loops(code)]
+    machine_loops = [
+        loop for code in disassembly(build.archive, build.source).values() for loop in innermost_loops(code)
+    ]
     maps = innermost_maps(rendered)
     compiler = matrix.compilers[build.candidate.compiler].executables[build.candidate.language]
     cpu = target_cpu(compiler, build.flags)

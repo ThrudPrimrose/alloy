@@ -4,6 +4,7 @@ cycles per element of the hot loop, the per-scope pick (fewest cycles, ties to t
 run that links its picks."""
 
 import pathlib
+import subprocess
 
 import dace
 import numpy as np
@@ -308,7 +309,7 @@ def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(tmp
     assert predict.choose(rep, {}, predicted, MATRIX, finite_inputs=False).candidate.serial is serial
 
 
-def ten_cycle_loop(archive: pathlib.Path) -> dict[str, list[Instruction]]:
+def ten_cycle_loop(archive: pathlib.Path, source: pathlib.Path) -> dict[str, list[Instruction]]:
     loop = (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"), (0x05, "vmovsd", "%xmm0, (%rsi,%rax,8)"), (0x0A, "jne", "0x0 <f>")
     return {"f": listing(*loop)}
 
@@ -402,6 +403,36 @@ def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path
     assert predict.tasklet_lines(source) == {2: "_Mult_", 3: "assign_3"}
 
 
+HEADER = "static inline double twice(double x) {\n  return x * 2.0 + 1.0;\n}\n"
+#: Line 2 names a tasklet the loop never runs; line 2 of the header is the inlined body the loop does run.
+UNIT = """#include "twice.h"
+double unused = 0.0;  // other_tasklet
+void k(double *restrict a, const double *restrict b, long n) {
+  for (long i = 0; i < n; ++i)
+    a[i] = twice(b[i]);  // loop_tasklet
+}
+"""
+
+
+@pytest.mark.clang
+def test_a_loop_names_only_the_tasklets_of_its_own_source_and_not_an_inlined_header_line_of_the_same_number(tmp_path):
+    """clang's line table gives inlined code its header's lines: a header line must not name the scope source's
+    statement that has the same number."""
+    (tmp_path / "twice.h").write_text(HEADER)
+    source = tmp_path / "v0.c"
+    source.write_text(UNIT)
+    obj = tmp_path / "v0.o"
+    clang = MATRIX.compilers["clang"]
+    command = ["clang", "-O3", "-fPIC", *clang.line_tables, "-c", str(source), "-o", str(obj)]
+    subprocess.run(command, check=True)
+    labels = predict.tasklet_lines(source)
+
+    loops = [loop for code in predict.disassembly(obj, source).values() for loop in predict.innermost_loops(code)]
+
+    named = {labels[n] for loop in loops for n in loop.lines if n in labels}
+    assert loops and named == {"loop_tasklet"}
+
+
 @pytest.mark.gcc
 def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(tmp_path, monkeypatch):
     scope = only_scope(two_rows)
@@ -415,7 +446,7 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
         for n in first.values()
     }
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
-    monkeypatch.setattr(predict, "disassembly", lambda archive: loops)
+    monkeypatch.setattr(predict, "disassembly", lambda archive, source: loops)
     monkeypatch.setattr(predict, "mca_cycles", lambda body, cpu: 10.0)
 
     sut = predict.predict(built, scope, MATRIX, {"M": 4, "N": 64, "K": 16})
