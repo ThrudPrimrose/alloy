@@ -79,6 +79,8 @@ MEMORY = re.compile(r"^(-?(?:0x[0-9a-f]+)?)\((%[^)]+)\)$")
 SVE_LENGTH = pathlib.Path("/proc/sys/abi/sve_default_vector_length")
 #: The CPU names in gcc's ``-Q --help=target`` listing: ``-march=`` on x86-64, ``-mcpu=`` on aarch64 (no extensions).
 TARGET_CPU = re.compile(r"^\s+-m(?:arch|cpu)=[ \t]+([\w.-]+)", re.MULTILINE)
+#: A build flag naming the CPU its code targets (nvc spells it ``-tp=``), without its ``+`` extensions.
+TARGET_FLAG = re.compile(r"^-(?:march|mcpu|tp)=([^+]+)")
 
 
 @plain(slots=True, frozen=True)
@@ -282,13 +284,27 @@ def mca_knows(cpu: str) -> bool:
     return "not a recognized processor" not in run.stderr
 
 
-@functools.lru_cache(maxsize=256, typed=True)
-def target_cpu(compiler: str, flags: tuple[str, ...]) -> str:
-    """The CPU llvm-mca models for an object ``compiler`` built with ``flags``: the one gcc resolves them to, when
-    llvm-mca knows it. Else ``native``, LLVM's own pick and so clang's, which is not gcc's: LLVM 22 takes a Zen 4 MI300A
-    for a znver3 without AVX-512, while gcc 14 targets znver4 and emits it."""
-    query = subprocess.run([compiler, *flags, "-Q", "--help=target"], capture_output=True, text=True, check=False)
+@functools.lru_cache(maxsize=4, typed=True)
+def host_cpu(gcc: str) -> str:
+    """The host as ``gcc`` resolves ``-march=native``, when llvm-mca knows it; else (no gcc) ``native``, LLVM's own
+    guess, which can be an older core: LLVM 22 takes a Zen 4 MI300A for a znver3 without AVX-512, whose model rejects
+    the zmm loops clang's ``-march=native`` still emits from the host's features."""
+    try:
+        query = subprocess.run(
+            [gcc, "-march=native", "-Q", "--help=target"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return "native"
     return next((cpu for cpu in TARGET_CPU.findall(query.stdout) if mca_knows(cpu)), "native")
+
+
+@functools.lru_cache(maxsize=256, typed=True)
+def target_cpu(gcc: str, flags: tuple[str, ...]) -> str:
+    """The CPU llvm-mca models for a build with ``flags``: the one its last ``-march``/``-mcpu``/``-tp`` names unless
+    that is ``native`` or unknown to llvm-mca, else the host (:func:`host_cpu`), whichever compiler built it, so one
+    pick never mixes machine models."""
+    named = [m.group(1) for flag in flags if (m := TARGET_FLAG.match(flag))]
+    return named[-1] if named and named[-1] != "native" and mca_knows(named[-1]) else host_cpu(gcc)
 
 
 @functools.lru_cache(maxsize=4096, typed=True)
@@ -467,7 +483,7 @@ def predict(
     running: bool = False,
 ) -> Prediction | None:
     """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`), each source loop weighted by its
-    maps' iterations at ``sizes``; llvm-mca models the CPU ``matrix``'s compiler targets. ``sdfg`` is what the build
+    maps' iterations at ``sizes``; llvm-mca models the CPU the build targets (:func:`target_cpu`). ``sdfg`` is what the build
     rendered (the scope's own by default). With ``running`` the scope will run at ``sizes``: a build pays for its
     regions on its real team. ``None`` without an object or a loop llvm-mca accepts, and for a serial build at a size
     that does not decide the scope."""
@@ -482,8 +498,8 @@ def predict(
         loop for code in disassembly(build.archive, build.source).values() for loop in innermost_loops(code)
     ]
     maps = innermost_maps(rendered)
-    compiler = matrix.compilers[build.candidate.compiler].executables[build.candidate.language]
-    cpu = target_cpu(compiler, build.flags)
+    gcc = matrix.compilers["gcc"].executables.get("c", "gcc") if "gcc" in matrix.compilers else "gcc"
+    cpu = target_cpu(gcc, build.flags)
     groups = hot_copies(machine_loops, tasklet_lines(build.source), maps, scope, cpu)
     if not groups:
         return None

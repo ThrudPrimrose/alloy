@@ -232,18 +232,20 @@ printf '  -march=                     \\t\\tznver4\\n  -mcpu=                   
 """
 
 
-def test_llvm_mca_models_the_cpu_the_compiler_resolves_the_build_flags_to(tmp_path, monkeypatch):
-    """LLVM's host guess can be an older core than gcc's (znver3 without AVX-512 for gcc's znver4): llvm-mca models
-    the compiler's, unless the compiler lists none (clang) or llvm-mca does not know it."""
+def test_llvm_mca_models_every_build_on_the_cpu_its_flags_name_else_on_the_host_gcc_resolves(tmp_path, monkeypatch):
+    """LLVM's host guess can be an older core than gcc's (znver3 without AVX-512 for gcc's znver4), so a native build
+    of any compiler is costed on gcc's host CPU, and a build whose flags name another CPU llvm-mca knows on that one."""
     gcc = tmp_path / "gcc"
     gcc.write_text(GCC_TARGET_LISTING)
     gcc.chmod(0o755)
-    monkeypatch.setattr(predict, "mca_knows", lambda cpu: cpu == "znver4")
+    monkeypatch.setattr(predict, "mca_knows", lambda cpu: cpu in ("znver4", "x86-64-v3", "neoverse-v2"))
+    native_gcc, native_clang = (Candidate("c", c, isa="avx512").flags(MATRIX) for c in ("gcc", "clang"))
 
-    assert predict.target_cpu(str(gcc), ("-march=native", "-O3")) == "znver4"
-    assert predict.target_cpu(str(gcc), ("-O3",)) == "native"
-    monkeypatch.setattr(predict, "mca_knows", lambda cpu: False)
-    assert predict.target_cpu(str(gcc), ("-march=native", "-O2")) == "native"
+    assert predict.target_cpu(str(gcc), native_clang) == predict.target_cpu(str(gcc), native_gcc) == "znver4"
+    assert predict.target_cpu(str(gcc), (*native_gcc, "-march=x86-64-v3")) == "x86-64-v3", "the last -march wins"
+    assert predict.target_cpu(str(gcc), ("-O3", "-mcpu=neoverse-v2+sve2")) == "neoverse-v2"
+    assert predict.target_cpu(str(gcc), ("-O3", "-march=sandybridge")) == "znver4", "a CPU llvm-mca does not know"
+    assert predict.target_cpu(str(tmp_path / "absent-gcc"), native_gcc) == "native"
 
 
 def a_build(candidate: Candidate) -> Build:
