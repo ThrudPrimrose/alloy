@@ -203,7 +203,7 @@ def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path):
     scope = only_scope(load_program(f"{REDUCTIONS}:scale"))
     builds = (build(scope, Candidate("c", "gcc", isa=isa), MATRIX, tmp_path, {}) for isa in ("avx512", "avx2"))
 
-    wide, narrow = (predict.predict(b, scope) for b in builds)
+    wide, narrow = (predict.predict(b, scope, MATRIX) for b in builds)
 
     assert wide is not None and narrow is not None
     assert (len(wide.loops), len(narrow.loops)) == (1, 1), "a main loop and its epilogues are one source loop"
@@ -217,11 +217,32 @@ def test_an_errno_bound_scalar_sqrt_is_predicted_dearer_than_its_fast_math_vecto
     strict = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
     fast = build(scope, Candidate("c", "gcc", fp_level="fast"), MATRIX, tmp_path, {})
 
-    sut = [predict.predict(b, scope) for b in (strict, fast)]
+    sut = [predict.predict(b, scope, MATRIX) for b in (strict, fast)]
 
     assert sut[0] is not None and sut[1] is not None
     assert sut[0].loops[0].elements == 1.0 < sut[1].loops[0].elements
     assert sut[1].cycles_per_element < sut[0].cycles_per_element
+
+
+#: gcc 14's ``-Q --help=target`` lines on a Zen 4, listed only for ``-march=native``.
+GCC_TARGET_LISTING = """#!/bin/sh
+[ "$1" = -march=native ] || exit 1
+printf '  -march=                     \\t\\tznver4\\n  -mcpu=                      \\t\\t\\n'
+"""
+
+
+def test_llvm_mca_models_the_cpu_the_compiler_resolves_the_build_flags_to(tmp_path, monkeypatch):
+    """LLVM's host guess can be an older core than gcc's (znver3 without AVX-512 for gcc's znver4): llvm-mca models
+    the compiler's, unless the compiler lists none (clang) or llvm-mca does not know it."""
+    gcc = tmp_path / "gcc"
+    gcc.write_text(GCC_TARGET_LISTING)
+    gcc.chmod(0o755)
+    monkeypatch.setattr(predict, "mca_knows", lambda cpu: cpu == "znver4")
+
+    assert predict.target_cpu(str(gcc), ("-march=native", "-O3")) == "znver4"
+    assert predict.target_cpu(str(gcc), ("-O3",)) == "native"
+    monkeypatch.setattr(predict, "mca_knows", lambda cpu: False)
+    assert predict.target_cpu(str(gcc), ("-march=native", "-O2")) == "native"
 
 
 def a_build(candidate: Candidate) -> Build:
@@ -264,7 +285,7 @@ def test_the_model_scores_openmp_builds_only_because_it_spreads_loops_over_the_c
     default = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "default", {})
     serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
 
-    sut = predict.predictions([ScopeReport(scope, (default, serial))])
+    sut = predict.predictions([ScopeReport(scope, (default, serial))], MATRIX)
 
     assert list(sut[scope.symbol]) == [default.name]
 
@@ -282,7 +303,7 @@ def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(tmp
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
-    predicted = predict.predictions([rep], {"N": size}, running=True)
+    predicted = predict.predictions([rep], MATRIX, {"N": size}, running=True)
 
     assert predict.choose(rep, {}, predicted, MATRIX, finite_inputs=False).candidate.serial is serial
 
@@ -297,10 +318,10 @@ def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     monkeypatch.setattr(machine, "max_frequency_hz", lambda: 3.0e9)
     monkeypatch.setattr(predict, "disassembly", ten_cycle_loop)
-    monkeypatch.setattr(predict, "mca_cycles", lambda body: 10.0)
+    monkeypatch.setattr(predict, "mca_cycles", lambda body, cpu: 10.0)
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
-    sut = predict.predictions([rep], {"N": 1000}, running=True)[rep.scope.symbol]
+    sut = predict.predictions([rep], MATRIX, {"N": 1000}, running=True)[rep.scope.symbol]
 
     parallel, serial = sut[rep.builds[0].name], sut[rep.builds[1].name]
     assert (parallel.regions, parallel.elements) == (1.0, 1000.0)
@@ -313,7 +334,7 @@ def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core
 def test_a_size_the_sdfg_does_not_decide_leaves_the_serial_build_unranked(tmp_path):
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
-    sut = predict.predictions([rep], {}, running=True)[rep.scope.symbol]
+    sut = predict.predictions([rep], MATRIX, {}, running=True)[rep.scope.symbol]
 
     assert list(sut) == [rep.builds[0].name] and sut[rep.builds[0].name].elements == 0.0
 
@@ -395,9 +416,9 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
     }
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     monkeypatch.setattr(predict, "disassembly", lambda archive: loops)
-    monkeypatch.setattr(predict, "mca_cycles", lambda body: 10.0)
+    monkeypatch.setattr(predict, "mca_cycles", lambda body, cpu: 10.0)
 
-    sut = predict.predict(built, scope, {"M": 4, "N": 64, "K": 16})
+    sut = predict.predict(built, scope, MATRIX, {"M": 4, "N": 64, "K": 16})
 
     assert sut is not None
     assert sorted(loop.weight for loop in sut.loops) == [0.25, 1.0]
@@ -409,7 +430,7 @@ def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path):
     scope = only_scope(two_sums)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
-    sut = predict.predict(built, scope, {"M": 4, "N": 16, "K": 4000})
+    sut = predict.predict(built, scope, MATRIX, {"M": 4, "N": 16, "K": 4000})
 
     assert sut is not None
     assert sorted(loop.weight for loop in sut.loops) == [0.004, 1.0]
@@ -420,7 +441,7 @@ def test_two_loops_of_one_operator_each_count_their_own_array_accesses(tmp_path)
     scope = only_scope(two_sums)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
-    sut = predict.predict(built, scope, {"M": 4, "N": 16, "K": 4000})
+    sut = predict.predict(built, scope, MATRIX, {"M": 4, "N": 16, "K": 4000})
 
     assert sut is not None
     assert sorted(loop.bytes for loop in sut.loops) == [16.0, 24.0], "a read and a write, then two reads and a write"
@@ -431,7 +452,7 @@ def test_without_sizes_every_source_loop_weighs_the_same(tmp_path):
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
-    sut = predict.predict(built, scope)
+    sut = predict.predict(built, scope, MATRIX)
 
     assert sut is not None and [loop.weight for loop in sut.loops] == [1.0, 1.0]
 
@@ -441,8 +462,8 @@ def test_a_build_on_the_bandwidth_floor_is_predicted_by_its_memory_term_only_bey
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
     elements = 64 * machine.largest_cache_bytes() // 8  # x and y: 16x the cache
 
-    beyond = predict.predict(built, scope, {"N": elements})
-    within = predict.predict(built, scope, {"N": 64})
+    beyond = predict.predict(built, scope, MATRIX, {"N": elements})
+    within = predict.predict(built, scope, MATRIX, {"N": 64})
 
     assert beyond is not None and within is not None
     assert within.memory == 0.0 and within.cycles_per_element == within.compute

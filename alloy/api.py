@@ -145,7 +145,7 @@ def generate(
     if mode == Mode.SPECULATIVE:
         known = known_sizes(program, running)
         sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
-        predicted = predict.predictions(reports, sizes, known is not None)
+        predicted = predict.predictions(reports, matrix, sizes, known is not None)
         winners = predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs)
     elif verification is not None and manifest is not None and time_locally:
         timings = timing.time_program(linker, reports, verification, manifest)

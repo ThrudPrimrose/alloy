@@ -295,9 +295,9 @@ Modes (`api.generate(..., mode=)`):
     tables render (every compiler emits line tables, `[compilers.*] line_tables`; no code change, stripped before
     objects are compared). A main loop and its epilogues are one group; its hot copy handles the most elements per
     iteration. A loop rendering no statement (OpenMP chunking) only counts when none does.
-  - Compute: llvm-mca on the host CPU (loop-carried chains included) over elements per iteration (bytes the loop's
-    non-stack memory operations move / (element bytes x distinct accesses)), plus a fixed cost per hot call
-    (vector math in a vector loop, every call in a scalar one); weighted by each source loop's iterations at the
+  - Compute: llvm-mca on the CPU the compiler targeted (loop-carried chains included) over elements per iteration
+    (bytes the loop's non-stack memory operations move / (element bytes x distinct accesses)), plus a fixed cost per
+    hot call (vector math in a vector loop, every call in a scalar one); weighted by each source loop's iterations at the
     preset sizes over the scope's largest map's, spread over the physical cores.
   - Regions, at a running size only (`heuristics/load.py`): the SDFG gives one call's regions and worksharing loops
     (enclosing loops multiply them) and its elements. A build whose object calls OpenMP pays a fixed cost per region

@@ -77,6 +77,8 @@ VECTOR_MOVE = re.compile(r"^vmov")
 #: An AT&T memory operand: its displacement and its registers.
 MEMORY = re.compile(r"^(-?(?:0x[0-9a-f]+)?)\((%[^)]+)\)$")
 SVE_LENGTH = pathlib.Path("/proc/sys/abi/sve_default_vector_length")
+#: The CPU names in gcc's ``-Q --help=target`` listing: ``-march=`` on x86-64, ``-mcpu=`` on aarch64 (no extensions).
+TARGET_CPU = re.compile(r"^\s+-m(?:arch|cpu)=[ \t]+([\w.-]+)", re.MULTILINE)
 
 
 @plain(slots=True, frozen=True)
@@ -272,10 +274,25 @@ def data_bytes(loop: Loop) -> int:
     )
 
 
+@functools.lru_cache(maxsize=64, typed=True)
+def mca_knows(cpu: str) -> bool:
+    run = subprocess.run(["llvm-mca", f"-mcpu={cpu}", "-"], input="", capture_output=True, text=True, check=False)
+    return "not a recognized processor" not in run.stderr
+
+
+@functools.lru_cache(maxsize=256, typed=True)
+def target_cpu(compiler: str, flags: tuple[str, ...]) -> str:
+    """The CPU llvm-mca models for an object ``compiler`` built with ``flags``: the one gcc resolves them to, when
+    llvm-mca knows it. Else ``native``, LLVM's own pick and so clang's, which is not gcc's: LLVM 22 takes a Zen 4 MI300A
+    for a znver3 without AVX-512, while gcc 14 targets znver4 and emits it."""
+    query = subprocess.run([compiler, *flags, "-Q", "--help=target"], capture_output=True, text=True, check=False)
+    return next((cpu for cpu in TARGET_CPU.findall(query.stdout) if mca_knows(cpu)), "native")
+
+
 @functools.lru_cache(maxsize=4096, typed=True)
-def mca_cycles(body: str) -> float | None:
+def mca_cycles(body: str, cpu: str) -> float | None:
     run = subprocess.run(
-        ["llvm-mca", "-mcpu=native", f"-iterations={MCA_ITERATIONS}", "-"],
+        ["llvm-mca", f"-mcpu={cpu}", f"-iterations={MCA_ITERATIONS}", "-"],
         input=body,
         capture_output=True,
         text=True,
@@ -369,8 +386,10 @@ def hot_calls(loop: Loop, elements: float) -> int:
     return len(loop.callees) if elements <= 1 or scalar >= elements else vector
 
 
-def loop_cost(loop: Loop, tasklets: tuple[str, ...], maps: dict[str, MapFacts], scope: Scope) -> LoopCost | None:
-    cycles = mca_cycles("\n".join(f"{i.mnemonic} {i.operands}" for i in loop.body) + "\n")
+def loop_cost(
+    loop: Loop, tasklets: tuple[str, ...], maps: dict[str, MapFacts], scope: Scope, cpu: str
+) -> LoopCost | None:
+    cycles = mca_cycles("\n".join(f"{i.mnemonic} {i.operands}" for i in loop.body) + "\n", cpu)
     if cycles is None:
         return None
     known = [maps[t] for t in tasklets if t in maps]
@@ -393,13 +412,13 @@ def source_loop(tasklets: tuple[str, ...], maps: dict[str, MapFacts]) -> frozens
 
 
 def hot_copies(
-    machine_loops: list[Loop], labels: dict[int, str], maps: dict[str, MapFacts], scope: Scope
+    machine_loops: list[Loop], labels: dict[int, str], maps: dict[str, MapFacts], scope: Scope, cpu: str
 ) -> dict[frozenset[MapFacts] | tuple[str, ...], LoopCost]:
     """Each source loop's hot copy: the most elements per iteration, then the fewest cycles."""
     groups: dict[frozenset[MapFacts] | tuple[str, ...], LoopCost] = {}
     for loop in machine_loops:
         tasklets = tuple(sorted({labels[n] for n in loop.lines if n in labels}))
-        cost = loop_cost(loop, tasklets, maps, scope)
+        cost = loop_cost(loop, tasklets, maps, scope, cpu)
         key = source_loop(tasklets, maps)
         held = groups.get(key)
         if cost is not None and (held is None or (cost.elements, -cost.cycles) > (held.elements, -held.cycles)):
@@ -439,15 +458,17 @@ def memory_term(loops: tuple[LoopCost, ...], footprint: int, share: float) -> fl
 def predict(
     build: Build,
     scope: Scope,
+    matrix: Matrix,
     sizes: dict[str, int] | None = None,
     sdfg: dace.SDFG | None = None,
     *,
     running: bool = False,
 ) -> Prediction | None:
     """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`), each source loop weighted by its
-    maps' iterations at ``sizes``. ``sdfg`` is what the build rendered (the scope's own by default). With ``running``
-    the scope will run at ``sizes``: a build pays for its regions on its real team. ``None`` without an object or a
-    loop llvm-mca accepts, and for a serial build at a size that does not decide the scope."""
+    maps' iterations at ``sizes``; llvm-mca models the CPU ``matrix``'s compiler targets. ``sdfg`` is what the build
+    rendered (the scope's own by default). With ``running`` the scope will run at ``sizes``: a build pays for its
+    regions on its real team. ``None`` without an object or a loop llvm-mca accepts, and for a serial build at a size
+    that does not decide the scope."""
     if build.archive is None:
         return None
     rendered = sdfg if sdfg is not None else scope.sdfg
@@ -457,7 +478,9 @@ def predict(
         return None
     machine_loops = [loop for code in disassembly(build.archive).values() for loop in innermost_loops(code)]
     maps = innermost_maps(rendered)
-    groups = hot_copies(machine_loops, tasklet_lines(build.source), maps, scope)
+    compiler = matrix.compilers[build.candidate.compiler].executables[build.candidate.language]
+    cpu = target_cpu(compiler, build.flags)
+    groups = hot_copies(machine_loops, tasklet_lines(build.source), maps, scope, cpu)
     if not groups:
         return None
     loops = weighted(groups.values(), maps, scope, sizes)
@@ -475,7 +498,9 @@ def predict(
 Predictions = dict[str, dict[str, Prediction]]
 
 
-def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None, running: bool = False) -> Predictions:
+def predictions(
+    reports: list[ScopeReport], matrix: Matrix, sizes: dict[str, int] | None = None, running: bool = False
+) -> Predictions:
     """The prediction of every distinct build of every scope at ``sizes`` (the loops weigh equally without), in parallel
     (llvm-mca runs per loop). Without ``running``, :func:`predict`'s model, every core and no region, skips serial
     builds."""
@@ -493,7 +518,9 @@ def predictions(reports: list[ScopeReport], sizes: dict[str, int] | None = None,
 
     def score(job: tuple[ScopeReport, Build]) -> Prediction | None:
         rep, b = job
-        return predict(b, rep.scope, sizes, cut[rep.scope.symbol] if b.candidate.fission else None, running=running)
+        return predict(
+            b, rep.scope, matrix, sizes, cut[rep.scope.symbol] if b.candidate.fission else None, running=running
+        )
 
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
         scored = list(pool.map(score, jobs))
