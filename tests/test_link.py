@@ -52,6 +52,26 @@ def test_a_library_links_the_vector_library_its_candidates_were_built_against(tm
     assert "-lmvec" not in links[1]
 
 
+def test_a_gcc_library_runs_on_libgomp_as_the_judge_grades_the_default_rendering(tmp_path):
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    archives = {
+        r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.scopes
+    }
+    linker = Linker(program, MATRIX, tmp_path)
+    gcc_only = cpf.render(linker.library_sdfg(archives, frozenset({Candidate("c", "gcc")})), language="c")
+    source, library = tmp_path / "unit.c", tmp_path / "libunit.so"
+    source.write_text(gcc_only.code)
+
+    # linked as the judge links a library submission: gcc -fopenmp, then the library's own link tokens
+    subprocess.run(["gcc", "-fopenmp", "-shared", "-fPIC", str(source), "-o", str(library), *gcc_only.link], check=True)
+
+    dynamic = subprocess.run(["readelf", "-d", str(library)], capture_output=True, text=True, check=True).stdout
+    needed = [line.split("[")[1].rstrip("]") for line in dynamic.splitlines() if "(NEEDED)" in line]
+    assert "libgomp.so.1" in needed and not any(name.startswith("libomp") for name in needed)
+    mixed = linker.library_sdfg(archives, frozenset({Candidate("c", "gcc"), Candidate("c", "clang")}))
+    assert "-lomp" in cpf.render(mixed, language="c", check_compiles=False).link
+
+
 @pytest.mark.clang
 @pytest.mark.sleef
 def test_a_sleef_build_binds_its_vector_calls_to_sleef_not_to_glibcs_libmvec(tmp_path):

@@ -80,7 +80,7 @@ def resolve(soname: str, compiler_executables: list[str]) -> pathlib.Path:
     return library
 
 
-def default_library(matrix: Matrix) -> pathlib.Path:
-    """The shared object of the matrix's default OpenMP runtime, as its compilers resolve it."""
-    soname = matrix.openmp_runtimes[matrix.defaults.openmp_runtime]
+def default_library(matrix: Matrix, name: str = "") -> pathlib.Path:
+    """The shared object of OpenMP runtime ``name`` (the matrix's default when empty), as its compilers resolve it."""
+    soname = matrix.openmp_runtimes[name or matrix.defaults.openmp_runtime]
     return resolve(soname, [exe for comp in matrix.compilers.values() for exe in comp.executables.values()])

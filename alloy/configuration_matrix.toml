@@ -43,12 +43,13 @@ std = "-std=c++20"
 suffix = "cpp"
 
 # A candidate is kept only if every OpenMP symbol its object needs is exported by the runtime's shared object.
-# libomp carries a GOMP compatibility layer, so gcc objects can link against it.
-[openmp_runtimes.libomp]
-soname = "omp"
-
+# libomp carries a GOMP compatibility layer, so gcc objects can link against it. A delivered library links the first
+# runtime below that all its candidates' compilers spell: a gcc-only one runs on libgomp, as the bench grades gcc code.
 [openmp_runtimes.libgomp]
 soname = "gomp"
+
+[openmp_runtimes.libomp]
+soname = "omp"
 
 [openmp_runtimes.libnvomp]  # NVHPC's runtime
 soname = "nvomp"

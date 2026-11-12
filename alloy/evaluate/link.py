@@ -108,9 +108,14 @@ class Linker:
     out: pathlib.Path
     vendor: list[str] | None = None
 
-    def link_flags(self) -> list[str]:
-        library = runtime.default_library(self.matrix)
-        return runtime.link_flags(library, self.matrix.openmp_runtimes[self.matrix.defaults.openmp_runtime])
+    def link_flags(self, candidates: frozenset[Candidate] | None = None) -> list[str]:
+        """The OpenMP runtime: Alloy's own process's (the default) without ``candidates``; else the first runtime of
+        the matrix every threaded candidate's compiler spells, the one the bench grades that compiler's code on."""
+        name = self.matrix.defaults.openmp_runtime
+        if candidates is not None:
+            threaded = [self.matrix.compilers[c.compiler].openmp for c in candidates if not c.serial]
+            name = next((r for r in self.matrix.openmp_runtimes if all(r in spelled for spelled in threaded)), name)
+        return runtime.link_flags(runtime.default_library(self.matrix, name), self.matrix.openmp_runtimes[name])
 
     def support_flags(self, candidates: frozenset[Candidate]) -> list[str]:
         """Link flags for what the linked archives call beyond their objects: the support libraries of every
@@ -147,10 +152,10 @@ class Linker:
         return self.vendor
 
     def library_sdfg(self, archives: dict[str, pathlib.Path], candidates: frozenset[Candidate]) -> dace.SDFG:
-        """A copy of the outlined program whose every scope calls ``archives[symbol]``, linked with the matrix's
-        OpenMP runtime and the libraries ``candidates`` need: what a standalone (CPF) library renders."""
+        """A copy of the outlined program whose every scope calls ``archives[symbol]``, linked with the OpenMP
+        runtime and the libraries ``candidates`` need: what a standalone (CPF) library renders."""
         sdfg = copy.deepcopy(self.program.sdfg)
-        flags = self.link_flags() + self.support_flags(candidates) + self.vendor_flags()
+        flags = self.link_flags(candidates) + self.support_flags(candidates) + self.vendor_flags()
         for call in external_call.external_calls(sdfg):
             call.implementation, call.lib_path, call.link_flags = "ExternCall", str(archives[call.symbol]), flags
         return sdfg
