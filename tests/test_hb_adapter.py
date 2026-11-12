@@ -317,10 +317,10 @@ if __name__ == "__main__":
     for scores, expected in PICK_CASES:
         test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected)
     test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share()
-    for pick, expected in PROFILE_CASES:
-        test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, expected)
-    for pick, expected in PLAIN_CASES:
-        test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, expected)
+    for pick, delivered in PROFILE_CASES:
+        test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, delivered)
+    for pick, delivery in PLAIN_CASES:
+        test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, delivery)
     test_a_pick_of_every_reference_delivers_the_plain_program_ungraded()
     with tempfile.TemporaryDirectory() as folder:
         test_an_episode_delivering_the_plain_program_records_no_scope_build(pathlib.Path(folder))
