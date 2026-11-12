@@ -2,6 +2,7 @@
 import ctypes
 import dataclasses
 import os
+import pathlib
 import shutil
 import subprocess
 
@@ -189,3 +190,24 @@ def test_best_carries_each_winners_own_source_and_flags(tmp_path):
         assert scope.candidate == winner.name
         assert scope.flags == winner.flags
         assert (best / scope.source).read_bytes() == winner.source.read_bytes()
+
+
+@pytest.mark.nvhpc
+def test_best_compiles_a_winner_into_the_code_that_was_measured(tmp_path):
+    """nvc's line tables (``-gopt``) keep a frame pointer: a ``best/`` compile without them is other code."""
+    program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
+    winners = {r.symbol: build(r, Candidate("c", "nvhpc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
+    Linker(program, MATRIX, tmp_path).write_best(winners)
+    best = tmp_path / "best"
+
+    for symbol, winner in winners.items():
+        subprocess.run(["make", "-C", str(best), f"lib{symbol}.a"], check=True, capture_output=True)
+        delivered, measured = (
+            text_section(obj) for obj in (best / f"{symbol}.o", built(winner).parent / f"{winner.name}.o")
+        )
+        assert delivered == measured, symbol
+
+
+def text_section(obj: pathlib.Path) -> list[str]:
+    listing = subprocess.run(["llvm-objdump", "-d", "--no-show-raw-insn", str(obj)], capture_output=True, text=True)
+    return listing.stdout.splitlines()[2:]

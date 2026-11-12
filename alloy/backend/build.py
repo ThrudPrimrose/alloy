@@ -130,10 +130,10 @@ def code_hash(obj: pathlib.Path) -> str:
 def compile_candidate(
     source: pathlib.Path, obj: pathlib.Path, candidate: Candidate, matrix: Matrix, flags: tuple[str, ...]
 ) -> subprocess.CompletedProcess[str]:
-    """Compile ``source`` with ``flags``, the compiler's remark flags and its line tables to ``obj``."""
+    """Compile ``source`` with ``flags`` and the compiler's remark flags to ``obj``."""
     compiler = matrix.compilers[candidate.compiler]
     executable, remarks = compiler.executables[candidate.language], compiler.remarks
-    command = [executable, *flags, *remarks, *compiler.line_tables, "-c", str(source), "-o", str(obj)]
+    command = [executable, *flags, *remarks, "-c", str(source), "-o", str(obj)]
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
@@ -168,7 +168,7 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
     """Compile ``source`` (its code variant) for ``candidate`` into ``<scope>/builds/<candidate>.o`` and archive it;
     safe to run concurrently for distinct candidates."""
     name, params = candidate.name(matrix), candidate.codegen_params(matrix)
-    flags = candidate.flags(matrix)
+    flags = (*candidate.flags(matrix), *matrix.compilers[candidate.compiler].line_tables)  # nvc's change the code
     builds = source.parent.parent / "builds"
     builds.mkdir(parents=True, exist_ok=True)
     obj = builds / f"{name}.o"
