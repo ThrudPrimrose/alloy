@@ -432,18 +432,22 @@ def source_loop(tasklets: tuple[str, ...], maps: dict[str, MapFacts]) -> frozens
 def hot_copies(
     machine_loops: list[Loop], labels: dict[int, str], maps: dict[str, MapFacts], scope: Scope, cpu: str
 ) -> dict[frozenset[MapFacts] | tuple[str, ...], LoopCost]:
-    """Each source loop's hot copy: the most elements per iteration, then the fewest cycles."""
-    groups: dict[frozenset[MapFacts] | tuple[str, ...], LoopCost] = {}
+    """Each source loop's hot copy: the most elements per iteration, then the fewest cycles. None at all when
+    llvm-mca accepts no copy of some source loop: the build's cost would leave that loop out."""
+    groups: dict[frozenset[MapFacts] | tuple[str, ...], LoopCost | None] = {}
     for loop in machine_loops:
         tasklets = tuple(sorted({labels[n] for n in loop.lines if n in labels}))
         cost = loop_cost(loop, tasklets, maps, scope, cpu)
         key = source_loop(tasklets, maps)
         held = groups.get(key)
-        if cost is not None and (held is None or (cost.elements, -cost.cycles) > (held.elements, -held.cycles)):
+        if cost is None:
+            groups.setdefault(key, None)
+        elif held is None or (cost.elements, -cost.cycles) > (held.elements, -held.cycles):
             groups[key] = cost
     if any(groups) and () in groups:  # a loop rendering no statement (OpenMP chunking) next to the loops that do
         del groups[()]
-    return groups
+    accepted = {key: cost for key, cost in groups.items() if cost is not None}
+    return accepted if len(accepted) == len(groups) else {}
 
 
 def weighted(
@@ -483,10 +487,10 @@ def predict(
     running: bool = False,
 ) -> Prediction | None:
     """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`), each source loop weighted by its
-    maps' iterations at ``sizes``; llvm-mca models the CPU the build targets (:func:`target_cpu`). ``sdfg`` is what the build
-    rendered (the scope's own by default). With ``running`` the scope will run at ``sizes``: a build pays for its
-    regions on its real team. ``None`` without an object or a loop llvm-mca accepts, and for a serial build at a size
-    that does not decide the scope."""
+    maps' iterations at ``sizes``; llvm-mca models the CPU the build targets (:func:`target_cpu`). ``sdfg`` is what
+    the build rendered (the scope's own by default). With ``running`` the scope will run at ``sizes``: a build pays for
+    its regions on its real team. ``None`` without an object, when llvm-mca accepts no copy of some source loop, and
+    for a serial build at a size that does not decide the scope."""
     if build.archive is None:
         return None
     rendered = sdfg if sdfg is not None else scope.sdfg

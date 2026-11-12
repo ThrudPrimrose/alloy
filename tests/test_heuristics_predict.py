@@ -459,6 +459,30 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
 
 
 @pytest.mark.gcc
+def test_a_build_with_a_source_loop_llvm_mca_rejects_every_copy_of_is_unranked(tmp_path, monkeypatch):
+    """Costed on the loops llvm-mca accepts, a build whose heavy loop it rejects (zmm on a model without AVX-512)
+    would look ten times cheaper and win the pick; it gets no prediction instead."""
+    scope = only_scope(two_rows)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+    maps = predict.innermost_maps(scope.sdfg)
+    first = {maps[t]: n for n, t in sorted(predict.tasklet_lines(built.source).items(), reverse=True) if t in maps}
+    assert len(first) == 2, "a statement line of each map"
+    loops = {
+        str(n): [
+            Instruction(0x00, "vmovupd", f"(%rdi,%rax,8), {register}", line=n),
+            Instruction(0x05, "vmovupd", f"{register}, (%rsi,%rax,8)", line=n),
+            Instruction(0x0A, "jne", "0x0 <f>"),
+        ]
+        for n, register in zip(first.values(), ("%xmm0", "%zmm0"), strict=True)
+    }
+    monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
+    monkeypatch.setattr(predict, "disassembly", lambda archive, source: loops)
+    monkeypatch.setattr(predict, "mca_cycles", lambda body, cpu: None if "zmm" in body else 10.0)
+
+    assert predict.predict(built, scope, MATRIX, {"M": 4, "N": 64, "K": 16}) is None
+
+
+@pytest.mark.gcc
 def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path):
     scope = only_scope(two_sums)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
