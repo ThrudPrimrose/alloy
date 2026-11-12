@@ -45,6 +45,31 @@ def test_the_accumulation_length_is_the_reduced_extent_of_each_scope(kernel, len
     assert [str(r.accumulation_length) for r in sut.scopes] == lengths
 
 
+def canonical_sum() -> dace.SDFG:
+    """A sum in canonicalize's shape: each element lands in a private scalar, which accumulates into ``out``."""
+    sdfg = dace.SDFG("canonical_sum")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("element", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, leave = state.add_map("sum", {"i": "0:N"})
+    copy = state.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    element = state.add_access("element")
+    state.add_memlet_path(state.add_read("a"), entry, copy, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_edge(copy, "y", element, None, dace.Memlet("element[0]"))
+    state.add_memlet_path(
+        element, leave, state.add_write("out"), memlet=dace.Memlet("out[0]", wcr="lambda x, y: x + y")
+    )
+    return sdfg
+
+
+def test_a_sum_through_a_private_scalar_accumulates_over_the_whole_map():
+    (sut,) = scopes.outline(canonical_sum(), MATRIX.libm_calls).scopes
+
+    assert sut.has_reduction
+    assert str(sut.accumulation_length) == "N"
+
+
 M = dace.symbol("M", dace.int64)
 N = dace.symbol("N", dace.int64)
 

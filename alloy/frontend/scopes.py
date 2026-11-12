@@ -114,7 +114,7 @@ def accumulation_length(sdfg: dace.SDFG) -> sympy.Expr:
         for edge in state.edges():
             if edge.data.is_empty() or edge.data.wcr is None:
                 continue
-            if isinstance(edge.src, nodes.Tasklet):
+            if isinstance(edge.src, (nodes.Tasklet, nodes.AccessNode)):  # canonicalize reduces through a scalar
                 lengths.append(reduced_extent(edge, scope))
             elif isinstance(edge.src, nodes.NestedSDFG):
                 lengths.append(reduced_extent(edge, scope) * accumulation_length(edge.src.sdfg))
