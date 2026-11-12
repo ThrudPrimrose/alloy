@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=6e59e7b5fd6de5cb6ea8a71564551f0da5553fda" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=d00fe32b50f4a7cff3283c6ad722217e4ef2d541" }]
 
 [[package]]
 name = "accelerate"
@@ -306,7 +306,7 @@ requires-dist = [
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
     { name = "dace" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=2b7f8dcdedc073bb277ba257a800723949e4a7d7" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=35f6edce6e8ab7fc64541e08783e74973c07adcd" },
     { name = "mpmath", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
@@ -1236,7 +1236,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0b1"
-source = { git = "https://github.com/spcl/dace.git?rev=6e59e7b5fd6de5cb6ea8a71564551f0da5553fda#6e59e7b5fd6de5cb6ea8a71564551f0da5553fda" }
+source = { git = "https://github.com/spcl/dace.git?rev=d00fe32b50f4a7cff3283c6ad722217e4ef2d541#d00fe32b50f4a7cff3283c6ad722217e4ef2d541" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1798,7 +1798,7 @@ wheels = [
 [[package]]
 name = "hpcagent-agent"
 version = "1.0a1"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=2b7f8dcdedc073bb277ba257a800723949e4a7d7#2b7f8dcdedc073bb277ba257a800723949e4a7d7" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?subdirectory=agent&rev=35f6edce6e8ab7fc64541e08783e74973c07adcd#35f6edce6e8ab7fc64541e08783e74973c07adcd" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
@@ -1807,7 +1807,7 @@ dependencies = [
 [[package]]
 name = "hpcagent-bench"
 version = "1.0a1"
-source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=2b7f8dcdedc073bb277ba257a800723949e4a7d7#2b7f8dcdedc073bb277ba257a800723949e4a7d7" }
+source = { git = "https://github.com/spcl/HPCAgent-Bench.git?rev=35f6edce6e8ab7fc64541e08783e74973c07adcd#35f6edce6e8ab7fc64541e08783e74973c07adcd" }
 dependencies = [
     { name = "accelerate" },
     { name = "anthropic" },
@@ -1833,6 +1833,7 @@ dependencies = [
     { name = "netcdf4" },
     { name = "numba" },
     { name = "numpy" },
+    { name = "opt-einsum" },
     { name = "orjson" },
     { name = "pandas" },
     { name = "playwright" },
@@ -3475,6 +3476,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2e/02/6e0ae9cc61bd3169d401077b507b3ebc344745171e1051ab430be012dcd9/opentelemetry_api-1.45.1.tar.gz", hash = "sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75", size = 72804, upload-time = "2026-10-06T17:32:58.133Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/41/f7dcf80b81ee8e71c1a2b59f14208bc723edbd89ed027a73b175abf6348e/opentelemetry_api-1.45.1-py3-none-any.whl", hash = "sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb", size = 60256, upload-time = "2026-10-06T17:32:33.506Z" },
+]
+
+[[package]]
+name = "opt-einsum"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/b9/2ac072041e899a52f20cf9510850ff58295003aa75525e58343591b0cbfb/opt_einsum-3.4.0.tar.gz", hash = "sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac", size = 63004, upload-time = "2024-09-26T14:33:24.483Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd", size = 71932, upload-time = "2024-09-26T14:33:23.039Z" },
 ]
 
 [[package]]
