@@ -59,18 +59,22 @@ def operations(tasklet: nodes.Tasklet) -> tuple[set[type], set[str]]:
     return ops, calls
 
 
+def sums(edge: dace.sdfg.graph.MultiConnectorEdge) -> bool:
+    return edge.data.wcr is not None and "+" in str(edge.data.wcr)
+
+
 def feeds_add(state: dace.SDFGState, tasklet: nodes.Tasklet) -> bool:
-    """Whether ``tasklet``'s result reaches an add or subtract: a summing write conflict, or a tasklet reading it
-    through one access node."""
+    """Whether ``tasklet``'s result reaches an add or subtract: a summing write conflict, or a tasklet or a summing
+    write conflict (canonicalize's private scalar) reading it through one access node."""
     for edge in state.out_edges(tasklet):
-        if edge.data.wcr is not None and "+" in str(edge.data.wcr):
+        if sums(edge):
             return True
         for path_edge in state.memlet_tree(edge):
             reader = path_edge.dst
             if not isinstance(reader, nodes.AccessNode):
                 continue
             for out in state.out_edges(reader):
-                if isinstance(out.dst, nodes.Tasklet) and operations(out.dst)[0] & {ast.Add, ast.Sub}:
+                if sums(out) or (isinstance(out.dst, nodes.Tasklet) and operations(out.dst)[0] & {ast.Add, ast.Sub}):
                     return True
     return False
 

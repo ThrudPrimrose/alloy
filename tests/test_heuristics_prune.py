@@ -68,6 +68,33 @@ def test_a_multiply_feeding_an_add_is_contractible_and_a_lone_multiply_is_not():
     assert not prune.facts(only_scope(scale64)).contracts
 
 
+def canonical_dot() -> dace.SDFG:
+    """A dot product in canonicalize's shape: each product lands in a private scalar, which sums into ``out``."""
+    sdfg = dace.SDFG("canonical_dot")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("product", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, leave = state.add_map("dot", {"i": "0:N"})
+    multiply = state.add_tasklet("multiply", {"x": dace.float64, "y": dace.float64}, {"z": dace.float64}, "z = x * y")
+    product = state.add_access("product")
+    state.add_memlet_path(state.add_read("a"), entry, multiply, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(state.add_read("b"), entry, multiply, dst_conn="y", memlet=dace.Memlet("b[i]"))
+    state.add_edge(multiply, "z", product, None, dace.Memlet("product[0]"))
+    state.add_memlet_path(
+        product, leave, state.add_write("out"), memlet=dace.Memlet("out[0]", wcr="lambda x, y: x + y")
+    )
+    return sdfg
+
+
+def test_a_product_summed_through_a_private_scalar_is_contractible():
+    (scope,) = scopes.outline(canonical_dot(), MATRIX.libm_calls).scopes
+
+    assert prune.facts(scope).contracts
+    assert "fp contract" not in pruned_reasons(scope, vectorized=1)
+
+
 def test_sqrt_sets_errno_and_a_division_is_a_fast_math_approximation():
     sut = prune.facts(only_scope(roots))
 
