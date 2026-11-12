@@ -122,6 +122,10 @@ SEEDED_COMPILERS = [
     pytest.param("clang", marks=MARKS["clang"]),
     pytest.param("icx", marks=[MARKS["icx"], ICX_LOSES_UPDATES]),
 ]
+#: libnvomp ships with the HPC SDK, so a row linking against it needs nvhpc whichever compilers built the archives.
+RUNTIMES = [
+    pytest.param(name, marks=[MARKS["nvhpc"]] if name == "libnvomp" else [], id=name) for name in MATRIX.openmp_runtimes
+]
 COMBINATIONS = [
     compiler_param(names)
     for size in (1, 2, len(MATRIX.compilers))
@@ -133,7 +137,7 @@ def executables() -> list[str]:
     return [exe for comp in MATRIX.compilers.values() for exe in comp.executables.values()]
 
 
-@pytest.mark.parametrize("runtime_name", list(MATRIX.openmp_runtimes))
+@pytest.mark.parametrize("runtime_name", RUNTIMES)
 @pytest.mark.parametrize("names", COMBINATIONS)
 def test_archives_from_several_compilers_link_exactly_when_the_runtime_exports_their_calls(
     tmp_path, names, runtime_name

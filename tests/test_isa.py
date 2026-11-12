@@ -188,16 +188,17 @@ def test_every_recipe_step_reverses_to_its_own_row():
 
 @functools.lru_cache(maxsize=1)
 def clang_include() -> pathlib.Path | None:
-    """The clang resource include dir (the headers the spellings were verified against), or None."""
+    """The clang resource include dir (the headers the spellings were verified against), or None. Only a clang built
+    for AArch64 too generates arm_neon.h and arm_sve.h, so one without them cannot check the table's ARM spellings."""
     for command in ("clang-22", "clang-21", "clang"):
         try:
             run = subprocess.run([command, "-print-resource-dir"], capture_output=True, text=True, check=True)
         except (OSError, subprocess.CalledProcessError):
             continue
-        if (include := pathlib.Path(run.stdout.strip()) / "include").is_dir():
+        if ((include := pathlib.Path(run.stdout.strip()) / "include") / "arm_sve.h").is_file():
             return include
     for include in sorted(pathlib.Path("/usr/lib/clang").glob("*/include")):
-        if include.is_dir():
+        if (include / "arm_sve.h").is_file():
             return include
     return None
 
