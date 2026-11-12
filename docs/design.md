@@ -161,6 +161,9 @@ Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope fro
 - `predict.choose`: among the correct distinct builds at or below that level, those within 2% of the fewest predicted
   cycles per element; of those the default level's, then the first in sweep order. Without any correct build the
   default build ships.
+- Bench delivery (`hb_plugin.adapter.graded_pick`, speculative and profile mode): the pick ships only if `/score`
+  grades it correct and no slower than the plain program (no scope outlined, what `alloy_none` delivers); else the
+  plain program ships, and the episode record names `none` as every scope's build.
 - Size: `SDFG.compile` passes no size, so a pick follows the running size only when something states it:
   `running=` on `api.generate` or `dace_backend.compile`, or a program with no free symbol (constants included). A
   manifest's presets say what may run, not what will. A size left open ranks OpenMP builds at the roofline sizes and
@@ -226,7 +229,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   `alloy_profile` extends the DaCe stage columns into `dace_<cpu|gpu>_<canon|parallel|autoopt>_alloy_profile`: the
   stage's pipeline output is Alloy's input SDFG. `alloy_speculative` extends the CPU columns into
   `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
-  once (every scope's reference when the score is wrong).
+  once (the plain program, no scope outlined, when the pick grades wrong or slower than it).
 - GPU (`alloy/gpu.py`, speculative only): `alloy_speculative` also extends the DaCe GPU columns. The bench GPU
   pipeline runs once with a probe block per device map (set on each map by the pipeline's `offloaded` hook,
   between the offload and the tiling, so the coalesced tiling follows it), which names each map's kernel; then once

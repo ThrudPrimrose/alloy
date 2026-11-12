@@ -64,6 +64,7 @@ __all__ = [
     "nothing_to_generate",
     "optimize",
     "pipeline_sdfg",
+    "plain",
     "ranked",
     "record_episode",
     "reference",
@@ -120,6 +121,14 @@ class Episode:
     scopes: tuple[EpisodeScope, ...]
 
 
+#: ``(chosen, note)`` of every scope when the plain program, no scope outlined, is delivered.
+PLAIN = ("none", "the plain program")
+
+
+def delivered_as(build: Build) -> tuple[str, str]:
+    return build.name, build.candidate.note
+
+
 def record_episode(
     mode: str,
     task: Task,
@@ -134,10 +143,10 @@ def record_episode(
 ) -> None:
     """Write the episode's :class:`Episode` to :data:`EPISODE_RECORD` beside ``submission``'s library (the episode's
     folder); ``started`` is the episode's ``time.monotonic()`` start, ``stubs`` the stub timings it took,
-    ``delivered`` the build delivered per scope of ``references``."""
-    refs, picks = references or {}, delivered or {}
+    ``delivered`` the build delivered per scope of ``references``, ``None`` for the plain program (:data:`PLAIN`)."""
+    refs = references or {}
     scopes = tuple(
-        EpisodeScope(symbol, build.name, picks[symbol].name, picks[symbol].candidate.note)
+        EpisodeScope(symbol, build.name, *(PLAIN if delivered is None else delivered_as(delivered[symbol])))
         for symbol, build in refs.items()
     )
     seconds = EpisodeSeconds(generate, time_stubs, score, time.monotonic() - started)
@@ -261,6 +270,15 @@ def library(task: Task, spec: BenchSpec, linker: Linker, selection: dict[str, Bu
     return rendered(task, spec, linked(linker, selection), deliver)
 
 
+def delivery(
+    task: Task, spec: BenchSpec, pipeline: str, linker: Linker, delivered: dict[str, Build] | None, deliver: Deliver
+) -> Submission:
+    """The library of the ``delivered`` selection, or without one the plain program (:func:`plain`)."""
+    return (
+        plain(task, spec, pipeline, deliver) if delivered is None else library(task, spec, linker, delivered, deliver)
+    )
+
+
 def stub_time(answer: ProfileAnswer) -> float:
     """A stub's time: device time per repetition from a trace, else the graded linuxperf configuration's elapsed."""
     report = answer.root
@@ -307,7 +325,7 @@ def ranked[B: Named](
 
 def judge_client() -> JudgeClient:
     """A client that waits for a grade as long as the router lets the judge take: given up early, a slow kernel's
-    ``/score`` reads as no grade and the references are delivered in place of the pick."""
+    ``/score`` reads as no grade and the plain program is delivered in place of the pick."""
     return JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=terminal_timeout())
 
 
@@ -325,7 +343,7 @@ def scratch_folder(spec: BenchSpec) -> pathlib.Path:
 
 def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
-    slower than the references, else every scope's reference (CPF's default rendering with no scope)."""
+    slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program."""
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -348,7 +366,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     stub_costs: list[float] = []
 
     def score_reserve() -> float:
-        # the selection's score plus the harness's own grade; the references' score needs one stub cost more
+        # the selection's score plus the harness's own grade; the plain program's score needs one stub cost more
         return 2 * max(stub_costs, default=0.0)
 
     def affordable_stub() -> bool:
@@ -373,12 +391,13 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
         chosen if left > score_reserve() else references,
         references,
         lambda selection: library(task, spec, linker, selection, deliver),
+        lambda: plain(task, spec, pipeline, deliver),
         task.kernel,
         compare=left > score_reserve() + max(stub_costs, default=0.0),
     )
     score = time.monotonic() - scoring
     # every deliver builds the same .so path, so the returned library is built last
-    submission = library(task, spec, linker, delivered, deliver)
+    submission = delivery(task, spec, pipeline, linker, delivered, deliver)
     record_episode(
         Mode.PROFILE.value,
         task,
@@ -399,16 +418,21 @@ def reference(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     graded by the same judge on the same draws."""
     started = time.monotonic()
     refuse_restricted(task)
-    spec = BenchSpec.load(task.kernel)
-    submission = rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
+    submission = plain(task, BenchSpec.load(task.kernel), pipeline, deliver)
     record_episode("none", task, started, submission)
     return submission
 
 
+def plain(task: Task, spec: BenchSpec, pipeline: str, deliver: Deliver) -> Submission:
+    """``pipeline``'s program rendered by CPF with no scope outlined: what alloy_none delivers, and what an Alloy
+    mode delivers when its pick does not grade faster."""
+    return rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
+
+
 def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy's speculative mode on ``task``'s kernel after ``pipeline``: each scope's predicted pick, verified and
-    never timed, if ``/score`` grades it correct, else every scope's reference. A GPU task's device maps take their
-    speculated threadblock shapes instead (:func:`speculative_gpu`)."""
+    never timed, if ``/score`` grades it correct and no slower than the plain program, else the plain program. A GPU
+    task's device maps take their speculated threadblock shapes instead (:func:`speculative_gpu`)."""
     if target_of(task) is Target.GPU:
         return speculative_gpu(task, pipeline)
     started = time.monotonic()
@@ -431,11 +455,16 @@ def speculative(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     judge = judge_client()
     scoring = time.monotonic()
     delivered = graded_pick(
-        judge, chosen, references, lambda selection: library(task, spec, linker, selection, deliver), task.kernel
+        judge,
+        chosen,
+        references,
+        lambda selection: library(task, spec, linker, selection, deliver),
+        lambda: plain(task, spec, pipeline, deliver),
+        task.kernel,
     )
     score = time.monotonic() - scoring
     # every deliver builds the same .so path, so the returned library is built last
-    submission = library(task, spec, linker, delivered, deliver)
+    submission = delivery(task, spec, pipeline, linker, delivered, deliver)
     record_episode(Mode.SPECULATIVE.value, task, started, submission, generate, 0.0, score, 0, references, delivered)
     return submission
 
@@ -445,22 +474,24 @@ def graded_pick[B](
     chosen: dict[str, B],
     references: dict[str, B],
     build: Callable[[dict[str, B]], Submission],
+    plain_program: Callable[[], Submission],
     kernel: str,
     compare: bool = True,
-) -> dict[str, B]:
-    """``chosen`` if ``/score`` grades it correct and, when ``compare``, no slower than ``references``; else the
-    references. Without ``compare`` (no time for a second grade) a correct pick is kept ungraded against them."""
+) -> dict[str, B] | None:
+    """``chosen`` if ``/score`` grades it correct and, when ``compare``, no slower than ``plain_program``; else
+    ``None``, the plain program (:func:`plain`). A pick of every reference is no pick. Without ``compare`` (no time
+    for a second grade) a correct pick is kept ungraded against it."""
     if chosen == references:
-        return references
-    baseline = (lambda: build(references)) if compare else None
-    return chosen if faster_correct(judge, lambda: build(chosen), baseline, kernel) else references
+        return None
+    baseline = plain_program if compare else None
+    return chosen if faster_correct(judge, lambda: build(chosen), baseline, kernel) else None
 
 
 def faster_correct(
     judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], Submission] | None, kernel: str
 ) -> bool:
     """Whether ``pick`` grades correct and no slower than ``baseline`` (if any); a judge that does not answer keeps
-    the references, the library that is safe without a grade. Each is built just before its grade: both share one
+    the plain program, the library that is safe without a grade. Each is built just before its grade: both share one
     .so."""
     try:
         graded = judge.score(pick(), kernel)

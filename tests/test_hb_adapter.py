@@ -4,6 +4,9 @@ best prefix so far, survives a failing stub, stops when the budget does, reads a
 a rendered library asks for the scratch its entry carves transients from."""
 
 import dataclasses
+import json
+import pathlib
+import tempfile
 
 import pytest
 
@@ -197,9 +200,50 @@ def test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_s
     def build(selection: dict[str, Fake]) -> Submission:
         return Submission(language=Language.C, source=selection["r"].name)
 
-    sut = graded_pick(judge, {"r": Fake("pick")}, {"r": Fake("base")}, build, "k")  # type: ignore[arg-type]
+    sut = graded_pick(judge, {"r": Fake("pick")}, {"r": Fake("ref")}, build, lambda: BASE, "k")  # type: ignore[arg-type]
 
-    assert sut["r"].name == expected
+    assert (sut["r"].name if sut is not None else "base") == expected
+
+
+PLAIN_CASES = [((True, 1.2), None), ((True, 2.0), "pick")]
+
+
+def library_of(selection: dict[str, Fake]) -> Submission:
+    return Submission(language=Language.C, source=selection["r"].name)
+
+
+@pytest.mark.parametrize(("pick", "expected"), PLAIN_CASES)
+def test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, expected) -> None:
+    """The per-scope references build at the strict level, slower than the plain program alloy_none delivers: a
+    pick that beat them could still lose to it, and losing delivers the plain program (``None``)."""
+    judge = Judge({"pick": pick, "ref": (True, 1.0), "base": (True, 1.5)})
+
+    sut = graded_pick(judge, {"r": Fake("pick")}, {"r": Fake("ref")}, library_of, lambda: BASE, "k")  # type: ignore[arg-type]
+
+    assert (sut["r"].name if sut is not None else None) == expected
+
+
+def test_a_pick_of_every_reference_delivers_the_plain_program_ungraded() -> None:
+    judge = Judge({})
+
+    assert graded_pick(judge, {"r": Fake("ref")}, {"r": Fake("ref")}, library_of, lambda: BASE, "k") is None  # type: ignore[arg-type]
+
+
+def test_an_episode_delivering_the_plain_program_records_no_scope_build(tmp_path) -> None:
+    def built(name: str) -> SimpleNamespace:
+        return SimpleNamespace(name=name, candidate=SimpleNamespace(note=name))
+
+    library = Submission(language=Language.C, source="", library=str(tmp_path / "lib.so"))
+    task = cast(Task, SimpleNamespace(kernel="k"))
+    refs, pick = {"r": built("ref")}, {"r": built("pick")}
+
+    adapter.record_episode("speculative", task, 0.0, library, references=refs, delivered=None)  # type: ignore[arg-type]
+    plain_scopes = json.loads((tmp_path / adapter.EPISODE_RECORD).read_text())["scopes"]
+    adapter.record_episode("speculative", task, 0.0, library, references=refs, delivered=pick)  # type: ignore[arg-type]
+    pick_scopes = json.loads((tmp_path / adapter.EPISODE_RECORD).read_text())["scopes"]
+
+    assert [(s["reference"], s["chosen"]) for s in plain_scopes] == [("ref", adapter.PLAIN[0])]
+    assert [(s["reference"], s["chosen"]) for s in pick_scopes] == [("ref", "pick")]
 
 
 def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
@@ -275,6 +319,11 @@ if __name__ == "__main__":
     test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share()
     for pick, expected in PROFILE_CASES:
         test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, expected)
+    for pick, expected in PLAIN_CASES:
+        test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, expected)
+    test_a_pick_of_every_reference_delivers_the_plain_program_ungraded()
+    with tempfile.TemporaryDirectory() as folder:
+        test_an_episode_delivering_the_plain_program_records_no_scope_build(pathlib.Path(folder))
     test_a_failed_verdict_is_not_offered_to_the_stub_ranking()
     test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
     test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
