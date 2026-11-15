@@ -154,20 +154,20 @@ def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet
     assert dict(packets.resolve(packet, "c").env)["JUDGE_INPUT_MODE"] == InputMode.ANY.text
 
 
-def test_the_full_packet_offers_every_alloy_tool_and_does_not_tell_the_agent_to_call_one_first(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_the_full_packet_offers_every_alloy_tool_and_does_not_tell_the_agent_to_call_one_first() -> None:
     plugins.load()
 
     sut = packets.resolve("alloy", "c")
-    assert prompt_build.main(["--packet", "alloy", "--render"]) == 0
-    prompt = capsys.readouterr().out
+    halves = [half for layer in prompt_build.overlays_for([], packet="alloy") for half in (layer.agent, layer.task)]
 
     assert set(sut.tools) == {"alloy_profile", "alloy_speculative", "alloy_isa"}
     assert set(sut.skills) == {"alloy", "alloy-isa"}
-    assert "## Alloy" in prompt
-    assert "Call it first" not in prompt
-    assert "Call Alloy and `submit`" not in prompt
+    assert [[(item.after, item.block.id) for item in half.insert] for half in halves] == [[("intro", "alloy")]] * 2
+    assert not any(half.set or half.remove for half in halves)
+    text = halves[0].insert[0].block.text
+    assert text.startswith("## Alloy")
+    assert "Call it first" not in text
+    assert "Call Alloy and `submit`" not in text
 
 
 def test_the_isa_packet_offers_the_lookup_alone_and_leaves_the_input_mode_to_the_benchmark() -> None:
