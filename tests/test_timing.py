@@ -86,7 +86,9 @@ def test_the_scope_timer_reads_nothing_for_an_empty_scope_and_time_for_a_real_on
     assert min(real_times) > 10 * max(empty)
 
 
-def test_alloy_full_links_every_scope_winner_and_matches_dace_default(tmp_path):
+def test_alloy_full_links_every_scope_winner_and_matches_dace_default(tmp_path, monkeypatch):
+    # a cache this small puts 2x it below any host's memory cap, which would bound the size on a big-L3 runner
+    monkeypatch.setattr(machine, "largest_cache_bytes", lambda: 8 << 20)
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     reports = [
         ScopeReport(
