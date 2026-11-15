@@ -231,7 +231,7 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   stage's pipeline output is Alloy's input SDFG. `alloy_speculative` extends the CPU columns into
   `dace_cpu_<canon|parallel|autoopt>_alloy_speculative`: each scope's predicted pick, verified, never timed, scored
   once (the plain program, no scope outlined, when the pick grades wrong or slower than it).
-- GPU (`alloy/gpu.py`, speculative only): `alloy_speculative` also extends the DaCe GPU columns. The bench GPU
+- GPU (`alloy/gpu.py`): `alloy_speculative` and `alloy_profile` also extend the DaCe GPU columns. The bench GPU
   pipeline runs once with a probe block per device map (set on each map by the pipeline's `offloaded` hook,
   between the offload and the tiling, so the coalesced tiling follows it), which names each map's kernel; then once
   per candidate shape (rank 1: 64..1024 threads; rank >= 2: 32x4, 32x8, 16x16, 64x4, 32x16, 128x2), each rendered
@@ -240,7 +240,11 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   0.5 (CUDA from the SM limits of its compute capability, HIP the compiler's waves per SIMD), an innermost
   dimension of at least a warp, fewer registers; the pipeline's own block is a candidate too and wins a tie. A map's
   roofline time does not depend on its shape, so it orders maps, not shapes. The submission is the bench's GPU form
-  (HIP), scored once, else the pipeline's blocks. GPU profile mode and the DaCe build plugin on GPU are not done.
+  (HIP), scored once, else the pipeline's blocks. Profile mode starts from those picks and descends map by map
+  (`gpu.descend`): each map tries its next three ranked shapes with the others held, timed by the judge's
+  `/profile`, and keeps one only when the program runs faster; a shape that fails to launch is dropped; it stops
+  when the kernel's time is short; the result is delivered if `/score` grades it correct and no slower than the
+  pipeline's own blocks. The DaCe build plugin on GPU is not done.
 - Packets `alloy-profile` and `alloy-speculative` (an LLM agent; skill page `alloy`): the tool `alloy_<mode>` posts
   `/alloy/<mode>`, which runs Alloy on the episode's kernel after `canon_cpu` in a spawned process holding a device
   slot (`alloy/hb_plugin/workbench.py`). It answers with plain C/C++ an agent rebuilds without DaCe: `best/program.c`

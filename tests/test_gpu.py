@@ -214,3 +214,59 @@ def test_the_submitted_hip_form_launches_every_kernel_with_its_picked_block():
     assert sut.language is Language.HIP and sut.source and sut.device_source
     for pick in picks.values():
         assert f"__launch_bounds__({pick.shape[0] * pick.shape[1] * pick.shape[2]})" in sut.device_source
+
+
+def ranked_pick(*shapes: gpu.Shape) -> gpu.Pick:
+    usage = gpu.Usage(registers=32, spill_bytes=0, shared_bytes=0)
+    return gpu.Pick(shapes[0], usage, 0.5, tuple((shape, usage, 0.5) for shape in shapes))
+
+
+A, B, C = (128, 1, 1), (256, 1, 1), (64, 1, 1)
+
+
+def test_the_descent_keeps_a_maps_next_shape_only_when_the_program_runs_faster():
+    seconds = {(A, A): 3.0, (B, A): 2.0, (C, A): 2.5, (B, B): 2.5, (B, C): 2.0}
+
+    sut = gpu.descend(
+        lambda shapes: (shapes[0], shapes[1]),
+        {0: ranked_pick(A, B, C), 1: ranked_pick(A, B, C)},
+        lambda program: seconds[program],
+        lambda: True,
+    )
+
+    assert sut == {0: B, 1: A}  # (B, C) ties (B, A): a tie keeps the shape already held
+
+
+def test_a_shape_that_fails_to_run_is_never_taken_and_a_running_one_replaces_a_failed_pick():
+    seconds = {A: None, B: 4.0, C: None}
+
+    sut = gpu.descend(
+        lambda shapes: shapes[0], {0: ranked_pick(A, B, C)}, lambda program: seconds[program], lambda: True
+    )
+
+    assert sut == {0: B}
+
+
+def test_the_descent_keeps_the_speculated_shapes_when_no_time_is_left():
+    timed: list[gpu.Shape] = []
+
+    def time_it(program: gpu.Shape) -> float:
+        timed.append(program)
+        return 1.0
+
+    sut = gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C)}, time_it, lambda: False)
+
+    assert sut == {0: A}
+    assert timed == [A]
+
+
+def test_the_descent_tries_no_more_shapes_of_a_map_than_its_width():
+    timed: list[gpu.Shape] = []
+
+    def time_it(program: gpu.Shape) -> float:
+        timed.append(program)
+        return 1.0
+
+    gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C, (512, 1, 1))}, time_it, lambda: True, width=2)
+
+    assert timed == [A, B]

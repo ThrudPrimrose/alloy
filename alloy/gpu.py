@@ -21,12 +21,14 @@ from dace.sdfg import nodes
 
 __all__ = [
     "Pick",
+    "Pipeline",
     "Shape",
     "SmLimits",
     "Usage",
     "blocks",
     "candidate_shapes",
     "cuda_occupancy",
+    "descend",
     "device_maps",
     "hip_usage",
     "nvcc_usage",
@@ -45,6 +47,8 @@ OCCUPANCY_SATURATION = 0.5
 #: Block sizes no candidate has as its thread count, one per device map of a probe run: a map's block tells its
 #: ordinal, and its kernel's ``__launch_bounds__`` the kernel's name.
 PROBE_THREADS: tuple[int, ...] = tuple(32 * m for m in range(3, 32) if m not in (4, 8, 16))
+#: Profile mode times a map's top shapes by the compiler report, this many, the speculated one included.
+DESCENT_WIDTH = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +318,29 @@ def speculate(pipeline: Pipeline, dialect: str, arch: str) -> tuple[dace.SDFG, d
         if (ranked := sorted(rows, key=lambda row: rank_key(*row)))
     }
     return pipeline({ordinal: pick.shape for ordinal, pick in picks.items()}), picks
+
+
+def descend(
+    pipeline: Pipeline,
+    picks: dict[int, Pick],
+    timed: Callable[[dace.SDFG], float | None],
+    affordable: Callable[[], bool],
+    width: int = DESCENT_WIDTH,
+) -> dict[int, Shape]:
+    """Profile mode's shapes: from the speculated ``picks``, each device map in turn tries its next ``width - 1``
+    ranked shapes with the other maps held, and keeps a shape only when ``timed`` (seconds, or ``None`` for a run
+    that failed) measures the program faster. Stops trying once ``affordable`` says no time is left."""
+    shapes = {ordinal: pick.shape for ordinal, pick in picks.items()}
+    best = timed(pipeline(shapes))
+    for ordinal in sorted(picks):
+        for shape, _, _ in picks[ordinal].ranked[1:width]:
+            if not affordable():
+                return shapes
+            trial = {**shapes, ordinal: shape}
+            seconds = timed(pipeline(trial))
+            if seconds is not None and (best is None or seconds < best):
+                best, shapes = seconds, trial
+    return shapes
 
 
 def native_arch(dialect: str) -> str:

@@ -343,7 +343,10 @@ def scratch_folder(spec: BenchSpec) -> pathlib.Path:
 
 def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
-    slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program."""
+    slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
+    GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`)."""
+    if target_of(task) is Target.GPU:
+        return profile_gpu(task, pipeline)
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -513,18 +516,61 @@ def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG) -> Submissio
     return with_scratch(submission, form.workspace_bytes)
 
 
-def speculative_gpu(task: Task, pipeline: str) -> Submission:
-    """Every device map of ``task``'s kernel after ``pipeline`` at its speculated threadblock shape
-    (:func:`alloy.gpu.speculate`, for this machine's device), if ``/score`` grades it correct, else the pipeline's
-    own blocks."""
+def gpu_dialect(task: Task) -> str:
     if task.image not in ANALYSIS_DIALECT:
         raise NotImplementedError(f"Alloy's GPU mode reads NVIDIA or AMD compiler reports; got image {task.image}")
-    spec = BenchSpec.load(task.kernel)
-    dialect = ANALYSIS_DIALECT[task.image]
+    return ANALYSIS_DIALECT[task.image]
+
+
+def gpu_pipeline(task: Task, spec: BenchSpec, pipeline: str) -> gpu.Pipeline:
+    """``pipeline``'s GPU program with the given device maps' threadblock shapes; ``{}`` keeps its own blocks."""
 
     def run(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
         return pipeline_sdfg(spec, pipeline, task.precision, Target.GPU, offloaded=gpu.blocks(shapes))
 
+    return run
+
+
+def profile_gpu(task: Task, pipeline: str) -> Submission:
+    """Every device map of ``task``'s kernel after ``pipeline`` at its profiled threadblock shape: the speculated
+    shapes (:func:`alloy.gpu.speculate`), then each map's next ranked ones timed by the judge (:func:`alloy.gpu.descend`)
+    while the kernel's time allows; delivered if ``/score`` grades it correct and no slower than the pipeline's own
+    blocks, else those."""
+    started = time.monotonic()
+    spec = BenchSpec.load(task.kernel)
+    deadline = started + resolve_kernel_timeout(spec)
+    dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
+    judge, size = judge_client(), fast_size(config.current().service.preset)
+    _, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
+    costs: list[float] = []
+
+    def timed(program: dace.SDFG) -> float | None:
+        start = time.monotonic()
+        try:
+            answer = judge.profile(device_submission(task, spec, program), task.kernel, reps=PROFILE_REPS, size=size)
+            return stub_time(answer)
+        except (OSError, RuntimeError, ValueError):
+            return None  # a shape the device cannot launch, or no time in the report: not a candidate
+        finally:
+            costs.append(time.monotonic() - start)
+
+    def affordable() -> bool:
+        # one more profile, then the pick's and the default's grades and the harness's own
+        return deadline - time.monotonic() > 4 * max(costs, default=0.0)
+
+    shapes = gpu.descend(run, picks, timed, affordable)
+    print(f"alloy: {spec.short_name}: threadblocks {shapes} after {len(costs)} profiles", file=sys.stderr, flush=True)
+    chosen = device_submission(task, spec, run(shapes))
+    default = device_submission(task, spec, run({}))
+    return chosen if faster_correct(judge, lambda: chosen, lambda: default, task.kernel) else default
+
+
+def speculative_gpu(task: Task, pipeline: str) -> Submission:
+    """Every device map of ``task``'s kernel after ``pipeline`` at its speculated threadblock shape
+    (:func:`alloy.gpu.speculate`, for this machine's device), if ``/score`` grades it correct, else the pipeline's
+    own blocks."""
+    spec = BenchSpec.load(task.kernel)
+    dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
     program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
     blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
     print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
