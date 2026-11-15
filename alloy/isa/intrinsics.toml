@@ -1,14 +1,13 @@
 # The op x dtype x ISA instruction table: the abstract math ops of alloy/isa/ops.py spelled as C
-# intrinsics (and assembly mnemonics) per vector ISA. Checked-in reference data; every spelling was
-# verified against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h). Sources:
-# the per-target ESSENTIALS sheets of the ISA docs package (Intel SDM ch.14/15, Arm NEON intrinsics
-# reference, ACLE, ACLE for SVE). Operand-order traps (NEON/SVE fma differ from Intel) are recorded
+# intrinsics (and assembly mnemonics) per vector ISA. Checked-in reference data, written by hand; every spelling was
+# checked against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h), and `validate` runs every row
+# the host can execute. Operand-order traps (NEON/SVE fma differ from Intel) are recorded
 # in `signature`/`semantics`, so no caller hardcodes an order. A `recipe` names its steps; its `code`
 # is the C that runs them on the operands of `signature`: statements, then the result expression.
 #
 # `schedules` uses the matrix's tail names: scalar_remainder (separate tail loop), masked_remainder
 # (masked epilogue), full_mask (every iteration masked), sve_intrinsics (explicit predicated SVE
-# loops, DaCe's SVEVectorization). Tenstorrent Tensix is absent: no C intrinsic path (design.md).
+# loops, DaCe's SVEVectorization). Tenstorrent Tensix has tile calls, not intrinsics: tensix.toml.
 
 # --- Loop schedules: what each tail strategy is. Legality per ISA lives in [isa.*].schedules;
 # "scalar" is legal everywhere (it is the fallback when nothing vectorizes).

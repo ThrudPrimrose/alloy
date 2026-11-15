@@ -92,7 +92,13 @@ checked. A recipe prints that `code`: C on the operands of its `signature`, stat
 so copy it rather than rebuilding the order from the step names. The output ends in `verified:`; on failure nothing is
 printed to stdout, the exit code is 3, and stderr lists potentially relevant spellings. `unverified:` marks what did
 not run here, even if it compiled for its target; `reverse`, `assist` and `schedule` answers are not checked at all.
+A `cost:` line gives llvm-mca's latency and cycles per instruction of the row's compiled instruction on Zen 4 (x86) or
+Neoverse V2 (Arm): on Zen 4 a 512-bit add costs twice a 256-bit one per instruction, so AVX-512 wins there by masking
+and fewer instructions, not by throughput.
 
+- `tensix` (Tenstorrent Blackhole) answers with compute-kernel tile calls, not intrinsics: `lookup tensix add f32`
+  prints each unit's row (the FPU reads TF32 operands, the SFPU keeps f32), the 0.6x and 0.8x spellings where
+  tt-metal renamed a call, and the maximum relative error its run on ttsim recorded. `f32` and `bf16` only.
 - ISAs: `avx2`, `avx512`, `neon`, `sve`. `avx512_256` is a compiler width knob: `kernel` maps it to AVX2 and
   `lookup` refuses it, because explicit `_mm512_*` intrinsics stay 512-bit. Dtypes: `f64`/`f32` everywhere, `f16`
   where the hardware has it, `i64`/`i32` for the integer ops. Names may be upper case.

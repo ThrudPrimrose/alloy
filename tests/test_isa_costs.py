@@ -1,0 +1,64 @@
+# Copyright 2026 ETH Zurich and the Alloy authors.
+"""The cost column: llvm-mca's model of each row's compiled instruction, in register form, on the paper's CPUs."""
+
+import importlib.util
+import pathlib
+
+import pytest
+
+from alloy.isa.__main__ import main
+from alloy.isa.costs import CPUS, costs
+
+HELPER = pathlib.Path(__file__).parents[1] / "helpers" / "isacost.py"
+
+
+@pytest.fixture(scope="module")
+def isacost():
+    spec = importlib.util.spec_from_file_location("isacost", HELPER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("compiled", "op", "measured"),
+    [
+        ("vaddpd\t(%rsi), %ymm0, %ymm0", "add", "vaddpd\t%ymm15, %ymm0, %ymm0"),
+        ("vandpd\t.LCPI0_0(%rip){1to8}, %zmm0, %zmm0", "abs", "vandpd\t%zmm15, %zmm0, %zmm0"),
+        ("vmovups\t(%rdi), %zmm0", "load", "vmovups\t(%rdi), %zmm0"),
+        ("fadd\tv0.4s, v0.4s, v1.4s", "add", "fadd\tv0.4s, v0.4s, v1.4s"),
+    ],
+)
+def test_a_folded_load_is_costed_as_the_arithmetic_alone(isacost, compiled: str, op: str, measured: str):
+    assert isacost.register_form(compiled, op) == measured
+
+
+def test_an_instruction_info_row_reads_uops_latency_and_throughput(isacost):
+    row = isacost.INFO_ROW.match(" 1      4     1.00                        vfmadd231pd\t%zmm1, %zmm2, %zmm0")
+
+    assert row is not None
+    assert row.groups() == ("1", "4", "1.00", "vfmadd231pd\t%zmm1, %zmm2, %zmm0")
+
+
+def test_zen4_issues_a_512_bit_add_as_two_256_bit_halves():
+    (wide,), (half,) = costs("avx512", "add", "f64"), costs("avx2", "add", "f64")
+
+    assert wide.cpu == half.cpu == "znver4"
+    assert wide.latency == half.latency
+    assert wide.rthroughput == 2 * half.rthroughput
+
+
+@pytest.mark.parametrize("isa", sorted(CPUS))
+@pytest.mark.parametrize("op", ["add", "mul", "fma", "div"])
+def test_the_core_arithmetic_has_a_cost_on_every_isa(isa: str, op: str):
+    found = costs(isa, op, "f64")
+
+    assert found, f"{isa}/f64/{op} has no cost"
+    assert all(c.cpu == CPUS[isa] and c.latency > 0 and c.rthroughput > 0 for c in found)
+
+
+def test_the_lookup_prints_the_rows_cost(capsys: pytest.CaptureFixture[str]):
+    assert main(["lookup", "avx512", "div", "f64", "--no-verify"]) == 0
+
+    assert "cost:      znver4 (llvm-mca): vdivpd" in capsys.readouterr().out

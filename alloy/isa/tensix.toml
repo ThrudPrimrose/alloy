@@ -1,0 +1,149 @@
+# Tenstorrent Tensix (Blackhole) rows of the abstract op set: what a compute kernel calls to apply an op to a tile in
+# DST. Not a SIMD table: a row is a tile call on 32x32 tiles, the SFPU (32 lanes, f32 inside) for unary math and the
+# FPU for binary arithmetic. Verdicts come from running each row (alloy/isa/tensix_harness.py) on ttsim or a device and
+# live in tensix_verified.toml. An op may have several rows, one per unit: the FPU path reads its operands as TF32
+# (SrcA/SrcB hold 19 bits), the SFPU path keeps f32 in DST. `header` is relative to the compute API root: compute_kernel_api/ in tt-metal 0.6x,
+# api/compute/ in 0.8x (compute_kernel_api.h itself sits at the 0.6x include root). An `init` or `call` that tt-metal
+# renamed between versions is a table: `v06` for 0.6x (the Daisytuner Blackhole), `v08` for 0.8x (ttsim's release).
+
+[target]
+title = "Tenstorrent Tensix (Blackhole p150)"
+tile = "32x32 elements, a kernel works tile by tile through circular buffers (CBs)"
+dtypes = ["f32", "bf16"]
+note = "No f64 on Tensix. A unary op copies the tile to DST (copy_tile) and runs <op>_tile_init(); <op>_tile(dst) on the SFPU. A binary op either runs <op>_tiles(cb_a, cb_b, i, j, dst) on the FPU, whose SrcA/SrcB registers hold TF32 (about 1e-3 relative on f32), or copies both tiles to DST and runs <op>_binary_tile(d0, d1, dst) on the SFPU, which keeps f32. Full f32 also needs fp32_dest_acc_en, and UnpackToDestFp32 for tiles copied to DST; without them f32 passes DST at bf16 precision (2^-9). Kernel scaffolding differs by version: 0.6x has namespace NAMESPACE { void MAIN }, init_sfpu and binary_op_init_common; 0.8x has kernel_main(), compute_kernel_hw_startup and copy_init."
+
+[[ops.exp]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/exp.h"
+init = "exp_tile_init()"
+call = "exp_tile(0)"
+domain = [-4.0, 4.0]
+
+[[ops.log]]
+kind = "unary"
+unit = "SFPU"
+header = "compute_kernel_api.h"
+init = "log_tile_init()"
+call = "log_tile(0)"
+domain = [0.01, 100.0]
+
+[[ops.sqrt]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/sqrt.h"
+init = "sqrt_tile_init()"
+call = "sqrt_tile(0)"
+domain = [0.01, 100.0]
+
+[[ops.rsqrt]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/rsqrt.h"
+init = "rsqrt_tile_init()"
+call = "rsqrt_tile(0)"
+domain = [0.01, 100.0]
+
+[[ops.recip]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/recip.h"
+init = "recip_tile_init()"
+call = "recip_tile(0)"
+domain = [0.1, 10.0]
+
+[[ops.abs]]
+kind = "unary"
+unit = "SFPU"
+header = "compute_kernel_api.h"
+init = "abs_tile_init()"
+call = "abs_tile(0)"
+domain = [-8.0, 8.0]
+
+[[ops.neg]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/negative.h"
+init = "negative_tile_init()"
+call = "negative_tile(0)"
+domain = [-8.0, 8.0]
+
+[[ops.tanh]]
+kind = "unary"
+unit = "SFPU"
+header = "compute_kernel_api.h"
+init = "tanh_tile_init()"
+call = "tanh_tile(0)"
+domain = [-4.0, 4.0]
+
+[[ops.sin]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/trigonometry.h"
+init = "sin_tile_init()"
+call = "sin_tile(0)"
+domain = [-3.14, 3.14]
+
+[[ops.cos]]
+kind = "unary"
+unit = "SFPU"
+header = "eltwise_unary/trigonometry.h"
+init = "cos_tile_init()"
+call = "cos_tile(0)"
+domain = [-3.14, 3.14]
+
+[[ops.add]]
+kind = "binary"
+unit = "FPU"
+header = "eltwise_binary.h"
+init = { v06 = "add_tiles_init(c0, c1)", v08 = "add_init(c0, c1)" }
+call = "add_tiles(c0, c1, 0, 0, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.sub]]
+kind = "binary"
+unit = "FPU"
+header = "eltwise_binary.h"
+init = { v06 = "sub_tiles_init(c0, c1)", v08 = "sub_init(c0, c1)" }
+call = "sub_tiles(c0, c1, 0, 0, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.mul]]
+kind = "binary"
+unit = "FPU"
+header = "eltwise_binary.h"
+init = { v06 = "mul_tiles_init(c0, c1)", v08 = "mul_init(c0, c1)" }
+call = "mul_tiles(c0, c1, 0, 0, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.add]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "add_binary_tile_init()"
+call = "add_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.sub]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "sub_binary_tile_init()"
+call = "sub_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.mul]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "mul_binary_tile_init()"
+call = "mul_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.div]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "div_binary_tile_init()"
+call = "div_binary_tile(0, 1, 0)"
+domain = [0.5, 8.0]

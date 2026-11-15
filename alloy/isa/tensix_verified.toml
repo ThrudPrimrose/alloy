@@ -1,0 +1,243 @@
+# Written by `python -m alloy.isa.tensix verify`: every tensix.toml row run on ttsim (simulated Blackhole).
+run = "2026-11-15"
+image = "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64@sha256:254e24eea71325fe7c564dd8e5dd8568af1a402b6a668d6c9d9318c388a16b94"
+ttsim = "v1.16.0 sha256:74616dc119268c513725f91007736f4bfa055100f2966149892475c8353700c9"
+note = "SFPLOADMACRO disabled (ttsim does not model it); f32 SFPU rows ran with fp32_dest_acc_en and UnpackToDestFp32, every row at HiFi4"
+
+[[verdicts]]
+op = "exp"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 6.47666375003591e-08
+
+[[verdicts]]
+op = "exp"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0056326249164824005
+
+[[verdicts]]
+op = "log"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 7.137559981528748e-08
+
+[[verdicts]]
+op = "log"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0039779405841412615
+
+[[verdicts]]
+op = "sqrt"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 8.529241756556039e-08
+
+[[verdicts]]
+op = "sqrt"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0038835098164954423
+
+[[verdicts]]
+op = "rsqrt"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 7.266438827037315e-08
+
+[[verdicts]]
+op = "rsqrt"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0038680132400830997
+
+[[verdicts]]
+op = "recip"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 7.137063554088327e-08
+
+[[verdicts]]
+op = "recip"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.003875732421875014
+
+[[verdicts]]
+op = "abs"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "abs"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "neg"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "neg"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "tanh"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 1.2483241708321569e-07
+
+[[verdicts]]
+op = "tanh"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.004604659907557002
+
+[[verdicts]]
+op = "sin"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 1.1062957158761669e-07
+
+[[verdicts]]
+op = "sin"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.003731507555903772
+
+[[verdicts]]
+op = "cos"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 1.1079086363391769e-07
+
+[[verdicts]]
+op = "cos"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.003655848793678489
+
+[[verdicts]]
+op = "add"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0004884663892335738
+
+[[verdicts]]
+op = "add"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0035587188612099642
+
+[[verdicts]]
+op = "add"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 5.957553740262453e-08
+
+[[verdicts]]
+op = "add"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.005825242718446602
+
+[[verdicts]]
+op = "sub"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0004886715617678967
+
+[[verdicts]]
+op = "sub"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.002053388090349076
+
+[[verdicts]]
+op = "sub"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 3.930757505319592e-08
+
+[[verdicts]]
+op = "sub"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.002053388090349076
+
+[[verdicts]]
+op = "mul"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0019509628308243005
+
+[[verdicts]]
+op = "mul"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.009019934813916471
+
+[[verdicts]]
+op = "mul"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 5.68192130277645e-08
+
+[[verdicts]]
+op = "mul"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.003800904977375566
+
+[[verdicts]]
+op = "div"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 6.691050647404684e-08
+
+[[verdicts]]
+op = "div"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0036542338709676593

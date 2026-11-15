@@ -28,7 +28,8 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   calls, measured on this machine, when the intrinsic count is not enough to choose.
   A kernel pays off in a loop with other work: the gain is the call and its spills.
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps. An op with no single
-  intrinsic prints a recipe and its `code`: copy that, it holds the operand order.
+  intrinsic prints a recipe and its `code`: copy that, it holds the operand order. Its `cost:` line is the compiled
+  instruction's latency and cycles per instruction on this kind of CPU (llvm-mca).
 - `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction or a vector library symbol
   (`_ZGVdN4v_sin`, `__svml_sin8`) computes.
 - `command="assist", arguments=["svexpa_f64"]`: what a hardware assist (`vscalefpd`, `svexpa`, `vrcpps`) helps

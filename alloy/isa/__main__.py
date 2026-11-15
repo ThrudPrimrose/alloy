@@ -20,7 +20,8 @@ import signal
 import sys
 from typing import Any
 
-from alloy.isa import ALIASES, OPS, load
+from alloy.isa import ALIASES, OPS, load, tensix
+from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
 from alloy.isa.mathkernels import (
@@ -41,6 +42,9 @@ from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
 from alloy.isa.table import ALL_DTYPES, FMA_FORM, NO_MATH, Hit, Table, masked_form, normalized, suggestion
 from alloy.isa.validate import Verdict, emulated, host_can_run, validate, validate_all
+
+#: The Tenstorrent target: tile calls checked on ttsim, kept apart from the SIMD table (alloy/isa/tensix.py).
+TENSIX = "tensix"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,6 +182,11 @@ def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
         print(f"  masked:    {entry.masked}")
     if entry.mnemonic:
         print(f"  mnemonic:  {entry.mnemonic}")
+    for cost in costs(isa, op, dtype):
+        each = f"{cost.rthroughput:g} cycles each in a stream"
+        print(
+            f"  cost:      {cost.cpu} (llvm-mca): {cost.instruction}: latency {cost.latency}, {each}, {cost.uops} uop(s)"
+        )
     for key in entry.approximations:
         tier = table.approx[key]
         print(f"  tier {key}: abs error {tier.error_abs:.3g} ({tier.error_ulp:.4g} f64 units of 2^-52); {tier.domain}")
@@ -231,6 +240,8 @@ def tiers_command(table: Table, args: argparse.Namespace) -> int:
 def lookup_command(table: Table, args: argparse.Namespace) -> int:
     """One op's entry, then its math kernels when it is a function; a function without an entry has only those. The
     gate runs first, so a failed row is never printed as the answer."""
+    if args.isa == TENSIX:
+        return tensix_lookup(args.op, args.dtype, args.json)
     refuse_width_knob(args.isa)
     op: str = args.op
     function = FUNCTION_ALIASES.get(op, op)
@@ -246,7 +257,19 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
             return report_failure(verdict)
         if args.json:
             row = dataclasses.asdict(table.entry(args.isa, function, args.dtype))
-            print(json.dumps({"isa": args.isa, "op": function, "dtype": args.dtype, **row, "verdict": record(verdict)}))
+            modelled = [dataclasses.asdict(c) for c in costs(args.isa, function, args.dtype)]
+            print(
+                json.dumps(
+                    {
+                        "isa": args.isa,
+                        "op": function,
+                        "dtype": args.dtype,
+                        **row,
+                        "costs": modelled,
+                        "verdict": record(verdict),
+                    }
+                )
+            )
             return 0
         print_entry(table, args.isa, function, args.dtype)
         if verdict is not None:
@@ -254,6 +277,43 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     if function in functions():
         return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
     return 0
+
+
+def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
+    """Every Tensix row of ``op`` at ``dtype`` with its recorded ttsim verdict; a row with no passing verdict is
+    refused, as a failed SIMD row is."""
+    found = [r for r in tensix.rows() if r.op == op]
+    if not found:
+        known = sorted({r.op for r in tensix.rows()})
+        raise KeyError(f"tensix/{dtype}/{op}: no Tensix row{suggestion(op, known)} (rows: {', '.join(known)})")
+    if dtype not in tensix.dtypes():
+        raise KeyError(f"tensix/{dtype}/{op}: Tensix computes {', '.join(tensix.dtypes())} only (no f64)")
+    verdicts = tensix.verdicts()
+    picked = [(r, verdicts.get((op, dtype, r.unit))) for r in found]
+    if as_json:
+        print(
+            json.dumps(
+                [{**dataclasses.asdict(r), "verdict": None if v is None else dataclasses.asdict(v)} for r, v in picked]
+            )
+        )
+        return 0
+    print(f"tensix/{dtype}/{op}: {OPS[op].semantics if op in OPS else op}, applied to a 32x32 tile")
+    run = tensix.recorded()
+    for row, verdict in picked:
+        print(f"  {row.unit} ({row.kind}): header {row.header}")
+        for name, value in (("init", row.init), ("call", row.call)):
+            spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
+            print(f"    {name}: {spelled}")
+        if verdict is None:
+            print("    unverified: no recorded run")
+        elif verdict.ok:
+            print(
+                f"    verified on ttsim {run.get('ttsim', '').split(' ')[0]} (simulated Blackhole): max rel error {verdict.rel:.2g}"
+            )
+        else:
+            print(f"    FAILED on ttsim: {verdict.error[:200]}")
+    print(f"  note: {tensix.table()['target']['note']}")
+    return 0 if all(v is not None and v.ok for _, v in picked) else 2
 
 
 def record(verdict: Verdict | None) -> dict[str, Any] | None:
@@ -450,6 +510,9 @@ def print_isas(table: Table) -> None:
         mask = "opmask/predicate" if isa.mask else "no predication"
         print(f"{name:8} {isa.title}  [{mask}; schedules: {', '.join(isa.schedules)}]")
         print(f"  {isa.note}")
+    target = tensix.table()["target"]
+    print(f"{TENSIX:8} {target['title']}  [tile calls, not intrinsics; {', '.join(tensix.dtypes())}]")
+    print(f"  {target['note']}")
 
 
 def print_schedule(table: Table, isa: str) -> None:
