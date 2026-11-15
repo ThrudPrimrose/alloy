@@ -1,14 +1,14 @@
 ---
 name: alloy-isa-gen
 description: "Extending or regenerating Alloy's ISA lookup table (alloy/isa/): how to add an op, dtype, or ISA; the verification workflow against clang headers; measuring ULP for approximation tiers; keeping the generated skill pages in sync. Use when adding intrinsics to intrinsics.toml, adding a new vector op, or regenerating the alloy ISA reference pages."
-when: "you extend alloy/isa/intrinsics.toml or alloy/isa/ops.py - add an op, an ISA, a dtype (f16, i64/i32), an approximation tier, or library spellings - or regenerate the skill pages under skills/alloy/isa/ from the table"
+when: "you extend alloy/isa/intrinsics.toml or alloy/isa/ops.py - add an op, an ISA, a dtype (f16, i64/i32), an approximation tier, or library spellings - or regenerate the skill pages under skills/alloy-isa-cli/isa/ from the table"
 ---
 
 # Generating the Alloy ISA table
 
 `alloy/isa/` is one source of truth (`intrinsics.toml`, validated by `table.py`) rendered into two
 consumers: the lookup CLI (`python -m alloy.isa`, cheap tool calls) and the generated skill pages
-(`skills/alloy/isa/*.md`, static context — never edit those by hand). This page is the maintainer's
+(`skills/alloy-isa-cli/isa/*.md`, static context — never edit those by hand). This page is the maintainer's
 workflow for changing the table.
 
 ## The pipeline
@@ -21,7 +21,7 @@ ops.py (abstract op)  +  intrinsics.toml (spelling, traps, recipes, tiers, sched
         |  table.py invariants + tests/test_isa*.py (header, kernels, tiers, schedules)
         v
 consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
-        · hints.py (do-it-yourself advice) · render.py -> skills/alloy/isa/*.md
+        · hints.py (do-it-yourself advice) · render.py -> skills/alloy-isa-cli/isa/*.md
 ```
 
 ## Adding an op (the workflow)
@@ -32,10 +32,9 @@ consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
 2. **Spell it per ISA and dtype in `intrinsics.toml`** under `[isa.<isa>.<dtype>.<op>]`. Sources, in
    priority order:
    - **clang resource headers are the spelling authority** — verify before committing:
-     `grep -r "_mm512_foo_pd(" /usr/lib/clang/*/include/`. Get the dir from `clang -print-resource-dir`.
-     for the machine model and naming grammar.
-     acle, sveacle, wormhole, blackhole) — a needle query for the one fact the table lacks, never an
-     end-to-end read.
+     `grep -rn "\b_mm512_foo_pd\b" "$(clang -print-resource-dir)/include/"`.
+   - **vendor manuals** (Intel Intrinsics Guide, Arm ACLE and SVE ACLE) for the one fact a header cannot show,
+     such as an operand order or a NaN rule; look that fact up, do not read the manual end to end.
 3. **Record traps in `note`** (operand order, sign-bit vs boolean masks, argument order swaps) — the
    table is where traps live, so no caller hardcodes them.
    **Assists** (single intrinsics that help an op without being one — `vscalefpd`, `svexpa`,
@@ -45,10 +44,10 @@ consumers: the CLI · validate.py (numerical gate) · schedules.py (skeletons)
    intrinsics (or pseudo steps, when even those don't exist) that provides it. See the existing
    patterns: x86 FP abs/neg (sign-mask AND/XOR), AVX2 scatter (scratch store + scalar), fmod
    (div+trunc+fnmadd), AVX2 f16 (cvtph_ps → f32 op → cvtps_ph).
-5. **Run the checks**: `pytest tests/test_isa*.py -q` (header verification of every identifier-shaped
+5. **Run the checks**: `pytest tests/test_isa*.py` (header verification of every identifier-shaped
    spelling; compiled-kernel validation of every x86 entry the host can execute; tier re-measurement;
    skeleton compile-and-run; round-trips; invariants) and `ruff check alloy/ tests/test_isa*.py`.
-6. **Regenerate the pages**: `python -m alloy.isa.render`, then mirror the skills:
+6. **Regenerate the pages**: `python -m alloy.isa.render`, and commit the pages with the table change.
 
 ## Adding a schedule
 
@@ -111,8 +110,9 @@ write `program_<fn>`, add its degrees to `DEGREES` and an entry to `PROGRAMS`, r
 ## Measuring ULP for a new tier
 
 Dense-grid against libm; ULP at function scale, floored at `ulp(1.0)` so function zeros stay finite
-(`err / spacing(max(|ref|, 1))`). The methodology comment sits above `[approx]` in `intrinsics.toml`;
-the measurement script pattern is in git history's session notes — replicate, don't quote folklore.
+(`err / spacing(max(|ref|, 1))`). The methodology comment sits above `[approx]` in `intrinsics.toml`.
+`validate.validate_tier` measures a tier the same way and prints `measured ... ulp (recorded ..., abs ...)`:
+record what it measures, never a number from elsewhere.
 Taylor tiers use exact coefficients; near-minimax tiers are Chebyshev fits converted to power basis
 (shortest-round-trip float reprs in the recipe steps). Record `error_abs` next to `error_ulp`; a test
 asserts the ladder is monotonic.

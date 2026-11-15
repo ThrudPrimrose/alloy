@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sve-fma-operand-order
+expected_outcome: |
+  Names the SVE multiply-add with the accumulator first (svmla_f64_x(pg, y, x, a) or the _n_ form with the scalar), says the answer was not run on this x86 host, and takes it from python -m alloy.isa lookup.

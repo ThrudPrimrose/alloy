@@ -27,6 +27,7 @@ from alloy.isa.mathkernels import (
     LADDER,
     LEVELS,
     cheapest,
+    error_text,
     functions,
     ladder,
     libraries,
@@ -277,8 +278,7 @@ MARKS = {True: "verified", None: "unverified", False: "FAILED"}
 def ladder_line(function: str, dtype: str, target: str) -> str:
     """Every kernel of ``function`` with its error and its cost, most accurate first."""
     return "; ".join(
-        f"{k.level} {k.error_ulp:.3g} ulp, {k.error_abs:.2g} abs, {render(k, target).intrinsics} intrinsics"
-        for k in ladder(function, dtype)
+        f"{k.level} {error_text(k)}, {render(k, target).intrinsics} intrinsics" for k in ladder(function, dtype)
     )
 
 

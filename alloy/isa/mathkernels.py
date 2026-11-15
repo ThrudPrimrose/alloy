@@ -26,6 +26,7 @@ __all__ = [
     "Kernel",
     "Spelled",
     "cheapest",
+    "error_text",
     "functions",
     "kernel",
     "kernels_for",
@@ -92,6 +93,15 @@ class Kernel:
     @property
     def name(self) -> str:
         return f"alloy_{self.fn}_{self.dtype}_{self.level}"
+
+
+#: Functions with a bounded result on their whole range: only for them does an absolute error bound anything.
+BOUNDED = frozenset({"sin", "cos", "tanh", "atan", "asin", "acos"})
+
+
+def error_text(k: Kernel) -> str:
+    """A kernel's error as printed: ulp, plus the absolute error for a bounded function."""
+    return f"{k.error_ulp:.3g} ulp, {k.error_abs:.2g} abs" if k.fn in BOUNDED else f"{k.error_ulp:.3g} ulp"
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -344,8 +354,7 @@ def cheapest(fn: str, dtype: str, isa: str, *, max_ulp: float | None = None, max
     if not holds:
         best = min(rungs, key=lambda k: k.error_ulp)
         raise KeyError(
-            f"{fn} {dtype}: no kernel within the bound; the most accurate is {best.level} at "
-            f"{best.error_ulp:.4g} ulp, {best.error_abs:.3g} absolute"
+            f"{fn} {dtype}: no kernel within the bound; the most accurate is {best.level} at {error_text(best)}"
         )
     return min((render(k, target_of(isa)) for k in holds), key=lambda s: s.intrinsics)
 

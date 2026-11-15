@@ -1,6 +1,6 @@
 ---
 name: alloy-isa
-description: "How to write vector intrinsics with the alloy_isa tool: which ISAs this machine runs, an op's intrinsic and its traps, math functions (sin, exp, log, pow, ...) as C functions at three accuracy levels, loop skeletons in a legal schedule, and what a disassembled instruction computes. Read it before writing any intrinsic by hand."
+description: "How to write vector intrinsics with the alloy_isa tool: which ISAs this machine runs, an op's intrinsic and its traps, math functions (sin, exp, log, pow, ...) as C functions at the error bound you need, loop skeletons in a legal schedule, and what a disassembled instruction computes. Read it before writing any intrinsic by hand."
 when: Before writing intrinsics, and when a loop calls a math function the compiler left scalar.
 ---
 
@@ -13,21 +13,27 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
 `kernel` and `skeleton` answers carry a compiled check there and say `unverified` elsewhere.
 
 - `command="kernel", arguments=["avx512", "sin", "f64"]`: `sin`, `cos`, `tan`, `exp`, `exp2`, `exp10`, `expm1`, `log`
-  (`ln`), `log2`, `log10`, `log1p`, `pow`, `atan`, `asin`, `acos`, `sinh`, `cosh`, `tanh` as C functions to paste
-  into the scope, replacing the library call (add `#include <immintrin.h>` and `<math.h>`). Each level lists its
-  measured ulp and contract:
+  (`ln`), `log2`, `log10`, `log1p`, `pow`, `atan`, `asin`, `acos`, `sinh`, `cosh`, `tanh`, `fmod` as C functions to
+  paste into the scope, replacing the library call (add `<math.h>` and the ISA's header: `<immintrin.h>` on x86,
+  `<arm_neon.h>` or `<arm_sve.h>` on Arm). Each rung lists its measured ulp and contract:
   - `strict` gives libm's special values on every input through one cold branch, within its listed ulp elsewhere.
     It is a compile error under `-ffast-math`.
   - `relaxed` has no branch and needs finite inputs in its stated range.
   - `fast` trades about half the digits for speed. Use it where a tolerance allows.
-  - The answer's `ladder` line lists every rung between `relaxed` and `fast` with its error and intrinsic count.
-    With a tolerance in hand, ask for the cheapest kernel that holds it: `arguments=["avx512", "sin", "f64",
-    "--max-ulp", "100"]`, or `"--max-abs", "1e-9"` for a bounded function.
+  - `strict` buys special values and domain, not digits: it can be less accurate than `relaxed`.
+  - The answer's `ladder` line lists every rung with its error and intrinsic count. Which `mid` rungs exist differs
+    per function and dtype, so ask by bound, not by rung name: `arguments=["avx512", "sin", "f64", "--max-ulp",
+    "100"]`, or `"--max-abs", "1e-9"` for a bounded function, returns the cheapest kernel that holds it.
 - `command="time", arguments=["avx512", "sin", "f64"]`: nanoseconds per element of every rung and of the library
   calls, measured on this machine, when the intrinsic count is not enough to choose.
   A kernel pays off in a loop with other work: the gain is the call and its spills.
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps. An op with no single
   intrinsic prints a recipe and its `code`: copy that, it holds the operand order.
-- `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction computes.
+- `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction or a vector library symbol
+  (`_ZGVdN4v_sin`, `__svml_sin8`) computes.
+- `command="assist", arguments=["svexpa_f64"]`: what a hardware assist (`vscalefpd`, `svexpa`, `vrcpps`) helps
+  with, for a reduction you write by hand.
+- `command="tiers", arguments=["sin"]`: bare polynomials on the reduced domain with their absolute error, without the
+  range reduction; a reference, take `kernel` for code.
 - `command="skeleton", arguments=["avx512", "<schedule>", "f64"]`: a loop in a legal schedule; `command="schedule",
   arguments=["avx512"]` lists the schedules.

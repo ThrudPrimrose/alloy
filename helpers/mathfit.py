@@ -2,8 +2,8 @@
 """Maintainer tool: fits the polynomials and writes ``mathkernels.toml`` (``python helpers/mathfit.py``), or the
 Chebyshev tiers of ``intrinsics.toml`` (``python helpers/mathfit.py tiers``).
 
-A program is written once per function family and parameterized by dtype and level. Coefficients are Chebyshev
-interpolants in high precision, rounded to the lane type. Each kernel is then measured on this host and the worst
+A program is written once per function family and parameterized by dtype and level. Coefficients are weighted
+minimax (Remez) fits in high precision on Chebyshev-spaced points, rounded to the lane type. Each kernel is then measured on this host and the worst
 error across the x86 ISAs is recorded; the gate in tests/test_isa_kernels.py re-measures it."""
 
 import concurrent.futures

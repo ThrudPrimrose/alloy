@@ -30,6 +30,14 @@ extends = "alloy-profile"
 name = "Alloy (speculative)"
 tools = ["alloy_speculative", "alloy_isa"]
 
+# Every Alloy tool, with the choice left to the agent: whether to call a mode tool, which one, and when.
+[packets.alloy]
+name = "Alloy (all tools)"
+skills = ["alloy", "alloy-isa"]
+tools = ["alloy_profile", "alloy_speculative", "alloy_isa"]
+overlays = ["alloy:prompt/overlay-choice.yaml"]
+env = { JUDGE_INPUT_MODE = "any" }  # a mode tool hands back a library, submitted as is
+
 # The intrinsics reference alone: the agent writes its own source, so the input mode stays the benchmark's.
 [packets.alloy-isa]
 name = "Alloy (ISA lookup)"

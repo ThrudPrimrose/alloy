@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
 
-from hpcagent_bench import config, packets, plugins
+from hpcagent_bench import config, packets, plugins, prompt_build
 from hpcagent_bench.api import RunConfig
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle
 from hpcagent_bench.config import SubmitFeedback
@@ -147,11 +147,27 @@ def test_make_rebuilds_the_library_the_tool_built(tmp_path: pathlib.Path, monkey
     assert library.is_file()
 
 
-@pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative"])
+@pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative", "alloy"])
 def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet: str) -> None:
     plugins.load()
 
     assert dict(packets.resolve(packet, "c").env)["JUDGE_INPUT_MODE"] == InputMode.ANY.text
+
+
+def test_the_full_packet_offers_every_alloy_tool_and_does_not_tell_the_agent_to_call_one_first(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plugins.load()
+
+    sut = packets.resolve("alloy", "c")
+    assert prompt_build.main(["--packet", "alloy", "--render"]) == 0
+    prompt = capsys.readouterr().out
+
+    assert set(sut.tools) == {"alloy_profile", "alloy_speculative", "alloy_isa"}
+    assert set(sut.skills) == {"alloy", "alloy-isa"}
+    assert "## Alloy" in prompt
+    assert "Call it first" not in prompt
+    assert "Call Alloy and `submit`" not in prompt
 
 
 def test_the_isa_packet_offers_the_lookup_alone_and_leaves_the_input_mode_to_the_benchmark() -> None:

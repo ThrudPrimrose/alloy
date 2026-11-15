@@ -14,7 +14,7 @@ from alloy.isa.table import ALL_DTYPES, DTYPES, F16, Entry, Table, load
 __all__ = ["render"]
 
 #: The default page folder, inside the shipped skill.
-DEFAULT_OUT = pathlib.Path(__file__).parent.parent.parent / "skills" / "alloy" / "isa"
+DEFAULT_OUT = pathlib.Path(__file__).parent.parent.parent / "skills" / "alloy-isa-cli" / "isa"
 
 
 def cell(text: str) -> str:

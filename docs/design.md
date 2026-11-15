@@ -214,16 +214,15 @@ gen_mask, zero` — and looks up the spelling per target, instead of reading ISA
   (`alloy/isa/schedules.py` — the seed of the schedule->vector-schedule translator), and the
   compiler-vectorizer spellings (gcc's `vect-partial-vector-usage` ladder, clang's pragmas; clang has no
   masked epilogue, and the table says so instead of inventing a flag).
-- Nothing is returned unverified: `validate.py` compiles and runs a small kernel for every
-  host-executable entry (fallback recipes are hand-coded, not auto-translated) and re-measures every
+- Every answer says whether it was checked: `validate.py` compiles and runs a small kernel for every
+  host-executable entry (what the host cannot run is marked `unverified`) (fallback recipes are hand-coded, not auto-translated) and re-measures every
   polynomial tier against libm; a failure attaches the candidate spellings instead of endorsing a wrong
   answer. When emission is impossible, `hints.py` answers with a text reason, a do-it-yourself
   instruction, and per-tasklet hints (classified tasklets mapped to their spellings and verdicts).
 - Every spelling is verified against the clang resource headers in CI (`tests/test_isa*.py`);
   the table is checked-in data, regenerated per clang version when ops are added, not parsed from ISA
-  PDFs. The agent-facing rule (encoded in `skills/alloy/`): candidates report first, generated pages,
-  this lookup for spelling and schedules, per-target ESSENTIALS sheets for context, itemized PDFs
-  last, never end-to-end.
+  PDFs. The agent-facing rule (encoded in `skills/alloy-isa-cli/`): the candidates' report first, this lookup
+  for spellings and schedules, the generated pages for a whole ISA, a vendor manual only for one missing fact.
 
 ## Bench experiments: dace+alloy
 

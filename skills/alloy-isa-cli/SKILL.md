@@ -1,16 +1,13 @@
 ---
-name: alloy
-description: "Alloy: DaCe's per-scope codegen backend, the machine abstract math ISA (+ - * / %, fma, sqrt, min/max/abs/neg, select, gather/scatter, lanewise reduction, integer bitwise/shift/logical, exp/sin/cos) for avx2/avx512/neon/sve, loop schedules with verified C skeletons, and a numerical validation gate. Use when optimizing a kernel Alloy/DaCe vectorized, when reading vector intrinsic code or SIMD disassembly, when choosing a vector loop schedule, or when you need a spelling, an operand order, or the math an instruction computes."
-when: "you work on an HPCAgent-Bench kernel through Alloy or DaCe's extended backend, or you face vector intrinsic code / vectorized loops (source or disassembly) on x86 or AArch64 and need the spelling, the operand order, the loop schedule, or the math an instruction computes — or Alloy answers a request with a failure body and you must do it yourself"
+name: alloy-isa-cli
+description: "Vector intrinsics without manuals, through `python -m alloy.isa` for avx2, avx512, neon and sve: an abstract op's intrinsic with its operand-order traps, 19 math functions (sin, exp, log, pow, fmod, ...) as intrinsic C at a chosen error bound, legal loop tail schedules with compiled skeletons, and what a disassembled mnemonic or vector library symbol computes. Answers the host can run are compiled and checked first. Use when writing or reading SIMD intrinsics or vectorized disassembly on x86 or AArch64, replacing a libm call in a hot loop, choosing a tail schedule, or when Alloy's report sends a scope back to you."
+when: "you write or read vector intrinsic code or vectorized loops (source or disassembly) on x86 or AArch64 and need a spelling, an operand order, a loop schedule, a math function as intrinsics, or the math an instruction computes; or an Alloy report says a scope is yours to do by hand"
 ---
 
-# Alloy + the machine abstract math ISA
+# The Alloy ISA lookup
 
-Alloy splits a DaCe program into scopes, builds each under many configurations (compiler, FP level, ISA
-width, loop tails), verifies and times them, and links the best. DaCe's auto-vectorization is the base
-layer: `compiler.build_plugin = alloy-speculative` runs Alloy as DaCe's CPU backend, and the `sve_intrinsics` tail renders
-scopes as explicit predicated SVE loops (DaCe `SVEVectorization`, CPF-rendered) — real intrinsics in the
-generated C, not just compiler hints. An agent continues optimizing from that intrinsic-level code.
+One command answers what a vector ISA manual would, for the ops a loop nest needs, and checks the answer on this
+machine when it can. Alloy uses the same table to advise on the scopes it leaves short.
 
 You do not need to know the intrinsics. Reason in the abstract math ISA; look up the spelling.
 
@@ -40,24 +37,29 @@ and float rows are not valid for integer lanes. A binary op also accepts a scala
 as an EVEX embedded broadcast on AVX-512 when it is the last source (`{1to8}`), an explicit `set1`/`vdup`/`svdup`
 elsewhere (`embedded_broadcast = true` marks the ISAs that fuse).
 
-## Transcendentals: polynomial tiers with measured ULP, or a library call
+## Math functions: a kernel at an error bound, or a library call
 
-`exp`, `sin`, `cos` have no hardware instruction on avx2/avx512/neon/sve. Each entry lists:
+No covered ISA has a vector `exp`, `sin` or `cos` instruction. Two commands cover them:
 
-- **tiers** — Horner recipes in abstract-op steps (`fma`/`mul` with inline coefficients) with their error
-  measured against libm in units of 2^-52: plain Taylor rungs (bad: sin-taylor7 ≈ 7e11 on [-π/2, π/2]) and
-  Chebyshev tiers on the reduced domain (sin-quad-cheb13 ≈ 0.5). `kernel` gives whole functions, reduction included.
-- **libraries** — the vector math call per veclib (glibc libmvec `_ZGVdN4v_sin`, SVML `__svml_sin4`,
-  SLEEF `Sleef_sind4_u10avx2`). `reverse` knows every name `kernel` prints, so `call __svml_sin4` or
-  `_ZGVdN4v_sin` in disassembly maps back to `sin`.
+- **`kernel`** gives a whole function (range reduction included) as C with intrinsics, for 19 functions: `sin`,
+  `cos`, `tan`, `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `fmod`, `atan`, `asin`,
+  `acos`, `sinh`, `cosh`, `tanh`. Each function has a ladder of rungs from weighted Remez fits: `strict` (libm's special
+  values through one cold branch; a compile error under `-ffast-math`), `relaxed` (no branch, finite inputs in a
+  stated range), up to three `mid` rungs, and `fast`. `strict` buys special values and domain, not digits: sin f64
+  `strict` is 2.58 ulp, `relaxed` 1.61. Which `mid` rungs exist differs per function and dtype, so ask by bound:
+  `--max-ulp N` or `--max-abs E` returns the cheapest rung that holds it. Every answer also names the library
+  calls it replaces (glibc libmvec `_ZGVeN8v_sin`, SLEEF `Sleef_sind8_u10avx512f`, SVML `__svml_sin8`).
+- **`tiers`** lists bare polynomials on the reduced domain (Taylor and Chebyshev, absolute error), without the
+  range reduction. A Taylor tier loses to the fitted polynomial of the same degree by 4 to 7 digits: read it as a
+  reference, and take `kernel` for code.
 
-Range reduction dominates accuracy: the tiers assume `x` already reduced (Cody-Waite / quadrant for
-sin/cos; k·ln2 + r split for exp, then scale by 2^k). Without hi/lo constants the reduction error
-exceeds the polynomial error beyond a few multiples of π. Native assists: AVX-512 `vreducepd` (strips
-multiples of 2^-M; scale by 2/π first for sin/cos) and `vscalefpd` (2^k scaling); SVE `svexpa_f64` — a
-hardware 2^(I/64) table taking the biased input `(k + 1023)*64 + j` (ACLE SVE 6.16.30) — plus `svscale`
-and, on SVE2 only, `svlogb`.
-Sub-1-ulp exp otherwise needs a 64-entry 2^(j/64) table (which is exactly what SVE's EXPA is).
+`reverse` knows every library name `kernel` prints, so `call __svml_sin4` or `_ZGVdN4v_sin` in disassembly maps
+back to `sin`. `time <isa> <fn> <dtype>` measures every rung and the library calls on this machine: inlining pays
+off in a loop with other work, where the gain is the call and its spills.
+
+Hardware assists for hand-written reductions: AVX-512 `vreducepd` (strips multiples of 2^-M; scale by 2/π first
+for sin/cos) and `vscalefpd` (2^k scaling); SVE `svexpa_f64` (a hardware 2^(I/64) table taking the biased input
+`(k + 1023)*64 + j`, ACLE SVE 6.16.30), `svscale` and, on SVE2 only, `svlogb`.
 
 **Assists are queryable too**: single intrinsics that help an op without being one — AVX-512
 `vscalefpd`/`vgetexppd`/`vreducepd`/`vrcp14pd`, SVE `svexpa`/`fscale`/`frecpe`, NEON `vrecpeq`,
@@ -69,10 +71,10 @@ how; the per-ISA pages list them.
 ```bash
 python -m alloy.isa host                        # which ISA and dtype this machine runs: start here
 python -m alloy.isa lookup <isa> <op> <dtype>   # op -> intrinsic, signature, semantics, traps (--json)
-python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> C (--level strict|relaxed|fast)
+python -m alloy.isa kernel <isa> <fn> <dtype>   # sin, exp, log (ln), pow, ... -> C, every rung (--level strict|relaxed|fast)
 python -m alloy.isa kernel <isa> <fn> <dtype> --max-ulp 100   # the cheapest rung of the ladder within a bound (or --max-abs)
 python -m alloy.isa time <isa> <fn|all> <dtype>   # ns per element of every rung and of the library calls, measured here
-python -m alloy.isa tiers <fn>                  # sin, cos, exp, log: every polynomial depth, its steps and error (--json)
+python -m alloy.isa tiers <fn>                  # sin, cos, exp, log: bare polynomials, steps and absolute error (--json)
 python -m alloy.isa reverse <name>              # intrinsic or mnemonic -> the math it computes (--json)
 python -m alloy.isa validate [isa op dtype]     # the numerical gate: everything the host can execute; takes minutes
 python -m alloy.isa skeleton <isa> <schedule> <dtype>   # the C loop shape, compiled and checked on this host
@@ -172,13 +174,12 @@ python -m alloy.isa reverse vfmadd231pd
 1. Alloy's `report.md` / `report.json` — what the sweep already measured; never re-derive it.
 2. `python -m alloy.isa ...` — one call is about 300 bytes; `kernel --level` keeps a function to one kernel.
 3. The generated pages in this skill's `isa/` folder (`index.md`, one page per ISA, `kernels.md`,
-   `transcendentals.md`) — 60 KB of static context rendered from `intrinsics.toml`, for reading a whole ISA.
+   `transcendentals.md`): 120 KB rendered from `intrinsics.toml` and `mathkernels.toml`; open one page, for
+   reading a whole ISA.
 
 The `isa/` pages are generated: `python -m alloy.isa.render` after changing the table (maintenance
 workflow: the `alloy-isa-gen` skill). Never edit them by hand.
 
-Tenstorrent Tensix is out of scope for the table (no C intrinsic path). Coverage is the core op set
-plus exp/sin/cos/log as polynomial tiers (Taylor + Chebyshev, error measured against libm) and
-per-veclib library spellings (libmvec names verified against the host's libmvec, SLEEF names per
-sleef.org); extend `alloy/isa/intrinsics.toml` (spellings verified against the clang resource headers)
-when a kernel needs more.
+Coverage: the abstract ops above on avx2, avx512, neon and sve, the 19 math functions, and the vector library
+spellings (libmvec names checked against the host's libmvec, SLEEF and SVML names per their references). To extend
+the table, follow the `alloy-isa-gen` skill.

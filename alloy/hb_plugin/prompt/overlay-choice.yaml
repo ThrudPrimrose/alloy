@@ -1,0 +1,10 @@
+# The full alloy packet: what Alloy offers after the intro of both prompts, and no change to the agent's steps; the
+# agent decides whether and when to call Alloy. A text "file:<path>" is relative to this file.
+agent:
+  insert:
+    - after: intro
+      block: {id: alloy, text: "file:about-choice.md"}
+task:
+  insert:
+    - after: intro
+      block: {id: alloy, text: "file:about-choice.md"}

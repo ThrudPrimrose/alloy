@@ -433,6 +433,15 @@ def test_the_cli_lists_the_ladder_and_answers_a_bound_with_one_kernel(capsys):
     assert bounded.count("static inline") == 1
 
 
+@pytest.mark.parametrize(("function", "absolute"), [("sin", True), ("exp", False), ("log", False)])
+def test_the_ladder_states_an_absolute_error_only_for_a_bounded_function(capsys, function, absolute):
+    assert main(["kernel", "avx2", function, "f32", "--no-verify"]) == 0
+    ladder_line = capsys.readouterr().out.splitlines()[0]
+
+    assert ladder_line.startswith("// ladder: strict")
+    assert (" abs," in ladder_line) is absolute
+
+
 def test_a_strict_sve_kernel_spills_into_arrays_of_constant_size():
     sut = spelled("sin", "f64", "strict", "sve").source
 

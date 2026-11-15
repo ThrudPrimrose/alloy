@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: read-a-vectorized-loop
+expected_outcome: |
+  Reads the fma as zmm0 = zmm1*zmm2 + zmm0 on 8 doubles and the call as glibc libmvec exp on 8 doubles, using python -m alloy.isa reverse.

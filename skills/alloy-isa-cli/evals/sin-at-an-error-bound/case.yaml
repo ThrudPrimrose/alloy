@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sin-at-an-error-bound
+expected_outcome: |
+  Asks the tool for the cheapest kernel under the bound (kernel avx512 sin f64 --max-abs 1e-12), pastes that one function, and states its recorded error and contract.

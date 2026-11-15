@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: skip-alloy-for-a-solved-kernel
+expected_outcome: |
+  Weighs the cost of a call (minutes per scope, a second call repeats the work) against the gain, and says a call is unlikely to pay off for one small loop the agent already sped up; the choice is the agent's.

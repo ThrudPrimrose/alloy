@@ -20,11 +20,16 @@ One call (`alloy_profile` or `alloy_speculative`, whichever your setup offers) a
 - `report`: the program tree, every scope's candidates (language, compiler, ISA, FP mode, layout knobs) and the
   top ones ranked by measured time (profile) or by prediction (speculative).
 
-How to use it:
+What a call costs and when it pays off: one call builds and checks every candidate of every scope, which takes
+minutes per scope (`alloy_speculative` builds without timing and is faster than `alloy_profile`), and a second call
+repeats that work in a new folder. It pays off when the kernel's time sits in loop nests whose best compiler, flags or
+FP level you do not know; it does not when you already have a faster version of your own, or when the kernel is one
+small loop the compiler vectorizes anyway. Your prompt says whether to call it first; without such a line, the
+choice is yours.
 
-1. Call the tool once and `submit` the library it built: that is your recorded starting point (`score` records
-   nothing). The call builds and checks every candidate of every scope, so it takes minutes per scope, and a second
-   call only repeats that work in a new folder.
+When you have called it:
+
+1. `submit` the library it built if nothing you have scores better: that records it (`score` records nothing).
 2. Read the report. A scope whose top candidates are close is not worth your time, because Alloy already tried what
    a flag change would; one where the report notes missed vectorization is.
 3. Edit that scope's translation unit (other candidates' sources are in `../scopes/<symbol>/variants/` next to
