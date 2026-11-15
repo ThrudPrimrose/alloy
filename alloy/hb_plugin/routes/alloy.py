@@ -83,7 +83,10 @@ def serve(judge: Judge, request: RouteRequest) -> None:
             return None
         # each call answers from a folder of its own: a repeat never pulls the files from under a running one
         folder = tempfile.mkdtemp(prefix="run", dir=parent)
-        call = CodegenRequest(kernel=kernel, mode=Mode(spelled), precision=precision, folder=folder, running=running)
+        language = str(request.body.get("language") or "c")
+        call = CodegenRequest(
+            kernel=kernel, mode=Mode(spelled), precision=precision, folder=folder, running=running, language=language
+        )
         spawn = multiprocessing.get_context("spawn")
         cpus = grading_cpus(slot.index)  # the slot's cores only, as a graded child; empty = unreadable, unpinned
         with concurrent.futures.ProcessPoolExecutor(

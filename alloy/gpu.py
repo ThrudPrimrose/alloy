@@ -8,6 +8,7 @@ A map's roofline time (its work and traffic) is the same for every shape, so it 
 map; the compiler's register, spill and shared-memory counts are what a shape changes."""
 
 import re
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -30,6 +31,7 @@ __all__ = [
     "cuda_occupancy",
     "descend",
     "device_maps",
+    "native_dialect",
     "hip_usage",
     "nvcc_usage",
     "speculate",
@@ -341,6 +343,18 @@ def descend(
             if seconds is not None and (best is None or seconds < best):
                 best, shapes = seconds, trial
     return shapes
+
+
+def native_dialect() -> str:
+    """The dialect whose compiler report describes this machine's first GPU: ``cuda`` where ``nvidia-smi`` lists a
+    device, else ``hip`` where ``amdgpu-arch`` names one; RuntimeError when neither does."""
+    for dialect, argv in (("cuda", ("nvidia-smi", "-L")), ("hip", ("amdgpu-arch",))):
+        if shutil.which(argv[0]) is None:
+            continue
+        done = subprocess.run(argv, capture_output=True, text=True, check=False)
+        if done.returncode == 0 and done.stdout.strip():
+            return dialect
+    raise RuntimeError("no GPU here: nvidia-smi lists none and amdgpu-arch names none")
 
 
 def native_arch(dialect: str) -> str:

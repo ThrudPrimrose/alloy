@@ -22,6 +22,11 @@ MODES = {
     "speculative": "Alloy's C/C++ renderings of this kernel, each scope's predicted best candidate (verified, not "
     "timed) built into a library you can submit, with the sources, a Makefile and the report of the top candidates.",
 }
+#: Appended on a HIP task, where either mode answers with the GPU form.
+GPU_NOTE = (
+    " On a HIP task: the kernel's HIP host and device sources with each device map at the threadblock its compiler "
+    "report ranks first, built into a library you can submit, and the ranked shapes per map."
+)
 
 
 class IsaArgs(pydantic.BaseModel):
@@ -59,6 +64,7 @@ def poster(mode: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
         body = {
             **payload,
             "kernel": http_json.assigned_kernel(payload),
+            "language": http_json.task_language(),  # hip takes Alloy's GPU path
             **http_json.identity_fields(),
             "rank": http_json.judge_rank(),
             "tokens": http_json.transcript_tokens(),
@@ -71,7 +77,8 @@ def poster(mode: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
 
 for mode, description in MODES.items():
     name = f"alloy_{mode}"
-    spec = Spec(description, NoArgs, f"- `{name}` -- {description}", HINTS)
+    told = description + GPU_NOTE
+    spec = Spec(told, NoArgs, f"- `{name}` -- {told}", HINTS)
     tool(spec=spec, core=False, name=name)(poster(mode))
 
 

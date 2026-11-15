@@ -270,3 +270,22 @@ def test_the_descent_tries_no_more_shapes_of_a_map_than_its_width():
     gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C, (512, 1, 1))}, time_it, lambda: True, width=2)
 
     assert timed == [A, B]
+
+
+@pytest.mark.hip
+def test_the_gpu_tool_answers_a_library_the_bench_built_from_the_ranked_hip_form(tmp_path):
+    from hpcagent_bench.precision import Precision
+
+    from alloy.hb_plugin.workbench import CodegenRequest, codegen
+    from alloy.report import Mode
+
+    request = CodegenRequest(
+        kernel="tsvc_2_vpv", mode=Mode.SPECULATIVE, precision=Precision.FP64, folder=str(tmp_path), running={},
+        language="hip",
+    )  # fmt: skip
+
+    sut = codegen(request)
+
+    assert pathlib.Path(sut.library).is_file()
+    assert (tmp_path / "best" / "device.hip").read_text().count("__global__") >= 1
+    assert "| Map | Picked |" in sut.report and "| 0 |" in sut.report

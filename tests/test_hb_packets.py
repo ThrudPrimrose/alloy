@@ -4,6 +4,7 @@ from plain C/C++ translation units (no DaCe runtime) by a Makefile the agent can
 correct. The ``alloy`` CI job runs it."""
 
 import contextlib
+import json
 import pathlib
 import subprocess
 import threading
@@ -247,3 +248,17 @@ def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake():
 
     assert sut.code == HTTPStatus.BAD_REQUEST
     assert "did you mean fma" in str(sut.answer)
+
+
+def test_the_alloy_tools_send_the_task_language_that_selects_the_gpu_path(monkeypatch: pytest.MonkeyPatch):
+    from alloy.hb_plugin.tools import alloy as alloy_tools
+
+    sent: list[dict] = []
+    monkeypatch.setenv("LANGUAGE", "hip")
+    monkeypatch.setattr(
+        alloy_tools.http_json, "call_json", lambda url, data, timeout: sent.append(json.loads(data)) or {"result": {}}
+    )
+
+    alloy_tools.poster("speculative")({"kernel": KERNEL})
+
+    assert sent[0]["language"] == "hip"
