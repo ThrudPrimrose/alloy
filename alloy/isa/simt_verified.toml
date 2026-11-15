@@ -1,0 +1,134 @@
+# Written by `python -m alloy.isa.simt verify`: every simt.toml row compiled and, where the GPU is here, run.
+run = "2026-11-15"
+
+[[verdicts]]
+op = "fma"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "fma"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "exp_fast"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 1.13259e-07
+
+[[verdicts]]
+op = "exp_fast"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "sin_fast"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 2.08616e-07
+
+[[verdicts]]
+op = "sin_fast"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "div_fast"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 1.1296e-07
+
+[[verdicts]]
+op = "div_fast"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "rsqrt"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 1.04839e-07
+
+[[verdicts]]
+op = "rsqrt"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "reduce_add"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "reduce_add"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "broadcast"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "broadcast"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "gen_mask"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "gen_mask"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "add_half2"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "add_half2"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "load_wide"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "load_wide"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "atomic_add"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "atomic_add"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"

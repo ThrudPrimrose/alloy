@@ -68,6 +68,20 @@ The column shows what an intrinsic name hides. On Zen 4 a 512-bit `vaddpd` has t
 half its throughput, because Zen 4 issues it as two 256-bit halves. Where AVX-512 wins on Zen 4, masking and the
 lower instruction count account for it. Rerun `python helpers/isacost.py` after changing the table.
 
+## CUDA and HIP
+
+`cuda` and `hip` are targets of device code (`alloy/isa/simt.py`, `simt.toml`), because a GPU thread has no vector
+intrinsics of its own. A row is an expression one thread evaluates (`fmaf`, `__expf`, `__fdividef`, `rsqrtf`, a
+packed `__hadd2`, a 16-byte `float4` load) or statements one warp runs (a shuffle reduction, a broadcast, a ballot,
+an `atomicAdd`). The rows keep the differences an author gets wrong from memory. CUDA's cross-lane intrinsics take a
+member mask first (`__shfl_down_sync`), and its warp has 32 lanes. HIP's take none (`__shfl_down`), its wavefront has
+64 lanes on CDNA (MI200, MI300), so a reduction starts at `warpSize/2`, and its ballot is a 64-bit mask.
+
+`python -m alloy.isa.simt verify` checks every row with a generated program: one warp runs the row on every thread,
+and the host compares each thread's value with the row's C reference. A dialect whose GPU the machine has is run; the
+other is compiled for its targets (gfx90a and gfx942 for HIP) and recorded as compiled, not run. The recorded checks
+ran on an NVIDIA RTX 4050, where all 11 rows are correct, and compiled all 11 HIP rows for both CDNA targets.
+
 ## Tenstorrent Tensix
 
 `tensix` is a target of its own (`alloy/isa/tensix.py`), because Tensix has no SIMD intrinsics. A row is the
@@ -113,6 +127,7 @@ runs 0.6x, and its jobs live in the `alloy-tenstorrent` repository.
 | `time <isa> <function or all> <dtype>` | nanoseconds per element of each rung and library call here |
 | `schedule <isa>`, `skeleton <isa> <schedule> <dtype>` | legal loop shapes and a compiled loop in one |
 | `validate [<isa> <op> <dtype>]` | the check over everything this host runs, or one row |
+| `lookup cuda <op> f32`, `lookup hip <op> f32` | a device-code row and its check |
 | `host`, `ops`, `isas` | what runs here, the op set, the targets |
 
 ## Maintaining the table
@@ -123,3 +138,4 @@ runs 0.6x, and its jobs live in the `alloy-tenstorrent` repository.
 3. Rerun `python helpers/isacost.py`, and `python helpers/mathfit.py` when a kernel changed.
 4. Regenerate the skill pages with `python -m alloy.isa.render` and commit them with the table.
 5. For a Tensix row, edit `tensix.toml` and run `python -m alloy.isa.tensix verify` (docker).
+6. For a CUDA or HIP row, edit `simt.toml` and run `python -m alloy.isa.simt verify` on a machine with a GPU.

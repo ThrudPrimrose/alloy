@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any
 
-from alloy.isa import ALIASES, OPS, load, tensix
+from alloy.isa import ALIASES, OPS, load, simt, tensix
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
-    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve")
+    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, cuda, hip")
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
@@ -242,6 +242,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     gate runs first, so a failed row is never printed as the answer."""
     if args.isa == TENSIX:
         return tensix_lookup(args.op, args.dtype, args.json)
+    if args.isa in simt.DIALECTS:
+        return simt_lookup(args.isa, args.op, args.dtype, args.json)
     refuse_width_knob(args.isa)
     op: str = args.op
     function = FUNCTION_ALIASES.get(op, op)
@@ -314,6 +316,34 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
             print(f"    FAILED on ttsim: {verdict.error[:200]}")
     print(f"  note: {tensix.table()['target']['note']}")
     return 0 if all(v is not None and v.ok for _, v in picked) else 2
+
+
+def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
+    """The CUDA or HIP row of ``op`` with its recorded check; the rows are f32 (``add_half2`` packs f16)."""
+    found = {r.op: r for r in simt.rows()}
+    if op not in found:
+        raise KeyError(f"{dialect}/{op}: no SIMT row{suggestion(op, list(found))} (rows: {', '.join(found)})")
+    if dtype != "f32":
+        raise KeyError(f"{dialect}/{dtype}/{op}: the SIMT rows are f32 (add_half2 packs two f16)")
+    row, verdict = found[op], simt.verdicts().get((op, dialect))
+    if as_json:
+        print(
+            json.dumps({**dataclasses.asdict(row), "verdict": None if verdict is None else dataclasses.asdict(verdict)})
+        )
+        return 0
+    lanes = simt.LANES[dialect]
+    print(f"{dialect}/{op}: one {'thread' if row.kind == 'lane' else f'warp of {lanes}'}")
+    print(f"  code:  {row.spelled(dialect)}")
+    if row.note:
+        print(f"  note:  {row.note}")
+    print(f"  {dialect}: {simt.table()['target'][dialect]['note']}")
+    if verdict is None:
+        print("unverified: no recorded check")
+        return 0
+    state = {True: "verified", False: "FAILED", None: "unverified"}[verdict.ok]
+    error = f"; max rel error {verdict.rel:.2g}" if verdict.rel is not None else ""
+    print(f"{state}: {verdict.basis}{error}")
+    return 2 if verdict.ok is False else 0
 
 
 def record(verdict: Verdict | None) -> dict[str, Any] | None:
@@ -513,6 +543,10 @@ def print_isas(table: Table) -> None:
     target = tensix.table()["target"]
     print(f"{TENSIX:8} {target['title']}  [tile calls, not intrinsics; {', '.join(tensix.dtypes())}]")
     print(f"  {target['note']}")
+    for dialect in simt.DIALECTS:
+        target = simt.table()["target"][dialect]
+        print(f"{dialect:8} {target['title']}  [device code per thread or warp; f32]")
+        print(f"  {target['note']}")
 
 
 def print_schedule(table: Table, isa: str) -> None:

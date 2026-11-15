@@ -1,0 +1,109 @@
+# CUDA and HIP rows of the abstract op set: device-code spellings for one thread (elementwise) or one warp/wavefront
+# (cross-lane). Not a SIMD table: a lane is a thread, and a cross-lane op talks to the other threads of its
+# warp (32 on NVIDIA, 64 on AMD CDNA, 32 on RDNA). Verdicts come from running each row (alloy/isa/simt.py): a kernel
+# of one warp computes the row on every thread and the host compares each thread's value with a C reference.
+#
+# Inputs: a spans the row's domain, b spans [0.5, 2] in another order, c = 0.25.
+# kind: "lane" = an expression of the thread's a, b, c; "warp" = statements that set `out` from the thread's `v`
+#        (`lanes` is the warp size, `lane` the thread's index in it).
+# ref: the host's C reference: an expression of a, b, c for "lane"; statements setting `want[j]` for "warp".
+# tol: maximum relative error against the reference (0 = exact).
+
+[target.cuda]
+title = "CUDA (NVIDIA, warp of 32)"
+compiler = "nvcc"
+headers = ["cuda_fp16.h"]
+note = "Cross-lane intrinsics take a member mask first (__shfl_down_sync(0xffffffff, v, d)); the non-_sync forms were deprecated in CUDA 9 and are unavailable on sm_70 and newer. Fast-math intrinsics (__expf, __sinf, __fdividef) are what -use_fast_math turns expf/sinf/a/b into; they trade accuracy for a special-function-unit instruction."
+
+[target.hip]
+title = "HIP (AMD, wavefront of 64 on CDNA)"
+compiler = "hipcc"
+headers = ["hip/hip_fp16.h"]
+note = "Cross-lane intrinsics take no mask (__shfl_down(v, d)) and the wavefront is 64 lanes on CDNA (MI200, MI300), so a reduction loops from warpSize/2, not 16; __ballot returns a 64-bit mask. Floating-point atomics on global memory need -munsafe-fp-atomics to become hardware atomics on CDNA; without it they are a compare-and-swap loop."
+
+[ops.fma]
+kind = "lane"
+cuda = "fmaf(a, b, c)"
+hip = "fmaf(a, b, c)"
+ref = "fmaf(a, b, c)"
+tol = 0.0
+
+[ops.exp_fast]
+kind = "lane"
+cuda = "__expf(a)"
+hip = "__expf(a)"
+ref = "expf(a)"
+tol = 1e-5
+note = "The special-function unit's exp: about 2 ulp near 0 and growing with |a| on CUDA; expf is the accurate call."
+
+[ops.sin_fast]
+kind = "lane"
+cuda = "__sinf(a)"
+hip = "__sinf(a)"
+ref = "sinf(a)"
+tol = 1e-5
+note = "Accurate to about 2^-21.4 absolute for |a| <= pi; outside, error grows with |a| (no full range reduction)."
+
+[ops.div_fast]
+kind = "lane"
+cuda = "__fdividef(a, b)"
+hip = "__fdividef(a, b)"
+ref = "a / b"
+tol = 1e-6
+
+[ops.rsqrt]
+kind = "lane"
+cuda = "rsqrtf(a)"
+hip = "rsqrtf(a)"
+ref = "1.0f / sqrtf(a)"
+tol = 1e-6
+domain = [0.5, 4.0]
+
+[ops.reduce_add]
+kind = "warp"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out += __shfl_down_sync(0xffffffffu, out, d);"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out += __shfl_down(out, d);"
+ref = "float s = 0; for (int k = 0; k < lanes; k++) s += in[k]; want[0] = s;"
+check = "first"
+tol = 1e-6
+note = "The sum lands in lane 0; the other lanes hold partial sums. Use __shfl_xor for the sum in every lane."
+
+[ops.broadcast]
+kind = "warp"
+cuda = "out = __shfl_sync(0xffffffffu, v, 0);"
+hip = "out = __shfl(v, 0);"
+ref = "for (int k = 0; k < lanes; k++) want[k] = in[0];"
+tol = 0.0
+
+[ops.gen_mask]
+kind = "warp"
+cuda = "out = (float)__popc(__ballot_sync(0xffffffffu, v > 0.0f));"
+hip = "out = (float)__popcll(__ballot(v > 0.0f));"
+ref = "int n = 0; for (int k = 0; k < lanes; k++) n += in[k] > 0.0f; for (int k = 0; k < lanes; k++) want[k] = (float)n;"
+tol = 0.0
+note = "The ballot is a 32-bit mask on CUDA and a 64-bit one on HIP: count it with __popc or __popcll."
+
+[ops.add_half2]
+kind = "lane"
+cuda = "__low2float(__hadd2(__floats2half2_rn(a, b), __floats2half2_rn(b, a)))"
+hip = "__low2float(__hadd2(__floats2half2_rn(a, b), __floats2half2_rn(b, a)))"
+ref = "a + b"
+tol = 2e-3
+note = "Two f16 additions in one instruction; the result is f16, so expect 2^-11 relative error."
+
+[ops.load_wide]
+kind = "lane"
+cuda = "reinterpret_cast<const float4*>(wide)[lane / 4].x"
+hip = "reinterpret_cast<const float4*>(wide)[lane / 4].x"
+ref = "wide_ref(k)"
+tol = 0.0
+note = "One 16-byte load per thread (LDG.128 / global_load_dwordx4); the pointer must be 16-byte aligned."
+
+[ops.atomic_add]
+kind = "warp"
+cuda = "atomicAdd(total, v); __syncwarp(); out = *total;"
+hip = "atomicAdd(total, v); __syncthreads(); out = *total;"
+ref = "float s = 0; for (int k = 0; k < lanes; k++) s += in[k]; want[0] = s;"
+check = "first"
+tol = 1e-6
+note = "Floating-point atomicAdd on global memory; on HIP/CDNA compile with -munsafe-fp-atomics for a hardware atomic."

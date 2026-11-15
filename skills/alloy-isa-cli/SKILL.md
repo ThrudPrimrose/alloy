@@ -99,6 +99,8 @@ and fewer instructions, not by throughput.
 - `tensix` (Tenstorrent Blackhole) answers with compute-kernel tile calls, not intrinsics: `lookup tensix add f32`
   prints each unit's row (the FPU reads TF32 operands, the SFPU keeps f32), the 0.6x and 0.8x spellings where
   tt-metal renamed a call, and the maximum relative error its run on ttsim recorded. `f32` and `bf16` only.
+- `cuda` and `hip` answer with device code for one thread or one warp: `lookup hip reduce_add f32` gives the
+  maskless 64-lane shuffle loop, `lookup cuda reduce_add f32` the masked 32-lane one, with the check each row passed.
 - ISAs: `avx2`, `avx512`, `neon`, `sve`. `avx512_256` is a compiler width knob: `kernel` maps it to AVX2 and
   `lookup` refuses it, because explicit `_mm512_*` intrinsics stay 512-bit. Dtypes: `f64`/`f32` everywhere, `f16`
   where the hardware has it, `i64`/`i32` for the integer ops. Names may be upper case.
