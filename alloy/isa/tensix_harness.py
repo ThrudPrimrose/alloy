@@ -142,11 +142,12 @@ def compute(row: dict, new: bool) -> str:
 
 def new_api() -> bool:
     """Whether this tt-metal keeps its kernel API under ``hw/inc/api/`` (0.8x), in the ttnn wheel or ``$TT_METAL_HOME``."""
-    import ttnn
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
-    roots = [pathlib.Path(ttnn.__file__).parent / "tt_metal"]
-    if os.environ.get("TT_METAL_HOME"):
-        roots.append(pathlib.Path(os.environ["TT_METAL_HOME"]) / "tt_metal")
+    roots = [pathlib.Path(str(ttnn.__file__)).parent / "tt_metal"]
+    home = os.environ.get("TT_METAL_HOME")
+    if home:
+        roots.append(pathlib.Path(home) / "tt_metal")
     return any((root / "hw/inc/api/compute").is_dir() for root in roots)
 
 
@@ -176,7 +177,7 @@ def reference(op: str, xs: list):
 
 def run(dev, row: dict, new: bool) -> dict:
     import torch
-    import ttnn
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
     tt_dtype, torch_dtype, page = {
         "f32": (ttnn.float32, torch.float32, 4096),
@@ -236,7 +237,7 @@ def run(dev, row: dict, new: bool) -> dict:
 
 
 def main() -> int:
-    import ttnn
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
     with open(sys.argv[1]) as handle:
         rows = json.load(handle)

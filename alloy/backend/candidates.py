@@ -8,6 +8,10 @@ from alloy import machine
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.scopes import Scope
 from alloy.heuristics import fission
+from alloy.isa import approximation
+
+#: The language whose libm calls a macro can redirect to an inline kernel; C++ would rename ``std::sin`` too.
+APPROX_LANGUAGE = "c"
 
 #: The FP level also built without a region: a small division loop gains from both at once.
 SERIAL_LEVEL = "reciprocal"
@@ -21,7 +25,8 @@ class Candidate:
     """One rendering + build of a scope, as names into the matrix. ``knobs`` holds only non-default values;
     an empty ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
     flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail; ``fission`` renders the scope with its
-    maps cut by :func:`fission.cuts`; ``serial`` builds the same source with no OpenMP region."""
+    maps cut by :func:`fission.cuts`; ``serial`` builds the same source with no OpenMP region; ``approx`` names the
+    ladder rung its libm calls go to (:mod:`alloy.isa.approximation`), empty for the library."""
 
     language: str
     compiler: str
@@ -33,6 +38,7 @@ class Candidate:
     tail: str = ""
     fission: bool = False
     serial: bool = False
+    approx: str = ""
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str]:
@@ -41,8 +47,9 @@ class Candidate:
         return self.fp_level or d.fp_level, self.cost_model or d.cost_model
 
     def tolerance(self, matrix: Matrix) -> str:
-        """How this candidate's outputs are compared: its FP level's tolerance."""
-        return matrix.fp_levels[self.resolved(matrix)[0]].tolerance
+        """How this candidate's outputs are compared: its FP level's tolerance, and the band for an inline kernel,
+        which rounds differently from libm as a contraction does."""
+        return "band" if self.approx else matrix.fp_levels[self.resolved(matrix)[0]].tolerance
 
     def name(self, matrix: Matrix) -> str:
         level, model = self.resolved(matrix)
@@ -54,7 +61,7 @@ class Candidate:
             level,
             model,
             self.veclib,
-            *filter(None, (self.isa, self.tail, split, threading)),
+            *filter(None, (self.isa, self.tail, split, threading, self.approx and f"approx-{self.approx}")),
         ]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
 
@@ -64,6 +71,7 @@ class Candidate:
         params = tuple(sorted(self.codegen_params(matrix).items()))
         render = self.render(matrix)
         params = (*params, ("render", render)) if render else params
+        params = (*params, ("approx", self.approx)) if self.approx else params
         return self.language, ((*params, ("fission", "cut")) if self.fission else params)
 
     def render(self, matrix: Matrix) -> str:
@@ -75,7 +83,7 @@ class Candidate:
         level, model = self.resolved(matrix)
         threading = "serial" if self.serial else ""
         fixed = [self.compiler, level, model, self.veclib, self.isa or "native"]
-        return "_".join(fixed + list(filter(None, (self.tail, threading))))
+        return "_".join(fixed + list(filter(None, (self.tail, threading, self.approx and f"approx-{self.approx}"))))
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
@@ -148,6 +156,11 @@ def flips(
             Candidate(language, compiler, fp_level=matrix.veclibs[lib].fp_level, veclib=lib, note=f"veclib {lib}")
             for lib in available_veclibs(matrix, comp)
             if matrix.veclibs[lib].fp_level in levels
+        ]
+    if scope.calls_libm and language == APPROX_LANGUAGE:
+        out += [
+            Candidate(language, compiler, approx=level, note=f"approx {level}")
+            for level in approximation.levels_for(finite_inputs=finite_inputs)
         ]
     if fission:
         out.append(Candidate(language, compiler, fission=True, note="fission"))

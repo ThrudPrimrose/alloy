@@ -67,7 +67,15 @@ WORD = re.compile(r"\b[A-Za-z_]\w*\b")
 #: The -march of each aarch64 target when another host builds it, by this compiler.
 CROSS = {"neon": "armv8.2-a", "sve": "armv8.2-a+sve"}
 CROSS_CC = "aarch64-linux-gnu-gcc"
-HEADERS = {"avx2": "immintrin.h", "avx512": "immintrin.h", "neon": "arm_neon.h", "sve": "arm_sve.h"}
+HEADERS = {
+    "avx2": "immintrin.h",
+    "avx512": "immintrin.h",
+    "neon": "arm_neon.h",
+    "sve": "arm_sve.h",
+    "scalar": "stdint.h",
+}
+#: The math kernels' portable target: one lane of plain C (the approximation axis), runnable on every host.
+SCALAR = "scalar"
 NEON_BYTES = 16
 SVE_MAX_BYTES = 256  # the longest vector the architecture allows
 SVE_BITS = 512  # the vector length emulated kernels run at
@@ -94,6 +102,8 @@ def host_flags() -> frozenset[str]:
 
 def host_can_run(isa: str, dtype: str) -> bool:
     """Whether this host compiles AND executes kernels for ``(isa, dtype)`` natively; see :func:`emulated`."""
+    if isa == SCALAR:
+        return True
     flags, machine = host_flags(), platform.machine()
     isa = ALIASES.get(isa, isa)
     if machine == "x86_64":
@@ -155,6 +165,8 @@ MISALIGNED = "one element past a boundary: an aligned spelling of an unaligned r
 
 def c_flags(isa: str, dtype: str) -> list[str]:
     isa = ALIASES.get(isa, isa)
+    if isa == SCALAR:
+        return []
     if isa == "neon":
         return ["-march=armv8.2-a+fp16"] if dtype == "f16" else []
     if isa == "sve":

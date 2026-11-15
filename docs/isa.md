@@ -47,6 +47,10 @@ function and dtype, so a caller asks by bound: `--max-ulp` or `--max-abs` return
 `strict` buys IEEE special values and the full domain at the price of accuracy elsewhere. For `sin` f64, `strict`
 measures 2.58 ulp and `relaxed` 1.61 ulp. f32 errors are measured over every input.
 
+The `scalar` target renders the same kernels as one-lane C, which a compiler vectorizes inside the caller's loop.
+It is the candidate matrix's approximation axis (`alloy/isa/approximation.py`), and its kernels pass the same error
+gate as the vector ones.
+
 `tiers` lists the bare Taylor and Chebyshev polynomials on the reduced domain with their absolute error, without the
 range reduction. The tiers are a reference for how degree buys accuracy. Code should come from `kernel`. `time`
 measures nanoseconds per element of every rung on this machine, and of the same loop calling scalar libm and,
