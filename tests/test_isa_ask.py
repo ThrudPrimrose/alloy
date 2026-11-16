@@ -3,6 +3,7 @@
 Infeasible, with a reason and the nearest requests it takes, from the surfaces it wraps."""
 
 import json
+import math
 
 import pytest
 
@@ -761,3 +762,30 @@ def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixtu
     out = capsys.readouterr().out
     assert code == 2
     assert "block: 16" in out and "nearest: x vector:f32:96" in out
+
+
+@pytest.mark.parametrize("shape", [(32, 32), (64, 64, 64)])
+def test_a_cpu_refuses_data_of_two_or_more_dimensions_with_the_block_and_the_flattened_run(shape: tuple[int, ...]):
+    sut = ask(Request("avx2", "reduce_add", {"x": Operand("vector", "f32", shape)}), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE, sut
+    assert sut.block == (8,) and "one-dimensional" in sut.reason and "elementwise" not in sut.reason
+    assert sut.nearest == (f"x vector:f32:{math.prod(shape)}",) and "flatten" in sut.fix
+
+
+def test_a_gpu_thread_row_refuses_a_three_dimensional_operand():
+    sut = ask(Request("sm90", "fma", {"x": Operand("register", "f32", (4, 4, 4))}), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE and sut.block == (1,), sut
+
+
+def test_an_uneven_neon_request_names_a_neon_register():
+    sut = ask(Request("neon", "add", {"x": Operand("vector", "f32", (6,))}), verify=False)
+
+    assert isinstance(sut, Infeasible) and "lanes of a neon register: 1 register holds 4, 2 remain" in sut.reason, sut
+
+
+def test_a_two_dimensional_request_in_a_type_the_isa_lacks_is_refused_for_the_type():
+    sut = ask(Request("avx2", "add", {"x": Operand("vector", "bf16", (3, 5))}), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.NO_ROW, sut

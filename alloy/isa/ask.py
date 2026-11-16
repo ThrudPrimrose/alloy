@@ -287,8 +287,14 @@ def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: s
     """The refusal of ``n`` elements that are no whole multiple of a register's ``lanes``: the block, the multiples
     below and above as nearest requests (``names`` are the operands a nearest request spells), and the tail's fix."""
     below = n - n % lanes
-    held = f"{n // lanes} registers hold {below}, {n % lanes} remain" if below else "less than one register"
-    reason = f"{n} {dtype} elements are not a whole multiple of the {lanes} {dtype} lanes of an {isa} register: {held}"
+    full = n // lanes
+    held = (
+        f"{full} register{'s' if full > 1 else ''} hold{'' if full > 1 else 's'} {below}, {n % lanes} remain"
+        if below
+        else "less than one register"
+    )
+    article = "a" if isa == "neon" else "an"
+    reason = f"{n} {dtype} elements are not a whole multiple of the {lanes} {dtype} lanes of {article} {isa} register: {held}"
     sizes = [size for size in (below, below + lanes) if size]
     if names == ("src", "dst"):
         memory = "src" if request.operands["dst"].space in REGISTERS else "dst"
@@ -434,9 +440,15 @@ def vector_op(request: Request, verify: bool) -> Answer:
                       spell(x=register), fix=fix)  # fmt: skip
         if operand.swizzle != "none":
             return no(request, Why.SWIZZLE, "a CPU has no swizzle", spell(x=register))
-        if len(operand.shape) == 2:
-            return no(request, Why.SHAPE, f"{request.op} is elementwise: one register per operand; a tile is an mma or copy operand",
-                      spell(x=register))  # fmt: skip
+        if (
+            len(operand.shape) >= 2 and lanes
+        ):  # TODO(design): logical 2-D data on a CPU (owner's batch, isa-design.md 2.8)
+            flat = Operand("vector", dtype, (math.prod(operand.shape),))
+            near = flat if lanes and not flat.shape[0] % lanes else register
+            shape = "x".join(map(str, operand.shape))
+            return no(request, Why.SHAPE, f"{isa} {request.op} takes one-dimensional data, not {shape}; a tile is an "
+                      "mma or copy operand", spell(x=near), fix="flatten the data into one run of elements",
+                      block=(lanes,))  # fmt: skip
         if lanes and operand.shape and operand.shape[0] % lanes:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
     count = next(iter(shapes))[0] // lanes if shapes and lanes else 1
@@ -511,9 +523,9 @@ def thread_op(request: Request) -> Answer:
                 f"the {request.op} row computes in {scalar.dtype}, not {operand.dtype}",
                 spell(x=scalar),
             )
-        if len(operand.shape) == 2 or operand.swizzle != "none":
+        if len(operand.shape) >= 2 or operand.swizzle != "none":
             return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or copy operand",
-                      spell(x=scalar))  # fmt: skip
+                      spell(x=scalar), block=(1,))  # fmt: skip
         if operand.space != "register":
             return no(request, Why.SPACE, f"the {request.op} row computes on one thread's registers, not on "
                       f"{operand.space} memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
@@ -825,6 +837,7 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
         return bad(
             request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}", *nearest
         )
+    # TODO(design): src and dst of different shapes (a block of a larger array) answer from the register's shape
     if lanes and register.shape and register.shape[-1] % lanes:  # rows of a tile are whole registers
         return uneven(request, request.target, register.dtype, register.shape[-1], lanes, "src", "dst")
     op = "load" if dst is register else "store"
