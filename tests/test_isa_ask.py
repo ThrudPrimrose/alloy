@@ -8,7 +8,7 @@ import pytest
 
 from alloy.isa import simt, tile
 from alloy.isa.__main__ import main
-from alloy.isa.ask import INVALID, Feasible, Infeasible, Invalid, Operand, Request, Why, ask
+from alloy.isa.ask import INVALID, Combined, Feasible, Infeasible, Invalid, Operand, Request, Why, ask, ask_all
 
 TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
         "b": Operand("shared", "f16", (64, 64), "col_major", "b128"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
@@ -359,7 +359,7 @@ def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap():
 
     assert INVALID and infeasible and Why.MALFORMED in INVALID
     assert {Why.UNIT, Why.NO_ROW, Why.ELEMENT_TYPE, Why.SHAPE, Why.SPACE, Why.SWIZZLE, Why.LAYOUT, Why.NO_RUNG,
-            Why.NOT_COVERED, Why.CHECK_FAILED} == infeasible  # fmt: skip
+            Why.NOT_COVERED, Why.CHECK_FAILED, Why.COMBINE} == infeasible  # fmt: skip
 
 
 def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za():
@@ -500,3 +500,123 @@ def test_a_math_kernel_that_fails_its_gate_is_infeasible(monkeypatch):
 
     assert isinstance(sut, Infeasible)
     assert sut.why is Why.CHECK_FAILED and "9 ulp" in sut.reason
+
+
+# A 256 x 256 x 128 product on sm90 runs the 128 x 128 kernel: A blocks of 128 x 64 from the 256 x 128 matrix, and
+# Bt blocks of 128 x 64 from the 256 x 128 transposed B.
+WIDE_MMA = Request("sm90", "mma", {"a": Operand("shared", "f16", (256, 128), "row_major", "b128"),
+                                   "b": Operand("shared", "f16", (128, 256), "col_major", "b128"),
+                                   "c": Operand("register", "f32", (256, 256))})  # fmt: skip
+BLOCK = Operand("shared", "f16", (128, 64), "row_major", "b128")
+COPY_A = Request("sm90", "copy", {"src": Operand("global", "f16", (256, 128)), "dst": BLOCK})
+COPY_BT = Request("sm90", "copy", {"src": Operand("global", "f16", (256, 128)), "dst": BLOCK})
+LDS_MMA = Request("gfx942", "mma", MFMA_TILE)
+LDS_COPY = Request("gfx942", "copy", {"src": Operand("global", "f16", (64, 64)), "dst": LDS})
+
+
+def recording(monkeypatch, verified: str = "compiled") -> list[tuple[str, int, int, int]]:
+    seen: list[tuple[str, int, int, int]] = []
+
+    def verify(plan_: tile.TilePlan) -> tile.TilePlan:
+        seen.append((plan_.target, plan_.m, plan_.n, plan_.k))
+        return tile.replace_check(plan_, verified, "the program's check")  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tile, "verify", verify)
+    return seen
+
+
+@pytest.mark.parametrize(("requests", "program"), [
+    ([COPY_A, COPY_BT, WIDE_MMA], ("sm90", 256, 256, 128)),
+    ([LDS_COPY, LDS_COPY, LDS_MMA], ("gfx942", 64, 64, 64)),
+])  # fmt: skip
+def test_copies_and_the_mma_they_fill_carry_the_check_of_the_one_tile_program_that_runs_them(
+    requests, program, monkeypatch
+):
+    seen = recording(monkeypatch)
+
+    sut = ask_all(requests)
+
+    assert isinstance(sut, Combined), sut
+    assert seen == [program]
+    assert sut.check.status == "compiled" and "one program runs all 3 requests" in sut.check.basis
+    assert all(a.check.status == "compiled" for a in sut.answers)
+    assert all("tile program of request 2" in a.check.basis for a in sut.answers[:2])
+    assert len(sut.feeds) == 2
+
+
+def copy_request(target: str, text: str) -> Request:
+    """A nearest copy as ``ask_all`` spells it: ``copy src <operand>, dst <operand>``."""
+    fields = (field.split(" ") for field in text.removeprefix("copy ").split(", "))
+    return Request(target, "copy", {name: Operand.parse(operand) for name, operand in fields})
+
+
+def test_a_copy_of_b_as_k_rows_of_n_does_not_combine_and_the_nearest_copies_do():
+    copy_b = Request("sm90", "copy", {"src": Operand("global", "f16", (128, 256)), "dst": BLOCK})
+
+    sut = ask_all([COPY_A, copy_b, WIDE_MMA], verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.COMBINE, sut
+    assert sut.request == copy_b and "Bt" in sut.fix
+    nearest = [copy_request("sm90", text) for text in sut.nearest]
+    assert nearest and isinstance(ask_all([*nearest, WIDE_MMA], verify=False), Combined)
+
+
+def test_a_copy_into_a_block_the_mma_does_not_load_does_not_combine():
+    narrow = Request("sm90", "copy", {"src": Operand("global", "f16", (256, 128)), "dst": B128})
+
+    sut = ask_all([narrow, WIDE_MMA], verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.COMBINE
+    assert "shared:f16:128x64:row_major:b128" in sut.reason
+
+
+def test_two_mmas_do_not_combine_because_no_tile_program_runs_both():
+    sut = ask_all([WIDE_MMA, WIDE_MMA], verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.COMBINE
+
+
+def test_requests_on_two_targets_are_invalid_as_one_kernel():
+    sut = ask_all([COPY_A, LDS_MMA], verify=False)
+
+    assert isinstance(sut, Invalid) and sut.why is Why.MIXED_TARGETS
+
+
+def test_a_refused_request_in_a_list_is_refused_with_its_index():
+    sut = ask_all([COPY_A, Request("sm90", "mma", TILE | {"b": B128})], verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.LAYOUT
+    assert sut.reason.startswith("request 1 (mma): ")
+
+
+def test_a_kernel_whose_tile_program_fails_is_infeasible(monkeypatch):
+    recording(monkeypatch, "failed")
+
+    sut = ask_all([COPY_A, COPY_BT, WIDE_MMA])
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.CHECK_FAILED
+    assert sut.reason.startswith("request 2 (mma): ")
+
+
+def test_requests_no_program_runs_together_say_each_is_checked_alone():
+    load = Request("avx2", "copy", {"src": Operand("global", "f64", (4,)), "dst": REGISTER})
+
+    sut = ask_all([load, Request("avx2", "add", {"a": REGISTER})], verify=False)
+
+    assert isinstance(sut, Combined) and not sut.feeds
+    assert "requests 0, 1 are checked alone" in sut.check.basis
+
+
+@pytest.mark.parametrize(("argv", "code", "status"), [
+    (["sm90", "copy src=global:f16:256x128 dst=shared:f16:128x64:row_major:b128",
+      "mma a=shared:f16:256x128:row_major:b128 b=shared:f16:128x256:col_major:b128 c=register:f32:256x256"], 0, "feasible"),
+    (["sm90", "copy src=global:f16:128x256 dst=shared:f16:128x64:row_major:b128",
+      "mma a=shared:f16:256x128:row_major:b128 b=shared:f16:128x256:col_major:b128 c=register:f32:256x256"], 2, "infeasible"),
+    (["sm90", "copy src"], 64, "invalid"),
+    (["sm90", ""], 64, "invalid"),
+])  # fmt: skip
+def test_the_ask_all_cli_exit_code_and_json_status_tell_the_three_classes_apart(argv, code, status, capsys):
+    exit_code = main(["ask-all", *argv, "--json", "--no-verify"])
+
+    sut = json.loads(capsys.readouterr().out)
+    assert exit_code == code and sut["status"] == status

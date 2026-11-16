@@ -10,10 +10,17 @@ Tensix rows, and the tile plans), wrapped, so every existing answer keeps its co
 
     python -m alloy.isa ask sm90 mma --a shared:f16:64x64:row_major:b128 --b shared:f16:64x64:col_major:b128 \
         --c register:f32:64x64
+
+:func:`ask_all` answers requests that run as one kernel (design section 2.4b): a copy into shared memory and the mma it
+fills are checked as the one tile program that runs both.
+
+    python -m alloy.isa ask-all sm90 'copy src=global:f16:64x64 dst=shared:f16:64x64:row_major:b128' \
+        'mma a=shared:f16:64x64:row_major:b128 b=shared:f16:64x64:col_major:b128 c=register:f32:64x64'
 """
 
 import dataclasses
 import enum
+from collections.abc import Sequence
 from typing import Literal, get_args
 
 from pydantic import ConfigDict
@@ -27,6 +34,7 @@ __all__ = [
     "UNITS",
     "Answer",
     "Check",
+    "Combined",
     "Feasible",
     "Infeasible",
     "Invalid",
@@ -35,6 +43,7 @@ __all__ = [
     "Step",
     "Why",
     "ask",
+    "ask_all",
 ]
 
 STRICT = ConfigDict(extra="forbid", strict=True, frozen=True)
@@ -89,6 +98,7 @@ class Why(enum.StrEnum):
     CHAIN = "shapes_do_not_chain"
     MIXED_TYPES = "mixed_element_types"
     BOUND = "bound_not_applicable"
+    MIXED_TARGETS = "mixed_targets"
 
     UNIT = "unit_does_not_run_it"
     NO_ROW = "no_row"
@@ -100,11 +110,12 @@ class Why(enum.StrEnum):
     NO_RUNG = "no_rung_within_bound"
     NOT_COVERED = "not_covered"
     CHECK_FAILED = "check_failed"
+    COMBINE = "answers_do_not_combine"
 
 
 #: The reasons of an invalid request; every other reason is an infeasible one.
 INVALID = frozenset({Why.TARGET, Why.UNIT_NAME, Why.OPERATION, Why.OPERANDS, Why.MALFORMED, Why.CHAIN,
-                     Why.MIXED_TYPES, Why.BOUND})  # fmt: skip
+                     Why.MIXED_TYPES, Why.BOUND, Why.MIXED_TARGETS})  # fmt: skip
 
 
 @dataclass(config=STRICT)
@@ -228,6 +239,19 @@ class Invalid:
 
 
 Answer = Feasible | Infeasible | Invalid
+
+
+@dataclass(config=STRICT)
+class Combined:
+    """The answers to several requests that run as one kernel, in the order asked: which copy fills which mma input,
+    and the check of them together. A copy and the mma it fills carry the check of the one tile program that runs
+    both; ``check`` is the weakest check of the answers."""
+
+    answers: tuple[Feasible, ...]
+    feeds: tuple[str, ...]
+    check: Check
+    feasible: Literal[True] = True
+    status: Literal["feasible"] = "feasible"
 
 
 def no(request: Request, why: Why, reason: str, *nearest: str, fix: str = "") -> Infeasible:
@@ -723,3 +747,87 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
     if (check := copy_check("sm90", verify)) is None:
         return no(request, Why.CHECK_FAILED, "the sm90 tile program that runs this copy failed its check")
     return Feasible(request, "tma", steps, setup, code, check)
+
+
+#: Check statuses from the weakest.
+STRENGTH = {"unverified": 0, "compiled": 1, "run": 2}
+
+
+def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infeasible | Invalid:
+    """The answers to ``requests`` as one kernel on one target. On a GPU, a copy into shared memory must write one K
+    block that the list's mma loads, from the global matrix it loads; the copy and the mma then carry the check of the
+    tile program that runs both. The tile programs run one mma each, so a list holds at most one. A refused request
+    is refused with its index."""
+    if not requests:
+        return bad(None, Why.OPERANDS, "a kernel names at least one request", "a list of requests")
+    targets = sorted({r.target for r in requests})
+    if len(targets) > 1:
+        return bad(requests[0], Why.MIXED_TARGETS, f"one kernel runs on one target, not {', '.join(targets)}",
+                   *(f"target {t}" for t in targets))  # fmt: skip
+    mmas = [i for i, r in enumerate(requests) if r.op == "mma"]
+    if len(mmas) > 1:
+        return no(requests[mmas[1]], Why.COMBINE, f"requests {mmas[0]} and {mmas[1]} are both mma; a tile program "
+                  "runs one mma, so no program checks them together", fix="ask each mma with its copies alone")  # fmt: skip
+    answers: list[Feasible] = []
+    for i, request in enumerate(requests):
+        answer = ask(request, verify=False)
+        if not isinstance(answer, Feasible):
+            return dataclasses.replace(answer, reason=f"request {i} ({request.op}): {answer.reason}")
+        answers.append(answer)
+    fed = feeds(requests, mmas[0]) if mmas and requests[0].target in DIALECT else {}
+    if isinstance(fed, Infeasible):
+        return fed
+    for i, request in enumerate(requests):
+        if verify and i not in fed:
+            answer = ask(request, verify=True)
+            if not isinstance(answer, Feasible):
+                return dataclasses.replace(answer, reason=f"request {i} ({request.op}): {answer.reason}")
+            answers[i] = answer
+    for i in fed:
+        mma_check = answers[mmas[0]].check
+        basis = f"the tile program of request {mmas[0]} (mma), which runs this copy" + (
+            f": {mma_check.basis}" if mma_check.basis else ""
+        )
+        answers[i] = dataclasses.replace(answers[i], check=Check(mma_check.status, basis))
+    weakest = min((a.check for a in answers), key=lambda c: STRENGTH[c.status])
+    together = set(fed) | set(mmas[:1])
+    if len(requests) == 1:
+        basis = answers[0].check.basis
+    elif len(together) == len(requests):
+        one = answers[mmas[0]].check.basis
+        basis = f"one program runs all {len(requests)} requests" + (f": {one}" if one else "")
+    else:
+        alone = ", ".join(str(i) for i in range(len(requests)) if i not in together)
+        basis = f"requests {alone} are checked alone, not in one program with the others"
+    return Combined(tuple(answers), tuple(f"copy {i} fills {name} of mma {mmas[0]}" for i, name in fed.items()),
+                    Check(weakest.status, basis))  # fmt: skip
+
+
+def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
+    """Which mma input each copy into shared memory fills, by the copy's index: the tile program of mma ``j`` loads
+    A as BM rows of 64 from the M x K matrix and Bt as BN rows of 64 from the N x K one. A copy that writes anything
+    else is not in that program, so it is infeasible with the copies the program runs."""
+    target, mma_ = requests[j].target, requests[j]
+    a, b = mma_.operands["a"], mma_.operands["b"]
+    m, k, n = a.shape[0], a.shape[1], b.shape[1]
+    bm, bn = tile.gpu_block(target, m, n, k)
+    blocks = {
+        "a": (Operand("global", a.dtype, (m, k)), Operand("shared", a.dtype, (bm, 64), "row_major", a.swizzle)),
+        "b": (Operand("global", b.dtype, (n, k)), Operand("shared", b.dtype, (bn, 64), "row_major", b.swizzle)),
+    }
+    nearest = tuple(dict.fromkeys(f"copy {spell(src=src, dst=dst)}" for src, dst in blocks.values()))
+    fed: dict[int, str] = {}
+    for i, request in enumerate(requests):
+        src, dst = request.operands.get("src"), request.operands.get("dst")
+        if request.op != "copy" or src is None or dst is None or dst.space != "shared":
+            continue
+        names = [name for name, (whole, block) in blocks.items() if dst == block and src.shape == whole.shape]
+        if not names:
+            reason = (f"request {i} copies {src.spelled()} into {dst.spelled()}, which the tile program of request {j} "
+                      f"(mma) does not load: it loads A as {blocks['a'][1].spelled()} from {m}x{k} and Bt as "
+                      f"{blocks['b'][1].spelled()} from {n}x{k}")  # fmt: skip
+            fix = (f"copy one K block of 64 per step: A from the {m} x {k} matrix, and B from Bt ({n} rows of {k}) "
+                   "in global memory, since the mma reads B transposed")  # fmt: skip
+            return no(request, Why.COMBINE, reason, *nearest, fix=fix)
+        fed[i] = " or ".join(names)
+    return fed

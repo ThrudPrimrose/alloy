@@ -16,7 +16,18 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 
-__all__ = ["CPU_TYPES", "GPU_TILES", "TYPES", "TilePlan", "cpu_plan", "gpu_plan", "native_gpu", "plan", "verify"]
+__all__ = [
+    "CPU_TYPES",
+    "GPU_TILES",
+    "TYPES",
+    "TilePlan",
+    "cpu_plan",
+    "gpu_block",
+    "gpu_plan",
+    "native_gpu",
+    "plan",
+    "verify",
+]
 
 HERE = pathlib.Path(__file__).parent
 #: Element types a CPU tile takes: (input, accumulator) pairs with a C spelling each.
@@ -247,18 +258,25 @@ int main(void) {{
 """
 
 
+def gpu_block(target: str, m: int, n: int, k: int) -> tuple[int, int]:
+    """The (BM, BN) block of the tile kernel an ``m x n x k`` product runs on ``target``: the largest that divides M
+    and N. Each block loads K in blocks of 64: A as BM rows of 64 and Bt as BN rows of 64."""
+    tiles = GPU_TILES[target]
+    fitting = [(bm, bn) for bm, bn in tiles if m % bm == 0 and n % bn == 0]
+    if not fitting or k % 64:
+        legal = ", ".join(f"{bm}x{bn} blocks" for bm, bn in tiles)
+        raise KeyError(f"{target}: M and N multiples of a tile ({legal}), K a multiple of 64; got {m}x{n}x{k}")
+    return max(fitting)
+
+
 def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     """An f16 GEMM on sm_90 or gfx942, tiled by the target's tile kernel; refuses what the kernels do not cover."""
     tiles = GPU_TILES[target]
-    legal = ", ".join(f"{bm}x{bn} blocks" for bm, bn in tiles)
     if (in_type, acc_type) not in TYPES[target]:
         raise KeyError(
             f"{target} tiles take --in f16 --acc f32 (the kernels the table checks); got {in_type}, {acc_type}"
         )
-    fitting = [(bm, bn) for bm, bn in tiles if m % bm == 0 and n % bn == 0]
-    if not fitting or k % 64:
-        raise KeyError(f"{target}: M and N multiples of a tile ({legal}), K a multiple of 64; got {m}x{n}x{k}")
-    bm, bn = max(fitting)
+    bm, bn = gpu_block(target, m, n, k)
     steps, layout, descriptors = gpu_steps(target, bm, bn, k)
     descriptors = {"tile": f"{tiles[bm, bn]}, {bm} x {bn} per block, {GPU_THREADS[target, bm]} threads"} | descriptors
     return TilePlan(
