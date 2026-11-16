@@ -271,18 +271,19 @@ def lscpu_hz() -> float | None:
 
 
 #: Eight dependent additions per iteration, the chain the measured clock times (the loop counter runs beside it).
+#: Register to register: recent x86 cores fold a chain of immediate additions at rename and run it three times faster.
 CHAIN = """#include <stdint.h>
 #include <stdio.h>
 #include <time.h>
 #if defined(__aarch64__)
-#define ADD asm volatile("add %0, %0, #1" : "+r"(x));
+#define ADD asm volatile("add %0, %0, %0" : "+r"(x));
 #else
-#define ADD asm volatile("add $1, %0" : "+r"(x));
+#define ADD asm volatile("add %0, %0" : "+r"(x));
 #endif
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 int main(void) {
   double best = 0.0;
-  uint64_t x = 0;
+  uint64_t x = 1;
   for (int round = 0; round < 5; ++round) {
     double start = now(), took;
     uint64_t adds = 0;
