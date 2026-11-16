@@ -14,6 +14,7 @@ import json
 import math
 import os
 import pathlib
+import re
 import sys
 import traceback
 
@@ -34,9 +35,10 @@ def dataflow_include(new: bool) -> str:
     return "api/dataflow/dataflow_api.h" if new else "dataflow_api.h"
 
 
-def reader(offsets: list[int], new: bool) -> str:
+def reader(offsets: list[int], new: bool, once: int = -1) -> str:
     """A reader of ``len(offsets)`` inputs, input ``k`` into CB ``k``; its accessor's compile-time args start at
-    ``offsets[k]`` (the host knows each accessor's count)."""
+    ``offsets[k]`` (the host knows each accessor's count). Input ``once`` (a reduction's scaler) is one tile, read
+    with the first tile of the others."""
     accessors = "".join(
         f"""
     constexpr auto args{cb} = TensorAccessorArgs<{offset}>();
@@ -45,10 +47,12 @@ def reader(offsets: list[int], new: bool) -> str:
     )
     reads = "".join(
         f"""
+        {"if (i == 0) " if cb == once else ""}{{
         cb_reserve_back({cb}, 1);
         noc_async_read_tile(i, s{cb}, get_write_ptr({cb}));
         noc_async_read_barrier();
-        cb_push_back({cb}, 1);"""
+        cb_push_back({cb}, 1);
+        }}"""
         for cb in range(len(offsets))
     )
     return f"""
@@ -90,8 +94,14 @@ def body(row: dict, new: bool) -> "tuple[str, str, str]":
     """The start-up, the per-tile body and the pops of ``row``'s kind: a unary row copies its tile to DST for the
     SFPU; a binary SFPU row copies both operands to DST; a binary FPU row reads both from their CBs."""
     init, call = spelled(row["init"], new), spelled(row["call"], new)
-    if row["kind"] == "unary":
+    if row["kind"] in ("unary", "scan"):
         start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
+        if row["kind"] == "scan":  # one init: the running totals stay in SFPU registers from tile to tile
+            return (
+                f"{start}\n    {init};",
+                f"cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);\n        {call};",
+                "cb_pop_front(c0, 1);",
+            )
         steps = f"cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);\n        {init};\n        {call};"
         return start, steps, "cb_pop_front(c0, 1);"
     pops = "cb_pop_front(c0, 1);\n        cb_pop_front(c1, 1);"
@@ -147,10 +157,56 @@ def matmul_compute(row: dict, new: bool) -> str:
 """
 
 
+def reduction_compute(row: dict, new: bool) -> str:
+    """The compute kernel of a ``reduction`` row: every data tile (CB 0) reduced into one DST tile against the scaler
+    tile (CB 1), packed once, as tt-metal's ``reduce_w.cpp`` test kernel does. 0.6x's templates default to the
+    ``REDUCE_OP`` and ``REDUCE_DIM`` macros, which its host defines; the kernel defines them from the row's init."""
+    init = spelled(row["init"], new)
+    found = re.search(r"<\s*([\w:]+)\s*,\s*([\w:]+)\s*>", init)
+    if found is None:
+        raise ValueError(f"a reduction's init names its PoolType and ReduceDim: {init}")
+    pool, dim = found.groups()
+    entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
+    close = "" if new else "}  // namespace NAMESPACE"
+    return f"""
+#include <cstdint>
+#define REDUCE_OP {pool}
+#define REDUCE_DIM {dim}
+#include "{compute_include("common.h", new)}"
+#include "{compute_include(row["header"], new)}"
+{entry} {{
+    uint32_t num_tiles = get_arg_val<uint32_t>(0);
+    constexpr auto c0 = tt::CBIndex::c_0;
+    constexpr auto c1 = tt::CBIndex::c_1;
+    constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
+    compute_kernel_hw_startup(c0, c1, c16);
+    {init};
+    cb_wait_front(c1, 1);
+    cb_reserve_back(c16, 1);
+    tile_regs_acquire();
+    for (uint32_t i = 0; i < num_tiles; ++i) {{
+        cb_wait_front(c0, 1);
+        {spelled(row["call"], new)};
+        cb_pop_front(c0, 1);
+    }}
+    tile_regs_commit();
+    tile_regs_wait();
+    pack_tile(0, c16);
+    tile_regs_release();
+    cb_push_back(c16, 1);
+    cb_pop_front(c1, 1);
+    reduce_uninit();
+}}
+{close}
+"""
+
+
 def compute(row: dict, new: bool) -> str:
     """The compute kernel of ``row`` for tt-metal 0.8x (``new``) or 0.6x."""
     if row["kind"] == "matmul":
         return matmul_compute(row, new)
+    if row["kind"] == "reduction":
+        return reduction_compute(row, new)
     headers = ("common.h", "tile_move_copy.h", "eltwise_unary/eltwise_unary.h", "eltwise_binary.h", row["header"])
     includes = "\n".join(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers))
     entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
@@ -228,13 +284,18 @@ def inputs(row: dict) -> list:
     base = torch.linspace(lo, hi, TILES * TILE, dtype=torch.float32)
     if row["kind"] == "matmul":  # A is one row of TILES K tiles (32 x 32 TILES), B one column of them
         return [base.reshape(32, TILES * 32), base.roll(97).reshape(TILES * 32, 32)]
+    if row["kind"] == "reduction":  # the data tiles and the scaler tile: 1 in the first row of each 16 x 16 face
+        scaler = torch.zeros(32, 32)
+        scaler[0::16] = 1.0
+        return [base.reshape(TILES * 32, 32), scaler]
     return [base.roll(k * 97).reshape(TILES * 32, 32) for k in range(count)]
 
 
 def dest_fp32(row: dict) -> bool:
-    """Whether DST accumulates in fp32: for f32 rows, and for every matrix product, whose sum over K tiles loses
-    digits in a 16-bit accumulator (bf16 mma measured 7% on ttsim without it). ``ask`` hands out the same setting."""
-    return row["dtype"] == "f32" or row["kind"] == "matmul"
+    """Whether DST accumulates in fp32: for f32 rows, and for every matrix product and reduction, whose sum over
+    tiles loses digits in a 16-bit accumulator (bf16 mma measured 7% on ttsim without it). ``ask`` hands out the
+    same setting."""
+    return row["dtype"] == "f32" or row["kind"] in ("matmul", "reduction")
 
 
 def reference(op: str, xs: list):
@@ -247,6 +308,10 @@ def reference(op: str, xs: list):
     }  # fmt: skip
     if op in unary:
         return unary[op](x)
+    if op == "scan_add":  # down each column, across the tiles of that column
+        return torch.cumsum(x, dim=0)
+    if op in ("reduce_add", "reduce_max"):  # REDUCE_SCALAR: one value for every element of every tile
+        return x.sum() if op == "reduce_add" else x.max()
     y = xs[1].double()
     if op == "mma":  # apart from the elementwise rows, whose tiles do not chain as a product
         return x @ y
@@ -268,7 +333,8 @@ def run(dev, row: dict, new: bool) -> dict:
         ttnn.from_torch(x, dtype=tt_dtype, layout=ttnn.TILE_LAYOUT, device=dev, memory_config=memory) for x in xs
     ]
     matmul = row["kind"] == "matmul"
-    shape = [32, 32] if matmul else list(xs[0].shape)
+    one_tile = matmul or row["kind"] == "reduction"  # the output is one tile
+    shape = [32, 32] if one_tile else list(xs[0].shape)
     out = ttnn.allocate_tensor_on_device(ttnn.Shape(shape), tt_dtype, ttnn.TILE_LAYOUT, dev, memory)
     cbs = [
         ttnn.CBDescriptor(
@@ -279,7 +345,7 @@ def run(dev, row: dict, new: bool) -> dict:
         for i in [*range(len(xs)), OUT_CB]
     ]
     reader_args = runtime_args(ttnn, [TILES, *(t.buffer_address() for t in tensors)])
-    writer_args = runtime_args(ttnn, [1 if matmul else TILES, out.buffer_address()])
+    writer_args = runtime_args(ttnn, [1 if one_tile else TILES, out.buffer_address()])
     compute_args = runtime_args(ttnn, [TILES])
     per_input = [list(ttnn.TensorAccessorArgs(t).get_compile_time_args()) for t in tensors]
     offsets = [sum(len(a) for a in per_input[:k]) for k in range(len(per_input))]
@@ -290,13 +356,14 @@ def run(dev, row: dict, new: bool) -> dict:
     if row["dtype"] == "f32" and row["kind"] not in (
         "binary",
         "matmul",
+        "reduction",
     ):  # FPU operands unpack to SrcA/SrcB (TF32): only DST takes FP32
         # one mode per circular buffer: tt-metal 0.6x has 32 of them, 0.8x has 64
         config.unpack_to_dest_mode = [unpack_mode(ttnn).UnpackToDestFp32] * (64 if new else 32)
     source = source_code(ttnn)
     kernels = [
         ttnn.KernelDescriptor(
-            kernel_source=reader(offsets, new), source_type=source, core_ranges=core,
+            kernel_source=reader(offsets, new, 1 if row["kind"] == "reduction" else -1), source_type=source, core_ranges=core,
             compile_time_args=[a for args in per_input for a in args], runtime_args=reader_args,
             config=ttnn.ReaderConfigDescriptor(),
         ),
@@ -313,6 +380,8 @@ def run(dev, row: dict, new: bool) -> dict:
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
     got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
     want = reference(row["op"], [x.float() for x in xs])
+    if row["kind"] == "reduction":  # REDUCE_SCALAR leaves the value at face 0 [0, 0] and zeros elsewhere
+        got, want = got[0, 0].reshape(1), want.reshape(1)
     if matmul:  # a sum of products: its error is relative to the result's scale, not to each element
         rel = ((got.double() - want).abs().max() / want.abs().max()).item()
     else:

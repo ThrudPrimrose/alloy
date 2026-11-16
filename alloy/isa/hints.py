@@ -47,6 +47,9 @@ CALL_NAMES: dict[str, str] = {
     },
 }
 
+#: The table's reduction for a write-conflict of DaCe's reduction type; any other type has no row.
+REDUCTION_OF = {"Sum": "reduce_add", "Min": "reduce_min", "Max": "reduce_max"}
+
 #: Ops a tasklet's arithmetic maps to, in a readable order.
 OP_ORDER = tuple(
     (
@@ -163,7 +166,7 @@ def library_use(state, node) -> OpUse:
 
     if isinstance(node, Reduce):
         kind = str(detect_reduction_type(node.wcr)).rsplit(".", 1)[-1]
-        ops, conflict = ("reduce_add",) if kind == "Sum" else (), "" if kind == "Sum" else kind
+        ops, conflict = ((REDUCTION_OF[kind],), "") if kind in REDUCTION_OF else ((), kind)
         return OpUse(node.label, ops, (type(node).__name__,), kind == "Sum", conflict, lane_of(state, node))
     return OpUse(node.label, ("fma", "reduce_add"), (type(node).__name__,), False, "", lane_of(state, node))
 
@@ -188,9 +191,10 @@ def op_uses(sdfg) -> list[OpUse]:
             ops, skipped = expression_ops(node.code.as_string)
         dtype = lane_of(state, node) if isinstance(state, dace.SDFGState) else ""
         ordered = tuple(op for op in OP_ORDER if op in ops)
-        uses.append(
-            OpUse(node.label, ordered, tuple(sorted(skipped)), kind == "Sum", kind if kind != "Sum" else "", dtype)
-        )
+        if kind in ("Min", "Max"):  # a sum's reduce_add joins in :func:`hints`, once per use
+            ordered = (REDUCTION_OF[kind], *ordered)
+        conflict = "" if kind in REDUCTION_OF else kind
+        uses.append(OpUse(node.label, ordered, tuple(sorted(skipped)), kind == "Sum", conflict, dtype))
     return uses
 
 

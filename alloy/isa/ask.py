@@ -20,6 +20,7 @@ fills are checked as the one tile program that runs both.
 
 import dataclasses
 import enum
+import math
 from collections.abc import Sequence
 from typing import Literal, get_args
 
@@ -28,6 +29,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy.isa import OPS, load, simt, tensix, tile
 from alloy.isa.mathkernels import cheapest, functions, kernel, render, target_of
+from alloy.isa.table import Table
 
 __all__ = [
     "TARGETS",
@@ -215,13 +217,16 @@ class Infeasible:
     """A well-formed request that no unit of the target carries out: the reason's code, the reason, and what the
     target does take (operands as ``name space:dtype:shape[:layout[:swizzle]]``, comma-separated, or ``unit <name>``).
     ``fix`` says how the caller gets from what it has to a nearest request (a load that swizzles, a transposed
-    store), where Alloy knows one."""
+    store), where Alloy knows one. ``block`` is the extent one instruction of the lowering takes, per dimension (the
+    lanes of a register; the rows and columns of a tile; M, N, and K of a product's kernel block): a shape the target
+    takes is a whole multiple of it. It is set on every refusal for a shape."""
 
     request: Request
     why: Why
     reason: str
     nearest: tuple[str, ...] = ()
     fix: str = ""
+    block: tuple[int, ...] = ()
     feasible: Literal[False] = False
     status: Literal["infeasible"] = "infeasible"
 
@@ -256,9 +261,70 @@ class Combined:
     status: Literal["feasible"] = "feasible"
 
 
-def no(request: Request, why: Why, reason: str, *nearest: str, fix: str = "") -> Infeasible:
+def no(
+    request: Request, why: Why, reason: str, *nearest: str, fix: str = "", block: tuple[int, ...] = ()
+) -> Infeasible:
     assert why not in INVALID, why
-    return Infeasible(request, why, reason, tuple(nearest), fix)
+    return Infeasible(request, why, reason, tuple(nearest), fix, block)
+
+
+#: The primitives a request names on logical data (design 2.8): the reductions with the lane-wise row that combines two
+#: blocks, and the scans with the row that carries a block's last element into the next.
+REDUCTIONS = {"reduce_add": "add", "reduce_min": "min", "reduce_max": "max"}
+SCANS = {"scan_add": "add"}
+#: Where a load ends and a store starts; every other space is memory.
+REGISTERS = ("register", "vector", "tile_register")
+#: How a caller finishes the elements past the last whole register, by CPU target.
+TAIL = {
+    "avx512": "run the last block under a mask: ask gen_mask, then use the row's masked form",
+    "sve": "run the last block under the svwhilelt predicate: ask gen_mask",
+    "avx2": "finish them in a scalar remainder loop, or pad the data to the multiple above",
+    "neon": "finish them in a scalar remainder loop, or pad the data to the multiple above",
+}
+
+
+def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: str) -> Infeasible:
+    """The refusal of ``n`` elements that are no whole multiple of a register's ``lanes``: the block, the multiples
+    below and above as nearest requests (``names`` are the operands a nearest request spells), and the tail's fix."""
+    below = n - n % lanes
+    held = f"{n // lanes} registers hold {below}, {n % lanes} remain" if below else "less than one register"
+    reason = f"{n} {dtype} elements are not a whole multiple of the {lanes} {dtype} lanes of an {isa} register: {held}"
+    sizes = [size for size in (below, below + lanes) if size]
+    if names == ("src", "dst"):
+        memory = "src" if request.operands["dst"].space in REGISTERS else "dst"
+        nearest = [
+            spell(**{name: Operand("global" if name == memory else "vector", dtype, (size,)) for name in names})
+            for size in sizes
+        ]
+    else:
+        nearest = [spell(x=Operand("vector", dtype, (size,))) for size in sizes]
+    return no(request, Why.SHAPE, reason, *nearest, fix=TAIL[isa], block=(lanes,))
+
+
+def repeated(answer: Answer, request: Request, count: int, table: Table, isa: str, dtype: str) -> Answer:
+    """``answer`` for one register, as the answer for ``count`` of them: every step runs ``count`` times; a reduction
+    combines the registers lane-wise and reduces once; a scan carries each register's last lane into the next."""
+    if not isinstance(answer, Feasible) or count == 1:
+        return answer
+    if request.op in REDUCTIONS:
+        combine = table.entry(isa, REDUCTIONS[request.op], dtype).intrinsic
+        steps = (Step("vector", combine, count - 1), *answer.steps)
+        note = (
+            f"{count} registers: combine them lane-wise with {combine} into one accumulator register, then reduce "
+            "it once; the lanes combine in another order than a scalar left fold"
+        )
+    elif request.op in SCANS:
+        carry = (table.entry(isa, "broadcast", dtype).intrinsic, table.entry(isa, SCANS[request.op], dtype).intrinsic)
+        steps = (*(dataclasses.replace(s, count=count) for s in answer.steps),
+                 *(Step("vector", c, count - 1) for c in carry))  # fmt: skip
+        note = (
+            f"{count} registers: scan each, then add the broadcast last lane of the scanned register before it "
+            f"({carry[0]}, {carry[1]})"
+        )
+    else:
+        steps = tuple(dataclasses.replace(s, count=s.count * count) for s in answer.steps)
+        note = f"{count} registers: a loop of {count} iterations, one register each"
+    return dataclasses.replace(answer, steps=steps, notes=(*answer.notes, note))
 
 
 def bad(request: Request | None, why: Why, reason: str, *expected: str) -> Invalid:
@@ -291,6 +357,8 @@ def answered(request: Request, verify: bool) -> Answer:
         return mma(request, verify)
     if request.op == "copy":
         return copy(request, verify)
+    if request.op in ("load", "store") and {"src", "dst"} <= request.operands.keys():
+        return moved(request, verify)
     if request.target in DIALECT:
         return thread_op(request)
     if request.op not in OPS and request.op not in functions():
@@ -308,6 +376,23 @@ def answered(request: Request, verify: bool) -> Answer:
         return tile_call(request)
     nearest = mma_nearest("sme", 32, 32, 32)
     return no(request, Why.NOT_COVERED, "sme answers mma only so far (step 3 of the design)", *nearest)
+
+
+def moved(request: Request, verify: bool) -> Answer:
+    """A ``load`` (memory to registers or a tile register) or a ``store`` (back), answered by the rows of ``copy``; a
+    move between two memories is a copy, and so is one between two registers."""
+    src, dst = request.operands["src"], request.operands["dst"]
+    inner, outer = (dst, src) if request.op == "load" else (src, dst)
+    if inner.space not in REGISTERS or outer.space in REGISTERS:
+        ends = (
+            "starts in memory and ends in registers"
+            if request.op == "load"
+            else "starts in registers and ends in memory"
+        )
+        reason = f"a {request.op} {ends} (register, vector, or tile_register), not {src.space} to {dst.space}"
+        return bad(request, Why.MALFORMED, reason, "copy with the same operands, for a move between two memories")
+    answer = copy(dataclasses.replace(request, op="copy"), verify)
+    return dataclasses.replace(answer, request=request)
 
 
 def dtype_of(request: Request) -> str:
@@ -338,9 +423,13 @@ def vector_op(request: Request, verify: bool) -> Answer:
         )
     if why := mixed(request):
         return bad(request, Why.MIXED_TYPES, why, spell(x=register))
+    shapes = {operand.shape for operand in request.operands.values() if operand.shape}
+    if len(shapes) > 1:
+        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+        return bad(request, Why.CHAIN, reason, spell(x=register))
     for operand in request.operands.values():
         if operand.space not in ("vector", "register"):
-            fix = f"load it first: ask copy with src global and dst {register.spelled()}"
+            fix = f"load it first: ask load with src global and dst {register.spelled()}"
             return no(request, Why.SPACE, f"{isa} {request.op} computes on registers, not on {operand.space} memory",
                       spell(x=register), fix=fix)  # fmt: skip
         if operand.swizzle != "none":
@@ -348,13 +437,14 @@ def vector_op(request: Request, verify: bool) -> Answer:
         if len(operand.shape) == 2:
             return no(request, Why.SHAPE, f"{request.op} is elementwise: one register per operand; a tile is an mma or copy operand",
                       spell(x=register))  # fmt: skip
-        if lanes and operand.shape and operand.shape != (lanes,):
-            return no(
-                request,
-                Why.SHAPE,
-                f"an {isa} register holds {lanes} {dtype} lanes, not {operand.shape[0]}",
-                spell(x=register),
-            )
+        if lanes and operand.shape and operand.shape[0] % lanes:
+            return uneven(request, isa, dtype, operand.shape[0], lanes)
+    count = next(iter(shapes))[0] // lanes if shapes and lanes else 1
+    return repeated(one_register(request, isa, dtype, table, verify), request, count, table, isa, dtype)
+
+
+def one_register(request: Request, isa: str, dtype: str, table: Table, verify: bool) -> Answer:
+    """``request`` on one register of ``isa``: the table's row, or the math kernel."""
     if request.op in functions() and (request.op not in OPS or request.max_ulp is not None):
         return math_kernel(request, isa, dtype, verify)
     try:
@@ -443,6 +533,9 @@ def tile_call(request: Request) -> Answer:
     recorded check."""
     dtype = dtype_of(request)
     rows = [r for r in tensix.rows() if r.op == request.op]
+    if not rows and request.op == "reduce_min":
+        return no(request, Why.NO_ROW, "Tensix reduce_tile pools SUM, AVG, and MAX; it has no MIN", "tensix neg",
+                  "tensix reduce_max", fix="negate the tiles (neg_tile), reduce_max, and negate the result")  # fmt: skip
     if not rows:
         return no(
             request, Why.NO_ROW, f"no Tensix row for {request.op}", *sorted({f"tensix {r.op}" for r in tensix.rows()})
@@ -466,8 +559,17 @@ def tile_call(request: Request) -> Answer:
     if any(o.space != "tile_register" for o in request.operands.values()):
         return no(request, Why.SPACE, "a Tensix tile call computes on the unit's tile registers", spell(x=one),
                   fix=INTO_SPACE["tensix"])  # fmt: skip
-    if any(o.shape not in ((), (32, 32)) for o in request.operands.values()):
-        return no(request, Why.SHAPE, "a Tensix tile call computes one 32x32 tile", spell(x=one))
+    shapes = {o.shape for o in request.operands.values() if o.shape}
+    if len(shapes) > 1:
+        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+        return bad(request, Why.CHAIN, reason, spell(x=one))
+    shape = next(iter(shapes), (32, 32))
+    if len(shape) != 2 or shape[0] % 32 or shape[1] % 32:
+        sizes = {tuple(max(32, e - e % 32) for e in shape[:2]), tuple(-(-e // 32) * 32 for e in shape[:2])}
+        near = (spell(x=Operand("tile_register", one.dtype, s)) for s in sorted(sizes) if len(s) == 2)
+        reason = f"a Tensix tile call computes one 32x32 tile at a time; {'x'.join(map(str, shape))} is no whole number of tiles"
+        return no(request, Why.SHAPE, reason, *near, fix="pad the data to whole 32x32 tiles", block=(32, 32))
+    tiles = (shape[0] // 32) * (shape[1] // 32)
     row = found[0]
     verdict = tensix.verdicts().get((request.op, dtype, row.unit))
     if verdict is not None and not verdict.ok:
@@ -477,10 +579,22 @@ def tile_call(request: Request) -> Answer:
             f"the row failed its check on ttsim: {verdict.error or 'outside its error bound'}",
         )
     init, call = tensix.spelled(row.init, "v08"), tensix.spelled(row.call, "v08")
-    check = Check("unverified") if verdict is None else Check("run", "ttsim")
+    if row.pending:
+        check = Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
+    else:
+        check = Check("unverified") if verdict is None else Check("run", "ttsim")
     unit = row.unit.lower()
-    return Feasible(request, unit, (Step(unit, init), Step(unit, call)), {"header": row.header}, f"{init};\n{call};",
-                    check, (row.note,) if row.note else ())  # fmt: skip
+    notes = (
+        *((row.note,) if row.note else ()),
+        *((f"{tiles} tiles: one call each, after one init",) if tiles > 1 else ()),
+    )
+    steps: tuple[Step, ...] = (Step(unit, init), Step(unit, call, tiles))
+    setup = {"header": row.header}
+    if row.kind == "reduction":  # every tile into one DST tile, packed once; the harness runs it so
+        steps += (Step(unit, "pack_tile(0, c16)"),)
+        setup |= {"compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
+                  "scaler": "one tile in CB c1: 1 in the first row of each 16x16 face"}  # fmt: skip
+    return Feasible(request, unit, steps, setup, f"{init};\n{call};", check, notes)
 
 
 def mma_nearest(target: str, m: int, n: int, k: int) -> tuple[str, ...]:
@@ -585,7 +699,8 @@ def mma(request: Request, verify: bool) -> Answer:
         found = tile.plan(target, m, n, k, a.dtype, c.dtype)
     except KeyError as exc:
         code = Why.SHAPE if (a.dtype, c.dtype) in tile.TYPES[target] else Why.ELEMENT_TYPE
-        return no(request, code, str(exc.args[0]), *nearest)
+        block = (*next(iter(tile.GPU_TILES[target])), 64) if code is Why.SHAPE and target in tile.GPU_TILES else ()
+        return no(request, code, str(exc.args[0]), *nearest, block=block)
     if misplaced_ := misplaced(target, a, b, c):
         return no(request, *misplaced_[:2], *nearest, fix=misplaced_[2])
     if verify:
@@ -603,7 +718,7 @@ def tensix_mma(request: Request, m: int, n: int, k: int, nearest: tuple[str, ...
     32 x 32 output tile; f32 operands are read at TF32."""
     a, b, c = (request.operands[name] for name in "abc")
     if m % 32 or n % 32 or k % 32:
-        return no(request, Why.SHAPE, f"Tensix multiplies 32x32 tiles; got {m}x{n}x{k}", *nearest)
+        return no(request, Why.SHAPE, f"Tensix multiplies 32x32 tiles; got {m}x{n}x{k}", *nearest, block=(32, 32, 32))
     if a.dtype not in tensix.dtypes() or c.dtype not in tensix.dtypes():
         return no(
             request,
@@ -710,11 +825,11 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
         return bad(
             request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}", *nearest
         )
-    if lanes and register.shape not in ((), (lanes,)):
-        return no(request, Why.SHAPE, f"an {request.target} register holds {lanes} {register.dtype} lanes; a larger copy is a "
-                  "loop of this one", *nearest)  # fmt: skip
+    if lanes and register.shape and register.shape[-1] % lanes:  # rows of a tile are whole registers
+        return uneven(request, request.target, register.dtype, register.shape[-1], lanes, "src", "dst")
     op = "load" if dst is register else "store"
-    answer = vector_op(Request(request.target, op, {"x": one}), verify=False)
+    whole = Operand("vector", register.dtype, (math.prod(register.shape),) if register.shape else one.shape)
+    answer = vector_op(Request(request.target, op, {"x": whole}), verify=False)
     return dataclasses.replace(answer, request=request)
 
 

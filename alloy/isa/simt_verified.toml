@@ -1,5 +1,5 @@
 # Written by `python -m alloy.isa.simt verify`: every simt.toml row compiled and, where the GPU is here, run.
-run = "2026-11-15"
+run = "2026-11-16"
 
 [[verdicts]]
 op = "fma"
@@ -70,6 +70,42 @@ rel = 0.0
 
 [[verdicts]]
 op = "reduce_add"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "reduce_min"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "reduce_min"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "reduce_max"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "reduce_max"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+
+[[verdicts]]
+op = "scan_add"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+
+[[verdicts]]
+op = "scan_add"
 dialect = "hip"
 basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
 

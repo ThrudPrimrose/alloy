@@ -47,7 +47,7 @@ __all__ = [
 
 #: Per-op relative-error tolerances for the compiled kernels. IEEE ops are exactly rounded, so their
 #: tolerance is zero; order-sensitive ops (reductions, recipes) get a real band.
-TOL: dict[str, float] = {"reduce_add": 1e-12, "mod": 1e-13}  # any other op is bit-exact
+TOL: dict[str, float] = {"reduce_add": 1e-12, "scan_add": 1e-12, "mod": 1e-13}  # any other op is bit-exact
 TOL_F16 = 4e-3  # the AVX2 f16 recipes compute in f32; a few f16 ulps of slack
 TOL_LIBRARY = {"f64": 1e-13, "f32": 1e-6}  # vector math library entries vs double libm, by lane type
 TIER_SLACK = 2.0  # a tier's re-measured error may exceed the recorded one by this factor
@@ -334,9 +334,22 @@ def select_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     return k.stored(f"{k.mask} k = {k.below};\n  {pick}"), lane_ref("a[j] < b[j] ? b[j] : a[j]")
 
 
+#: The scalar reference of each reduction.
+REDUCED = {
+    "reduce_add": "for (int j = 0; j < VL; j++) ref[0] += a[j];",
+    "reduce_min": "ref[0] = a[0];\nfor (int j = 1; j < VL; j++) if (a[j] < ref[0]) ref[0] = a[j];",
+    "reduce_max": "ref[0] = a[0];\nfor (int j = 1; j < VL; j++) if (a[j] > ref[0]) ref[0] = a[j];",
+}
+
+
 def reduce_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     compute = assigned(f"{k.scalar} r = ", entry, operands(k))
-    return f"{k.loads}\n  {compute}\n  out[0] = r;", "for (int j = 0; j < VL; j++) ref[0] += a[j];"
+    return f"{k.loads}\n  {compute}\n  out[0] = r;", REDUCED[op]
+
+
+def scan_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
+    compute = assigned(f"{k.vector} vr = ", entry, operands(k))
+    return k.stored(compute), "ref[0] = a[0];\nfor (int j = 1; j < VL; j++) ref[j] = ref[j - 1] + a[j];"
 
 
 def indices(k: Frame, entry: Entry) -> tuple[str, str]:
@@ -395,6 +408,9 @@ BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
     "lt": lt_body,
     "select": select_body,
     "reduce_add": reduce_body,
+    "reduce_min": reduce_body,
+    "reduce_max": reduce_body,
+    "scan_add": scan_body,
     "gather": gather_body,
     "scatter": scatter_body,
     "gen_mask": gen_mask_body,
@@ -864,7 +880,7 @@ def run_verdict(source: str, isa: str, op: str, dtype: str, table: Table, emulat
             return Verdict(None, f"this toolchain cannot build {isa}/{dtype} kernels (unverified, not wrong): {exc}")
         return Verdict(False, "compiled kernel", str(exc), candidates_for(isa, op, dtype, table))
     tol = TOL_F16 if (isa, dtype) == ("avx2", F16) else TOL.get(op, 0.0)
-    if dtype == "f32" and op in ("mod", "reduce_add"):
+    if dtype == "f32" and op in ("mod", "reduce_add", "scan_add"):
         tol = max(tol, 1e-5)  # single-precision arithmetic vs the double reference
     return within(rel, tol, f"compiled kernel{emulator_note(emulator)}", isa, op, dtype, table)
 

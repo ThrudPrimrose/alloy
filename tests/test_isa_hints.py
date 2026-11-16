@@ -171,3 +171,26 @@ def test_a_canonical_reduction_past_its_private_node_counts():
     (sut,) = [use for use in op_uses(sdfg) if use.tasklet == "acc"]
 
     assert sut.reduces
+
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    ("wcr", "op"), [("lambda a, b: max(a, b)", "reduce_max"), ("lambda a, b: min(a, b)", "reduce_min")]
+)
+def test_a_min_or_max_reduction_is_spelled_by_its_row_and_no_longer_reported_as_missing(wcr, op):
+    sdfg = dace.SDFG(f"wcr_{op}")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", dict(i="0:8"))
+    node = state.add_tasklet("acc", {"x"}, {"o"}, "o = x * 2.0")
+    state.add_memlet_path(state.add_access("a"), entry, node, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(node, exit_, state.add_access("s"), src_conn="o", memlet=dace.Memlet("s[0]", wcr=wcr))
+
+    (sut,) = [use for use in op_uses(sdfg) if use.tasklet == "acc"]
+    (hint,) = [h for h in tasklet_hints(sdfg, "avx512", "f64", TABLE) if h.use.tasklet == "acc"]
+
+    assert sut.ops[0] == op and sut.conflict == "" and not sut.reduces
+    assert op in {spelling.op for spelling in hint.spellings}

@@ -34,6 +34,11 @@ PINNED = {
     ("neon", "reduce_add", "f32"): ("vaddvq_f32", "sum of the 4 lanes"),
     ("avx512", "reduce_add", "f64"): ("_mm512_reduce_add_pd", "sum of the 8 lanes"),
     ("sve", "reduce_add", "f64"): ("svaddv_f64", "sum of the active lanes"),
+    ("avx512", "reduce_max", "f64"): ("_mm512_reduce_max_pd", "largest of the 8 lanes"),
+    ("neon", "reduce_min", "f32"): ("vminvq_f32", "smallest of the 4 lanes"),
+    ("sve", "reduce_min", "f64"): ("svminv_f64", "smallest of the active lanes"),
+    ("avx512", "scan_add", "f64"): ("_mm512_setzero_si512", "inclusive prefix sum"),
+    ("neon", "scan_add", "f32"): ("vextq_f32", "inclusive prefix sum"),
     ("avx512", "load", "f64"): ("_mm512_loadu_pd", "v[j] = p[j]"),
     ("neon", "load", "f64"): ("vld1q_f64", "v[j] = p[j]"),
     ("sve", "load", "f64"): ("svld1_f64", "v[j] = p[j]"),
@@ -52,7 +57,18 @@ def test_pinned_rows(isa, op, dtype):
 def test_the_abstract_isa_covers_the_core_math():
     for name in ("load", "store", "broadcast", "add", "sub", "mul", "div", "fma", "reduce_add"):
         assert name in OPS
-    kinds = {"memory", "elementwise", "bitwise", "shift", "logical", "reduction", "mask", "constant", "transcendental"}
+    kinds = {
+        "memory",
+        "elementwise",
+        "bitwise",
+        "shift",
+        "logical",
+        "reduction",
+        "scan",
+        "mask",
+        "constant",
+        "transcendental",
+    }
     assert {op.kind for op in OPS.values()} <= kinds
     assert OPS["reduce_add"].result == "scalar"  # full vector width to a single element
     assert OPS["gen_mask"].result == "mask"
@@ -574,11 +590,11 @@ def test_the_word_an_agent_tries_suggests_the_op_it_means(word, meant):
     assert f"did you mean {meant}?" in run.stderr
 
 
-def test_a_min_or_max_reduction_says_the_table_has_no_row_for_it():
-    run = cli("lookup", "avx512", "reduce_max", "f64")
+def test_a_reduction_without_a_row_says_which_reductions_the_table_holds():
+    run = cli("lookup", "avx512", "reduce_mul", "f64")
 
     assert run.returncode == 2
-    assert "only reduce_add" in run.stderr
+    assert "only reduce_add, reduce_min, reduce_max" in run.stderr
     assert "did you mean" not in run.stderr
 
 

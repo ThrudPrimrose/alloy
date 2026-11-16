@@ -25,6 +25,26 @@ def test_a_warp_reduction_takes_a_mask_on_cuda_and_none_on_a_64_lane_hip_wavefro
     assert "#include <hip/hip_runtime.h>" in hip and "hipMalloc" in hip
 
 
+def test_a_warp_scan_adds_the_lane_d_below_only_where_one_exists_and_checks_every_lane():
+    row = next(r for r in simt.rows() if r.op == "scan_add")
+
+    cuda, hip = simt.program(row, "cuda"), simt.program(row, "hip")
+
+    assert "__shfl_up_sync(0xffffffffu, out, d); if (lane >= d) out += t;" in cuda
+    assert "__shfl_up(out, d); if (lane >= d) out += t;" in hip
+    assert "for (int k = 0; k < lanes; k++) {\n        double scale" in cuda
+
+
+@pytest.mark.parametrize(("op", "pick"), [("reduce_min", "fminf"), ("reduce_max", "fmaxf")])
+def test_a_warp_min_or_max_takes_the_c_function_and_is_exact_in_lane_0(op: str, pick: str):
+    row = next(r for r in simt.rows() if r.op == op)
+
+    sut = simt.program(row, "cuda")
+
+    assert f"out = {pick}(out, __shfl_down_sync(0xffffffffu, out, d));" in sut and row.tol == 0.0
+    assert row.check == "first"
+
+
 def test_a_nan_on_any_lane_stays_the_programs_worst_error():
     row = next(r for r in simt.rows() if r.op == "rsqrt")
 
@@ -33,7 +53,7 @@ def test_a_nan_on_any_lane_stays_the_programs_worst_error():
     assert "if (rel != rel || rel > worst) worst = rel;" in sut
 
 
-@pytest.mark.parametrize("op", ["reduce_add", "atomic_add", "gen_mask"])
+@pytest.mark.parametrize("op", ["reduce_add", "reduce_min", "reduce_max", "scan_add", "atomic_add", "gen_mask"])
 def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: str):
     row = next(r for r in simt.rows() if r.op == op)
     lo, hi = row.domain

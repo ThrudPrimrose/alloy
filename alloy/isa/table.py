@@ -76,6 +76,8 @@ SYNONYMS = {
     "sum": "reduce_add",
     "hsum": "reduce_add",
     "hadd": "reduce_add",
+    "cumsum": "scan_add",
+    "prefix_sum": "scan_add",
     "blend": "select",
     "tail": "gen_mask",
     "mask": "gen_mask",

@@ -7,17 +7,17 @@ agents reach it as the `alloy_isa` tool of the `alloy-isa` and `alloy` packets.
 
 ## What the table holds
 
-The table spells 30 abstract ops (`alloy/isa/ops.py`) on four SIMD ISAs. The ops are loads and stores, gather and
-scatter, arithmetic, `fma`, `sqrt`, comparisons and `select`, integer bit operations, `reduce_add`, `gen_mask`, and the
-math functions `exp`, `sin`, and `cos`. The ISAs are AVX2, AVX-512, NEON, and SVE, and `avx512_256` names AVX-512 under
+The table spells 33 abstract ops (`alloy/isa/ops.py`) on four SIMD ISAs. The ops are loads and stores, gather and
+scatter, arithmetic, `fma`, `sqrt`, comparisons and `select`, integer bit operations, the reductions `reduce_add`,
+`reduce_min`, and `reduce_max`, the scan `scan_add`, `gen_mask`, and the math functions `exp`, `sin`, and `cos`. The ISAs are AVX2, AVX-512, NEON, and SVE, and `avx512_256` names AVX-512 under
 a 256-bit compiler width, so it has no spellings of its own.
 
 | ISA | f64 | f32 | f16 | i64 | i32 | Assists |
 |---|---|---|---|---|---|---|
-| `avx2` | 23 | 23 | 14 | 16 | 16 | 3 |
-| `avx512` | 24 | 24 | 14 | 16 | 16 | 9 |
-| `neon` | 23 | 23 | 14 | 16 | 16 | 4 |
-| `sve` | 24 | 24 | 15 | 16 | 16 | 6 |
+| `avx2` | 26 | 26 | 14 | 16 | 16 | 3 |
+| `avx512` | 27 | 27 | 14 | 16 | 16 | 9 |
+| `neon` | 26 | 26 | 14 | 16 | 16 | 4 |
+| `sve` | 27 | 27 | 15 | 16 | 16 | 6 |
 
 A row of `intrinsics.toml` holds the C intrinsic, its signature, the lane semantics, the masked form where the ISA has
 one, the assembly mnemonic, and a note on traps such as operand order. Where no single intrinsic exists, the row holds
@@ -89,12 +89,16 @@ compute-kernel call that applies an op to a 32x32 tile in the destination regist
 `sqrt`, `rsqrt`, `recip`, `abs`, `neg`, `tanh`, `sin`, and `cos`) runs on the SFPU. Binary arithmetic has two rows.
 The FPU row (`add_tiles`) reads both operands from SrcA and SrcB, which hold TF32. The SFPU row (`add_binary_tile`)
 copies both operands into DST and keeps f32. The dtypes are `f32` and `bf16`, since Tensix has no f64.
+`reduce_add` and `reduce_max` run `reduce_tile` on the FPU: every data tile reduces into one DST tile against a scaler
+tile (1 in the first row of each 16x16 face), and the value lands at `[0, 0]` of the packed tile. `scan_add` runs
+`cumsum_tile` on the SFPU down each column, with `first` set only for the top tile of a column. These three rows are
+`pending`: the CI job `tensix` runs them, and the next `verify` records them.
 
 Each row is verified by running it. `tensix_harness.py` builds a one-core program from an inline reader, a compute
 kernel around the row's call, and a writer, launches it with `ttnn.generic_op`, and compares the result with torch.
 `python -m alloy.isa.tensix verify` runs every row on Tenstorrent's simulator ttsim (v1.16.0, Blackhole) inside a
 pinned tt-metal 0.8x release image and records the result in `tensix_verified.toml`. The CI job `tensix` reruns it.
-All 34 row and dtype pairs pass. The measured errors are what a kernel author needs to know.
+All 34 recorded row and dtype pairs pass; the pending rows (`mma`, the reductions, and the scan) have no record yet. The measured errors are what a kernel author needs to know.
 
 | Path | f32 max relative error | bf16 |
 |---|---|---|
@@ -140,6 +144,42 @@ a kernel has 32 circular buffers, so `unpack_to_dest_mode` takes 32 entries wher
 | `validate [<isa> <op> <dtype>]` | the check over everything this host runs, or one row |
 | `lookup cuda <op> f32`, `lookup hip <op> f32` | a device-code row and its check |
 | `host`, `ops`, `isas` | what runs here, the op set, the targets |
+| `ask <target> <op> --a ... --x ... --src ... --dst ...` | one request form for every target: feasible with its steps, or infeasible or invalid with the reason |
+
+## Requests on logical data
+
+`ask` takes one of six primitives on logical data (design: `notes/isa-design.md`, section 2.8 of the workspace): `load`
+and `store`, an elementwise operation or a math function, a reduction (`reduce_add`, `reduce_min`, `reduce_max`), the
+scan `scan_add` (the inclusive prefix sum), and `mma`. `copy` moves data between two memories. An operand is
+`space:dtype:shape[:layout[:swizzle]]`, and its shape is the extent of the data, not of a register.
+
+Every lowering has a block, the extent one instruction takes: the lanes of a register (16 f32 on AVX-512), one 32x32
+tile on Tensix, and the 64-row K block of a GPU product. A shape that is a whole multiple of the block is feasible, and
+each step of the answer carries how often the request runs it:
+
+```text
+$ python -m alloy.isa ask avx512 add --a vector:f32:96 --b vector:f32:96
+avx512 add: feasible on vector
+  6 x vector: _mm512_add_ps
+$ python -m alloy.isa ask avx512 add --a vector:f32:100 --b vector:f32:100
+avx512 add: infeasible (shape): 100 f32 elements are not a whole multiple of the 16 f32 lanes of an avx512 register: 6 registers hold 96, 4 remain
+  nearest: x vector:f32:96
+  nearest: x vector:f32:112
+  block: 16 (a shape the target takes is a whole multiple)
+  fix: run the last block under a mask: ask gen_mask, then use the row's masked form
+```
+
+A refusal for a shape always states the block, the multiples below and above as requests that are feasible, and how
+to finish the remainder (a mask on AVX-512 and SVE, a scalar remainder loop on AVX2 and NEON, padding to whole tiles
+on Tensix). A reduction over several registers lists the lane-wise combination (`count` minus one times) and the one
+horizontal step; a scan lists the in-register scan and the carry (the broadcast last lane of the register before,
+added to the next). `reduce_add` and `scan_add` associate differently from a scalar left fold, so they need
+permission to reassociate; `reduce_min` and `reduce_max` are exact on finite lanes, and each row states its NaN rule.
+
+On CUDA and HIP, `reduce_min` and `reduce_max` are `__shfl_down` trees into lane 0 and `scan_add` is a `__shfl_up`
+scan in log2(lanes) steps (`simt.toml`). Tensix has no MIN pool, so `reduce_min` there is refused with the maximum of
+the negated tiles. Not built yet: the Tensix moves and layout calls (`copy_tile`, `pack_tile`, `tilize`,
+`transpose`); the lookup refuses them with `no_row`.
 
 ## Maintaining the table
 

@@ -291,7 +291,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     function = FUNCTION_ALIASES.get(op, op)
     if function not in OPS and function not in functions():
         if function.startswith("reduce_"):
-            raise KeyError(f"{args.op!r}: the table holds only reduce_add, so no other reduction here is verified")
+            held = ", ".join(name for name in OPS if name.startswith("reduce_"))
+            raise KeyError(f"{args.op!r}: the table holds only {held}, so no other reduction here is verified")
         raise KeyError(
             f"{args.op!r}: neither an abstract op nor a math function{suggestion(args.op, [*OPS, *functions()])}"
         )
@@ -710,6 +711,8 @@ def print_refusal(title: str, answer: ask.Infeasible | ask.Invalid) -> None:
     near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
     for line in near:
         print(f"  {'nearest' if isinstance(answer, ask.Infeasible) else 'expected'}: {line}")
+    if isinstance(answer, ask.Infeasible) and answer.block:
+        print(f"  block: {'x'.join(map(str, answer.block))} (a shape the target takes is a whole multiple)")
     if isinstance(answer, ask.Infeasible) and answer.fix:
         print(f"  fix: {answer.fix}")
 

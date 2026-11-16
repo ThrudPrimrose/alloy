@@ -167,7 +167,7 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
      "loads global memory into a register"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
      "8 f32 lanes"),
-    (Request("avx512", "copy", {"src": Operand("global", "f32", (64, 64)), "dst": Operand("vector", "f32", (64, 64))}),
+    (Request("avx512", "copy", {"src": Operand("global", "f32", (64, 60)), "dst": Operand("vector", "f32", (64, 60))}),
      "16 f32 lanes"),
     (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), "shared memory only"),
     (Request("sm90", "copy", {"src": Operand("global", "f32", (256, 256)), "dst": B128}), "converts nothing"),
@@ -215,7 +215,7 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
 @pytest.mark.parametrize(("request_", "reason"), [
     (Request("sm90", "fma", {"x": Operand("register", "f64")}), "computes in f32"),
     (Request("sm90", "fma", {"x": Operand("shared", "f32", (64, 64))}), "one thread on scalars"),
-    (Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}), "4 f64 lanes"),
+    (Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}), "4 f64 lanes"),
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,)), "b": Operand("vector", "f32", (8,))}), "mix"),
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}, max_ulp=1.0), "add is exact"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}), "one 32x32 tile"),
@@ -249,7 +249,7 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code():
     Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}),
     Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}),
     Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
-    Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}),
+    Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}),
     Request("sm90", "fma", {"x": Operand("register", "f64")}),
     Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}),
     Request("sme", "add"),
@@ -341,7 +341,7 @@ REGISTER = Operand("vector", "f64", (4,))
     (Request("sm90", "fma", {"x": Operand("register", "f64")}), Why.ELEMENT_TYPE),
     (Request("sm90", "mma", {"a": Operand("shared", "f16", (48, 64), "row_major", "b128"), "b": TILE["b"],
                              "c": Operand("register", "f32", (48, 64))}), Why.SHAPE),
-    (Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}), Why.SHAPE),
+    (Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}), Why.SHAPE),
     (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), Why.SPACE),
     (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), Why.SPACE),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), Why.SWIZZLE),
@@ -632,3 +632,132 @@ def test_the_ask_all_cli_exit_code_and_json_status_tell_the_three_classes_apart(
 
     sut = json.loads(capsys.readouterr().out)
     assert exit_code == code and sut["status"] == status
+
+
+# The six primitives on logical data (notes/isa-design.md, 2.8): blocks, the whole-multiple rule, load and store.
+
+
+def test_a_whole_multiple_of_the_register_is_feasible_and_each_step_carries_its_count():
+    sut = answered(
+        Request("avx512", "add", {"a": Operand("vector", "f32", (96,)), "b": Operand("vector", "f32", (96,))})
+    )
+
+    assert isinstance(sut, Feasible)
+    assert [(s.spelling, s.count) for s in sut.steps] == [("_mm512_add_ps", 6)]
+    assert "6 registers" in sut.notes[-1]
+
+
+@pytest.mark.parametrize(("target", "extent", "block", "nearest", "fix"), [
+    ("avx512", 100, (16,), ("x vector:f32:96", "x vector:f32:112"), "gen_mask"),
+    ("avx2", 100, (8,), ("x vector:f32:96", "x vector:f32:104"), "scalar remainder"),
+    ("avx2", 3, (8,), ("x vector:f32:8",), "scalar remainder"),
+])  # fmt: skip
+def test_an_extent_that_is_no_whole_multiple_is_refused_with_the_block_the_multiples_and_the_tail(
+    target, extent, block, nearest, fix
+):
+    sut = answered(Request(target, "mul", {"a": Operand("vector", "f32", (extent,))}))
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
+    assert (sut.block, sut.nearest) == (block, nearest)
+    assert fix in sut.fix and f"{extent % block[0]} remain" in sut.reason or "less than one register" in sut.reason
+
+
+def test_operands_of_two_extents_are_invalid_on_every_target():
+    request = Request("avx512", "add", {"a": Operand("vector", "f32", (16,)), "b": Operand("vector", "f32", (32,))})
+
+    sut = answered(request)
+
+    assert isinstance(sut, Invalid) and sut.why is Why.CHAIN
+
+
+def test_a_reduction_over_several_registers_combines_them_lane_wise_and_reduces_once():
+    sut = answered(Request("avx512", "reduce_max", {"x": Operand("vector", "f64", (32,))}))
+
+    assert isinstance(sut, Feasible)
+    assert [(s.spelling, s.count) for s in sut.steps] == [("_mm512_max_pd", 3), ("_mm512_reduce_max_pd", 1)]
+    assert "accumulator" in sut.notes[-1]
+
+
+def test_a_scan_over_several_registers_carries_the_last_lane_into_the_next():
+    one = answered(Request("neon", "scan_add", {"x": Operand("vector", "f32", (4,))}))
+    sut = answered(Request("neon", "scan_add", {"x": Operand("vector", "f32", (12,))}))
+
+    assert isinstance(one, Feasible) and isinstance(sut, Feasible)
+    assert all(s.count == 1 for s in one.steps)
+    carry = [(s.spelling, s.count) for s in sut.steps[len(one.steps) :]]
+    assert [s.count for s in sut.steps[: len(one.steps)]] == [3] * len(one.steps)
+    assert carry == [("vdupq_n_f32", 2), ("vaddq_f32", 2)]
+
+
+@pytest.mark.parametrize(("op", "src", "dst", "spelling"), [
+    ("load", Operand("global", "f32", (48,)), Operand("vector", "f32", (48,)), "_mm512_loadu_ps"),
+    ("store", Operand("vector", "f32", (48,)), Operand("global", "f32", (48,)), "_mm512_storeu_ps"),
+])  # fmt: skip
+def test_load_and_store_are_request_names_over_the_rows_of_copy(op, src, dst, spelling):
+    sut = answered(Request("avx512", op, {"src": src, "dst": dst}))
+    as_copy = answered(Request("avx512", "copy", {"src": src, "dst": dst}))
+
+    assert isinstance(sut, Feasible) and isinstance(as_copy, Feasible)
+    assert sut.request.op == op and sut.steps == as_copy.steps
+    assert [(s.spelling, s.count) for s in sut.steps] == [(spelling, 3)]
+
+
+@pytest.mark.parametrize(("op", "src", "dst"), [
+    ("load", "global", "global"),
+    ("load", "vector", "global"),
+    ("store", "global", "vector"),
+    ("load", "global", "shared"),
+])  # fmt: skip
+def test_a_load_that_ends_in_memory_or_a_store_that_starts_there_is_invalid_and_names_copy(op, src, dst):
+    operands = {"src": Operand(src, "f32", (16,)), "dst": Operand(dst, "f32", (16,))}
+
+    sut = answered(Request("avx512", op, operands))
+
+    assert isinstance(sut, Invalid) and sut.why is Why.MALFORMED
+    assert sut.expected and sut.expected[0].startswith("copy")
+
+
+def test_a_refused_load_names_the_block_and_load_requests_that_are_feasible():
+    refused = Request("avx2", "load", {"src": Operand("global", "f32", (50,)), "dst": Operand("vector", "f32", (50,))})
+
+    sut = answered(refused)
+
+    assert isinstance(sut, Infeasible) and sut.block == (8,)
+    assert sut.nearest == ("src global:f32:48, dst vector:f32:48", "src global:f32:56, dst vector:f32:56")
+    for near in sut.nearest:
+        operands = {name: Operand.parse(text) for name, text in (part.split(" ", 1) for part in near.split(", "))}
+        assert isinstance(answered(Request("avx2", "load", operands)), Feasible), near
+
+
+def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile():
+    whole = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (64, 96))}))
+    partial = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (48, 32))}))
+
+    assert isinstance(whole, Feasible) and [s.count for s in whole.steps] == [1, 6]
+    assert isinstance(partial, Infeasible) and partial.why is Why.SHAPE
+    assert partial.block == (32, 32) and "pad" in partial.fix
+    assert partial.nearest == ("x tile_register:f32:32x32", "x tile_register:f32:64x32")
+
+
+@pytest.mark.parametrize(("refused", "block"), [
+    (Request("sm90", "mma", {"a": Operand("shared", "f16", (100, 64), "row_major", "b128"),
+                             "b": Operand("shared", "f16", (64, 64), "col_major", "b128"),
+                             "c": Operand("register", "f32", (100, 64))}), (64, 64, 64)),
+    (Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)),
+                               "b": Operand("tile_register", "f32", (48, 32)),
+                               "c": Operand("tile_register", "f32", (32, 32))}), (32, 32, 32)),
+    (Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}), (8,)),
+])  # fmt: skip
+def test_a_refusal_for_a_shape_tells_the_block_the_target_needs(refused, block):
+    sut = answered(refused)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
+    assert sut.block == block
+
+
+def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixture[str]):
+    code = main(["ask", "avx512", "add", "--a", "vector:f32:100", "--no-verify"])
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "block: 16" in out and "nearest: x vector:f32:96" in out

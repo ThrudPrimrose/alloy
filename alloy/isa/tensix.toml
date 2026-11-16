@@ -164,3 +164,41 @@ init = { v06 = "mm_init(c0, c1, c16)", v08 = "compute_kernel_hw_startup<SrcOrder
 call = { v06 = "matmul_tiles(c0, c1, 0, 0, 0, false)", v08 = "matmul_tiles(c0, c1, 0, 0, 0)" }
 domain = [-1.0, 1.0]
 pending = true
+
+# Reductions and the prefix sum (design 2.8 of alloy-workspace notes/isa-design.md). A reduction runs on the FPU:
+# reduce_tile adds every data tile into one DST tile against a scaler tile (1 in the first row of each 16x16 face for
+# SUM and MAX), and REDUCE_SCALAR leaves the value at face 0 [0, 0] with zeros elsewhere; REDUCE_ROW and REDUCE_COL
+# leave one value per row (column 0) or per column (row 0). The FPU reads f32 data at TF32. The prefix sum runs on the
+# SFPU down each column of a tile, carrying the running totals in SFPU registers to the next tile of that column
+# (first = false), so no other SFPU call may run between two tiles of one column; along rows, transpose first and
+# after. Sources: alloy-workspace notes/isa-research/tensix-primitives.md (tt-metal reduce.h, cumsum.h, and the test
+# kernels reduce_w.cpp and cumsum.cpp at v0.63.0 and v0.81.1).
+[[ops.reduce_add]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::SUM, ReduceDim::REDUCE_SCALAR>(c0, c1, c16)"
+call = "reduce_tile<PoolType::SUM, ReduceDim::REDUCE_SCALAR>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "the scaler tile (CB c1) holds 1 in the first row of each face; every data tile reduces into DST tile 0, packed once after the last; the sum sits at [0, 0] of the packed tile; fp32_dest_acc_en keeps the sum in f32; reduce_uninit() restores the packer"
+pending = true
+
+[[ops.reduce_max]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::MAX, ReduceDim::REDUCE_SCALAR>(c0, c1, c16)"
+call = "reduce_tile<PoolType::MAX, ReduceDim::REDUCE_SCALAR>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "the scaler tile (CB c1) holds 1 in the first row of each face (the maximum is scaled by it); every data tile reduces into DST tile 0, packed once after the last; the maximum sits at [0, 0] of the packed tile; reduce_uninit() restores the packer"
+pending = true
+
+[[ops.scan_add]]
+kind = "scan"
+unit = "SFPU"
+header = "cumsum.h"
+init = "cumsum_tile_init()"
+call = "cumsum_tile(0, i == 0)"
+domain = [0.5, 2.0]
+note = "the inclusive prefix sum down each column; tiles of one column arrive top to bottom, first = true only for the top one (i == 0 here), and no other SFPU call runs between them; along rows: transpose_tile before and transpose_dest after"
+pending = true

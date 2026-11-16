@@ -3149,3 +3149,184 @@ mnemonic = "fcmgt"
 signature = "(pg, a, b) -> mask"
 semantics = "lane j true iff a[j] < b[j]; false on NaN"
 note = "a predicate"
+
+# Reductions by min and max, and the inclusive prefix sum (design 2.8, the six primitives).
+[isa.avx2.f64.reduce_min]
+mnemonic = "vextractf128 + vminpd + vunpckhpd + vminsd"
+signature = "(v) -> s"
+semantics = "s = the smallest of the 4 lanes of v"
+recipe = ["_mm_min_pd", "_mm256_castpd256_pd128", "_mm256_extractf128_pd", "_mm_cvtsd_f64", "_mm_min_sd", "_mm_unpackhi_pd"]
+code = ["__m128d m2 = _mm_min_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1))", "_mm_cvtsd_f64(_mm_min_sd(m2, _mm_unpackhi_pd(m2, m2)))"]
+note = "no single intrinsic: min of the 128-bit halves, then of the two lanes left. NaN: a lane-wise min keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx2.f32.reduce_min]
+mnemonic = "vextractf128 + vminps + vmovhlps + vminps + vmovshdup + vminss"
+signature = "(v) -> s"
+semantics = "s = the smallest of the 8 lanes of v"
+recipe = ["_mm_min_ps", "_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_movehl_ps", "_mm_cvtss_f32", "_mm_min_ss", "_mm_movehdup_ps"]
+code = ["__m128 m4 = _mm_min_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1))", "__m128 m2 = _mm_min_ps(m4, _mm_movehl_ps(m4, m4))", "_mm_cvtss_f32(_mm_min_ss(m2, _mm_movehdup_ps(m2)))"]
+note = "no single intrinsic: min of the 128-bit halves, then of pairs. NaN: a lane-wise min keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx512.f64.reduce_min]
+intrinsic = "_mm512_reduce_min_pd"
+mnemonic = "vextractf64x4 + vminpd + ..."
+signature = "(v) -> s"
+semantics = "s = the smallest of the 8 lanes of v"
+note = "header composite, not one instruction: an extract-and-min chain the compiler expands. NaN: a lane-wise min keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx512.f32.reduce_min]
+intrinsic = "_mm512_reduce_min_ps"
+mnemonic = "vextractf64x4 + vminps + ..."
+signature = "(v) -> s"
+semantics = "s = the smallest of the 16 lanes of v"
+note = "header composite, not one instruction: an extract-and-min chain the compiler expands. NaN: a lane-wise min keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.neon.f64.reduce_min]
+intrinsic = "vminvq_f64"
+mnemonic = "fminp"
+signature = "(v) -> s"
+semantics = "s = the smallest of the 2 lanes of v"
+note = "one instruction; a NaN lane gives NaN (vminnmvq_f64 returns the number instead)"
+
+[isa.neon.f32.reduce_min]
+intrinsic = "vminvq_f32"
+mnemonic = "fminv"
+signature = "(v) -> s"
+semantics = "s = the smallest of the 4 lanes of v"
+note = "one instruction; a NaN lane gives NaN (vminnmvq_f32 returns the number instead)"
+
+[isa.sve.f64.reduce_min]
+intrinsic = "svminv_f64"
+mnemonic = "fminv"
+signature = "(pg, v) -> s"
+semantics = "s = the smallest of the active lanes of v"
+note = "one instruction; a NaN lane gives NaN (svminnmv_f64 returns the number instead)"
+
+[isa.sve.f32.reduce_min]
+intrinsic = "svminv_f32"
+mnemonic = "fminv"
+signature = "(pg, v) -> s"
+semantics = "s = the smallest of the active lanes of v"
+note = "one instruction; a NaN lane gives NaN (svminnmv_f32 returns the number instead)"
+
+[isa.avx2.f64.reduce_max]
+mnemonic = "vextractf128 + vmaxpd + vunpckhpd + vmaxsd"
+signature = "(v) -> s"
+semantics = "s = the largest of the 4 lanes of v"
+recipe = ["_mm_max_pd", "_mm256_castpd256_pd128", "_mm256_extractf128_pd", "_mm_cvtsd_f64", "_mm_max_sd", "_mm_unpackhi_pd"]
+code = ["__m128d m2 = _mm_max_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1))", "_mm_cvtsd_f64(_mm_max_sd(m2, _mm_unpackhi_pd(m2, m2)))"]
+note = "no single intrinsic: max of the 128-bit halves, then of the two lanes left. NaN: a lane-wise max keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx2.f32.reduce_max]
+mnemonic = "vextractf128 + vmaxps + vmovhlps + vmaxps + vmovshdup + vmaxss"
+signature = "(v) -> s"
+semantics = "s = the largest of the 8 lanes of v"
+recipe = ["_mm_max_ps", "_mm256_castps256_ps128", "_mm256_extractf128_ps", "_mm_movehl_ps", "_mm_cvtss_f32", "_mm_max_ss", "_mm_movehdup_ps"]
+code = ["__m128 m4 = _mm_max_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1))", "__m128 m2 = _mm_max_ps(m4, _mm_movehl_ps(m4, m4))", "_mm_cvtss_f32(_mm_max_ss(m2, _mm_movehdup_ps(m2)))"]
+note = "no single intrinsic: max of the 128-bit halves, then of pairs. NaN: a lane-wise max keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx512.f64.reduce_max]
+intrinsic = "_mm512_reduce_max_pd"
+mnemonic = "vextractf64x4 + vmaxpd + ..."
+signature = "(v) -> s"
+semantics = "s = the largest of the 8 lanes of v"
+note = "header composite, not one instruction: an extract-and-max chain the compiler expands. NaN: a lane-wise max keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.avx512.f32.reduce_max]
+intrinsic = "_mm512_reduce_max_ps"
+mnemonic = "vextractf64x4 + vmaxps + ..."
+signature = "(v) -> s"
+semantics = "s = the largest of the 16 lanes of v"
+note = "header composite, not one instruction: an extract-and-max chain the compiler expands. NaN: a lane-wise max keeps its second operand, so a NaN lane may or may not reach the result; exact on finite lanes"
+
+[isa.neon.f64.reduce_max]
+intrinsic = "vmaxvq_f64"
+mnemonic = "fmaxp"
+signature = "(v) -> s"
+semantics = "s = the largest of the 2 lanes of v"
+note = "one instruction; a NaN lane gives NaN (vmaxnmvq_f64 returns the number instead)"
+
+[isa.neon.f32.reduce_max]
+intrinsic = "vmaxvq_f32"
+mnemonic = "fmaxv"
+signature = "(v) -> s"
+semantics = "s = the largest of the 4 lanes of v"
+note = "one instruction; a NaN lane gives NaN (vmaxnmvq_f32 returns the number instead)"
+
+[isa.sve.f64.reduce_max]
+intrinsic = "svmaxv_f64"
+mnemonic = "fmaxv"
+signature = "(pg, v) -> s"
+semantics = "s = the largest of the active lanes of v"
+note = "one instruction; a NaN lane gives NaN (svmaxnmv_f64 returns the number instead)"
+
+[isa.sve.f32.reduce_max]
+intrinsic = "svmaxv_f32"
+mnemonic = "fmaxv"
+signature = "(pg, v) -> s"
+semantics = "s = the largest of the active lanes of v"
+note = "one instruction; a NaN lane gives NaN (svmaxnmv_f32 returns the number instead)"
+
+[isa.avx2.f64.scan_add]
+mnemonic = "vpslldq + vaddpd + vpermilpd + vperm2f128 + vaddpd"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["_mm256_castsi256_pd", "_mm256_slli_si256", "_mm256_castpd_si256", "_mm256_permute_pd", "_mm256_permute2f128_pd"]
+code = ["__m256d t = _mm256_add_pd(v, _mm256_castsi256_pd(_mm256_slli_si256(_mm256_castpd_si256(v), 8)))", "__m256d u = _mm256_permute_pd(t, 15)", "_mm256_add_pd(t, _mm256_permute2f128_pd(u, u, 8))"]
+note = "no single intrinsic: a byte shift scans each 128-bit half, then the low half's last lane is added to the high half. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.avx2.f32.scan_add]
+mnemonic = "vpslldq + vaddps + vpslldq + vaddps + vpermilps + vperm2f128 + vaddps"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["_mm256_castsi256_ps", "_mm256_slli_si256", "_mm256_castps_si256", "_mm256_permute_ps", "_mm256_permute2f128_ps"]
+code = ["__m256 t = _mm256_add_ps(v, _mm256_castsi256_ps(_mm256_slli_si256(_mm256_castps_si256(v), 4)))", "t = _mm256_add_ps(t, _mm256_castsi256_ps(_mm256_slli_si256(_mm256_castps_si256(t), 8)))", "__m256 u = _mm256_permute_ps(t, 255)", "_mm256_add_ps(t, _mm256_permute2f128_ps(u, u, 8))"]
+note = "no single intrinsic: two byte shifts scan each 128-bit half, then the low half's last lane is added to the high half. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.avx512.f64.scan_add]
+mnemonic = "valignq + vaddpd"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["_mm512_setzero_si512", "_mm512_castsi512_pd", "_mm512_alignr_epi64", "_mm512_castpd_si512"]
+code = ["__m512i z = _mm512_setzero_si512()", "__m512d t = _mm512_add_pd(v, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(v), z, 7)))", "t = _mm512_add_pd(t, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(t), z, 6)))", "_mm512_add_pd(t, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(t), z, 4)))"]
+note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4 with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.avx512.f32.scan_add]
+mnemonic = "valignd + vaddps"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["_mm512_setzero_si512", "_mm512_castsi512_ps", "_mm512_alignr_epi32", "_mm512_castps_si512"]
+code = ["__m512i z = _mm512_setzero_si512()", "__m512 t = _mm512_add_ps(v, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(v), z, 15)))", "t = _mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 14)))", "t = _mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 12)))", "_mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 8)))"]
+note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4, 8 with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.neon.f64.scan_add]
+mnemonic = "ext + fadd"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["vextq_f64"]
+code = ["vaddq_f64(v, vextq_f64(vdupq_n_f64(0), v, 1))"]
+note = "no single intrinsic: ext shifts the lanes up by one with a zero entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.neon.f32.scan_add]
+mnemonic = "ext + fadd"
+signature = "(v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
+recipe = ["vextq_f32"]
+code = ["float32x4_t t = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 3))", "vaddq_f32(t, vextq_f32(vdupq_n_f32(0), t, 2))"]
+note = "no single intrinsic: ext shifts the lanes up by 1, then 2, with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.sve.f64.scan_add]
+mnemonic = "index + tbl + fadd"
+signature = "(pg, v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg"
+recipe = ["svtbl_f64", "svsub_n_u64_x", "svindex_u64"]
+code = ["svfloat64_t t = v", "for (uint64_t d = 1; d < svcntd(); d *= 2) t = svadd_f64_x(pg, t, svtbl_f64(t, svsub_n_u64_x(pg, svindex_u64(0, 1), d)))", "t"]
+note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.sve.f32.scan_add]
+mnemonic = "index + tbl + fadd"
+signature = "(pg, v) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg"
+recipe = ["svtbl_f32", "svsub_n_u32_x", "svindex_u32"]
+code = ["svfloat32_t t = v", "for (uint32_t d = 1; d < svcntw(); d *= 2) t = svadd_f32_x(pg, t, svtbl_f32(t, svsub_n_u32_x(pg, svindex_u32(0, 1), d)))", "t"]
+note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"

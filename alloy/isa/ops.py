@@ -28,7 +28,7 @@ class AbstractOp:
 
     ``kind`` is ``memory`` (moves elements), ``elementwise`` (lane-wise, one result lane per operand
     lane), ``bitwise`` (integer lane-wise), ``shift`` (integer lane counts), ``logical`` (per-lane
-    zero tests combined), ``reduction`` (the whole vector to one scalar), ``mask`` (a lane predicate),
+    zero tests combined), ``reduction`` (the whole vector to one scalar), ``scan`` (lane j from lanes 0 to j), ``mask`` (a lane predicate),
     ``transcendental`` (no native instruction) or ``constant`` (no data operand)."""
 
     name: str
@@ -120,6 +120,15 @@ OPS: dict[str, AbstractOp] = {
     ),
     "lt": AbstractOp("lt", "a < b", "mask", 2, "mask", "lane j true iff a[j] < b[j] (feeds select)"),
     "reduce_add": AbstractOp("reduce_add", "sum(v)", "reduction", 1, "scalar", "s = sum of every active lane of v"),
+    "reduce_min": AbstractOp(
+        "reduce_min", "min(v)", "reduction", 1, "scalar", "s = the smallest active lane of v; NaN lanes differ per ISA"
+    ),
+    "reduce_max": AbstractOp(
+        "reduce_max", "max(v)", "reduction", 1, "scalar", "s = the largest active lane of v; NaN lanes differ per ISA"
+    ),
+    "scan_add": AbstractOp(
+        "scan_add", "cumsum(v)", "scan", 1, "vector", "v[j] = x[0] + ... + x[j], the inclusive prefix sum of a register"
+    ),
     "exp": AbstractOp("exp", "e^x", "transcendental", 1, "vector", "v[j] = exp(x[j])"),
     "sin": AbstractOp("sin", "sin x", "transcendental", 1, "vector", "v[j] = sin(x[j])"),
     "cos": AbstractOp("cos", "cos x", "transcendental", 1, "vector", "v[j] = cos(x[j])"),

@@ -69,6 +69,35 @@ tol = 1e-6
 domain = [0.5, 4.0]  # not symmetric: a sum of zero would equal the untouched output
 note = "The sum lands in lane 0; the other lanes hold partial sums. Use __shfl_xor for the sum in every lane."
 
+[ops.reduce_min]
+kind = "warp"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fminf(out, __shfl_down_sync(0xffffffffu, out, d));"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fminf(out, __shfl_down(out, d));"
+ref = "float s = in[0]; for (int k = 1; k < lanes; k++) s = fminf(s, in[k]); want[0] = s;"
+check = "first"
+tol = 0.0
+domain = [0.5, 4.0]  # the minimum sits in lane 0: the tree must carry it there from the first step
+note = "The minimum lands in lane 0; fminf returns the other operand when one is NaN. Use __shfl_xor for it in every lane."
+
+[ops.reduce_max]
+kind = "warp"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmaxf(out, __shfl_down_sync(0xffffffffu, out, d));"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmaxf(out, __shfl_down(out, d));"
+ref = "float s = in[0]; for (int k = 1; k < lanes; k++) s = fmaxf(s, in[k]); want[0] = s;"
+check = "first"
+tol = 0.0
+domain = [0.5, 4.0]  # the maximum sits in the last lane: it has to travel the whole tree
+note = "The maximum lands in lane 0; fmaxf returns the other operand when one is NaN. Use __shfl_xor for it in every lane."
+
+[ops.scan_add]
+kind = "warp"
+cuda = "out = v; for (int d = 1; d < lanes; d *= 2) { float t = __shfl_up_sync(0xffffffffu, out, d); if (lane >= d) out += t; }"
+hip = "out = v; for (int d = 1; d < lanes; d *= 2) { float t = __shfl_up(out, d); if (lane >= d) out += t; }"
+ref = "float s = 0; for (int k = 0; k < lanes; k++) { s += in[k]; want[k] = s; }"
+tol = 1e-6
+domain = [0.5, 4.0]
+note = "The inclusive prefix sum over the warp in log2(lanes) steps (Hillis and Steele); lane k holds in[0] + ... + in[k], summed in another order than a left fold. Across warps, add the last lane of the warp before."
+
 [ops.broadcast]
 kind = "warp"
 cuda = "out = __shfl_sync(0xffffffffu, v, 0);"

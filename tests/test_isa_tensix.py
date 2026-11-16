@@ -138,3 +138,99 @@ def test_a_matrix_product_accumulates_in_fp32_for_every_element_type_as_ask_tell
     answer = ask(Request("tensix", "mma", {"a": tile, "b": tile, "c": tile}), verify=False)
     assert isinstance(answer, Feasible), answer
     assert "fp32_dest_acc_en = true" in answer.setup["compute config"]
+
+
+@pytest.mark.parametrize(("new", "spelled"), [
+    (True, ['#include "api/compute/reduce.h"', "void kernel_main()"]),
+    (False, ['#include "compute_kernel_api/reduce.h"', "void MAIN"]),
+])  # fmt: skip
+def test_the_reduction_kernel_reduces_every_tile_into_one_dst_tile_against_one_scaler_tile(
+    new: bool, spelled: list[str]
+):
+    row = next(r for r in tensix.harness_rows() if r["op"] == "reduce_add")
+
+    sut = tensix_harness.compute(row, new)
+
+    assert all(text in sut for text in spelled), sut
+    assert "#define REDUCE_OP PoolType::SUM\n#define REDUCE_DIM ReduceDim::REDUCE_SCALAR" in sut
+    assert sut.index("#define REDUCE_OP") < sut.index("reduce.h")  # 0.6x's template defaults name the macros
+    assert sut.count("cb_wait_front(c1, 1)") == 1 and sut.count("pack_tile(0, c16)") == 1
+    assert sut.index("reduce_tile<") < sut.index("pack_tile(0, c16)") < sut.index("reduce_uninit()")
+
+
+def test_the_reader_of_a_reduction_reads_the_scaler_tile_once():
+    sut = tensix_harness.reader([0, 3], new=True, once=1)
+
+    assert sut.count("if (i == 0) {") == 1
+    assert sut.index("if (i == 0) {") < sut.index("cb_reserve_back(1, 1)")
+    assert sut.index("cb_reserve_back(0, 1)") < sut.index("if (i == 0) {")
+
+
+def test_the_scan_kernel_inits_once_and_marks_only_the_first_tile_of_a_column():
+    row = next(r for r in tensix.harness_rows() if r["op"] == "scan_add")
+
+    sut = tensix_harness.compute(row, new=True)
+
+    assert sut.count("cumsum_tile_init()") == 1
+    assert sut.index("cumsum_tile_init()") < sut.index("for (uint32_t i = 0") < sut.index("cumsum_tile(0, i == 0)")
+    assert sut.index("copy_tile(c0, 0, 0)") < sut.index("cumsum_tile(0, i == 0)")
+
+
+def test_the_scaler_tile_holds_one_in_the_first_row_of_each_face():
+    row = next(r for r in tensix.harness_rows() if r["op"] == "reduce_max")
+
+    data, scaler = tensix_harness.inputs(row)
+
+    assert data.shape == (tensix_harness.TILES * 32, 32) and scaler.shape == (32, 32)
+    assert scaler.sum().item() == 64.0 and scaler[0].sum().item() == scaler[16].sum().item() == 32.0
+
+
+@pytest.mark.parametrize(("op", "expected"), [("reduce_add", 2048.0), ("reduce_max", 1.0)])
+def test_the_reference_of_a_reduction_is_one_value_over_every_tile(op: str, expected: float):
+    import torch
+
+    sut = tensix_harness.reference(op, [torch.ones(64, 32), torch.zeros(32, 32)])
+
+    assert sut.numel() == 1 and sut.item() == expected
+
+
+def test_the_reference_of_the_scan_runs_down_each_column_across_tiles():
+    import torch
+
+    sut = tensix_harness.reference("scan_add", [torch.ones(64, 32)])
+
+    assert sut.shape == (64, 32)
+    assert sut[31, 0].item() == 32.0 and sut[63, 5].item() == 64.0
+
+
+@pytest.mark.parametrize("kind", ["reduction", "matmul"])
+def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(kind: str):
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    assert tensix_harness.dest_fp32({"dtype": "bf16", "kind": kind}) is True
+
+    data = Operand("tile_register", "bf16", (64, 32))
+    answer = ask(Request("tensix", "reduce_add", {"x": data}), verify=False)
+    assert isinstance(answer, Feasible), answer
+    assert "fp32_dest_acc_en = true" in answer.setup["compute config"] and "scaler" in answer.setup
+
+
+@pytest.mark.parametrize("op", ["reduce_add", "reduce_max", "scan_add"])
+def test_a_pending_row_is_offered_unverified_with_one_call_per_tile(op: str):
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (64, 64))}), verify=False)
+
+    assert isinstance(answer, Feasible), answer
+    assert answer.check.status == "unverified" and "pending" in answer.check.basis
+    assert answer.steps[1].count == 4
+    assert [s.spelling for s in answer.steps].count("pack_tile(0, c16)") == (op != "scan_add")
+
+
+def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
+    from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
+
+    answer = ask(Request("tensix", "reduce_min", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
+
+    assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
+    assert answer.nearest == ("tensix neg", "tensix reduce_max") and "neg_tile" in answer.fix

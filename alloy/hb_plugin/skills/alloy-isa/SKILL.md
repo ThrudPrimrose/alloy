@@ -51,3 +51,10 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   and swizzle (`space:dtype:RxC:layout:swizzle`, for example `shared:f16:128x64:row_major:b128`). The answer is feasible,
   with the unit that runs it (`--unit tma` pins one), its steps, its setup, and code, or infeasible, with the reason
   and the nearest requests the target takes. Ask one of those instead.
+  The operations are six primitives on your data: `load` and `store` (`--src global:f32:96 --dst vector:f32:96`),
+  elementwise operations and math functions, the reductions `reduce_add`, `reduce_min`, and `reduce_max`, the prefix
+  sum `scan_add`, and `mma`; `copy` moves data between two memories. A shape is the extent of your data. A whole
+  multiple of the target's block (the lanes of a register, a 32x32 Tensix tile, a 64-row GPU block) is feasible, and
+  each step says how often it runs (`6 x vector: _mm512_add_ps`). Any other shape is infeasible, and the answer
+  states the block, the multiples below and above as nearest requests, and how to finish the remainder (a mask on
+  AVX-512 and SVE, a scalar loop on AVX2 and NEON, padding on Tensix).

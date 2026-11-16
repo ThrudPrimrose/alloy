@@ -21,6 +21,8 @@ You do not need to know the intrinsics. Reason in the abstract math ISA; look up
 | `add` / `sub` / `mul` / `div` | `v[j] = a[j] ± b[j]` etc. | elementwise |
 | `fma` | `v[j] = a[j]*b[j] + c[j]`, one rounding | elementwise |
 | `reduce_add` | `s = Σ lanes of v` — full vector width to one scalar | reduction |
+| `reduce_min` / `reduce_max` | `s` = the smallest / largest lane of v; exact on finite lanes, NaN rule per row | reduction |
+| `scan_add` | `v[j] = x[0] + ... + x[j]`, the inclusive prefix sum of one register; carry the last lane into the next register | scan |
 | `gen_mask` | lane j active iff `i + j < N` (the tail predicate) | mask |
 | `zero` | `v[j] = 0` | constant |
 | `exp` / `sin` / `cos` | `v[j] = f(v[j])` — transcendentals: **no native instruction** on any covered ISA | transcendental |
