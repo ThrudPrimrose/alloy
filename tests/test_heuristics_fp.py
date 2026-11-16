@@ -4,6 +4,7 @@ declared finite, the level without errno otherwise."""
 
 import pytest
 
+from alloy import configuration_matrix
 from alloy.heuristics import fp
 from helpers import MATRIX, outlined, scope_with
 
@@ -20,3 +21,11 @@ def test_a_non_reducing_scope_gets_fast_math_only_with_finite_inputs():
 
     assert fp.default_level(MATRIX, scope, finite_inputs=True) == "fast"
     assert fp.default_level(MATRIX, scope, finite_inputs=False) == "noerrno"
+
+
+def test_the_reference_fp_matrix_has_no_fast_math_so_finite_inputs_get_the_level_without_errno():
+    scope = scope_with(outlined(), libm=True, reduction=False)
+
+    sut = fp.default_level(configuration_matrix.at_reference_fp(MATRIX), scope, finite_inputs=True)
+
+    assert sut == "noerrno"

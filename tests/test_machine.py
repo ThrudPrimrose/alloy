@@ -1,4 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import subprocess
+from collections.abc import Callable
+
 import pytest
 
 from alloy import machine
@@ -95,6 +98,36 @@ def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(mo
 
 def test_a_host_without_the_openmp_runtime_prices_a_region_at_the_default():
     assert machine.region_cost(None, "omp") == machine.RegionCost(machine.REGION_NS, "default")
+
+
+def silent(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess("region", 0, stdout="", stderr="")
+
+
+def raising(error: Exception) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise error
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        raising(FileNotFoundError("cc")),
+        raising(subprocess.CalledProcessError(1, "cc")),
+        raising(subprocess.TimeoutExpired("region", 120)),
+        silent,
+    ],
+    ids=["no compiler", "failed build or crash", "timeout", "no number printed"],
+)
+def test_a_region_probe_that_fails_prices_a_region_at_the_default(tmp_path, monkeypatch, run):
+    """A probe that does not build, end, or print a number must not end the prediction that asked for it."""
+    monkeypatch.setattr(machine.subprocess, "run", run)
+
+    sut = machine.region_cost(tmp_path / "libomp.so", "omp")
+
+    assert sut == machine.RegionCost(machine.REGION_NS, "default")
 
 
 def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host():

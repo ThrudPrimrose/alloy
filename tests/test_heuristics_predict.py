@@ -346,6 +346,7 @@ def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core
     parallel, serial = sut[rep.builds[0].name], sut[rep.builds[1].name]
     assert (parallel.regions, parallel.elements) == (1.0, 1000.0)
     assert (serial.regions, serial.elements) == (0.0, 1000.0)
+    assert (parallel.region_ns, serial.region_ns) == (470.0, 0.0), "each prediction records what it charged a region"
     assert parallel.compute == pytest.approx(3.91), "2.5 for the four cores' share, 470 ns at 3 GHz over 1000 elements"
     assert serial.compute == pytest.approx(10.0)
 

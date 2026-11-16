@@ -376,7 +376,8 @@ REGION_NS = 470.0
 @dataclass(slots=True, frozen=True)
 class RegionCost:
     """What a parallel region with a worksharing loop costs a team on every physical core, in ns: ``measured`` on
-    the process's OpenMP runtime (A15), or ``default`` (:data:`REGION_NS`) without a C compiler or the runtime."""
+    the process's OpenMP runtime (A15), or ``default`` (:data:`REGION_NS`) without the runtime or when the probe does
+    not build, run to its end, or print a number."""
 
     ns: float
     source: str
@@ -400,15 +401,15 @@ def region_cost(library: pathlib.Path | None, soname: str) -> RegionCost:
                 timeout=60,
             )
             subprocess.run(["cc", f"{binary}.o", *link, "-o", str(binary)], check=True, capture_output=True, timeout=60)
-        except (FileNotFoundError, subprocess.CalledProcessError):
+            env = os.environ | {
+                "OMP_NUM_THREADS": str(len(physical_cores())),
+                "OMP_PROC_BIND": "close",
+                "OMP_PLACES": "cores",
+            }
+            run = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=120, env=env)
+            return RegionCost(float(run.stdout.split()[0]), "measured")
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
             return RegionCost(REGION_NS, "default")
-        env = os.environ | {
-            "OMP_NUM_THREADS": str(len(physical_cores())),
-            "OMP_PROC_BIND": "close",
-            "OMP_PLACES": "cores",
-        }
-        run = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=120, env=env)
-    return RegionCost(float(run.stdout.split()[0]), "measured")
 
 
 def pin_worker(cpus: set[int]) -> None:

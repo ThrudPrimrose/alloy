@@ -121,7 +121,9 @@ class LoopCost:
 class Prediction:
     """A build's predicted cycles per element, a roofline: the larger of ``compute`` (its loops' cycles over its team,
     plus its regions) and ``memory`` (their bytes over the bandwidth once the arrays leave the cache). ``regions`` and
-    ``elements`` are one call's at the running size; ``elements`` is 0 when that size is unknown."""
+    ``elements`` are one call's at the running size; ``elements`` is 0 when that size is unknown. ``region_ns`` is
+    what each region was charged (:func:`region_ns`; :data:`machine.REGION_NS` exactly is the unmeasured default), 0
+    without a region."""
 
     cycles_per_element: float
     compute: float
@@ -130,6 +132,7 @@ class Prediction:
     machine_loops: int
     regions: float = 0.0
     elements: float = 0.0
+    region_ns: float = 0.0
 
 
 def disassembly(archive: pathlib.Path, source: pathlib.Path) -> dict[str, list[Instruction]]:
@@ -528,11 +531,12 @@ def predict(
     compute = sum(
         c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements / (1.0 if c.atomic else team) for c in loops
     )
+    region = region_ns(matrix) if regions > 0 else 0.0
     if regions > 0:
-        compute += regions * region_ns(matrix) * 1e-9 * machine.max_frequency_hz() / elements
+        compute += regions * region * 1e-9 * machine.max_frequency_hz() / elements
     footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
     memory = memory_term(loops, footprint, team, cores)
-    return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops), regions, elements)
+    return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops), regions, elements, region)
 
 
 #: ``{scope symbol: {candidate name: prediction}}``; a build without one (no object, no loop) is absent.

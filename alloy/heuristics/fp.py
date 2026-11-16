@@ -15,8 +15,10 @@ FINITE = "fast"
 
 
 def default_level(matrix: Matrix, scope: Scope, *, finite_inputs: bool) -> str:
-    """``contract`` for a scope that reduces or scans, else ``fast`` when no input is NaN or Inf, else ``noerrno``."""
-    level = REDUCING if scope.has_reduction else FINITE if finite_inputs else NON_FINITE
+    """``contract`` for a scope that reduces or scans, else ``fast`` when no input is NaN or Inf and the matrix
+    declares it (the reference-FP matrix does not), else ``noerrno``."""
+    finite = finite_inputs and FINITE in matrix.fp_levels
+    level = REDUCING if scope.has_reduction else FINITE if finite else NON_FINITE
     if level not in matrix.fp_levels:
         raise ValueError(f"{matrix.path}: the FP default {level!r} is not a declared FP level")
     return level

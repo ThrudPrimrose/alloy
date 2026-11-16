@@ -17,6 +17,7 @@ from alloy.backend.candidates import Candidate
 from alloy.evaluate.verify import Verdict
 from alloy.hb_plugin import episode
 from alloy.hb_plugin.episode import EpisodeSeconds, axes, scope_record
+from alloy.heuristics.predict import Prediction
 
 MATRIX = configuration_matrix.load()
 REFERENCE = Candidate("c", "gcc")
@@ -96,6 +97,21 @@ def test_the_compiler_only_best_is_the_fastest_build_differing_from_the_referenc
     assert sut.search.best_ns_by_axis["fp_level"] == 70.0
     only_gcc = scope_record(REPORT, MATRIX, CON, VERDICTS, TIMED)  # type: ignore[arg-type]
     assert only_gcc.search is not None and only_gcc.search.best_compiler_ns == 100.0
+
+
+def test_a_scope_record_keeps_the_region_cost_its_predictions_charged() -> None:
+    """The measured region cost (A15) must be in the record, or a speculative pick cannot be replayed."""
+    predicted = {
+        REF.name: Prediction(2.0, 2.0, 0.0, (), 1, 1.0, 1000.0, 310.0),
+        CON.name: Prediction(1.0, 1.0, 0.0, (), 1),
+    }
+
+    sut = scope_record(REPORT, MATRIX, CON, VERDICTS, TIMED, predicted)  # type: ignore[arg-type]
+
+    assert sut.search is not None
+    assert (sut.search.region_ns, sut.search.predicted_gain) == (310.0, 2.0)
+    unpredicted = scope_record(REPORT, MATRIX, CON, VERDICTS, TIMED)  # type: ignore[arg-type]
+    assert unpredicted.search is not None and unpredicted.search.region_ns is None
 
 
 def test_the_plain_program_records_no_axes_and_an_untimed_search_no_default() -> None:

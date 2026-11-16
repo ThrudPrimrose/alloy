@@ -71,7 +71,8 @@ class ScopeSearch:
     reference's value; ``best_compiler_ns`` the fastest stub among the timed builds that differ from the reference in
     the compiler alone, the reference included (per-scope compiler selection at default flags, as MCompiler does);
     ``predicted_gain`` the reference's predicted cycles over the delivered build's, ``None``
-    without both predictions; ``fastest`` the :data:`FASTEST` builds of the fewest stub ns, fastest first (E1's hit
+    without both predictions; ``region_ns`` what the predictions charged a parallel region on this host (A15), ``None``
+    when no predicted build of the scope has one; ``fastest`` the :data:`FASTEST` builds of the fewest stub ns, fastest first (E1's hit
     rate at 1 and 5); ``vectorized`` the loops the compiler reports vectorized in the delivered build."""
 
     built: int
@@ -82,6 +83,7 @@ class ScopeSearch:
     best_ns_by_axis: dict[str, float]
     best_compiler_ns: float | None
     predicted_gain: float | None
+    region_ns: float | None
     fastest: tuple[str, ...]
     vectorized: int
 
@@ -185,6 +187,7 @@ def scope_record(
         best_ns_by_axis=best_by_axis(axes_of[reference.name], stubs, axes_of),
         best_compiler_ns=best_compiler_only(axes_of[reference.name], stubs, axes_of),
         predicted_gain=predicted_gain(predicted, reference, delivered),
+        region_ns=max((p.region_ns for p in (predicted or {}).values() if p.regions > 0), default=None),
         fastest=tuple(sorted(stubs, key=stubs.__getitem__)[:FASTEST]),
         vectorized=(delivered or reference).remarks.vectorized,
     )
