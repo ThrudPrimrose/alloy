@@ -157,8 +157,9 @@ def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | N
 DOMAIN_CALLS = frozenset(
     "sqrt log log2 log10 log1p pow asin acos acosh atanh lgamma tgamma fmod py_mod PyMod FtnMod CMod".split()
 )
-#: Sizes of the derived draws: odd, so a vector loop has a remainder, and different per draw.
-DERIVED_SIZES = (37, 61)
+#: Sizes of the derived draws: one below any vector length and odd ones, so a vector loop has a remainder; each size
+#: symbol of a draw takes a different one (A8), so a program that confuses two extents fails verification.
+DERIVED_SIZES = (37, 61, 3, 50)
 
 
 def derived_outputs(sdfg: dace.SDFG) -> tuple[str, ...]:
@@ -202,9 +203,13 @@ def domain_gap(sdfg: dace.SDFG) -> str:
 
 
 def drawn_values(rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dtype, array: bool) -> Any:
-    """Uniform values in [0, 1) at ``dtype``: both truth values for booleans, both parts for complex numbers."""
+    """Values at ``dtype`` of both signs (A8): half uniform in [-1, 1), half of magnitude 10^u for u uniform in
+    [-3, 3], so a wrong sign or a scale-dependent error shows; both truth values for booleans, both parts for complex
+    numbers."""
     size = shape if array else None
-    drawn: Any = rng.random(size)
+    uniform = 2.0 * rng.random(size) - 1.0
+    spread = np.where(rng.random(size) < 0.5, -1.0, 1.0) * 10.0 ** rng.uniform(-3.0, 3.0, size)
+    drawn: Any = np.where(rng.random(size) < 0.5, uniform, spread)
     if dtype == np.bool_:
         drawn = drawn < 0.5
     elif np.issubdtype(dtype, np.complexfloating):
@@ -213,10 +218,11 @@ def drawn_values(rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dty
 
 
 def derived_draw(sdfg: dace.SDFG, iteration: int) -> Draw:
-    """One draw without a manifest: every size symbol at :data:`DERIVED_SIZES`, every array and scalar argument
-    uniform in [0, 1) at its dtype, seeded by ``iteration``. Only valid for an ``sdfg`` without a :func:`domain_gap`."""
-    size = DERIVED_SIZES[iteration % len(DERIVED_SIZES)]
-    sizes = {name: size for name in sdfg.arglist() if name in sdfg.free_symbols}
+    """One draw without a manifest: each size symbol at a different one of :data:`DERIVED_SIZES`, rotated by
+    ``iteration``, and every array and scalar argument drawn by :func:`drawn_values`, seeded by ``iteration``. Only
+    valid for an ``sdfg`` without a :func:`domain_gap`."""
+    symbols = [name for name in sdfg.arglist() if name in sdfg.free_symbols]
+    sizes = {name: DERIVED_SIZES[(iteration + i) % len(DERIVED_SIZES)] for i, name in enumerate(symbols)}
     # a size symbol specialized to a constant still names array extents
     constants: dict[dace.symbol | str, int | float] = {
         k: int(v) for k, v in sdfg.constants.items() if isinstance(v, (int, np.integer))

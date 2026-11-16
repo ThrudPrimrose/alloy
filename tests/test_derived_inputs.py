@@ -8,6 +8,7 @@ import numpy as np
 from alloy.frontend import inputs
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -38,7 +39,7 @@ def test_any_value_is_valid_unless_a_call_or_an_integer_argument_restricts_it():
     assert inputs.domain_gap(gather.to_sdfg()) == "integer argument idx"
 
 
-def test_a_draw_sizes_every_symbol_odd_and_fills_every_argument_at_its_dtype():
+def test_a_draw_sizes_every_symbol_from_the_derived_sizes_and_fills_every_argument_at_its_dtype():
     sdfg = axpy.to_sdfg()
 
     sut = [inputs.derived_draw(sdfg, i) for i in range(2)]
@@ -47,3 +48,21 @@ def test_a_draw_sizes_every_symbol_odd_and_fills_every_argument_at_its_dtype():
     assert sut[0].values["x"].shape == (37,) and sut[0].values["x"].dtype == np.float64
     assert isinstance(sut[0].values["a"], np.float64)
     assert not np.array_equal(sut[0].values["x"], inputs.derived_draw(sdfg, 2).values["x"]), "seeded per draw"
+
+
+@dace.program
+def outer(x: dace.float64[M], y: dace.float64[N], z: dace.float64[M, N]):
+    for i, j in dace.map[0:M, 0:N]:
+        z[i, j] = x[i] * y[j]
+
+
+def test_two_size_symbols_never_share_a_size_and_the_values_have_both_signs_and_a_spread_of_magnitudes():
+    """A8: a program that confuses M and N passes square draws; one that loses a sign passes values in [0, 1)."""
+    sdfg = outer.to_sdfg()
+
+    sut = [inputs.derived_draw(sdfg, i) for i in range(4)]
+
+    assert all(d.sizes["M"] != d.sizes["N"] for d in sut)
+    assert {min(d.sizes.values()) for d in sut} & {3}, "one draw has an extent below every vector length"
+    values = np.concatenate([d.values["x"] for d in sut])
+    assert values.min() < 0 < values.max() and np.abs(values).max() > 1.0
