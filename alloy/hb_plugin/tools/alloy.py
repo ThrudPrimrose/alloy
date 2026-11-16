@@ -35,7 +35,19 @@ class IsaArgs(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
 
     command: Literal[
-        "lookup", "reverse", "assist", "kernel", "tiers", "time", "schedule", "skeleton", "ops", "isas", "host", "tile"
+        "lookup",
+        "reverse",
+        "assist",
+        "kernel",
+        "tiers",
+        "time",
+        "schedule",
+        "skeleton",
+        "ops",
+        "isas",
+        "host",
+        "tile",
+        "ask",
     ]
     arguments: list[str] = pydantic.Field(
         default_factory=list, description='e.g. ["avx512", "sin", "f64"] for kernel, ["vfmadd231pd"] for reverse'

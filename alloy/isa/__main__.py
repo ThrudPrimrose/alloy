@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any
 
-from alloy.isa import ALIASES, OPS, load, simt, tensix, tile
+from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -123,6 +123,16 @@ def main(argv: list[str] | None = None) -> int:
     tile_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
     tile_p.add_argument("--json", action="store_true", help="the plan as JSON")
 
+    ask_p = commands.add_parser("ask", help="any target, any operation: ask sm90 mma --a shared:f16:64x64 ...")
+    ask_p.add_argument("target", help=", ".join(ask.TARGETS))
+    ask_p.add_argument("op", help="an op of `ops`, a math function, mma, or copy")
+    for name in ("a", "b", "c", "x", "src", "dst"):
+        ask_p.add_argument(f"--{name}", help="operand as space:dtype[:RxC or N][:layout][:swizzle]")
+    ask_p.add_argument("--unit", default="", help="pin the implementation (tma, warpgroup, mfma, vector, ...)")
+    ask_p.add_argument("--max-ulp", type=float, help="for a math function: the cheapest rung within this bound")
+    ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
+    ask_p.add_argument("--json", action="store_true", help="the Feasible or Infeasible answer as JSON")
+
     args = parser.parse_args(argv)
     for field in ("isa", "op", "dtype", "function"):
         if isinstance(value := vars(args).get(field), str):
@@ -141,6 +151,8 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return lookup_command(table, args)
     if args.command == "tile":
         return tile_command(args)
+    if args.command == "ask":
+        return ask_command(args)
     if args.command == "kernel":
         level = args.level
         table.isa(args.isa)
@@ -647,6 +659,36 @@ def tile_command(args: argparse.Namespace) -> int:
     print("  program:")
     print(found.program)
     return 0 if found.verified == "run" else 3
+
+
+def ask_command(args: argparse.Namespace) -> int:
+    """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible."""
+    operands = {
+        name: ask.Operand.parse(value)
+        for name in ("a", "b", "c", "x", "src", "dst")
+        if isinstance(value := vars(args).get(name), str)
+    }
+    request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp)
+    answer = ask.ask(request, verify=not args.no_verify)
+    if args.json:
+        print(json.dumps(dataclasses.asdict(answer)))
+        return 0 if answer.feasible else 2
+    if isinstance(answer, ask.Infeasible):
+        print(f"{args.target} {args.op}: infeasible: {answer.reason}")
+        for near in answer.nearest:
+            print(f"  nearest: {near}")
+        return 2
+    print(
+        f"{args.target} {args.op}: feasible on {answer.unit}; check: {answer.check.status} {answer.check.basis}".rstrip()
+    )
+    for step in answer.steps:
+        print(f"  {step.count} x {step.unit}: {step.spelling}" if step.count > 1 else f"  {step.unit}: {step.spelling}")
+    for key, value in answer.setup.items():
+        print(f"  setup {key}: {value}")
+    for note in answer.notes:
+        print(f"  note: {note}")
+    print(answer.code)
+    return 0
 
 
 if __name__ == "__main__":
