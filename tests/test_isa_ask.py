@@ -789,3 +789,10 @@ def test_a_two_dimensional_request_in_a_type_the_isa_lacks_is_refused_for_the_ty
     sut = ask(Request("avx2", "add", {"x": Operand("vector", "bf16", (3, 5))}), verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.NO_ROW, sut
+
+
+def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[str]):
+    assert main(["ask", "gfx942", "scan_add", "--x", "register:f32"]) == 0
+
+    first = capsys.readouterr().out.splitlines()[0]
+    assert "check: compiled for gfx90a, gfx942" in first and "compiled compiled" not in first

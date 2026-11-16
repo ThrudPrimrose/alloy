@@ -717,8 +717,14 @@ def print_refusal(title: str, answer: ask.Infeasible | ask.Invalid) -> None:
         print(f"  fix: {answer.fix}")
 
 
+def checked(check: ask.Check) -> str:
+    """The check as one phrase; a basis that starts with its status ("compiled for gfx942") is not repeated."""
+    said = check.basis.split(" ", 1)[0] in (check.status, "ran")  # "compiled for ...", "ran on ..."
+    return check.basis if said else f"{check.status} {check.basis}".rstrip()
+
+
 def print_feasible(title: str, answer: ask.Feasible) -> None:
-    print(f"{title}: feasible on {answer.unit}; check: {answer.check.status} {answer.check.basis}".rstrip())
+    print(f"{title}: feasible on {answer.unit}; check: {checked(answer.check)}")
     for step in answer.steps:
         print(f"  {step.count} x {step.unit}: {step.spelling}" if step.count > 1 else f"  {step.unit}: {step.spelling}")
     for key, value in answer.setup.items():
@@ -768,7 +774,7 @@ def ask_all_command(args: argparse.Namespace) -> int:
     if not isinstance(answer, ask.Combined):
         print_refusal(f"{args.target} kernel", answer)
         return code
-    print(f"{args.target} kernel: feasible; check: {answer.check.status} {answer.check.basis}".rstrip())
+    print(f"{args.target} kernel: feasible; check: {checked(answer.check)}")
     for line in answer.feeds:
         print(f"  {line}")
     for i, one in enumerate(answer.answers):
