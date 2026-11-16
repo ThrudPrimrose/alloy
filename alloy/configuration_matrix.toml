@@ -125,6 +125,9 @@ isas = ["sve"]
 render = "sve"
 
 # probe: library name the linker must find. fp_level: the level a vector-library candidate builds at.
+# private: each scope that picks the library links its own copy from the static archive, so two scopes may pick two
+# libraries that export the same _ZGV* names (A7). glibc's libmvec.a is not position-independent, so libmvec stays the
+# program's one dynamic vector math library.
 [veclibs.libmvec]
 probe = "mvec"
 fp_level = "noerrno"
@@ -132,11 +135,13 @@ fp_level = "noerrno"
 [veclibs.sleef]
 probe = "sleefgnuabi"
 fp_level = "noerrno"
+private = true
 
 # Arm Performance Libraries (aarch64): armpl_sv* calls under SVE, armpl_v*q under NEON.
 [veclibs.armpl]
 probe = "armpl"
 fp_level = "noerrno"
+private = true
 
 # gcc reaches glibc's simd variants only under __FAST_MATH__, so its libmvec build is the fast level.
 [veclibs.libmvec_fast]

@@ -74,6 +74,10 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   Every build counts its masked instructions from the object; a masked tail without any is reported "not honored".
 - Vector math library (libmvec / SVML / SLEEF): opened only when the scope calls libm (sin, cos, exp, log, pow, ...),
   at its FP level's requirement: gcc reaches libmvec only under `-ffast-math`, so that build needs finite inputs.
+  A7 (2026-11-16): a library marked `private` in the matrix (SLEEF, ArmPL) is linked into each scope as its own copy
+  (`ld -r` with the static archive, then every symbol but the scope's own globals made local), so two scopes may pick
+  two libraries that export the same `_ZGV*` names; without the static archive the build fails with that reason.
+  glibc's `libmvec.a` is not position-independent, so libmvec stays the program's one dynamic vector math library.
 - Approximation (`alloy/isa/approximation.py`): a C scope that calls libm also tries the ladder's `strict` and
   `relaxed` rungs. `relaxed` is built only where the declared input ranges prove every call's contract (A2,
   `alloy/heuristics/ranges.py`): interval arithmetic over the scope's Python tasklets from the manifest's `domain`

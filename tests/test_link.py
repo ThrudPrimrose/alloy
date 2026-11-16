@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from dace.codegen import cpf
 
+from alloy.backend.build import Build, closed
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.link import Best, Linker, built, execution_order
 from alloy.frontend import scopes
@@ -89,10 +90,47 @@ def test_a_sleef_build_binds_its_vector_calls_to_sleef_not_to_glibcs_libmvec(tmp
     )
 
     (library,) = folder.glob(f"build/lib{program.sdfg.name}_*.so")
-    dynamic = subprocess.run(["readelf", "-d", str(library)], capture_output=True, text=True, check=True).stdout
-    needed = [line.split("[")[1].rstrip("]") for line in dynamic.splitlines() if "(NEEDED)" in line]
-    assert any(name.startswith("libsleefgnuabi.so") for name in needed)
-    assert not any(name.startswith("libmvec.so") for name in needed)
+    exported = vector_symbols(library, "-D", "--defined-only")
+    assert not exported, f"a scope's private SLEEF copy leaks {exported[:3]}"  # A7
+    assert private_vector_calls(builds[libm.symbol])
+
+
+def vector_symbols(path: pathlib.Path, *options: str) -> list[str]:
+    listing = subprocess.run(["nm", *options, str(path)], capture_output=True, text=True, check=True).stdout
+    return [line.split()[-1] for line in listing.splitlines() if line.split()[-1:] and "_ZGV" in line.split()[-1]]
+
+
+def private_vector_calls(built: Build) -> bool:
+    """A7: the scope's archive defines the vector routines it calls as local symbols and calls none outside."""
+    assert built.archive is not None, built.error
+    listing = subprocess.run(["nm", str(built.archive)], capture_output=True, text=True, check=True).stdout
+    kinds = {line.split()[-2] for line in listing.splitlines() if len(line.split()) >= 2 and "_ZGV" in line}
+    return bool(kinds) and kinds <= {"t", "i", "r", "d", "b"}  # i: a local ifunc, as libmvec selects one
+
+
+def test_a_libmvec_scope_stays_on_the_programs_one_dynamic_vector_library(tmp_path):
+    """glibc's libmvec.a is not position-independent: libmvec is the dynamic library the private copies sit beside."""
+    program = outlined()
+    libm = scope_with(program, libm=True, reduction=False)
+
+    sut = build(libm, Candidate("c", "gcc", fp_level="fast", veclib="libmvec_fast"), MATRIX, tmp_path, {})
+
+    assert not MATRIX.veclibs["libmvec_fast"].private and MATRIX.veclibs["sleef"].private
+    assert sut.archive is not None and not private_vector_calls(sut)
+
+
+def test_a_vector_library_without_a_static_archive_fails_the_build_with_its_reason(tmp_path):
+    sut = closed_or_reason(tmp_path)
+
+    assert sut == "libnosuchvectorlib has no static archive here, so the scope cannot keep a private copy of it"
+
+
+def closed_or_reason(tmp_path: pathlib.Path) -> str:
+    obj = tmp_path / "scope.o"
+    subprocess.run(["gcc", "-x", "c", "-c", "-", "-o", str(obj)], input="int f(void){return 0;}", text=True, check=True)
+    result, why = closed(obj, "nosuchvectorlib", "gcc")
+    assert result == obj
+    return why
 
 
 def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):

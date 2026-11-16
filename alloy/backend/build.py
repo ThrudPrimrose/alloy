@@ -202,9 +202,43 @@ def compile_source(source: pathlib.Path, candidate: Candidate, matrix: Matrix) -
     if candidate.serial and (calls := runtime.openmp_needs(obj)):
         error = f"a serial build still calls {', '.join(sorted(calls))}"
         return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
+    linked = obj
+    if candidate.veclib != "none" and matrix.veclibs[candidate.veclib].private:
+        executable = matrix.compilers[candidate.compiler].executables[candidate.language]
+        linked, error = closed(obj, matrix.veclibs[candidate.veclib].probe, executable)
+        if error:
+            return Build(candidate, name, params, source, None, flags, "", remarks, error=error)
     archive = builds / f"lib{name}.a"
-    subprocess.run(["ar", "rcs", str(archive), str(obj)], check=True)
+    subprocess.run(["ar", "rcs", str(archive), str(linked)], check=True)
     return Build(candidate, name, params, source, archive, flags, code_hash(obj), remarks, masked_ops=masked_ops(obj))
+
+
+def static_archive(probe: str, executable: str) -> pathlib.Path | None:
+    """``lib<probe>.a`` beside the ``lib<probe>.so`` the link resolves (:func:`runtime.find_library`), or ``None``."""
+    shared = runtime.find_library(probe, (executable,))
+    archive = shared.with_name(f"lib{probe}.a") if shared is not None else None
+    return archive if archive is not None and archive.is_file() else None
+
+
+def closed(obj: pathlib.Path, probe: str, executable: str) -> tuple[pathlib.Path, str]:
+    """``obj`` with a private copy of the vector math library ``lib<probe>`` (A7): ``ld -r`` pulls in only the archive
+    members the scope calls, and every symbol but the scope's own globals turns local, so no ``_ZGV*`` name of one
+    scope binds another scope's calls. ``(closed object, "")``, or ``(obj, why)`` when it cannot be closed here."""
+    archive = static_archive(probe, executable)
+    if archive is None:
+        return obj, f"lib{probe} has no static archive here, so the scope cannot keep a private copy of it"
+    own = subprocess.run(["nm", "--defined-only", "-g", "-P", str(obj)], capture_output=True, text=True, check=True)
+    keep = obj.with_suffix(".keep")
+    keep.write_text("".join(f"{line.split()[0]}\n" for line in own.stdout.splitlines() if line.strip()))
+    result = obj.with_suffix(".closed.o")
+    for command in (
+        ["ld", "-r", str(obj), str(archive), "-o", str(result)],
+        ["objcopy", f"--keep-global-symbols={keep}", str(result)],
+    ):
+        run = subprocess.run(command, capture_output=True, text=True, check=False)
+        if run.returncode != 0:
+            return obj, f"closing over lib{probe} failed: {run.stderr.strip()[-500:]}"
+    return result, ""
 
 
 def deduplicated(built: Build, seen: dict[str, str]) -> Build:

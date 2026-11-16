@@ -44,6 +44,8 @@ class FPLevel:
 class Veclib:
     probe: str
     fp_level: str
+    #: Each scope links a private copy from the static archive (A7); else the program's one dynamic library.
+    private: bool = False
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)

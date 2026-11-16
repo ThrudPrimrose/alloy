@@ -55,9 +55,11 @@ jobs:
           echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           # OpenBLAS + LAPACKE: the BLAS/LAPACK library-node headers a scope includes (OMEN's Norb-sized products)
-          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev libsleef-dev gcc-aarch64-linux-gnu qemu-user
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev ninja-build gcc-aarch64-linux-gnu qemu-user
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
+          # SLEEF shared and static: a scope that picks it links a private copy from libsleefgnuabi.a (A7)
+          sudo JOBS="$(nproc)" helpers/install-sleef.sh /usr/local
 
       - name: clang + LLVM libomp
         run: |

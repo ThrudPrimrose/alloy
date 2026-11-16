@@ -73,7 +73,7 @@ markers = [
     "clang: needs clang on PATH",
     "nvhpc: needs the NVIDIA HPC SDK (nvc) on PATH",
     "icx: needs Intel oneAPI (icx) on PATH",
-    "sleef: needs SLEEF (libsleefgnuabi) where the linker finds it",
+    "sleef: needs SLEEF with its static libsleefgnuabi.a where the compiler finds it (helpers/install-sleef.sh)",
     "avx512: needs an AVX-512 host (hosted CI runners may lack it)",
     "e2e: an LLR kernel of the bench through the whole pipeline",
     "cuda: needs nvcc (compiles device units for sm_89; no device needed)",

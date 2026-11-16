@@ -59,6 +59,7 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
 
 
 @pytest.mark.clang
+@pytest.mark.sleef
 def test_an_object_linked_against_another_vector_library_is_not_a_duplicate(tmp_path):
     scope = scope_with(outlined(), libm=True, reduction=False)
     seen: dict[str, str] = {}
