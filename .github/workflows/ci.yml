@@ -133,7 +133,15 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --extra dev
       - name: Tensix rows on ttsim
-        run: PYTHONHASHSEED=0 uv run pytest --maxfail=20 -W error -m tensix tests/test_isa_tensix.py
+        run: PYTHONHASHSEED=0 ALLOY_TENSIX_VERDICTS=$RUNNER_TEMP/tensix_verified.toml uv run pytest --maxfail=20 -W error -m tensix tests/test_isa_tensix.py
+      # The verdicts of every row, pending ones included, as `python -m alloy.isa.tensix verify` writes them: copy the
+      # file over alloy/isa/tensix_verified.toml and clear the rows' `pending` to record them without a local docker run.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tensix-verified
+          path: ${{ runner.temp }}/tensix_verified.toml
+          if-no-files-found: ignore
 
   # The bench kernels end to end on an in-process judge (libraries graded, scratch requested), on the two compilers
   # every developer box has; a runner of its own, so the toolchain job's interop matrix stays short.

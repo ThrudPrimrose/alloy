@@ -2,6 +2,8 @@
 """The Tensix rows: each one recorded as run on ttsim, the lookup answering from those records, and the kernel the
 harness builds spelled for the tt-metal version it targets."""
 
+import os
+import pathlib
 import shutil
 
 import pytest
@@ -84,6 +86,8 @@ def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactor
 
     found = tensix.run_harness(library, tensix.IMAGE)
 
+    if out := os.environ.get("ALLOY_TENSIX_VERDICTS"):  # the CI job uploads it: the record `verify` would write
+        pathlib.Path(out).write_text(tensix.verdicts_text(found, library, tensix.IMAGE))
     assert len(found) == len(tensix.rows()) * len(tensix.dtypes())
     assert all(v.ok for v in found), [v for v in found if not v.ok]
 
