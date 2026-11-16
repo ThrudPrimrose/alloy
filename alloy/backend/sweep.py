@@ -41,8 +41,9 @@ def run(
     finite_inputs: bool = False,
     ranges: Mapping[str, Interval] | None = None,
 ) -> list[ScopeReport]:
-    """Build every candidate of every scope under ``out/scopes/<symbol>`` in two stages: each compiler's default
-    first, then the rest minus what :func:`prune.prune` rules out given those builds. Rendered in turn (the codegen
+    """Build every candidate of every scope under ``out/scopes/<symbol>`` in three stages: each compiler's default,
+    then every cell that sets no vector width or tail, then the vector cells; each stage minus what :func:`prune.prune`
+    rules out given the builds before it. Rendered in turn (the codegen
     knobs are process-wide DaCe config), compiled in parallel (:func:`machine.compile_jobs`), duplicates marked in
     candidate order."""
     reports = []
@@ -57,16 +58,18 @@ def run(
                 return list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, cands))
 
             candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs)
+            facts = prune.facts(scope, ranges)
             natives = [c for c in candidates if prune.is_native(c)]
             first = dict(zip(natives, built(natives), strict=True))
-            rest, pruned = prune.prune(
-                [c for c in candidates if c not in first],
-                matrix,
-                prune.facts(scope, ranges),
-                list(first.values()),
-                host_isas,
-            )
-            later = dict(zip(rest, built(rest), strict=True))
+            # the cells that may make a loop vectorize (an emission form, an FP level, a rung) are built before the
+            # vector cells are pruned, so "nothing vectorizes" reads every one of them
+            plain = [c for c in candidates if c not in first and not prune.is_vector_cell(c)]
+            kept, pruned = prune.prune(plain, matrix, facts, list(first.values()), host_isas)
+            second = dict(zip(kept, built(kept), strict=True))
+            vector = [c for c in candidates if c not in first and prune.is_vector_cell(c)]
+            kept, pruned_vector = prune.prune(vector, matrix, facts, [*first.values(), *second.values()], host_isas)
+            later = second | dict(zip(kept, built(kept), strict=True))
+            pruned = pruned + pruned_vector
             seen: dict[str, str] = {}
             ordered = [first.get(c) or later[c] for c in candidates if c in first or c in later]
             reports.append(

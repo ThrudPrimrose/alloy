@@ -180,3 +180,27 @@ def test_the_sweep_builds_the_defaults_first_and_skips_the_pruned_cells(tmp_path
     assert sut.builds[0].candidate == Candidate("c", "gcc")
     assert sut.pruned, "a lone multiply prunes at least the contract level"
     assert not built & {p.candidate.name(matrix) for p in sut.pruned}
+
+
+def test_a_scope_that_vectorizes_only_in_a_non_default_cell_keeps_its_vector_cells(tmp_path, monkeypatch):
+    """Regression: "nothing vectorizes" read only each compiler's default build, so a loop that vectorizes once an
+    emission form or an FP level allows it lost its width and tail cells before they were built."""
+    matrix = gcc_only(tmp_path)
+    program = scopes.outline(axpy.to_sdfg(), matrix.libm_calls)
+    compiled: list[Candidate] = []
+
+    def compile_source(source: pathlib.Path, c: Candidate, matrix_: object) -> Build:
+        compiled.append(c)
+        vectorized = 0 if prune.is_native(c) else 1  # only a non-default cell vectorizes
+        name = c.name(MATRIX)
+        return Build(c, name, {}, source, pathlib.Path("lib.a"), (), name, Remarks(vectorized, ()))
+
+    monkeypatch.setattr(sweep, "compile_source", compile_source)
+
+    (sut,) = sweep.run(program, matrix, tmp_path / "out")
+
+    assert not [p for p in sut.pruned if p.reason == "nothing vectorizes"]
+    vector = [c for c in compiled if prune.is_vector_cell(c)]
+    assert vector, "the vector cells are built"
+    first_vector = compiled.index(vector[0])
+    assert all(not prune.is_vector_cell(c) for c in compiled[:first_vector])

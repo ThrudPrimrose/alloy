@@ -85,9 +85,11 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   range it could not prove. Declaring finite inputs alone no longer opens it. The unit starts with the called functions' kernels as scalar C
   (`[prims.scalar]`, each `#pragma omp declare simd`) and a macro per libm name, so the scope's compiler inlines and
   vectorizes them; verified under the band, as a contraction is. C++ is left out: the macro would rename `std::sin`.
-- Pruning (`alloy/heuristics/prune.py`, built): each compiler's default builds first, then the rest minus the cells
-  that cannot change the code, each kept in the report with its reason:
-  - no compiler vectorized a loop: no ISA or tail cell (explicit SVE loops stay);
+- Pruning (`alloy/heuristics/prune.py`, built): in three stages (`sweep.run`), each compiler's default builds, then
+  every cell without an ISA or tail, then the ISA and tail cells; each stage minus the cells that cannot change the
+  code given the builds before it, each kept in the report with its reason:
+  - no build of the first two stages vectorized a loop (a default, an emission form, an FP level, a rung): no ISA or
+    tail cell (explicit SVE loops stay);
   - every innermost trip count a constant multiple of an ISA's lanes x 4 (clang's interleave): no tail on that ISA;
     SVE's length is unknown at compile time, so never there;
   - an FP level only where it has something to rewrite: contract needs a multiply feeding an add, reciprocal a
@@ -293,10 +295,10 @@ Modes (`api.generate(..., mode=)`):
     `region / (cycles per element * (1 - 1 / cores))` elements per region. A branch, a jump or an unknown library
     node leaves the size undecided.
   - Memory: the source loops' bytes per element over main-memory bandwidth (cycles at the maximum clock), once the
-    scope's arrays fill more than half the largest cache. Bandwidth (`machine.memory_bandwidth`): the installed
-    modules' peak from a saved `dmidecode -t 17` (`$ALLOY_MEMORY_DEVICES`, default
-    `$XDG_CACHE_HOME/alloy/dmidecode-17.txt`; `sudo dmidecode -t 17 > that` once), else `dmidecode` run directly,
-    else a measured parallel copy.
+    scope's arrays fill more than half the largest cache. Bandwidth (`machine.memory_bandwidth`): a measured
+    parallel copy on every host, so the cap means a sustained rate everywhere. The installed modules' theoretical peak
+    is recorded beside it (`peak`) from a saved `dmidecode -t 17` (`$ALLOY_MEMORY_DEVICES`, default
+    `$XDG_CACHE_HOME/alloy/dmidecode-17.txt`; `sudo dmidecode -t 17 > that` once), else `dmidecode` run directly.
   - Pick: the default build unless a correct build is predicted more than `timing.speculative_margin` cheaper,
     then the cheapest (ties to the default FP level of `heuristics/fp.py`, then sweep order). The verdict matrix shows `cycles/elem`; `best/` links the picks.
   - Fission (`heuristics/fission.py`): one more one-factor candidate per compiler when a flat top-level map keeps

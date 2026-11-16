@@ -161,10 +161,13 @@ STREAM_BYTES_PER_THREAD = 64 << 20
 
 @dataclass(slots=True, frozen=True)
 class Bandwidth:
-    """Main-memory bandwidth: from ``dmidecode`` (the modules' theoretical peak) or ``stream`` (a measured copy)."""
+    """Main-memory bandwidth as a parallel copy sustains it (``stream``), and the installed modules' theoretical peak
+    from ``dmidecode`` where the DMI tables are readable (``None`` otherwise), recorded beside it. The model reads the
+    measured value on every host, so its cap means the same on each."""
 
     bytes_per_second: float
     source: str
+    peak: float | None = None
 
 
 def memory_devices_file() -> pathlib.Path:
@@ -232,12 +235,10 @@ def measured_bandwidth() -> float:
 
 
 def memory_bandwidth() -> Bandwidth:
-    peak = theoretical_bandwidth(memory_devices_text())
-    if peak is not None:
-        return Bandwidth(peak, "dmidecode")
     # a cache does not serialize a miss: threads measuring at once run against each other and read low
     with MEASURING:
-        return Bandwidth(measured_bandwidth(), "stream")
+        measured = measured_bandwidth()
+    return Bandwidth(measured, "stream", theoretical_bandwidth(memory_devices_text()))
 
 
 @dataclass(slots=True, frozen=True)

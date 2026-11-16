@@ -1,5 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Main-memory bandwidth: the installed modules' theoretical peak from a saved ``dmidecode -t 17``, else measured."""
+"""Main-memory bandwidth: measured by a parallel copy, with the installed modules' theoretical peak from a saved
+``dmidecode -t 17`` recorded beside it."""
 
 import concurrent.futures
 import time
@@ -70,3 +71,15 @@ def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch):
 
     assert sut == [1.0, 1.0, 1.0, 1.0]
     assert len(measured) == 1
+
+
+def test_the_bandwidth_is_measured_even_where_the_firmware_lists_a_peak(monkeypatch):
+    """Regression: a readable DMI table replaced the measured copy by the modules' theoretical peak, so the speculative
+    model's memory cap meant a peak on one host and a sustained rate on another."""
+    monkeypatch.setattr(machine, "memory_devices_text", lambda: TWO_DDR5_MODULES_ONE_EMPTY_SLOT)
+    monkeypatch.setattr(machine, "measured_bandwidth", lambda: 5.0e10)
+
+    sut = machine.memory_bandwidth()
+
+    assert sut.source == "stream" and sut.bytes_per_second == 5.0e10
+    assert sut.peak == machine.theoretical_bandwidth(TWO_DDR5_MODULES_ONE_EMPTY_SLOT)

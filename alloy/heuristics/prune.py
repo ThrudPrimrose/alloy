@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Which sweep cells are worth building: a scope's static facts and each compiler's default build rule out the
-cells that cannot change the code, and every pruned cell keeps its reason for the report."""
+"""Which sweep cells are worth building: a scope's static facts and the builds before them (each compiler's default,
+then every cell without a vector width or tail) rule out the cells that cannot change the code, and every pruned cell
+keeps its reason for the report."""
 
 import ast
 from collections.abc import Callable, Mapping
@@ -20,7 +21,7 @@ from alloy.heuristics.ranges import Interval, proof_gap
 from alloy.isa import approximation
 from alloy.isa.ops import called_name
 
-__all__ = ["Facts", "Pruned", "facts", "innermost_entries", "is_native", "prune", "smallest_element"]
+__all__ = ["Facts", "Pruned", "facts", "innermost_entries", "is_native", "is_vector_cell", "prune", "smallest_element"]
 
 #: Iterations clang unrolls a vector loop by at most (its interleave count), so a remainder can exist after a trip
 #: count the vector length divides; gcc does not interleave. A trip count must be a multiple of lanes x this.
@@ -150,6 +151,11 @@ def facts(scope: Scope, ranges: Mapping[str, Interval] | None = None) -> Facts:
     )
 
 
+def is_vector_cell(candidate: Candidate) -> bool:
+    """A cell that sets a vector width or a loop tail: worth building only where some build vectorized a loop."""
+    return bool(candidate.isa or candidate.tail)
+
+
 def is_native(candidate: Candidate) -> bool:
     """A compiler's default candidate for a language: the build every pruning decision reads."""
     return candidate == Candidate(candidate.language, candidate.compiler)
@@ -194,7 +200,7 @@ def reason(candidate: Candidate, matrix: Matrix, f: Facts, vectorizes: bool, hos
     explicit = (
         bool(candidate.tail) and matrix.tails[candidate.tail].render == "sve"
     )  # vector code without the vectorizer
-    vector_cell = bool(candidate.isa or candidate.tail)
+    vector_cell = is_vector_cell(candidate)
     if vector_cell and not explicit and not vectorizes:
         return "nothing vectorizes"
     if candidate.tail and not explicit:
@@ -208,10 +214,11 @@ def reason(candidate: Candidate, matrix: Matrix, f: Facts, vectorizes: bool, hos
 
 
 def prune(
-    candidates: list[Candidate], matrix: Matrix, f: Facts, native: list[Build], host_isas: tuple[str, ...]
+    candidates: list[Candidate], matrix: Matrix, f: Facts, built: list[Build], host_isas: tuple[str, ...]
 ) -> tuple[list[Candidate], list[Pruned]]:
-    """``candidates`` split into those to build and those pruned, given the ``native`` builds of every compiler."""
-    vectorizes = any(b.remarks.vectorized > 0 for b in native)
+    """``candidates`` split into those to build and those pruned, given the builds so far: a vector cell is pruned
+    only when none of ``built`` vectorized a loop."""
+    vectorizes = any(b.remarks.vectorized > 0 for b in built)
     keep: list[Candidate] = []
     pruned: list[Pruned] = []
     for c in candidates:
