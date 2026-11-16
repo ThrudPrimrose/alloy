@@ -16,7 +16,7 @@ class AlloyProfileOptimizer(FlavorOptimizer):
     def tune(self, task: Task, pipeline: str) -> Submission:
         from alloy.hb_plugin import adapter
 
-        return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link))
+        return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link), self.keep_record)
 
 
 class AlloyReferenceOptimizer(FlavorOptimizer):
@@ -27,7 +27,7 @@ class AlloyReferenceOptimizer(FlavorOptimizer):
     def tune(self, task: Task, pipeline: str) -> Submission:
         from alloy.hb_plugin import adapter
 
-        return adapter.reference(task, pipeline, lambda code, link: self.deliver(task, code, link))
+        return adapter.reference(task, pipeline, lambda code, link: self.deliver(task, code, link), self.keep_record)
 
 
 class AlloySpeculativeOptimizer(FlavorOptimizer):
@@ -38,7 +38,7 @@ class AlloySpeculativeOptimizer(FlavorOptimizer):
     def tune(self, task: Task, pipeline: str) -> Submission:
         from alloy.hb_plugin import adapter
 
-        return adapter.speculative(task, pipeline, lambda code, link: self.deliver(task, code, link))
+        return adapter.speculative(task, pipeline, lambda code, link: self.deliver(task, code, link), self.keep_record)
 
 
 class AlloyToolStub(FlavorOptimizer):

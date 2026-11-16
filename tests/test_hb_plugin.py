@@ -3,7 +3,6 @@
 variants, and the CPU profile, speculative and none flavors submit a library the judge grades correct and record
 the episode. The ``alloy`` CI job runs it."""
 
-import json
 import pathlib
 import threading
 from collections.abc import Callable, Iterator
@@ -16,13 +15,15 @@ pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs th
 from hpcagent_bench import config
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle, SourceMode
 from hpcagent_bench.config import SubmitFeedback
-from hpcagent_bench.harness import tools
+from hpcagent_bench.harness import plugin_records, tools
 from hpcagent_bench.harness.judge_wire import GradeAnswer
 from hpcagent_bench.harness.optimizers import optimizer_registry
 from hpcagent_bench.harness.service import ServiceConfig, make_server
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
+
+from alloy.hb_plugin import episode
 
 KERNEL = "tsvc_2_vpv"
 
@@ -102,8 +103,16 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
     assert r.build_ok is True, r.detail
     assert r.correct is True, r.detail
     assert r.speedup > 0.0
-    record = json.loads((tmp_path / "alloy-episode.json").read_text())
-    assert set(record) == {"schema", "mode", "kernel", "seconds", "stubs", "scopes"}
+    kept = plugin_records.found(tmp_path)["alloy"]  # what the judge archives with the grade
+    record = kept.data
+    assert isinstance(record, dict)
+    assert kept.schema_version == record["schema"] == episode.SCHEMA
+    assert set(record) == {"schema", "mode", "kernel", "seconds", "stubs", "scopes", "truncated"}
     assert set(record["seconds"]) == {"generate", "time_stubs", "score", "total"}
-    assert all(set(scope) == {"symbol", "reference", "chosen", "note"} for scope in record["scopes"])
-    assert (record["mode"], record["kernel"]) == (flavor.rsplit("_", 1)[1], kernel)
+    assert (record["mode"], record["kernel"], record["truncated"]) == (flavor.rsplit("_", 1)[1], kernel, False)
+    for scope in record["scopes"]:
+        assert set(scope) == {"symbol", "reference", "chosen", "note", "axes", "search"}
+        assert (scope["chosen"] == episode.PLAIN[0]) == (not scope["axes"])
+        assert scope["search"]["built"] >= scope["search"]["verified"] + scope["search"]["rejected"]
+    if flavor.endswith("_profile"):  # every scope's reference is timed as the first stub
+        assert all(scope["search"]["default_ns"] > 0 for scope in record["scopes"])

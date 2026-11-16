@@ -4,9 +4,7 @@ best prefix so far, survives a failing stub, stops when the budget does, reads a
 a rendered library asks for the scratch its entry carves transients from."""
 
 import dataclasses
-import json
 import pathlib
-import tempfile
 
 import pytest
 
@@ -59,9 +57,10 @@ def test_each_scope_keeps_its_fastest_stub_over_the_best_prefix() -> None:
             prefixes.append(selection["r0"].name)
         return cost[selection[symbol].name]
 
-    sut = ranked(["r0", "r1"], start, candidates, time_stub, always)
+    sut, times = ranked(["r0", "r1"], start, candidates, time_stub, always)
 
     assert {s: b.name for s, b in sut.items()} == {"r0": "r0.fast", "r1": "r1.fast"}
+    assert times == {"r0": {"r0.ref": 5.0, "r0.fast": 1.0, "r0.slow": 9.0}, "r1": {"r1.ref": 4.0, "r1.fast": 2.0}}
     assert set(prefixes) == {"r0.fast"}, "the later scope's stubs run over the earlier scope's winner"
 
 
@@ -71,7 +70,7 @@ def test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail() -> N
     def time_stub(selection: dict[str, Fake], symbol: str) -> float:
         raise RuntimeError("stub did not build")
 
-    sut = ranked(["r0"], start, {"r0": [Fake("r0.a")]}, time_stub, always)
+    sut, _ = ranked(["r0"], start, {"r0": [Fake("r0.a")]}, time_stub, always)
 
     assert sut["r0"].name == "r0.ref"
 
@@ -84,10 +83,11 @@ def test_the_ranking_stops_when_the_budget_does() -> None:
         timed.append(selection[symbol].name)
         return 1.0
 
-    sut = ranked(["r0", "r1"], start, {"r1": [Fake("r1.fast")]}, time_stub, lambda: len(timed) < 1)
+    sut, times = ranked(["r0", "r1"], start, {"r1": [Fake("r1.fast")]}, time_stub, lambda: len(timed) < 1)
 
     assert timed == ["r0.ref"]
     assert sut == start
+    assert times == {"r0": {"r0.ref": 1.0}, "r1": {}}, "the record keeps the stubs timed before the budget ran out"
 
 
 def test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count() -> None:
@@ -229,23 +229,6 @@ def test_a_pick_of_every_reference_delivers_the_plain_program_ungraded() -> None
     assert graded_pick(judge, {"r": Fake("ref")}, {"r": Fake("ref")}, library_of, lambda: BASE, "k") is None  # type: ignore[arg-type]
 
 
-def test_an_episode_delivering_the_plain_program_records_no_scope_build(tmp_path) -> None:
-    def built(name: str) -> SimpleNamespace:
-        return SimpleNamespace(name=name, candidate=SimpleNamespace(note=name))
-
-    library = Submission(language=Language.C, source="", library=str(tmp_path / "lib.so"))
-    task = cast(Task, SimpleNamespace(kernel="k"))
-    refs, pick = {"r": built("ref")}, {"r": built("pick")}
-
-    adapter.record_episode("speculative", task, 0.0, library, references=refs, delivered=None)  # type: ignore[arg-type]
-    plain_scopes = json.loads((tmp_path / adapter.EPISODE_RECORD).read_text())["scopes"]
-    adapter.record_episode("speculative", task, 0.0, library, references=refs, delivered=pick)  # type: ignore[arg-type]
-    pick_scopes = json.loads((tmp_path / adapter.EPISODE_RECORD).read_text())["scopes"]
-
-    assert [(s["reference"], s["chosen"]) for s in plain_scopes] == [("ref", adapter.PLAIN[0])]
-    assert [(s["reference"], s["chosen"]) for s in pick_scopes] == [("ref", "pick")]
-
-
 def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
     builds = [Fake("good"), Fake("wrong")]
     rep = dataclasses.make_dataclass("Rep", [("builds", list)])([Fake("ref"), *builds])
@@ -322,8 +305,6 @@ if __name__ == "__main__":
     for pick, delivery in PLAIN_CASES:
         test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, delivery)
     test_a_pick_of_every_reference_delivers_the_plain_program_ungraded()
-    with tempfile.TemporaryDirectory() as folder:
-        test_an_episode_delivering_the_plain_program_records_no_scope_build(pathlib.Path(folder))
     test_a_failed_verdict_is_not_offered_to_the_stub_ranking()
     test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
     test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
