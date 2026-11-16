@@ -95,6 +95,7 @@ class Timing:
     screen_reps: int
     final_reps: int
     top: int
+    speculative_margin: float
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)

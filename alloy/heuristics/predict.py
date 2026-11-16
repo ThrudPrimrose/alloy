@@ -49,11 +49,12 @@ CACHE_RESIDENT = 0.5
 #: Cycles per lane of a gather or scatter: llvm-mca prices them far too low on recent x86 cores.
 GATHER_LANE_CYCLES = 4.0
 GATHER = re.compile(r"^v(gather|scatter|pgather|pscatter)")
+#: An atomic read-modify-write: x86's ``lock`` prefix (objdump splits it off as the mnemonic), aarch64's LSE atomics
+#: and exclusive pairs. Every thread's update of one address is serialized: an ``omp atomic`` per element.
+ATOMIC = re.compile(r"^(lock$|ld(add|clr|eor|set|smax|smin|umax|umin)|casp?[albh]*$|swp|ld[a]?xr|st[l]?xr)")
 #: What a region or a worksharing loop costs a team: the cheapest empty region measured on libomp.
 REGION_NS = 470.0
 
-#: Predictions within this fraction of the cheapest tie: memory-bound builds all sit on the bandwidth floor.
-TIE = 0.02
 #: Cycles per call in a loop: llvm-mca cannot see a callee, so one call per vector ranks above one per element.
 CALL_CYCLES = 30.0
 SOURCE_LINE = re.compile(r"^; (.*):(\d+)$")
@@ -106,7 +107,8 @@ class Loop:
 @dataclass(slots=True, frozen=True, config=RECORD)
 class LoopCost:
     """One source loop's hot copy: tasklets, cycles and elements per iteration, hot calls, main-memory bytes per
-    element, and its share of the scope's iterations."""
+    element, its share of the scope's iterations, and whether it updates memory atomically (its threads then take
+    turns, so it runs at a team of one)."""
 
     tasklets: Strings
     cycles: float
@@ -114,6 +116,7 @@ class LoopCost:
     calls: int
     bytes: float
     weight: float
+    atomic: bool = False
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -416,7 +419,8 @@ def loop_cost(
     per_element = width * accesses
     elements = max(1.0, data_bytes(loop) / per_element)
     cycles += GATHER_LANE_CYCLES * sum(element_lanes(i, width) for i in loop.body if GATHER.match(i.mnemonic))
-    return LoopCost(tasklets, cycles, elements, hot_calls(loop, elements), float(per_element), 1.0)
+    atomic = any(ATOMIC.match(i.mnemonic) for i in loop.body)
+    return LoopCost(tasklets, cycles, elements, hot_calls(loop, elements), float(per_element), 1.0, atomic)
 
 
 def weight(tasklets: tuple[str, ...], maps: dict[str, MapFacts], sizes: dict[str, int] | None, total: float) -> float:
@@ -457,7 +461,7 @@ def weighted(
         (v for f in innermost_maps(scope.sdfg).values() if (v := evaluated(f.volume, sizes)) is not None), default=0.0
     )
     return tuple(
-        LoopCost(c.tasklets, c.cycles, c.elements, c.calls, c.bytes, weight(c.tasklets, maps, sizes, largest))
+        LoopCost(c.tasklets, c.cycles, c.elements, c.calls, c.bytes, weight(c.tasklets, maps, sizes, largest), c.atomic)
         for c in costs
     )
 
@@ -510,7 +514,9 @@ def predict(
     loops = weighted(groups.values(), maps, scope, sizes)
     regions, team = team_of(build.archive, load, cores)
     elements = load.elements if load is not None else 0.0
-    compute = sum(c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements for c in loops) / team
+    compute = sum(
+        c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements / (1.0 if c.atomic else team) for c in loops
+    )
     if regions > 0:
         compute += regions * REGION_NS * 1e-9 * machine.max_frequency_hz() / elements
     footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
@@ -558,11 +564,12 @@ def predictions(
 def choose(
     rep: ScopeReport, verdicts: dict[str, Verdict], predicted: Predictions, matrix: Matrix, *, finite_inputs: bool
 ) -> Build:
-    """The scope's speculative winner: among the correct distinct builds (any FP level the sweep built: its
-    requirement met, its verdict inside the band) within :data:`TIE` of the fewest predicted cycles per element (all
-    of them when none is predicted), the default FP level's (:func:`fp.default_level`), then the first in sweep
-    order. Without verdicts (no manifest) every build that compiled counts as correct, up to the default FP level. A
-    serial build counts only at a size that decides it."""
+    """The scope's speculative winner. Its default is the first correct distinct build (any FP level the sweep built:
+    its requirement met, its verdict inside the band) at the default FP level (:func:`fp.default_level`), else the
+    first correct one. The default stays unless it is predicted and some correct build is predicted more than the
+    matrix's ``speculative_margin`` cheaper; then the cheapest wins, a tie going to the default FP level, then to
+    sweep order. Without verdicts (no manifest) every build that compiled counts as correct, up to the default FP
+    level. A serial build counts only at a size that decides it."""
     scores = predicted.get(rep.scope.symbol, {})
     level = fp.default_level(matrix, rep.scope, finite_inputs=finite_inputs)
 
@@ -581,6 +588,12 @@ def choose(
         levels = list(matrix.fp_levels)
         allowed = levels[: levels.index(level) + 1]
         usable = [item for item in usable if item[1].candidate.resolved(matrix)[0] in allowed] or usable
+
+    def preferred(item: tuple[int, Build]) -> tuple[bool, int]:
+        return item[1].candidate.resolved(matrix)[0] != level, item[0]
+
+    default = min(usable, key=preferred)[1]
     cheapest = min(cost(b) for _, b in usable)
-    tied = [(order, b) for order, b in usable if cost(b) <= cheapest * (1 + TIE)]
-    return min(tied, key=lambda item: (item[1].candidate.resolved(matrix)[0] != level, item[0]))[1]
+    if math.isinf(cost(default)) or cost(default) <= cheapest * (1 + matrix.timing.speculative_margin):
+        return default
+    return min(((order, b) for order, b in usable if cost(b) == cheapest), key=preferred)[1]

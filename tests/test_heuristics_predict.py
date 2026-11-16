@@ -553,3 +553,57 @@ def test_builds_within_the_tie_band_go_to_the_default_fp_level():
 
     assert predict.choose(rep, {}, near, MATRIX, finite_inputs=False) is builds[1]
     assert predict.choose(rep, {}, far, MATRIX, finite_inputs=False) is builds[0]
+
+
+def test_the_default_stays_unless_a_build_is_predicted_beyond_the_margin_ahead_of_it():
+    """A12: a wrong prediction can only replace the default when it claims more than the margin."""
+    scope = only_scope(roots)
+    default, other = a_build(Candidate("c", "gcc", fp_level="noerrno")), a_build(Candidate("c", "gcc"))
+    rep = ScopeReport(scope, (other, default))
+    margin = MATRIX.timing.speculative_margin
+    assert 0.03 < margin < 1.0
+    near = {scope.symbol: {default.name: scored(1.03), other.name: scored(1.00)}}
+    beyond = {scope.symbol: {default.name: scored(1.0 + 2 * margin), other.name: scored(1.00)}}
+
+    assert predict.choose(rep, {}, near, MATRIX, finite_inputs=False) is default, "3% ahead stays within the margin"
+    assert predict.choose(rep, {}, beyond, MATRIX, finite_inputs=False) is other
+
+
+def test_an_unpredicted_default_stays_however_cheap_another_build_is_predicted():
+    scope = only_scope(roots)
+    default, other = a_build(Candidate("c", "gcc", fp_level="noerrno")), a_build(Candidate("c", "gcc"))
+    rep = ScopeReport(scope, (other, default))
+    only_other = {scope.symbol: {other.name: scored(0.1)}}
+
+    assert predict.choose(rep, {}, only_other, MATRIX, finite_inputs=False) is default
+
+
+@dace.program
+def atomic_total(a: dace.float64[N], s: dace.float64[1]):
+    for i in dace.map[0:N]:
+        s[0] += a[i]
+
+
+@pytest.mark.parametrize("mnemonic", ["lock", "ldadd", "ldaddal", "casal", "swpl", "ldaxr", "stlxr"])
+def test_an_atomic_read_modify_write_is_recognized_on_x86_and_aarch64(mnemonic):
+    assert predict.ATOMIC.match(mnemonic)
+
+
+@pytest.mark.parametrize("mnemonic", ["ldr", "ldp", "add", "addsd", "cmpxchg", "vmovq", "str", "stp"])
+def test_a_plain_access_is_no_atomic(mnemonic):
+    assert not predict.ATOMIC.match(mnemonic)
+
+
+@pytest.mark.gcc
+def test_a_parallel_sum_through_an_atomic_per_element_is_predicted_at_a_team_of_one(tmp_path):
+    """A12: CPF renders a map's WCR as ``omp atomic update``; every thread takes its turn on one address, so the
+    prediction never spreads that loop over the cores (it rated the atomic build three times cheaper than serial)."""
+    scope = only_scope(atomic_total)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope, MATRIX)
+
+    assert "omp atomic" in built.source.read_text()
+    assert sut is not None and any(c.atomic for c in sut.loops)
+    alone = sum(c.weight * (c.cycles + predict.CALL_CYCLES * c.calls) / c.elements for c in sut.loops if c.atomic)
+    assert sut.compute >= alone

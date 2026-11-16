@@ -165,8 +165,10 @@ Status: built (`alloy/heuristics/predict.py`). Picks one candidate per scope fro
   declared finite), as long as its verdict passes within the band. The default level, `contract` for a scope with a
   reduction or scan, else `fast` when the inputs are declared finite, else `noerrno` (shared with NestForge's
   defaults), only breaks ties; without verdicts (no manifest) a pick relaxes no further than it.
-- `predict.choose`: among the correct distinct builds, those within 2% of the fewest predicted cycles per element;
-  of those the default level's, then the first in sweep order. Without any correct build the default build ships.
+- `predict.choose` (A12, 2026-11-16): the scope's default is its first correct distinct build at the default level.
+  The default stays unless it is predicted and a correct build is predicted more than `timing.speculative_margin`
+  (the matrix, calibrated on llr40) fewer cycles per element; then the cheapest wins, a tie going to the default
+  level, then to sweep order. Without any correct build the first build ships.
 - Bench delivery (`hb_plugin.adapter.graded_pick`, speculative and profile mode): the pick ships only if `/score`
   grades it correct and no slower than the plain program (no scope outlined, what `alloy_none` delivers); else the
   plain program ships, and the episode record names `none` as every scope's build.
@@ -288,8 +290,8 @@ Modes (`api.generate(..., mode=)`):
     modules' peak from a saved `dmidecode -t 17` (`$ALLOY_MEMORY_DEVICES`, default
     `$XDG_CACHE_HOME/alloy/dmidecode-17.txt`; `sudo dmidecode -t 17 > that` once), else `dmidecode` run directly,
     else a measured parallel copy.
-  - Pick: the correct build with the lowest cost; builds within 2% tie and go to the default FP level
-    (`heuristics/fp.py`), then sweep order. The verdict matrix shows `cycles/elem`; `best/` links the picks.
+  - Pick: the default build unless a correct build is predicted more than `timing.speculative_margin` cheaper,
+    then the cheapest (ties to the default FP level of `heuristics/fp.py`, then sweep order). The verdict matrix shows `cycles/elem`; `best/` links the picks.
   - Fission (`heuristics/fission.py`): one more one-factor candidate per compiler when a flat top-level map keeps
     more values live than the host's vector registers (16 on x86-64, 32 with AVX-512 and on aarch64). Work/depth:
     a code node's level is 1 + its deepest producer's; the body is cut after the level that leaves the least

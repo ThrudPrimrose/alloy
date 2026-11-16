@@ -2,13 +2,16 @@
 """The CPUs Alloy runs on: one hardware thread per physical core, never an SMT sibling."""
 
 import functools
+import json
 import os
 import pathlib
 import re
 import resource
 import subprocess
+import tempfile
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -197,17 +200,110 @@ def memory_bandwidth() -> Bandwidth:
         return Bandwidth(measured_bandwidth(), "stream")
 
 
-@functools.lru_cache(maxsize=1, typed=True)
-def max_frequency_hz() -> float:
-    """The first usable CPU's maximum clock: cpufreq's ``cpuinfo_max_freq``, else the highest ``cpu MHz`` listed."""
-    cpu = min(os.sched_getaffinity(0))
-    path = pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq")
-    if path.is_file():
-        return int(path.read_text()) * 1e3
+@dataclass(slots=True, frozen=True)
+class Clock:
+    """A CPU clock and its source: ``cpufreq`` (the first usable CPU's maximum), ``cpuinfo`` (the highest ``cpu MHz``
+    listed), ``lscpu`` (its ``CPU max MHz``), or ``measured`` (the running clock of a chain of dependent additions, one
+    per cycle on every current core; an aarch64 kernel lists no ``cpu MHz`` and a container often hides cpufreq)."""
+
+    hz: float
+    source: str
+
+
+def cpufreq_hz() -> float | None:
+    path = pathlib.Path(f"/sys/devices/system/cpu/cpu{min(os.sched_getaffinity(0))}/cpufreq/cpuinfo_max_freq")
+    return int(path.read_text()) * 1e3 if path.is_file() else None
+
+
+def cpuinfo_hz() -> float | None:
     mhz = re.findall(r"^cpu MHz\s*:\s*([\d.]+)", pathlib.Path("/proc/cpuinfo").read_text(), re.MULTILINE)
-    if not mhz:
-        raise RuntimeError("neither cpufreq nor /proc/cpuinfo gives a CPU clock")
-    return max(float(m) for m in mhz) * 1e6
+    return max(float(m) for m in mhz) * 1e6 if mhz else None
+
+
+def lscpu_fields(entries: list[dict[str, object]]) -> dict[str, str]:
+    """``lscpu --json``'s fields, its nested ``children`` flattened."""
+    out: dict[str, str] = {}
+    for entry in entries:
+        out[str(entry.get("field", ""))] = str(entry.get("data", ""))
+        children = entry.get("children")
+        if isinstance(children, list):
+            out |= lscpu_fields(children)
+    return out
+
+
+def lscpu_hz() -> float | None:
+    try:
+        run = subprocess.run(["lscpu", "--json"], capture_output=True, text=True, check=False, timeout=30)
+    except FileNotFoundError:
+        return None
+    if run.returncode != 0:
+        return None
+    mhz = lscpu_fields(json.loads(run.stdout).get("lscpu", [])).get("CPU max MHz:", "")
+    return float(mhz) * 1e6 if mhz.replace(".", "", 1).isdigit() and float(mhz) > 0 else None
+
+
+#: Eight dependent additions per iteration, the chain the measured clock times (the loop counter runs beside it).
+CHAIN = """#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+#if defined(__aarch64__)
+#define ADD asm volatile("add %0, %0, #1" : "+r"(x));
+#else
+#define ADD asm volatile("add $1, %0" : "+r"(x));
+#endif
+static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
+int main(void) {
+  double best = 0.0;
+  uint64_t x = 0;
+  for (int round = 0; round < 5; ++round) {
+    double start = now(), took;
+    uint64_t adds = 0;
+    do {
+      for (int i = 0; i < 1000000; ++i) { ADD ADD ADD ADD ADD ADD ADD ADD }
+      adds += 8000000;
+    } while ((took = now() - start) < 0.05);
+    if (adds / took > best) best = adds / took;
+  }
+  printf("%.0f %llu\\n", best, (unsigned long long)(x & 1));
+  return 0;
+}
+"""
+
+
+def measured_hz() -> float | None:
+    """The best of five 50-ms runs of :data:`CHAIN`, built by the system C compiler; ``None`` without one."""
+    with tempfile.TemporaryDirectory(prefix="alloy_clock_") as folder:
+        source, binary = pathlib.Path(folder) / "chain.c", pathlib.Path(folder) / "chain"
+        source.write_text(CHAIN)
+        try:
+            subprocess.run(["cc", "-O2", str(source), "-o", str(binary)], check=True, capture_output=True, timeout=60)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return None
+        run = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=60)
+    return float(run.stdout.split()[0])
+
+
+#: The clock's sources in the order they are asked.
+CLOCK_SOURCES: tuple[tuple[str, Callable[[], float | None]], ...] = (
+    ("cpufreq", cpufreq_hz),
+    ("cpuinfo", cpuinfo_hz),
+    ("lscpu", lscpu_hz),
+    ("measured", measured_hz),
+)
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def clock() -> Clock:
+    """The CPU clock from the first of :data:`CLOCK_SOURCES` that answers."""
+    for source, probe in CLOCK_SOURCES:
+        if (hz := probe()) is not None:
+            return Clock(hz, source)
+    raise RuntimeError("no CPU clock: no cpufreq, no cpu MHz, no lscpu maximum, and no C compiler to measure one")
+
+
+def max_frequency_hz() -> float:
+    """The clock the predictions turn cycles into seconds with (:func:`clock`)."""
+    return clock().hz
 
 
 def pin_worker(cpus: set[int]) -> None:
@@ -215,3 +311,8 @@ def pin_worker(cpus: set[int]) -> None:
     the route module, because a spawned worker imports the module that defines its initializer."""
     if cpus:
         os.sched_setaffinity(0, cpus)
+
+
+if __name__ == "__main__":
+    found = clock()
+    print(f"clock {found.hz / 1e9:.3f} GHz from {found.source}")

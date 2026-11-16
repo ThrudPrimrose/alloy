@@ -20,6 +20,10 @@ max_program_cache_factor = 16.0
 screen_reps = 11
 final_reps = 31
 top = 3
+# Speculative mode leaves a scope's default build only for a build predicted this fraction faster; with the default
+# unpredicted it keeps the default. Calibrated on llr40 (notes A12): the smallest value with no kernel losing more
+# than the noise band. Provisional until the pilot's records are replayed.
+speculative_margin = 0.05
 
 [build]
 flags = ["-O3", "-march=native", "-fPIC"]
