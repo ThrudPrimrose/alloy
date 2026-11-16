@@ -12,6 +12,7 @@ pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs th
 from hpcagent_bench.harness import plugin_records
 
 from alloy import configuration_matrix
+from alloy.backend.build import Remarks
 from alloy.backend.candidates import Candidate
 from alloy.evaluate.verify import Verdict
 from alloy.hb_plugin import episode
@@ -32,6 +33,7 @@ class FakeBuild:
     name: str
     archive: pathlib.Path | None = pathlib.Path("lib.a")
     duplicate_of: str = ""
+    remarks: Remarks = Remarks(3, ())
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -77,6 +79,8 @@ def test_a_scope_record_counts_the_search_and_keeps_each_axis_best_at_its_defaul
     assert sut.search.best_ns_by_axis["threading"] == 60.0
     assert sut.search.best_ns_by_axis["compiler"] == 60.0
     assert sut.search.predicted_gain is None
+    assert sut.search.fastest == (CON.name, BOT.name, REF.name, SER.name)
+    assert sut.search.vectorized == 3
 
 
 def test_the_plain_program_records_no_axes_and_an_untimed_search_no_default() -> None:

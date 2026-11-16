@@ -44,6 +44,8 @@ __all__ = [
 SCHEMA = 2
 #: Bytes of the record's data under the bench's cap, the rest left for the envelope.
 BUDGET = CAP_BYTES - 1024
+#: How many of a scope's fastest stubs its record names.
+FASTEST = 5
 #: ``(chosen, note)`` of every scope when the plain program, no scope outlined, is delivered.
 PLAIN = ("none", "the plain program")
 
@@ -67,7 +69,8 @@ class ScopeSearch:
     duplicate), verified correct, rejected by verification, and timed as stubs. ``default_ns`` is the reference's stub
     time, ``None`` untimed; ``best_ns_by_axis[axis]`` the fastest stub among the timed builds whose ``axis`` holds the
     reference's value; ``predicted_gain`` the reference's predicted cycles over the delivered build's, ``None``
-    without both predictions."""
+    without both predictions; ``fastest`` the :data:`FASTEST` builds of the fewest stub ns, fastest first (E1's hit
+    rate at 1 and 5); ``vectorized`` the loops the compiler reports vectorized in the delivered build."""
 
     built: int
     verified: int
@@ -76,6 +79,8 @@ class ScopeSearch:
     default_ns: float | None
     best_ns_by_axis: dict[str, float]
     predicted_gain: float | None
+    fastest: tuple[str, ...]
+    vectorized: int
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -166,6 +171,8 @@ def scope_record(
         default_ns=stubs.get(reference.name),
         best_ns_by_axis=best_by_axis(axes_of[reference.name], stubs, axes_of),
         predicted_gain=predicted_gain(predicted, reference, delivered),
+        fastest=tuple(sorted(stubs, key=stubs.__getitem__)[:FASTEST]),
+        vectorized=(delivered or reference).remarks.vectorized,
     )
     chosen, note = PLAIN if delivered is None else (delivered.name, delivered.candidate.note)
     delivered_axes = {} if delivered is None else axes(delivered.candidate, matrix)
