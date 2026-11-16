@@ -331,3 +331,39 @@ def test_a_gpu_column_extends_only_the_pipeline_that_hands_a_tuner_its_offloaded
     for flavor in ("alloy_profile", "alloy_speculative"):
         gpu_columns = [column for column in plugin["flavors"][flavor]["extends"] if "_gpu_" in column]
         assert gpu_columns == ["dace_gpu_canon"]
+
+
+def test_a_gpu_episode_records_each_maps_block_or_the_pipelines_with_its_reason():
+    shapes = {1: (32, 8, 1), 0: (256, 1, 1)}
+
+    sut = adapter.gpu_scopes(shapes, True, "profiled")
+    fallback = adapter.gpu_scopes(shapes, False, "graded wrong")
+
+    assert [(s.symbol, s.chosen, s.axes) for s in sut] == [
+        ("map0", "256,1,1", {"block": "256,1,1"}),
+        ("map1", "32,8,1", {"block": "32,8,1"}),
+    ]
+    assert [(s.chosen, s.note, s.axes) for s in fallback] == [("none", "graded wrong", {})] * 2
+    assert [s.symbol for s in adapter.gpu_scopes({}, False, "no maps")] == ["program"]
+
+
+def test_a_speculative_gpu_episode_whose_shapes_fail_records_the_fallback(monkeypatch: pytest.MonkeyPatch):
+    kept: list[tuple[int, object]] = []
+    task = Task("tsvc_2_vpv", SourceMode.ANY, Language.CUDA, image="nvidia")
+
+    def no_report(*_: object) -> object:
+        raise RuntimeError("no compiler report")
+
+    monkeypatch.setattr(adapter.gpu, "speculate", no_report)
+    monkeypatch.setattr(adapter.gpu, "native_arch", lambda dialect: "8.9")
+    monkeypatch.setattr(adapter, "device_submission", lambda *args: BASE)
+
+    sut = adapter.speculative_gpu(task, "canon_gpu", lambda schema, data: kept.append((schema, data)))  # type: ignore[arg-type,return-value]
+
+    assert sut is BASE
+    ((schema, data),) = kept
+    assert isinstance(data, dict) and (schema, data["mode"]) == (2, "gpu-speculative")
+    assert data["scopes"] == [
+        {"symbol": "program", "reference": "pipeline", "chosen": "none", "note": "dropped: no compiler report",
+         "axes": {}, "search": None}
+    ]  # fmt: skip

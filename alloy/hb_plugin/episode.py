@@ -2,12 +2,15 @@
 """An Alloy flavor's record of one episode, kept as the bench's plugin record (``plugin_records/alloy.json``, archived
 with the grade): what each scope delivered and along which axes, and what its search built, verified and timed."""
 
+import hashlib
 import json
 import pathlib
 import sys
+import threading
 from collections.abc import Callable, Mapping
 
 import pydantic
+from hpcagent_bench.harness import plugin_records
 from hpcagent_bench.harness.plugin_records import CAP_BYTES
 from pydantic.dataclasses import dataclass
 
@@ -28,6 +31,9 @@ __all__ = [
     "EpisodeSeconds",
     "Keep",
     "ScopeSearch",
+    "ToolCall",
+    "append_tool_call",
+    "file_hash",
     "axes",
     "episode",
     "keep_episode",
@@ -189,3 +195,48 @@ def keep_episode(keep: Keep, data: pydantic.JsonValue) -> None:
         keep(SCHEMA, data)
     except ValueError as exc:
         print(f"alloy: episode record not kept: {exc}", file=sys.stderr, flush=True)
+
+
+#: The plugin whose record an Alloy tool appends to.
+PLUGIN = "alloy"
+
+
+@dataclass(slots=True, frozen=True, config=RECORD)
+class ToolCall:
+    """One call of an Alloy tool in an agent's episode: the tool, its arguments (never source text), its wall
+    seconds, whether it answered, and the SHA-256 of the library and of every source unit it returned (empty for a
+    query), so an analysis can tell Alloy's result from the agent's own submission."""
+
+    tool: str
+    arguments: dict[str, str]
+    seconds: float
+    ok: bool
+    library_sha256: str
+    unit_sha256: dict[str, str]
+
+
+def file_hash(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+
+
+#: One lock per episode folder: the judge serves an episode's tool calls on threads of one process.
+LOCKS: dict[pathlib.Path, threading.Lock] = {}
+LOCKS_GUARD = threading.Lock()
+
+
+def append_tool_call(folder: pathlib.Path, call: ToolCall) -> None:
+    """Append ``call`` to the ``tools`` list of the episode folder's Alloy record (read, appended, written whole);
+    the bench archives the record with the episode's next ``/submit`` grade. A record at the bench's cap keeps its
+    earlier calls and logs the one it drops."""
+    with LOCKS_GUARD:
+        lock = LOCKS.setdefault(folder.resolve(), threading.Lock())
+    with lock:
+        path = folder / plugin_records.FOLDER / f"{PLUGIN}.json"
+        held = plugin_records.read(path) if path.is_file() else None
+        data = held.data if held is not None and isinstance(held.data, dict) else {"schema": SCHEMA}
+        tools = data.get("tools")
+        calls = [*(tools if isinstance(tools, list) else []), json.loads(dumped_json(call))]
+        try:
+            plugin_records.keep(folder, PLUGIN, SCHEMA, {**data, "tools": calls})
+        except ValueError as exc:
+            print(f"alloy: tool call {call.tool} not recorded: {exc}", file=sys.stderr, flush=True)

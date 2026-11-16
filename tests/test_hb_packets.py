@@ -19,13 +19,15 @@ from hpcagent_bench import config, packets, plugins, prompt_build
 from hpcagent_bench.api import RunConfig
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle
 from hpcagent_bench.config import SubmitFeedback
-from hpcagent_bench.harness import tools
+from hpcagent_bench.harness import plugin_records, tools
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.judge_scheduler import DeviceSlot
 from hpcagent_bench.harness.judge_wire import GradeAnswer, JudgeAnswer
 from hpcagent_bench.harness.routes import ROUTES, RouteRequest
 from hpcagent_bench.harness.sandbox import AGENT_FOLDERS_LOG, AgentFolderLine
 from hpcagent_bench.harness.service import ServiceConfig, make_server
+
+from alloy.hb_plugin import episode
 
 KERNEL = "tsvc_2_vpv"
 
@@ -121,8 +123,24 @@ def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_its_tool_bui
     result = sut.answer["result"]
     assert isinstance(result, dict)
     assert pathlib.Path(str(result["library"])).is_relative_to(agent)
+    (call_kept,) = recorded_calls(agent)  # A4: the episode's record names the call and what it returned
+    assert (call_kept["tool"], call_kept["ok"], call_kept["arguments"]) == (
+        "alloy_speculative",
+        True,
+        {"kernel": KERNEL},
+    )
+    assert call_kept["library_sha256"] == episode.file_hash(pathlib.Path(str(result["library"])))
+    units = call_kept["unit_sha256"]
+    assert isinstance(units, dict) and isinstance(scopes := result["scopes"], list)
+    assert set(units) == {"program.c", *(scope["source"] for scope in scopes)}
     grade = graded(judge_url, result)
     assert grade.build_ok is True and grade.correct is True, grade.detail
+
+
+def recorded_calls(folder: pathlib.Path) -> list[dict[str, object]]:
+    data = plugin_records.found(folder)["alloy"].data
+    assert isinstance(data, dict) and isinstance(data["tools"], list)
+    return [c for c in data["tools"] if isinstance(c, dict)]
 
 
 def test_the_profile_tool_answers_a_library_the_judge_grades_correct(
@@ -241,6 +259,20 @@ def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop():
 
 def test_the_isa_tool_refuses_a_query_it_does_not_serve():
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
+
+
+def test_each_isa_query_of_an_episode_appends_one_tool_line(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HPCAGENT_BENCH_SHARED_DIR", str(tmp_path))
+
+    isa_call("lookup", ["avx2", "fma", "f64"])
+    isa_call("validate", [])
+
+    sut = recorded_calls(tmp_path)
+    assert [(c["tool"], c["ok"], c["library_sha256"], c["unit_sha256"]) for c in sut] == [
+        ("alloy_isa", True, "", {}),
+        ("alloy_isa", False, "", {}),
+    ]
+    assert sut[0]["arguments"] == {"command": "lookup", "arguments": "['avx2', 'fma', 'f64']"}
 
 
 def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake():

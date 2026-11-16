@@ -47,7 +47,7 @@ from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, execution_order
 from alloy.evaluate.verify import Verdict
 from alloy.frontend import inputs, scopes
-from alloy.hb_plugin.episode import EpisodeScope, EpisodeSeconds, Keep, episode, keep_episode, scope_record
+from alloy.hb_plugin.episode import PLAIN, EpisodeScope, EpisodeSeconds, Keep, episode, keep_episode, scope_record
 from alloy.report import Mode
 
 __all__ = [
@@ -321,7 +321,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, keep: Keep) -> Submiss
     slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
     GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`)."""
     if target_of(task) is Target.GPU:
-        return profile_gpu(task, pipeline)
+        return profile_gpu(task, pipeline, keep)
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -414,7 +414,7 @@ def speculative(task: Task, pipeline: str, deliver: Deliver, keep: Keep) -> Subm
     never timed, if ``/score`` grades it correct and no slower than the plain program, else the plain program. A GPU
     task's device maps take their speculated threadblock shapes instead (:func:`speculative_gpu`)."""
     if target_of(task) is Target.GPU:
-        return speculative_gpu(task, pipeline)
+        return speculative_gpu(task, pipeline, keep)
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -516,7 +516,21 @@ def gpu_pipeline(task: Task, spec: BenchSpec, pipeline: str) -> gpu.Pipeline:
     return run
 
 
-def profile_gpu(task: Task, pipeline: str) -> Submission:
+def gpu_scopes(shapes: dict[int, gpu.Shape], delivered: bool, note: str) -> tuple[EpisodeScope, ...]:
+    """A GPU episode's record per device map: its threadblock shape when ``delivered``, else the pipeline's own
+    blocks (``none``) with the reason in ``note``; one ``program`` entry when no map was identified."""
+    if not shapes:
+        return (EpisodeScope("program", "pipeline", PLAIN[0], note, {}, None),)
+    blocks = {ordinal: ",".join(str(n) for n in shape) for ordinal, shape in sorted(shapes.items())}
+    return tuple(
+        EpisodeScope(
+            f"map{o}", "pipeline", block if delivered else PLAIN[0], note, {"block": block} if delivered else {}, None
+        )
+        for o, block in blocks.items()
+    )
+
+
+def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     """Every device map of ``task``'s kernel after ``pipeline`` at its profiled threadblock shape: the speculated
     shapes (:func:`alloy.gpu.speculate`), then each map's next ranked ones timed by the judge (:func:`alloy.gpu.descend`)
     while the kernel's time allows; delivered if ``/score`` grades it correct and no slower than the pipeline's own
@@ -531,6 +545,7 @@ def profile_gpu(task: Task, pipeline: str) -> Submission:
         _, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"alloy: {spec.short_name}: no speculated threadblocks, default kept: {exc}", file=sys.stderr, flush=True)
+        record_episode(keep, "gpu-profile", task, started, scopes=gpu_scopes({}, False, f"no speculated blocks: {exc}"))
         return default
     costs: list[float] = []
 
@@ -553,22 +568,31 @@ def profile_gpu(task: Task, pipeline: str) -> Submission:
     shapes = gpu.descend(run, picks, timed, affordable)
     print(f"alloy: {spec.short_name}: threadblocks {shapes} after {len(costs)} profiles", file=sys.stderr, flush=True)
     chosen = device_submission(task, spec, run(shapes), form_dialect(task))
-    return chosen if faster_correct(judge, lambda: chosen, lambda: default, task.kernel) else default
+    kept = faster_correct(judge, lambda: chosen, lambda: default, task.kernel)
+    note = "profiled" if kept else "graded slower or wrong: the pipeline's blocks"
+    record_episode(keep, "gpu-profile", task, started, stubs=len(costs), scopes=gpu_scopes(shapes, kept, note))
+    return chosen if kept else default
 
 
-def speculative_gpu(task: Task, pipeline: str) -> Submission:
+def speculative_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     """Every device map of ``task``'s kernel after ``pipeline`` at its speculated threadblock shape
     (:func:`alloy.gpu.speculate`, for this machine's device), if ``/score`` grades it correct, else the pipeline's
     own blocks."""
+    started = time.monotonic()
     spec = BenchSpec.load(task.kernel)
     dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
+    blocks: dict[int, gpu.Shape] = {}
     try:
         program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
         blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
         print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
         chosen = device_submission(task, spec, program, form_dialect(task))
         if judge_client().score(chosen, task.kernel).correct:
+            record_episode(keep, "gpu-speculative", task, started, scopes=gpu_scopes(blocks, True, "speculated"))
             return chosen
+        reason = "graded wrong"
     except (OSError, RuntimeError, ValueError) as exc:  # no compiler report, or a judge that does not answer
         print(f"alloy: {spec.short_name}: speculated threadblocks dropped: {exc}", file=sys.stderr, flush=True)
+        reason = f"dropped: {exc}"
+    record_episode(keep, "gpu-speculative", task, started, scopes=gpu_scopes(blocks, False, reason))
     return device_submission(task, spec, run({}), form_dialect(task))
