@@ -36,6 +36,10 @@ GPU_MATRIX = pathlib.Path(__file__).with_name("gpu_matrix.toml")
 #: The device language of a dialect, and the judge's evaluation mode for it.
 LANGUAGE = {"cuda": Language.CUDA, "hip": Language.HIP}
 MODE = {"cuda": Mode.GPU_CUDA, "hip": Mode.GPU_HIP}
+#: The emission axis on a device unit: where DaCe declares a kernel's scope scalars besides ``eager`` (the default),
+#: the choice AMD's compiler answers to. DaCe's other emission knobs do not reach device code: a kernel's pointers are
+#: always ``__restrict__`` and its scalars always passed by value.
+SCALAR_DECL = ("late", "late_fused")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,16 +61,21 @@ class GpuCompiler:
 
 @dataclass(frozen=True, slots=True)
 class GpuCandidate:
-    """One build of a GPU program: a compiler, a floating-point level ("" the compiler's default), and whether
-    floating-point atomics may take the unsafe hardware path (AMD, a scope with an accumulation)."""
+    """One build of a GPU program: a compiler, a floating-point level ("" the compiler's default), whether
+    floating-point atomics may take the unsafe hardware path (AMD, a scope with an accumulation), and where the device
+    code declares its scalars (DaCe's ``scalar_decl``; "" the default, ``eager``)."""
 
     compiler: str
     fp: str = ""
     unsafe_atomics: bool = False
+    scalar_decl: str = ""
 
     @property
     def name(self) -> str:
-        return "_".join(filter(None, (self.compiler, self.fp, "unsafe-atomics" if self.unsafe_atomics else "")))
+        atomics = "unsafe-atomics" if self.unsafe_atomics else ""
+        return "_".join(
+            filter(None, (self.compiler, self.fp, atomics, self.scalar_decl and f"decl-{self.scalar_decl}"))
+        )
 
 
 def usage(built: "GpuBuild", dialect: str) -> dict[str, gpu.Usage]:
@@ -114,8 +123,8 @@ def load(path: pathlib.Path = GPU_MATRIX) -> dict[str, GpuCompiler]:
 
 def candidates(compilers: dict[str, GpuCompiler], dialect: str, accumulates: bool) -> list[GpuCandidate]:
     """The default (the dialect's first compiler with no flag) and every single-factor change of it: each other
-    compiler, each floating-point level, and the unsafe atomics where the program accumulates and the compiler has
-    them."""
+    compiler, each floating-point level, the unsafe atomics where the program accumulates and the compiler has them,
+    and each other place for the device code's scalar declarations (:data:`SCALAR_DECL`)."""
     own = [c for c in compilers.values() if c.dialect == dialect]
     if not own:
         return []
@@ -125,6 +134,7 @@ def candidates(compilers: dict[str, GpuCompiler], dialect: str, accumulates: boo
     out += [GpuCandidate(first.name, level) for level in first.fp]
     if accumulates and first.atomics:
         out.append(GpuCandidate(first.name, unsafe_atomics=True))
+    out += [GpuCandidate(first.name, scalar_decl=place) for place in SCALAR_DECL]
     return out
 
 

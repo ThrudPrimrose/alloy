@@ -14,11 +14,12 @@ from collections.abc import Callable, Sequence
 from typing import Protocol
 
 import dace
+from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from hpcagent_agent.tools.http_json import judge_rank, terminal_timeout
 from hpcagent_bench import config, paths
 from hpcagent_bench.categories import Language, Preset, SourceMode
-from hpcagent_bench.cpf.bridge import render_canonical
+from hpcagent_bench.cpf.bridge import RenderedForm, render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
 from hpcagent_bench.cpf.canonical import PARSE_SIMPLIFY
 from hpcagent_bench.frameworks.benchmark import Benchmark
@@ -537,14 +538,25 @@ def gpu_arch(dialect: str) -> str:
 
 
 def gpu_libraries(task: Task, spec: BenchSpec, program: dace.SDFG) -> list[tuple[gpu_build.GpuBuild, Submission]]:
-    """The device candidates of ``program`` (A10: compiler and floating-point level, :mod:`alloy.gpu_build`), each
-    built into a library, the default first; a build this machine refuses or a duplicate device object drops out."""
+    """The device candidates of ``program`` (A10: compiler, floating-point level, and where scalars are declared,
+    :mod:`alloy.gpu_build`), each built into a library, the default first; a build this machine refuses or a
+    duplicate device object drops out."""
     dialect = form_dialect(task)
-    form = render_canonical(spec, spec.short_name, program, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
+
+    def rendered_form(scalar_decl: str) -> RenderedForm:
+        with set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=scalar_decl or "eager"):
+            return render_canonical(
+                spec, spec.short_name, program, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS
+            )
+
+    forms = {"": rendered_form("")}
     compilers, folder, arch = gpu_build.load(), scratch_folder(spec), gpu_arch(dialect)
     seen: set[str] = set()
     built: list[tuple[gpu_build.GpuBuild, Submission]] = []
-    for candidate in gpu_build.candidates(compilers, dialect, "atomic" in form.device_code):
+    for candidate in gpu_build.candidates(compilers, dialect, "atomic" in forms[""].device_code):
+        if candidate.scalar_decl not in forms:
+            forms[candidate.scalar_decl] = rendered_form(candidate.scalar_decl)
+        form = forms[candidate.scalar_decl]
         result = gpu_build.build(compilers, candidate, form.code, form.device_code, folder, arch, tuple(form.libraries))
         if result.library is None or result.device_hash in seen:
             why = result.error.splitlines()[-1] if result.error else "a duplicate device object"

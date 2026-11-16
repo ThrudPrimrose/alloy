@@ -28,10 +28,12 @@ def test_the_default_is_the_dialects_first_compiler_and_every_other_candidate_ch
     sut = gpu_build.candidates(COMPILERS, "hip", accumulates=True)
 
     assert sut[0] == GpuCandidate("hipcc")
-    assert [c.name for c in sut[1:]] == ["amdclang", "hipcc_nocontract", "hipcc_fast", "hipcc_unsafe-atomics"]
+    assert [c.name for c in sut[1:]] == [
+        "amdclang", "hipcc_nocontract", "hipcc_fast", "hipcc_unsafe-atomics", "hipcc_decl-late", "hipcc_decl-late_fused"
+    ]  # fmt: skip
     assert not [c for c in gpu_build.candidates(COMPILERS, "hip", accumulates=False) if c.unsafe_atomics]
     assert [c.name for c in gpu_build.candidates(COMPILERS, "cuda", accumulates=True)] == [
-        "nvcc", "clang_cuda", "nvcc_nocontract", "nvcc_fast"
+        "nvcc", "clang_cuda", "nvcc_nocontract", "nvcc_fast", "nvcc_decl-late", "nvcc_decl-late_fused"
     ]  # fmt: skip
 
 
@@ -85,3 +87,18 @@ def test_nvcc_builds_each_floating_point_level_of_a_bench_kernel_into_its_own_de
     assert all(b.library is not None and b.library.is_file() for b in sut), [b.error for b in sut]
     assert len({b.device_hash for b in sut}) == len(sut), "contraction off and fast math change the device code"
     assert all(gpu_build.usage(b, "cuda") for b in sut), "each build printed its kernels' registers"
+
+
+@pytest.mark.cuda
+def test_the_scalar_declaration_axis_reaches_the_device_code_of_a_kernel_with_scope_scalars(tmp_path, monkeypatch):
+    """A10 emission axis: where scalars are declared changes the device unit (cloudsc_saturation has scope scalars)."""
+    spec = BenchSpec.load("cloudsc_saturation")
+    sdfg = adapter.pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU)
+    task = Task("cloudsc_saturation", SourceMode.ANY, Language.CUDA, image="nvidia")
+    monkeypatch.setattr(adapter, "scratch_folder", lambda spec: tmp_path)
+    monkeypatch.setattr(adapter, "gpu_arch", lambda dialect: "sm_89")
+
+    sut = {result.candidate.name: result for result, _ in adapter.gpu_libraries(task, spec, sdfg)}
+
+    assert {"nvcc", "nvcc_decl-late"} <= set(sut), sorted(sut)
+    assert sut["nvcc"].device_hash != sut["nvcc_decl-late"].device_hash
