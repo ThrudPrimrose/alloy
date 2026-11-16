@@ -147,6 +147,25 @@ def test_occupancy_past_saturation_does_not_reorder_shapes():
     assert gpu.rank_key(*first) == gpu.rank_key(*second)[:3] + (False, 40)
 
 
+def test_a_row_of_half_a_wavefront_ranks_below_a_full_one_on_hip_only():
+    half = ((32, 8, 1), gpu.Usage(40, 0, 0), 0.5)
+    full = ((64, 4, 1), gpu.Usage(40, 0, 0), 0.5)
+
+    assert gpu.rank_key(*half, gpu.LANES["cuda"]) == gpu.rank_key(*full, gpu.LANES["cuda"])
+    assert gpu.rank_key(*full, gpu.LANES["hip"]) < gpu.rank_key(*half, gpu.LANES["hip"])
+
+
+def test_the_gpu_form_follows_the_task_language_and_else_the_image():
+    from hpcagent_bench.categories import Language, SourceMode
+    from hpcagent_bench.harness.task import Task
+
+    from alloy.hb_plugin.adapter import form_dialect
+
+    assert form_dialect(Task("jacobi_2d", SourceMode.ANY, Language.CUDA)) == "cuda"
+    assert form_dialect(Task("jacobi_2d", SourceMode.ANY, Language.HIP, image="nvidia")) == "hip"
+    assert form_dialect(Task("jacobi_2d", SourceMode.ANY, Language.C, image="amd")) == "hip"
+
+
 def bench_pipeline(kernel: str):
     from hpcagent_bench.cpf.cache import Target
     from hpcagent_bench.precision import Precision
@@ -208,7 +227,7 @@ def test_the_submitted_hip_form_launches_every_kernel_with_its_picked_block():
     program, picks = gpu.speculate(bench_pipeline("jacobi_2d"), "cuda", "8.9")
 
     sut = device_submission(
-        Task("jacobi_2d", SourceMode.RESTRICTED, Language.HIP), BenchSpec.load("jacobi_2d"), program
+        Task("jacobi_2d", SourceMode.RESTRICTED, Language.HIP), BenchSpec.load("jacobi_2d"), program, "hip"
     )
 
     assert sut.language is Language.HIP and sut.source and sut.device_source

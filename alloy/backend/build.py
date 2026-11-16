@@ -147,8 +147,9 @@ def rendered_or_error(scope: Scope, candidate: Candidate, matrix: Matrix) -> str
     over a call SVE has no instruction for): the candidate is a failed build that names its cause."""
     try:
         return render(scope, candidate, matrix)
-    except (NotImplementedError, RuntimeError, ValueError) as err:
-        reason = " ".join(str(err).split())
+    # whatever a variant's transformation raises fails that candidate only, not the sweep
+    except Exception as err:
+        reason = " ".join(f"{type(err).__name__}: {err}".split())
         return f"#error alloy: {candidate.note} cannot be rendered: {reason}\n"
 
 

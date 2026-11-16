@@ -66,6 +66,7 @@ hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out += __shfl_down(out, d
 ref = "float s = 0; for (int k = 0; k < lanes; k++) s += in[k]; want[0] = s;"
 check = "first"
 tol = 1e-6
+domain = [0.5, 4.0]  # not symmetric: a sum of zero would equal the untouched output
 note = "The sum lands in lane 0; the other lanes hold partial sums. Use __shfl_xor for the sum in every lane."
 
 [ops.broadcast]
@@ -81,6 +82,7 @@ cuda = "out = (float)__popc(__ballot_sync(0xffffffffu, v > 0.0f));"
 hip = "out = (float)__popcll(__ballot(v > 0.0f));"
 ref = "int n = 0; for (int k = 0; k < lanes; k++) n += in[k] > 0.0f; for (int k = 0; k < lanes; k++) want[k] = (float)n;"
 tol = 0.0
+domain = [-1.0, 3.0]  # a quarter of the lanes negative: an inverted predicate counts differently
 note = "The ballot is a 32-bit mask on CUDA and a 64-bit one on HIP: count it with __popc or __popcll."
 
 [ops.add_half2]
@@ -106,4 +108,5 @@ hip = "atomicAdd(total, v); __syncthreads(); out = *total;"
 ref = "float s = 0; for (int k = 0; k < lanes; k++) s += in[k]; want[0] = s;"
 check = "first"
 tol = 1e-6
+domain = [0.5, 4.0]
 note = "Floating-point atomicAdd on global memory; on HIP/CDNA compile with -munsafe-fp-atomics for a hardware atomic."

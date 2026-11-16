@@ -143,7 +143,7 @@ int main() {{
     for (int k = 0; k < {checked}; k++) {{
         double scale = fabs((double)want[k]) > 1.0 ? fabs((double)want[k]) : 1.0;
         double rel = fabs((double)got[k] - (double)want[k]) / scale;
-        if (!(rel <= worst)) worst = rel;
+        if (rel != rel || rel > worst) worst = rel;  // a NaN stays the worst
     }}
     printf("ALLOY-SIMT rel=%.6g\\n", worst);
     return 0;
@@ -226,7 +226,13 @@ def verdicts_text(found: list[Verdict]) -> str:
 
 def verify() -> list[Verdict]:
     here = runnable()
+    kept = verdicts()
     found = [check(row, dialect, dialect in here) for row in rows() for dialect in DIALECTS]
+    # a row this machine can only compile keeps the verdict of the machine that ran it
+    found = [
+        kept[v.op, v.dialect] if v.ok is None and (v.op, v.dialect) in kept and kept[v.op, v.dialect].ok else v
+        for v in found
+    ]
     VERDICTS_PATH.write_text(verdicts_text(found))
     recorded.cache_clear()
     return found

@@ -362,7 +362,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
         return Verdict(False, "kernel build", str(exc))
     if seen is None:
         return Verdict(None, f"host cannot run {isa}/{dtype}", "")
-    return judged(k, seen, "kernel under qemu" if isa in CROSS else "kernel vs wider libm")
+    return judged(k, seen, "kernel under qemu" if emulated(isa) is not None else "kernel vs wider libm")
 
 
 def judged(k: Kernel, seen: Measured, basis: str) -> Verdict:

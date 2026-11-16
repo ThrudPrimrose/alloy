@@ -151,6 +151,33 @@ def new_api() -> bool:
     return any((root / "hw/inc/api/compute").is_dir() for root in roots)
 
 
+def unpack_mode(ttnn):
+    """``UnpackToDestMode``: tt-metal 0.6x binds it only in the program-descriptor module, 0.8x at the top too."""
+    try:
+        return ttnn.UnpackToDestMode
+    except AttributeError:
+        return ttnn._ttnn.program_descriptor.UnpackToDestMode
+
+
+def source_code(ttnn):
+    """The inline-source kernel type: nested in ``KernelDescriptor`` in tt-metal 0.8x, a module enum in 0.6x."""
+    try:
+        return ttnn.KernelDescriptor.SourceType.SOURCE_CODE
+    except AttributeError:
+        return ttnn._ttnn.program_descriptor.SourceType.SOURCE_CODE
+
+
+def runtime_args(ttnn, values: list):
+    """``values`` as the runtime arguments of core (0, 0): a ``RuntimeArgs`` in tt-metal 0.8x, nested lists
+    indexed ``[x][y]`` in 0.6x."""
+    try:
+        args = ttnn.RuntimeArgs()
+    except AttributeError:
+        return [[values]]
+    args[0][0] = values
+    return args
+
+
 def inputs(row: dict) -> list:
     """Operands drawn from the row's domain ``[lo, hi]``, every element distinct, shaped as TILES tiles."""
     import torch
@@ -198,10 +225,9 @@ def run(dev, row: dict, new: bool) -> dict:
         )
         for i in [*range(len(xs)), OUT_CB]
     ]
-    reader_args, writer_args, compute_args = ttnn.RuntimeArgs(), ttnn.RuntimeArgs(), ttnn.RuntimeArgs()
-    reader_args[0][0] = [TILES, *(t.buffer_address() for t in tensors)]
-    writer_args[0][0] = [TILES, out.buffer_address()]
-    compute_args[0][0] = [TILES]
+    reader_args = runtime_args(ttnn, [TILES, *(t.buffer_address() for t in tensors)])
+    writer_args = runtime_args(ttnn, [TILES, out.buffer_address()])
+    compute_args = runtime_args(ttnn, [TILES])
     per_input = [list(ttnn.TensorAccessorArgs(t).get_compile_time_args()) for t in tensors]
     offsets = [sum(len(a) for a in per_input[:k]) for k in range(len(per_input))]
     config = ttnn.ComputeConfigDescriptor()
@@ -211,8 +237,9 @@ def run(dev, row: dict, new: bool) -> dict:
     if (
         row["dtype"] == "f32" and row["kind"] != "binary"
     ):  # FPU operands unpack to SrcA/SrcB (TF32): only DST takes FP32
-        config.unpack_to_dest_mode = [ttnn.UnpackToDestMode.UnpackToDestFp32] * 64
-    source = ttnn.KernelDescriptor.SourceType.SOURCE_CODE
+        # one mode per circular buffer: tt-metal 0.6x has 32 of them, 0.8x has 64
+        config.unpack_to_dest_mode = [unpack_mode(ttnn).UnpackToDestFp32] * (64 if new else 32)
+    source = source_code(ttnn)
     kernels = [
         ttnn.KernelDescriptor(
             kernel_source=reader(offsets, new), source_type=source, core_ranges=core,

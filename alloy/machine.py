@@ -37,6 +37,8 @@ def largest_cache_bytes() -> int:
     sizes: dict[tuple[str, str], int] = {}
     for cpu in os.sched_getaffinity(0):
         for index in pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/cache").glob("index*"):
+            if not (index / "size").is_file():  # some arm64 kernels list a cache with no size: sysconf below
+                continue
             size = (index / "size").read_text().strip()
             if not size.endswith("K"):  # sysfs reports KiB on Linux
                 raise ValueError(f"{index}/size: {size!r} is not in KiB")

@@ -538,7 +538,9 @@ def write(
     advice: dict[str, str] | None = None,
 ) -> Report:
     """Write ``report.json`` and ``report.md`` (rendered from it), with a copy of the matrix that produced them."""
-    shutil.copyfile(matrix.path, out / "configuration_matrix.toml")
+    copy = out / "configuration_matrix.toml"
+    if not (copy.exists() and copy.samefile(matrix.path)):  # a rerun on the copy an earlier run left in ``out``
+        shutil.copyfile(matrix.path, copy)
     r = assemble(program, reports, matrix, verification, timing, commands, predicted, picked, advice)
     (out / "report.json").write_text(dumped_json(r))
     (out / "report.md").write_text(markdown(r))

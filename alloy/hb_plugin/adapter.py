@@ -4,6 +4,7 @@
 
 import atexit
 import numbers
+import os
 import pathlib
 import shutil
 import sys
@@ -19,11 +20,14 @@ from hpcagent_bench import config, paths
 from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target
+from hpcagent_bench.cpf.canonical import PARSE_SIMPLIFY
 from hpcagent_bench.frameworks.benchmark import Benchmark
 from hpcagent_bench.frameworks.dace_framework import (
     PIPELINES_BY_NAME,
     DaceFramework,
+    apply_pipeline_config,
     enforce_gpu_residency,
+    pipeline_canonicalize,
     pool_gpu_transients,
 )
 from hpcagent_bench.frameworks.framework import framework_class
@@ -174,8 +178,11 @@ def pipeline_sdfg(
     program, _ = framework.implementations(Benchmark(spec.short_name))[0]
     if not isinstance(program, DaceProgram):
         raise TypeError(f"{spec.short_name}: the dace port is not a @dace.program")
-    sdfg = program.to_sdfg(simplify=False)
-    PIPELINES_BY_NAME[pipeline].transform(sdfg, framework.build_context(spec, offloaded))
+    pipe = PIPELINES_BY_NAME[pipeline]
+    # as DaceFramework.build_sdfgs does: the pipeline's config, and canon parsed as the CPF cache parses it
+    apply_pipeline_config(pipe)
+    sdfg = program.to_sdfg(simplify=PARSE_SIMPLIFY if pipe.transform is pipeline_canonicalize else False)
+    pipe.transform(sdfg, framework.build_context(spec, offloaded))
     if target is Target.GPU:  # the bench's residency contract, after every GPU pipeline
         enforce_gpu_residency(sdfg)
         pool_gpu_transients(sdfg)
@@ -326,7 +333,9 @@ def ranked[B: Named](
 def judge_client() -> JudgeClient:
     """A client that waits for a grade as long as the router lets the judge take: given up early, a slow kernel's
     ``/score`` reads as no grade and the plain program is delivered in place of the pick."""
-    return JudgeClient(judge_endpoints()[0], rank=judge_rank(), timeout=terminal_timeout())
+    # the rank is this worker's judge, $JUDGE_URL (as run_tuner pairs them); the endpoint list is for a bare call
+    url = os.environ.get("JUDGE_URL") or judge_endpoints()[0]
+    return JudgeClient(url, rank=judge_rank(), timeout=terminal_timeout())
 
 
 def refuse_restricted(task: Task) -> None:
@@ -379,7 +388,10 @@ def optimize(task: Task, pipeline: str, deliver: Deliver) -> Submission:
         start = time.monotonic()
         try:
             stub = rendered(task, spec, linker.stub(selection, symbol), deliver)
-            return stub_time(judge.profile(stub, task.kernel, reps=PROFILE_REPS, size=size))
+            # one configuration, the slot's width (the judge clamps to it): the default sweep stops at 4 threads
+            return stub_time(
+                judge.profile(stub, task.kernel, threads=[os.cpu_count() or 1], reps=PROFILE_REPS, size=size)
+            )
         finally:
             stub_costs.append(time.monotonic() - start)
 
@@ -504,16 +516,23 @@ def faster_correct(
     return graded.correct and (reference is None or not reference.correct or graded.speedup >= reference.speedup)
 
 
-#: A GPU image -> the dialect its device maps' register use is read in: nvcc's report on an NVIDIA device, hipcc's
-#: on an AMD one. The submission itself is the bench's GPU form, HIP on either (``bridge.DEVICE_LANGUAGE``).
+#: A GPU image -> the dialect of its device: the bench's GPU form is rendered in it (``dace_emit.device_units``) and
+#: the device maps' register use is read from its compiler's report (nvcc, hipcc).
 ANALYSIS_DIALECT = {"nvidia": "cuda", "amd": "hip"}
 
 
-def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG) -> Submission:
-    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form: a HIP host and device source."""
-    form = render_canonical(spec, spec.short_name, sdfg, "hip", task.precision.value, Target.GPU, DEFAULT_HINTS)
-    submission = Submission(language=Language.HIP, source=form.code, device_source=form.device_code)
+def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str) -> Submission:
+    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``: a host and a device
+    source."""
+    form = render_canonical(spec, spec.short_name, sdfg, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
+    submission = Submission(language=Language.parse(dialect), source=form.code, device_source=form.device_code)
     return with_scratch(submission, form.workspace_bytes)
+
+
+def form_dialect(task: Task) -> str:
+    """The dialect ``task``'s GPU form is rendered and submitted in: its language when that is a device one, else
+    its image's."""
+    return task.language.text if task.language.text in ANALYSIS_DIALECT.values() else gpu_dialect(task)
 
 
 def gpu_dialect(task: Task) -> str:
@@ -541,16 +560,23 @@ def profile_gpu(task: Task, pipeline: str) -> Submission:
     deadline = started + resolve_kernel_timeout(spec)
     dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
     judge, size = judge_client(), fast_size(config.current().service.preset)
-    _, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
+    default = device_submission(task, spec, run({}), form_dialect(task))
+    try:
+        _, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"alloy: {spec.short_name}: no speculated threadblocks, default kept: {exc}", file=sys.stderr, flush=True)
+        return default
     costs: list[float] = []
 
     def timed(program: dace.SDFG) -> float | None:
         start = time.monotonic()
         try:
-            answer = judge.profile(device_submission(task, spec, program), task.kernel, reps=PROFILE_REPS, size=size)
-            return stub_time(answer)
-        except (OSError, RuntimeError, ValueError):
-            return None  # a shape the device cannot launch, or no time in the report: not a candidate
+            shaped = device_submission(task, spec, program, form_dialect(task))
+            return stub_time(judge.profile(shaped, task.kernel, reps=PROFILE_REPS, size=size))
+        except (OSError, RuntimeError, ValueError) as exc:
+            # a shape the device cannot launch, a refused profile, or no time in the report: not a candidate
+            print(f"alloy: {spec.short_name}: profile dropped: {exc}", file=sys.stderr, flush=True)
+            return None
         finally:
             costs.append(time.monotonic() - start)
 
@@ -560,8 +586,7 @@ def profile_gpu(task: Task, pipeline: str) -> Submission:
 
     shapes = gpu.descend(run, picks, timed, affordable)
     print(f"alloy: {spec.short_name}: threadblocks {shapes} after {len(costs)} profiles", file=sys.stderr, flush=True)
-    chosen = device_submission(task, spec, run(shapes))
-    default = device_submission(task, spec, run({}))
+    chosen = device_submission(task, spec, run(shapes), form_dialect(task))
     return chosen if faster_correct(judge, lambda: chosen, lambda: default, task.kernel) else default
 
 
@@ -571,10 +596,13 @@ def speculative_gpu(task: Task, pipeline: str) -> Submission:
     own blocks."""
     spec = BenchSpec.load(task.kernel)
     dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
-    program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
-    blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
-    print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
-    chosen = device_submission(task, spec, program)
-    if judge_client().score(chosen, task.kernel).correct:
-        return chosen
-    return device_submission(task, spec, run({}))
+    try:
+        program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
+        blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
+        print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
+        chosen = device_submission(task, spec, program, form_dialect(task))
+        if judge_client().score(chosen, task.kernel).correct:
+            return chosen
+    except (OSError, RuntimeError, ValueError) as exc:  # no compiler report, or a judge that does not answer
+        print(f"alloy: {spec.short_name}: speculated threadblocks dropped: {exc}", file=sys.stderr, flush=True)
+    return device_submission(task, spec, run({}), form_dialect(task))

@@ -45,11 +45,11 @@ up to six rungs: `strict`, `relaxed`, `mid3`, `mid2`, `mid1`, and `fast`. The ru
 fits on the reduced domain (`helpers/mathfit.py` writes `mathkernels.toml`). Which mid rungs exist depends on the
 function and dtype, so a caller asks by bound: `--max-ulp` or `--max-abs` returns the cheapest rung that holds it.
 `strict` buys IEEE special values and the full domain at the price of accuracy elsewhere. For `sin` f64, `strict`
-measures 2.58 ulp and `relaxed` 1.61 ulp. f32 errors are measured over every input.
+measures 2.58 ulp and `relaxed` 1.61 ulp. The errors of one-argument f32 kernels are measured over every input.
 
-The `scalar` target renders the same kernels as one-lane C, which a compiler vectorizes inside the caller's loop.
-It is the candidate matrix's approximation axis (`alloy/isa/approximation.py`), and its kernels pass the same error
-gate as the vector ones.
+The `scalar` rendering gives the same kernels as one-lane C, which a compiler vectorizes inside the caller's loop.
+The command line does not take it as an ISA: it is the candidate matrix's approximation axis
+(`alloy/isa/approximation.py`), and its kernels pass the same error gate as the vector ones.
 
 `tiers` lists the bare Taylor and Chebyshev polynomials on the reduced domain with their absolute error, without the
 range reduction. The tiers are a reference for how degree buys accuracy. Code should come from `kernel`. `time`
@@ -114,6 +114,17 @@ Two limits apply to the simulator. ttsim does not model `SFPLOADMACRO`, so verif
 `TT_METAL_DISABLE_SFPLOADMACRO=1` and tt-metal takes its plain SFPU path. ttsim also speaks only the current
 simulator interface, which tt-metal 0.6x does not, so 0.6x spellings are checked on hardware. The Daisytuner Blackhole
 runs 0.6x, and its jobs live in the `alloy-tenstorrent` repository.
+
+On that Blackhole (tt-metal 0.63, runs of 2026-11-16) every row compiles and runs, and 30 of the 34 row and dtype
+pairs hold the table's bound. All six FPU pairs pass, and so do 12 of the 14 SFPU rows at each dtype. The two f32
+rows that miss the bound are `log` and `tanh`. tt-metal 0.63 computes `log` with a low-order approximation and `tanh`
+from a lookup table, and their relative error near the function's zero exceeds 0.3 and 0.1. The two rows carry a
+`note` that the lookup prints. The job reports only exit codes, so it gives these error ranges and not exact values,
+and it does not name the two failing bf16 rows.
+
+The Python side of `ttnn.generic_op` also differs in 0.6x, and the harness handles both versions. In 0.6x the
+runtime arguments are nested lists, `SourceType` and `UnpackToDestMode` live in `ttnn._ttnn.program_descriptor`, and
+a kernel has 32 circular buffers, so `unpack_to_dest_mode` takes 32 entries where 0.8x takes 64.
 
 ## Commands
 

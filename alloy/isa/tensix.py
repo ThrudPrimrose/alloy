@@ -54,6 +54,7 @@ class Row:
     init: str | dict[str, str]
     call: str | dict[str, str]
     domain: tuple[float, float]
+    note: str = ""
 
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
@@ -143,8 +144,11 @@ def run_harness(library: pathlib.Path, image: str) -> list[Verdict]:
         for line in done.stdout.splitlines()
         if line.startswith("TENSIX-VERDICT ")
     ]
-    if not found:
-        raise RuntimeError(f"the harness printed no verdict (exit {done.returncode}): {done.stderr[-1500:]}")
+    if done.returncode != 0 or len(found) != len(harness_rows()):
+        raise RuntimeError(
+            f"the harness gave {len(found)} of {len(harness_rows())} verdicts (exit {done.returncode}): "
+            f"{done.stderr[-1500:]}"
+        )
     return found
 
 

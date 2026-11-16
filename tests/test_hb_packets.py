@@ -255,9 +255,12 @@ def test_the_alloy_tools_send_the_task_language_that_selects_the_gpu_path(monkey
 
     sent: list[dict] = []
     monkeypatch.setenv("LANGUAGE", "hip")
-    monkeypatch.setattr(
-        alloy_tools.http_json, "call_json", lambda url, data, timeout: sent.append(json.loads(data)) or {"result": {}}
-    )
+
+    def recorded(url: str, data: bytes, timeout: float) -> dict:
+        sent.append(json.loads(data))
+        return {"result": {}}
+
+    monkeypatch.setattr(alloy_tools.http_json, "call_json", recorded)
 
     alloy_tools.poster("speculative")({"kernel": KERNEL})
 

@@ -24,9 +24,11 @@ domain = [-4.0, 4.0]
 kind = "unary"
 unit = "SFPU"
 header = "compute_kernel_api.h"
-init = "log_tile_init()"
-call = "log_tile(0)"
+# 0.6x defaults to its fast approximation (fast_and_approx = true); <false> is its other one
+init = { v06 = "log_tile_init<false>()", v08 = "log_tile_init()" }
+call = { v06 = "log_tile<false>(0)", v08 = "log_tile(0)" }
 domain = [0.01, 100.0]
+note = "tt-metal 0.6x log is a low-order approximation: relative error above 0.3 near log's zero (x close to 1) on a Blackhole, with either template argument (runs of 2026-11-16, tt-metal 0.63). 0.8x holds the table's bound."
 
 [[ops.sqrt]]
 kind = "unary"
@@ -75,6 +77,7 @@ header = "compute_kernel_api.h"
 init = "tanh_tile_init()"
 call = "tanh_tile(0)"
 domain = [-4.0, 4.0]
+note = "tt-metal 0.6x computes tanh from a lookup table: relative error between 0.1 and 0.3 near tanh's zero on a Blackhole (runs of 2026-11-16, tt-metal 0.63). 0.8x holds the table's bound."
 
 [[ops.sin]]
 kind = "unary"

@@ -16,10 +16,11 @@ One call (`alloy_profile` or `alloy_speculative`, whichever your setup offers) a
   flags (`scopes` lists them). Keep `-ffast-math` on a scope's compile line, never on the link line: linked, it
   switches the whole process to flush-to-zero, which changes every other scope's results and can fail
   verification.
-- On a HIP task the answer is the GPU form: `folder` holds `program.hip` (host) and `device.hip` (kernels) with each
-  device map at the threadblock its compiler report ranks first, `library` is what the bench builds from them,
-  `report` lists every map's ranked shapes, and `make` is the bench's own build command. Edit `device.hip` and
-  submit the pair as `source` and `device_source`, or submit the library.
+- On a HIP or CUDA task the answer is the GPU form: `folder` holds `program.hip` (host) and `device.hip` (kernels),
+  `.cu` on CUDA, with each device map at the threadblock its compiler report ranks first. `library` is what the
+  bench builds from them, `report` lists every map's ranked shapes, and `make` says how to submit, since the judge
+  builds the pair itself. Edit the device file and submit the pair as `source` and `device_source`, or submit the
+  library.
 - `advice`: for each scope Alloy left short, why, and the intrinsics its tasklets need on this machine.
 - `report`: the program tree, every scope's candidates (language, compiler, ISA, FP mode, layout knobs) and the
   top ones ranked by measured time (profile) or by prediction (speculative).

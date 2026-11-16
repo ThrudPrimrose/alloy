@@ -34,9 +34,11 @@ __all__ = ["CodegenAnswer", "CodegenRequest", "codegen"]
 PIPELINE = "canon_cpu"
 GPU_PIPELINE = "canon_gpu"
 #: Task languages whose submission is the bench's GPU form.
-GPU_LANGUAGES = frozenset({"hip"})
+GPU_LANGUAGES = frozenset({"hip", "cuda"})
 #: The most of ``report.md`` an answer carries; the file holds all of it.
 REPORT_CHARS = 20_000
+#: The file suffix of a dialect's two GPU units.
+DEVICE_SUFFIX = {"hip": "hip", "cuda": "cu"}
 
 
 class CodegenRequest(pydantic.BaseModel):
@@ -48,7 +50,7 @@ class CodegenRequest(pydantic.BaseModel):
     folder: str
     #: The sizes the judge grades the kernel at.
     running: dict[str, int]
-    #: The episode's task language: ``hip`` takes the GPU path.
+    #: The episode's task language: ``hip`` and ``cuda`` take the GPU path.
     language: str = "c"
 
 
@@ -109,31 +111,34 @@ def gpu_report(picks: dict[int, gpu.Pick], dialect: str, arch: str, mode: Mode) 
 
 
 def gpu_codegen(request: CodegenRequest) -> CodegenAnswer:
-    """The bench's HIP form of ``request.kernel`` with each device map at its ranked threadblock
-    (:func:`alloy.gpu.speculate`, compile-only), built into a library by the bench's own sandbox, so it is the
-    ``.so`` the judge would build from these sources."""
+    """The bench's GPU form of ``request.kernel`` in the task's dialect with each device map at its ranked
+    threadblock (:func:`alloy.gpu.speculate`, compile-only), built into a library by the bench's own sandbox, so it
+    is the ``.so`` the judge would build from these sources."""
     spec = BenchSpec.load(request.kernel)
-    task = Task(request.kernel, SourceMode.ANY, Language.HIP, request.precision)
+    # the form in the task's language; the register report from the compiler of the device that is here
+    task = Task(request.kernel, SourceMode.ANY, Language.parse(request.language), request.precision)
     dialect = gpu.native_dialect()
     arch = gpu.native_arch(dialect)
     run = gpu_pipeline(task, spec, GPU_PIPELINE)
     program, picks = gpu.speculate(run, dialect, arch)
     if not picks:
         raise api.NothingToGenerate(f"{spec.short_name}: no device map to give a threadblock")
-    submission = device_submission(task, spec, program)
+    submission = device_submission(task, spec, program, request.language)
     best = pathlib.Path(request.folder) / "best"
     best.mkdir(parents=True, exist_ok=True)
-    (best / "program.hip").write_text(submission.source or "")
-    (best / "device.hip").write_text(submission.device_source or "")
+    suffix = DEVICE_SUFFIX[request.language]
+    (best / f"program.{suffix}").write_text(submission.source or "")
+    (best / f"device.{suffix}").write_text(submission.device_source or "")
     with Sandbox(binding_from_spec(spec), source_mode=SourceMode.ANY) as sandbox:
         built = sandbox.build(submission)
         if not built.ok or built.lib is None:
-            raise RuntimeError(f"the bench could not build the HIP form: {built.log[-1500:]}")
+            raise RuntimeError(f"the bench could not build the {request.language} form: {built.log[-1500:]}")
         library = best / built.lib.name
         shutil.copy(built.lib, library)
     report = gpu_report(picks, dialect, arch, request.mode)
     (pathlib.Path(request.folder) / "report.md").write_text(report)
-    rebuild = "\n".join(built.commands) or "submit program.hip and device.hip as source and device_source"
+    # the sandbox's own commands name its temporary folder, gone by now: the judge rebuilds from the pair
+    rebuild = f"submit program.{suffix} as source and device.{suffix} as device_source; the judge builds them"
     return CodegenAnswer(
         mode=request.mode,
         library=str(library),

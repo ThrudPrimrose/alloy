@@ -48,13 +48,15 @@ tools = ["alloy_isa"]
 name = "Alloy profile"
 full_name = "Alloy (profiled)"
 optimizer = "alloy.hb_plugin.tuners:AlloyProfileOptimizer"
-extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon", "dace_gpu_parallel", "dace_gpu_autoopt"]
+# GPU: canon only, the one pipeline that hands its offloaded program to a tuner (PipelineContext.offloaded)
+extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon"]
 
 [flavors.alloy_speculative]
 name = "Alloy speculative"
 full_name = "Alloy (speculative)"
 optimizer = "alloy.hb_plugin.tuners:AlloySpeculativeOptimizer"
-extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon", "dace_gpu_parallel", "dace_gpu_autoopt"]
+# GPU: canon only, the one pipeline that hands its offloaded program to a tuner (PipelineContext.offloaded)
+extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon"]
 
 # The baseline column through the same judge: the pipeline's default rendering, no scope outlined.
 [flavors.alloy_none]

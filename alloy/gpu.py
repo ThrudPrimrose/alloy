@@ -42,8 +42,11 @@ Shape = tuple[int, int, int]
 SHAPES_1D: tuple[Shape, ...] = ((64, 1, 1), (128, 1, 1), (256, 1, 1), (512, 1, 1), (1024, 1, 1))
 SHAPES_ND: tuple[Shape, ...] = ((32, 4, 1), (32, 8, 1), (16, 16, 1), (64, 4, 1), (32, 16, 1), (128, 2, 1))
 MAX_THREADS = 1024
-#: Threads per warp (CUDA) or the narrowest wavefront (HIP): an innermost dimension below it splits a coalesced row.
+#: Threads per warp (CUDA) and the register-allocation unit of the occupancy model.
 WARP = 32
+#: Threads per warp or wavefront by dialect (CDNA runs wave64): an innermost dimension below it splits a coalesced
+#: row across the lanes of one warp.
+LANES = {"cuda": 32, "hip": 64}
 #: The occupancy past which more warps hide no more latency; above it shapes tie on occupancy.
 OCCUPANCY_SATURATION = 0.5
 #: Block sizes no candidate has as its thread count, one per device map of a probe run: a map's block tells its
@@ -199,12 +202,12 @@ def occupancy(usage: Usage, shape: Shape, dialect: str, arch: str) -> float:
     return cuda_occupancy(usage, shape[0] * shape[1] * shape[2], SM_LIMITS[arch])
 
 
-def rank_key(shape: Shape, usage: Usage, reached: float) -> tuple[bool, int, float, bool, int]:
+def rank_key(shape: Shape, usage: Usage, reached: float, lanes: int = WARP) -> tuple[bool, int, float, bool, int]:
     return (
         usage.spill_bytes > 0,
         usage.spill_bytes,
         -min(reached, OCCUPANCY_SATURATION),
-        shape[0] < WARP,
+        shape[0] < lanes,
         usage.registers,
     )
 
@@ -317,7 +320,7 @@ def speculate(pipeline: Pipeline, dialect: str, arch: str) -> tuple[dace.SDFG, d
     picks = {
         ordinal: Pick(ranked[0][0], ranked[0][1], ranked[0][2], tuple(ranked))
         for ordinal, rows in tried.items()
-        if (ranked := sorted(rows, key=lambda row: rank_key(*row)))
+        if (ranked := sorted(rows, key=lambda row: rank_key(row[0], row[1], row[2], LANES[dialect])))
     }
     return pipeline({ordinal: pick.shape for ordinal, pick in picks.items()}), picks
 

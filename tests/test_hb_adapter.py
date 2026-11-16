@@ -331,3 +331,22 @@ if __name__ == "__main__":
         test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch)
     with pytest.MonkeyPatch.context() as patch:
         test_a_grade_slower_than_one_judge_call_is_still_read(patch)
+
+
+def test_the_judge_client_calls_the_workers_own_judge_when_the_run_lists_several(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HPCAGENT_BENCH_JUDGE_URLS", "http://judge-0:8000,http://judge-1:8000")
+    monkeypatch.setenv("JUDGE_URL", "http://judge-1:8000")
+
+    sut = adapter.judge_client()
+
+    assert sut.base_url == "http://judge-1:8000"
+
+
+def test_a_gpu_column_extends_only_the_pipeline_that_hands_a_tuner_its_offloaded_program():
+    import tomllib
+
+    plugin = tomllib.loads((pathlib.Path(adapter.__file__).parent / "plugin.toml").read_text())
+
+    for flavor in ("alloy_profile", "alloy_speculative"):
+        gpu_columns = [column for column in plugin["flavors"][flavor]["extends"] if "_gpu_" in column]
+        assert gpu_columns == ["dace_gpu_canon"]

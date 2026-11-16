@@ -130,7 +130,10 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return lookup_command(table, args)
     if args.command == "kernel":
         level = args.level
+        table.isa(args.isa)
         if args.max_ulp is not None or args.max_abs is not None:
+            if level:
+                raise KeyError("--level names one rung and --max-ulp/--max-abs pick one: give one of the two")
             picked = cheapest(args.function, args.dtype, args.isa, max_ulp=args.max_ulp, max_abs=args.max_abs)
             level = picked.kernel.level
         return print_kernels(table, args.isa, args.function, args.dtype, level, not args.no_verify)
@@ -277,6 +280,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
         if verdict is not None:
             print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}".rstrip())
     if function in functions():
+        if args.json:
+            raise KeyError(f"{function} has no table row, only kernels, which print as C: drop --json")
         return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
     return 0
 
@@ -314,6 +319,8 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
             )
         else:
             print(f"    FAILED on ttsim: {verdict.error[:200]}")
+        if row.note:
+            print(f"    note: {row.note}")
     print(f"  note: {tensix.table()['target']['note']}")
     return 0 if all(v is not None and v.ok for _, v in picked) else 2
 
@@ -377,6 +384,7 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
     table.isa(isa)
     target = target_of(isa)
     status = 0
+    find(function, dtype, level or LEVELS[0])  # an unknown function or dtype is refused before anything prints
     if not level:
         print(f"// ladder: {ladder_line(function, dtype, target)}")
         print("// --level <name> gives one; --max-ulp N or --max-abs E gives the cheapest that holds the bound\n")
@@ -386,15 +394,19 @@ def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str 
         branch = "one cold branch to scalar libm" if k.guard else "no branch"
         scope = f"any input; vector path for {k.contract}" if name == "strict" else f"contract: {k.contract}"
         basis = "over every input of its range" if k.exhaustive else "sampled"
-        print(f"// {name}: {k.error_ulp:.4g} ulp {basis}; {spelled.intrinsics} intrinsics; {branch}; {scope}")
-        print(spelled.source)
-        for library, call in libraries(function, dtype, target, name).items():
-            print(f"// or call {library}: {call}")
+        lines = [
+            f"// {name}: {k.error_ulp:.4g} ulp {basis}; {spelled.intrinsics} intrinsics; {branch}; {scope}",
+            spelled.source,
+            *(f"// or call {library}: {call}" for library, call in libraries(function, dtype, target, name).items()),
+        ]
+        failed = False
         if verify:
             verdict = validate_kernel(k.fn, dtype, name, target)
-            print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
-            status = 3 if verdict.ok is False else status
-        print()
+            lines.append(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
+            failed = verdict.ok is False
+        # a kernel that fails its gate is not an answer: it goes to stderr
+        print("\n".join(lines) + "\n", file=sys.stderr if failed else sys.stdout)
+        status = 3 if failed else status
     return status
 
 
@@ -567,13 +579,14 @@ def print_schedule(table: Table, isa: str) -> None:
 
 
 def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bool) -> int:
-    print(skeleton(table, isa, schedule, dtype))
+    text = skeleton(table, isa, schedule, dtype)
+    failed = False
     if verify:
         verdict = verify_skeleton(isa, schedule, dtype, table)
-        print(f"// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}")
-        if verdict.ok is False:
-            return 3
-    return 0
+        text += f"\n// {MARKS[verdict.ok]}: {verdict.basis}; {verdict.detail}"
+        failed = verdict.ok is False
+    print(text, file=sys.stderr if failed else sys.stdout)
+    return 3 if failed else 0
 
 
 if __name__ == "__main__":
