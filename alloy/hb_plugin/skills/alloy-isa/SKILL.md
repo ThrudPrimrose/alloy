@@ -57,4 +57,8 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   multiple of the target's block (the lanes of a register, a 32x32 Tensix tile, a 64-row GPU block) is feasible, and
   each step says how often it runs (`6 x vector: _mm512_add_ps`). Any other shape is infeasible, and the answer
   states the block, the multiples below and above as nearest requests, and how to finish the remainder (a mask on
-  AVX-512 and SVE, a scalar loop on AVX2 and NEON, padding on Tensix).
+  AVX-512 and SVE, a scalar loop on AVX2 and NEON, padding on Tensix). On a CPU the data is one run of elements (`vector:f32:96`); a
+  2-D shape is refused with the flattened run as the nearest request.
+- `command="ask-all", arguments=["sm90", "copy src=global:f16:256x256 dst=shared:f16:64x64:row_major:b128", "mma
+  a=shared:f16:64x64 b=shared:f16:64x64 c=register:f32:64x64"]`: requests that run as one kernel, one per argument;
+  the answer says which copy feeds which mma operand, or why they do not combine.

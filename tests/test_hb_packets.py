@@ -257,6 +257,21 @@ def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop():
     assert "skeleton neon scalar_remainder f64" in str(sut.answer)
 
 
+def test_an_infeasible_ask_reaches_the_agent_as_an_answer_with_its_block_and_nearest_requests():
+    sut = isa_call("ask", ["avx512", "add", "--x", "vector:f32:100", "--no-verify"])
+
+    assert sut.code == HTTPStatus.OK, sut.answer
+    assert "infeasible (shape)" in str(sut.answer) and "block: 16" in str(sut.answer)
+    assert "nearest: x vector:f32:96" in str(sut.answer)
+
+
+def test_an_invalid_ask_reaches_the_agent_with_its_reason():
+    sut = isa_call("ask", ["avx512", "frobnicate", "--x", "vector:f32:16", "--no-verify"])
+
+    assert sut.code == HTTPStatus.BAD_REQUEST
+    assert "no operation 'frobnicate'" in str(sut.answer)
+
+
 def test_the_isa_tool_refuses_a_query_it_does_not_serve():
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
 

@@ -48,6 +48,7 @@ class IsaArgs(pydantic.BaseModel):
         "host",
         "tile",
         "ask",
+        "ask-all",
     ]
     arguments: list[str] = pydantic.Field(
         default_factory=list, description='e.g. ["avx512", "sin", "f64"] for kernel, ["vfmadd231pd"] for reverse'
@@ -59,7 +60,10 @@ ISA = (
     "and fast levels; `tiers` lists a function's polynomial depths with their error, for picking one; `time` "
     "measures what an element costs here with each kernel and library call; `lookup` spells "
     "an op for an ISA and dtype; `reverse` names what an intrinsic, a mnemonic or a pasted disassembly line computes; "
-    "`skeleton` gives a loop in a legal schedule; `host` says which ISAs this machine runs. `lookup`, `kernel` and "
+    "`skeleton` gives a loop in a legal schedule; `host` says which ISAs this machine runs. `ask` answers one "
+    'operation on logical data for any target (CPU, sm90, gfx942, gfx90a, tensix), e.g. ["avx512", "reduce_add", '
+    '"--x", "vector:f32:96"]: feasible with its steps, or refused with the block the target takes, the nearest '
+    "requests, and a fix; `ask-all` combines requests into one kernel. `lookup`, `kernel` and "
     "`skeleton` answers carry the verdict of a compiled check where this machine can run them, else say unverified."
 )
 

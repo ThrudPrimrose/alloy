@@ -49,8 +49,12 @@ ISA_COMMANDS = frozenset(
         "host",
         "tile",
         "ask",
+        "ask-all",
     }
 )
+#: Exit codes that are answers, by command: ``ask`` exits 2 when the target cannot (the refusal with its block,
+#: nearest requests, and fix is the answer); the other queries exit 3 for an answer that is no row.
+ANSWER_CODES = {"ask": (0, 2), "ask-all": (0, 2)}
 MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value)
 ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels
 #: The characters of an argument a tool record keeps.
@@ -81,8 +85,8 @@ def isa_query(body: Mapping[str, object]) -> Outcome:
     except subprocess.TimeoutExpired:
         error = f"alloy_isa: no answer in {ISA_TIMEOUT} s"
         return HTTPStatus.INTERNAL_SERVER_ERROR, JudgeError(error=error, cause=JUDGE_FAULT_CAUSE), None
-    if run.returncode not in (0, 3):
-        return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: {run.stderr.strip()}"), None
+    if run.returncode not in ANSWER_CODES.get(str(command), (0, 3)):  # ask prints an invalid request's reason to stdout
+        return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: {(run.stderr or run.stdout).strip()}"), None
     return HTTPStatus.OK, IsaAnswer(result=run.stdout + run.stderr), None
 
 
