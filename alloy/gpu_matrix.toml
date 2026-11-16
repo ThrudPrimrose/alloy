@@ -1,0 +1,41 @@
+# Device axes of a GPU program (A10, alloy/gpu_build.py). A dialect's first compiler with no flag is the default
+# candidate: the build the judge makes of the same source. `bench` names the compilers.yaml block whose recipe builds a
+# compiler (its baseline, compile, and link flags), `driver` replaces that block's driver; a compiler without `bench`
+# carries its own `compile` (with {arch} and {cuda}) and `link` flags; `report` makes the compiler print each
+# kernel's registers and spills, which speculative mode ranks. A compiler or flag this machine does not take fails its
+# build and drops out. Flags checked on 2026-11-16 against nvcc 13.3, clang 21, and ROCm 7.1 clang 20.
+
+[compilers.nvcc]
+dialect = "cuda"
+bench = "nvcc"
+report = ["-Xptxas", "-v"]
+fp.nocontract = ["--fmad=false"]
+fp.fast = ["--use_fast_math"]
+
+# LLVM's NVPTX back end: another code generator on the same source. Needs a clang that supports the installed CUDA.
+[compilers.clang_cuda]
+dialect = "cuda"
+driver = "clang++"
+compile = ["-x", "cuda", "--cuda-path={cuda}", "--cuda-gpu-arch={arch}", "-O3", "-std=c++20", "-fPIC", "-march=native"]
+link = ["-shared", "-L{cuda}/lib64", "-Wl,-rpath,{cuda}/lib64", "-lcudart"]
+report = ["-Xcuda-ptxas", "-v"]
+fp.nocontract = ["-ffp-contract=off"]
+fp.fast = ["-ffast-math"]
+
+[compilers.hipcc]
+dialect = "hip"
+bench = "hipcc"
+report = ["-Rpass-analysis=kernel-resource-usage"]
+fp.nocontract = ["-ffp-contract=off"]
+fp.fast = ["-ffast-math"]
+# A floating-point atomic update compiles to the hardware instruction, which may flush denormals and ignores the
+# rounding mode: offered only where the program accumulates, verified in the reassociation band.
+atomics = ["-munsafe-fp-atomics"]
+
+# ROCm's clang driver called directly: hipcc's defaults left out. It links the HIP runtime only with --hip-link.
+[compilers.amdclang]
+dialect = "hip"
+bench = "hipcc"
+driver = "amdclang++"
+link = ["--hip-link"]
+report = ["-Rpass-analysis=kernel-resource-usage"]
