@@ -58,6 +58,8 @@ def test_each_clock_source_is_named_and_asked_in_order(monkeypatch):
 
 
 def test_lscpu_fields_are_read_from_nested_children():
-    entries = [{"field": "Architecture:", "data": "aarch64", "children": [{"field": "CPU max MHz:", "data": "3456.0"}]}]
+    entries: list[dict[str, object]] = [
+        {"field": "Architecture:", "data": "aarch64", "children": [{"field": "CPU max MHz:", "data": "3456.0"}]}
+    ]
 
     assert machine.lscpu_fields(entries)["CPU max MHz:"] == "3456.0"

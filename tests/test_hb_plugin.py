@@ -114,5 +114,7 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
         assert set(scope) == {"symbol", "reference", "chosen", "note", "axes", "search"}
         assert (scope["chosen"] == episode.PLAIN[0]) == (not scope["axes"])
         assert scope["search"]["built"] >= scope["search"]["verified"] + scope["search"]["rejected"]
-    if flavor.endswith("_profile"):  # every scope's reference is timed as the first stub
-        assert all(scope["search"]["default_ns"] > 0 for scope in record["scopes"])
+    if flavor.endswith("_profile"):  # each stub attempt, a dropped one too, counts; a timed reference took one
+        timed = [s["search"]["timed"] + (s["search"]["default_ns"] is not None) for s in record["scopes"]]
+        assert record["stubs"] >= sum(timed)
+        assert all(s["search"]["default_ns"] is None or s["search"]["default_ns"] > 0 for s in record["scopes"])

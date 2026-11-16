@@ -93,10 +93,11 @@ def test_a_record_over_the_cap_keeps_every_delivered_build_and_says_it_is_trunca
 
     sut = episode.episode("profile", "k", SECONDS, 4, many)
 
-    assert isinstance(sut, dict) and isinstance(sut["scopes"], list)
+    assert isinstance(sut, dict) and isinstance(scopes := sut["scopes"], list)
+    kept = [s for s in scopes if isinstance(s, dict)]
     assert sut["truncated"] is True
-    assert [s["chosen"] for s in sut["scopes"]] == [CON.name] * 1000  # type: ignore[index]
-    assert all(s["search"] is None and s["axes"] == {} for s in sut["scopes"])  # type: ignore[index]
+    assert [s["chosen"] for s in kept] == [CON.name] * 1000
+    assert all(s["search"] is None and s["axes"] == {} for s in kept)
     assert len(plugin_records.PluginRecord(schema_version=episode.SCHEMA, data=sut).model_dump_json()) <= (
         plugin_records.CAP_BYTES
     )
