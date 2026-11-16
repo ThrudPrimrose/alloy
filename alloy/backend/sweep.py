@@ -2,6 +2,7 @@
 """Build every candidate of every scope of an outlined program."""
 
 import pathlib
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -11,6 +12,7 @@ from alloy.backend.candidates import Candidate, RenderKey, one_factor_at_a_time
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Program, Scope
 from alloy.heuristics import prune
+from alloy.heuristics.ranges import Interval
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,6 +39,7 @@ def run(
     out: pathlib.Path,
     *,
     finite_inputs: bool = False,
+    ranges: Mapping[str, Interval] | None = None,
 ) -> list[ScopeReport]:
     """Build every candidate of every scope under ``out/scopes/<symbol>`` in two stages: each compiler's default
     first, then the rest minus what :func:`prune.prune` rules out given those builds. Rendered in turn (the codegen
@@ -57,7 +60,11 @@ def run(
             natives = [c for c in candidates if prune.is_native(c)]
             first = dict(zip(natives, built(natives), strict=True))
             rest, pruned = prune.prune(
-                [c for c in candidates if c not in first], matrix, prune.facts(scope), list(first.values()), host_isas
+                [c for c in candidates if c not in first],
+                matrix,
+                prune.facts(scope, ranges),
+                list(first.values()),
+                host_isas,
             )
             later = dict(zip(rest, built(rest), strict=True))
             seen: dict[str, str] = {}

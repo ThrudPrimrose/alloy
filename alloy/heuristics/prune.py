@@ -3,7 +3,7 @@
 cells that cannot change the code, and every pruned cell keeps its reason for the report."""
 
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import dace
@@ -16,6 +16,8 @@ from alloy.backend.build import Build
 from alloy.backend.candidates import Candidate
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Scope
+from alloy.heuristics.ranges import Interval, proof_gap
+from alloy.isa import approximation
 from alloy.isa.ops import called_name
 
 __all__ = ["Facts", "Pruned", "facts", "innermost_entries", "is_native", "prune", "smallest_element"]
@@ -38,6 +40,8 @@ class Facts:
     divisions: bool
     trip_counts: tuple[int | None, ...]
     element_bytes: int
+    #: Per rung above ``strict``, why the declared ranges do not prove its contracts (empty: proven).
+    rung_gaps: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -112,8 +116,14 @@ def trip_counts(sdfg: dace.SDFG) -> tuple[int | None, ...]:
     return tuple(counts)
 
 
-def facts(scope: Scope) -> Facts:
-    """``scope``'s static facts (see :class:`Facts`)."""
+def float_dtypes(scope: Scope) -> tuple[str, ...]:
+    """The ladder dtypes of ``scope``'s floating-point containers."""
+    types = {d.dtype for d in scope.sdfg.arrays.values()}
+    return tuple(name for name, t in (("f64", dace.float64), ("f32", dace.float32)) if t in types) or ("f64",)
+
+
+def facts(scope: Scope, ranges: Mapping[str, Interval] | None = None) -> Facts:
+    """``scope``'s static facts (see :class:`Facts`); ``ranges`` are the inputs' declared ranges."""
     contracts = approximates = sets_errno = divisions = False
     for node, state in scope.sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.Tasklet) or not isinstance(state, dace.SDFGState):
@@ -132,6 +142,11 @@ def facts(scope: Scope) -> Facts:
         divisions=divisions,
         trip_counts=trip_counts(scope.sdfg),
         element_bytes=smallest_element(scope.sdfg),
+        rung_gaps=tuple(
+            (level, proof_gap(scope, ranges or {}, level, float_dtypes(scope)))
+            for level in approximation.LEVELS[1:]
+            if scope.calls_libm
+        ),
     )
 
 
@@ -186,6 +201,8 @@ def reason(candidate: Candidate, matrix: Matrix, f: Facts, vectorizes: bool, hos
         why = tail_reason(candidate, matrix, f, host_isas)
         if why:
             return why
+    if candidate.approx:
+        return dict(f.rung_gaps).get(candidate.approx, "")
     is_fp_flip = candidate.fp_level and candidate.veclib == "none" and not vector_cell and not candidate.knobs
     return fp_reason(candidate.fp_level, f) if is_fp_flip else ""
 

@@ -11,11 +11,12 @@ import re
 
 from alloy.isa.mathkernels import functions, kernel, render
 
-__all__ = ["LEVELS", "called_functions", "levels_for", "prelude"]
+__all__ = ["LEVELS", "called_functions", "prelude"]
 
 #: The rungs the matrix offers. ``strict`` keeps libm's special values on every input; ``relaxed`` holds only for
-#: finite inputs in its range, so it is offered when the inputs are declared finite. Lower rungs trade digits, which
-#: only a caller with a stated error bound can accept (the ISA lookup's ``--max-ulp``).
+#: finite inputs in its range, so it is built only where the declared input ranges prove every call's contract
+#: (:func:`alloy.heuristics.ranges.proof_gap`). Lower rungs trade digits, which only a caller with a stated error
+#: bound can accept (the ISA lookup's ``--max-ulp``).
 LEVELS = ("strict", "relaxed")
 
 #: A C call of a libm name, f64 (``sin``) or f32 (``sinf``).
@@ -27,11 +28,6 @@ def called_functions(source: str) -> tuple[str, ...]:
     known = set(functions())
     called = {name for name, _ in CALL.findall(source) if name in known}
     return tuple(fn for fn in functions() if fn in called)
-
-
-def levels_for(*, finite_inputs: bool) -> tuple[str, ...]:
-    """The rungs a scope's candidates take: ``relaxed`` needs finite inputs."""
-    return LEVELS if finite_inputs else LEVELS[:1]
 
 
 def prelude(level: str, called: tuple[str, ...]) -> str:

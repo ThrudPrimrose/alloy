@@ -24,13 +24,14 @@ def test_every_scalar_rung_holds_the_error_its_vector_kernel_recorded(fn: str, d
     assert judged(k, seen, "scalar").ok, (k.name, seen, k.error_ulp)
 
 
-@pytest.mark.parametrize(("finite", "levels"), [(False, ("strict",)), (True, ("strict", "relaxed"))])
-def test_a_c_scope_that_calls_libm_tries_each_rung_its_inputs_allow(finite: bool, levels: tuple[str, ...]):
+@pytest.mark.parametrize("finite", [False, True])
+def test_a_c_scope_that_calls_libm_tries_every_rung_and_the_proof_prunes_relaxed(finite: bool):
+    """Declaring finite inputs no longer opens ``relaxed``: the range proof prunes it (tests/test_heuristics_ranges)."""
     scope = scope_with(outlined(), libm=True, reduction=False)
 
     sut = [c for c in flips(MATRIX, scope, "c", "gcc", finite_inputs=finite) if c.approx]
 
-    assert tuple(c.approx for c in sut) == levels
+    assert tuple(c.approx for c in sut) == approximation.LEVELS
     assert all(c.tolerance(MATRIX) == "band" for c in sut)
 
 

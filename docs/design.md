@@ -74,8 +74,11 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
   Every build counts its masked instructions from the object; a masked tail without any is reported "not honored".
 - Vector math library (libmvec / SVML / SLEEF): opened only when the scope calls libm (sin, cos, exp, log, pow, ...),
   at its FP level's requirement: gcc reaches libmvec only under `-ffast-math`, so that build needs finite inputs.
-- Approximation (`alloy/isa/approximation.py`): a C scope that calls libm also tries the ladder's `strict` rung, and
-  `relaxed` when its inputs are declared finite. The unit starts with the called functions' kernels as scalar C
+- Approximation (`alloy/isa/approximation.py`): a C scope that calls libm also tries the ladder's `strict` and
+  `relaxed` rungs. `relaxed` is built only where the declared input ranges prove every call's contract (A2,
+  `alloy/heuristics/ranges.py`): interval arithmetic over the scope's Python tasklets from the manifest's `domain`
+  entries, with each kernel's contract read from its documented text; otherwise it is pruned with the call and the
+  range it could not prove. Declaring finite inputs alone no longer opens it. The unit starts with the called functions' kernels as scalar C
   (`[prims.scalar]`, each `#pragma omp declare simd`) and a macro per libm name, so the scope's compiler inlines and
   vectorizes them; verified under the band, as a contraction is. C++ is left out: the macro would rename `std::sin`.
 - Pruning (`alloy/heuristics/prune.py`, built): each compiler's default builds first, then the rest minus the cells

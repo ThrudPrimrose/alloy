@@ -158,10 +158,7 @@ def flips(
             if matrix.veclibs[lib].fp_level in levels
         ]
     if scope.calls_libm and language == APPROX_LANGUAGE:
-        out += [
-            Candidate(language, compiler, approx=level, note=f"approx {level}")
-            for level in approximation.levels_for(finite_inputs=finite_inputs)
-        ]
+        out += [Candidate(language, compiler, approx=level, note=f"approx {level}") for level in approximation.LEVELS]
     if fission:
         out.append(Candidate(language, compiler, fission=True, note="fission"))
     out.append(Candidate(language, compiler, serial=True, note="serial"))

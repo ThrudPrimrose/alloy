@@ -20,7 +20,7 @@ from alloy.evaluate.verify import Verification
 from alloy.frontend import inputs, scopes
 from alloy.frontend.inputs import Manifest
 from alloy.frontend.scopes import Program
-from alloy.heuristics import predict
+from alloy.heuristics import predict, ranges
 from alloy.heuristics.predict import Predictions
 from alloy.report import Mode
 
@@ -127,7 +127,8 @@ def generate(
     :func:`test_cases`). In profile mode (a manifest is required), when ``time_locally``, time the survivors and link
     the fastest; a caller that times elsewhere (a benchmark's judge) passes ``time_locally=False``. In speculative mode
     link the ones :func:`predict.choose` picks, untimed, or each scope's default build when nothing was verified.
-    ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it. ``running`` declares
+    ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it; the manifest's input
+    ``domain`` entries are the declared ranges a ``relaxed`` rung must be proven under (:mod:`.heuristics.ranges`). ``running`` declares
     the sizes the program will be called at: speculative mode then ranks every build, serial ones too, at those sizes."""
     matrix = matrix or configuration_matrix.load()
     program = scopes.outline(sdfg, matrix.libm_calls)
@@ -136,7 +137,8 @@ def generate(
     if manifest is None and mode == Mode.PROFILE:
         raise ValueError(f"{sdfg.name}: profile mode times at declared sizes, so it needs a manifest")
     out.mkdir(parents=True, exist_ok=True)
-    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs)
+    declared = ranges.declared(manifest.spec.init.domains) if manifest is not None and manifest.spec.init else {}
+    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, ranges=declared)
     timings, best, commands, predicted, picked = None, None, None, None, None
     cases = test_cases(program, manifest)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
