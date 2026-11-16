@@ -120,3 +120,20 @@ def test_the_reference_of_an_mma_row_is_the_matrix_product():
     sut = tensix_harness.reference("mma", [torch.ones(32, 64), torch.ones(64, 32)])
 
     assert sut.shape == (32, 32) and sut[0, 0].item() == 64.0
+
+
+@pytest.mark.parametrize(("row", "expected"), [
+    ({"dtype": "bf16", "kind": "matmul"}, True),
+    ({"dtype": "f32", "kind": "matmul"}, True),
+    ({"dtype": "f32", "kind": "unary"}, True),
+    ({"dtype": "bf16", "kind": "unary"}, False),
+    ({"dtype": "bf16", "kind": "binary"}, False),
+])  # fmt: skip
+def test_a_matrix_product_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(row, expected):
+    from alloy.isa.ask import Operand, Request, ask
+
+    assert tensix_harness.dest_fp32(row) is expected
+
+    tile = Operand("tile_register", row["dtype"], (32, 32))
+    answer = ask(Request("tensix", "mma", {"a": tile, "b": tile, "c": tile}), verify=False)
+    assert "fp32_dest_acc_en = true" in answer.setup["compute config"]

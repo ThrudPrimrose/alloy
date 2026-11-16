@@ -231,6 +231,12 @@ def inputs(row: dict) -> list:
     return [base.roll(k * 97).reshape(TILES * 32, 32) for k in range(count)]
 
 
+def dest_fp32(row: dict) -> bool:
+    """Whether DST accumulates in fp32: for f32 rows, and for every matrix product, whose sum over K tiles loses
+    digits in a 16-bit accumulator (bf16 mma measured 7% on ttsim without it). ``ask`` hands out the same setting."""
+    return row["dtype"] == "f32" or row["kind"] == "matmul"
+
+
 def reference(op: str, xs: list):
     import torch
 
@@ -278,7 +284,7 @@ def run(dev, row: dict, new: bool) -> dict:
     per_input = [list(ttnn.TensorAccessorArgs(t).get_compile_time_args()) for t in tensors]
     offsets = [sum(len(a) for a in per_input[:k]) for k in range(len(per_input))]
     config = ttnn.ComputeConfigDescriptor()
-    config.fp32_dest_acc_en = row["dtype"] == "f32"
+    config.fp32_dest_acc_en = dest_fp32(row)
     config.math_approx_mode = False
     config.math_fidelity = ttnn.MathFidelity.HiFi4  # LoFi, the default, multiplies with truncated mantissas
     if row["dtype"] == "f32" and row["kind"] not in (
