@@ -271,6 +271,8 @@ def scope_ranges(
         known[target] = None if value is None or held is None else held.join(value)
 
     calls: list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]] = []
+    skipped: list[nodes.Tasklet] = []
+    before: dict[str, Interval | None] = {}
     for _ in range(ROUNDS):
         calls, skipped, before = [], [], dict(known)
         for state in states:
@@ -282,17 +284,18 @@ def scope_ranges(
                             put(node.data, known[source.data])
                 if not isinstance(node, nodes.Tasklet):
                     continue
-                edges = [e for e in state.in_edges(node) if e.dst_conn is not None and e.data.data is not None]
-                if any(e.data.data not in known for e in edges):
+                reads = [(e.dst_conn, e.data.data) for e in state.in_edges(node) if e.dst_conn and e.data.data]
+                if any(name not in known for _, name in reads):
                     skipped.append(node)  # a transient nothing has written yet: next round
                     continue
-                ev = evaluate(node, {e.dst_conn: known[e.data.data] for e in edges})
+                ev = evaluate(node, {conn: known[name] for conn, name in reads})
                 if ev is None:
                     calls += unread_calls(node)
                     continue
                 calls += [(node, fn, args) for fn, args in ev.calls]
                 for e in state.out_edges(node):
-                    put(state.memlet_path(e)[-1].data.data, None if e.src_conn is None else ev.names.get(e.src_conn))
+                    if (target := state.memlet_path(e)[-1].data.data) is not None:
+                        put(target, None if e.src_conn is None else ev.names.get(e.src_conn))
         if known == before:
             return known, calls + [c for t in skipped for c in unread_calls(t)]
     unsettled = {name: None for name, value in known.items() if before.get(name, value) != value}
