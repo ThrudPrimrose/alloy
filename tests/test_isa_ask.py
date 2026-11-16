@@ -8,7 +8,7 @@ import pytest
 
 from alloy.isa import simt, tile
 from alloy.isa.__main__ import main
-from alloy.isa.ask import INVALID, Combined, Feasible, Infeasible, Invalid, Operand, Request, Why, ask, ask_all
+from alloy.isa.ask import INVALID, UNITS, Combined, Feasible, Infeasible, Invalid, Operand, Request, Why, ask, ask_all
 
 TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
         "b": Operand("shared", "f16", (64, 64), "col_major", "b128"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
@@ -191,6 +191,16 @@ def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load(
     assert isinstance(store, Feasible) and isinstance(loaded, Feasible)
     assert "store" in store.steps[0].spelling and "load" in loaded.steps[0].spelling
     assert store.request.op == "copy"
+
+
+@pytest.mark.parametrize("op", [row.op for row in simt.rows()])
+@pytest.mark.parametrize("target", ["sm90", "gfx942", "gfx90a"])
+def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_is_feasible(target: str, op: str):
+    sut = answered(Request(target, op))
+
+    assert isinstance(sut, Feasible), sut
+    assert sut.unit in UNITS[target] and all(step.unit == sut.unit for step in sut.steps)
+    assert isinstance(answered(Request(target, op, unit=sut.unit)), Feasible)
 
 
 @pytest.mark.parametrize("op", [row.op for row in simt.rows()])

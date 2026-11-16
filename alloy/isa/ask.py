@@ -434,7 +434,7 @@ def thread_op(request: Request) -> Answer:
         return no(request, Why.CHECK_FAILED, f"the row failed its check: {verdict.error or verdict.basis}")
     spelling = row.spelled(dialect)
     check = Check("unverified") if verdict is None else Check("run" if verdict.ok else "compiled", verdict.basis)
-    unit = "warp" if row.kind == "warp" else "thread"
+    unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
     return Feasible(request, unit, (Step(unit, spelling),), {}, spelling, check, (row.note,) if row.note else ())
 
 
