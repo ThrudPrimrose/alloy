@@ -108,8 +108,49 @@ def body(row: dict, new: bool) -> "tuple[str, str, str]":
     return start, steps, pops
 
 
+def matmul_compute(row: dict, new: bool) -> str:
+    """The compute kernel of a ``matmul`` row: one output tile accumulated in DST over ``num_tiles`` K tiles (tile
+    ``kt`` of A from CB 0 and of B from CB 1), as tt-metal's single-core matmul example does. 0.8x starts the hardware
+    with ``SrcOrder::Reverse`` (matmul sends in0 to SrcB) and inits with ``matmul_init``; 0.6x's ``mm_init`` does
+    both."""
+    headers = ["common.h", "tile_move_copy.h", row["header"]] + (
+        ["compute_kernel_hw_startup.h", "src_order.h"] if new else []
+    )
+    includes = "\n".join(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers))
+    entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
+    close = "" if new else "}  // namespace NAMESPACE"
+    return f"""
+#include <cstdint>
+{includes}
+{entry} {{
+    uint32_t num_tiles = get_arg_val<uint32_t>(0);
+    constexpr auto c0 = tt::CBIndex::c_0;
+    constexpr auto c1 = tt::CBIndex::c_1;
+    constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
+    {spelled(row["init"], new)};
+    cb_reserve_back(c16, 1);
+    tile_regs_acquire();
+    for (uint32_t kt = 0; kt < num_tiles; ++kt) {{
+        cb_wait_front(c0, 1);
+        cb_wait_front(c1, 1);
+        {spelled(row["call"], new)};
+        cb_pop_front(c0, 1);
+        cb_pop_front(c1, 1);
+    }}
+    tile_regs_commit();
+    tile_regs_wait();
+    pack_tile(0, c16);
+    tile_regs_release();
+    cb_push_back(c16, 1);
+}}
+{close}
+"""
+
+
 def compute(row: dict, new: bool) -> str:
     """The compute kernel of ``row`` for tt-metal 0.8x (``new``) or 0.6x."""
+    if row["kind"] == "matmul":
+        return matmul_compute(row, new)
     headers = ("common.h", "tile_move_copy.h", "eltwise_unary/eltwise_unary.h", "eltwise_binary.h", row["header"])
     includes = "\n".join(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers))
     entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
@@ -185,6 +226,8 @@ def inputs(row: dict) -> list:
     lo, hi = row["domain"]
     count = 1 if row["kind"] == "unary" else 2
     base = torch.linspace(lo, hi, TILES * TILE, dtype=torch.float32)
+    if row["kind"] == "matmul":  # A is one row of TILES K tiles (32 x 32 TILES), B one column of them
+        return [base.reshape(32, TILES * 32), base.roll(97).reshape(TILES * 32, 32)]
     return [base.roll(k * 97).reshape(TILES * 32, 32) for k in range(count)]
 
 
@@ -199,7 +242,7 @@ def reference(op: str, xs: list):
     if op in unary:
         return unary[op](x)
     y = xs[1].double()
-    return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y}[op]
+    return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y, "mma": x @ y}[op]
 
 
 def run(dev, row: dict, new: bool) -> dict:
@@ -216,7 +259,9 @@ def run(dev, row: dict, new: bool) -> dict:
     tensors = [
         ttnn.from_torch(x, dtype=tt_dtype, layout=ttnn.TILE_LAYOUT, device=dev, memory_config=memory) for x in xs
     ]
-    out = ttnn.allocate_tensor_on_device(ttnn.Shape(list(xs[0].shape)), tt_dtype, ttnn.TILE_LAYOUT, dev, memory)
+    matmul = row["kind"] == "matmul"
+    shape = [32, 32] if matmul else list(xs[0].shape)
+    out = ttnn.allocate_tensor_on_device(ttnn.Shape(shape), tt_dtype, ttnn.TILE_LAYOUT, dev, memory)
     cbs = [
         ttnn.CBDescriptor(
             total_size=2 * page,
@@ -226,7 +271,7 @@ def run(dev, row: dict, new: bool) -> dict:
         for i in [*range(len(xs)), OUT_CB]
     ]
     reader_args = runtime_args(ttnn, [TILES, *(t.buffer_address() for t in tensors)])
-    writer_args = runtime_args(ttnn, [TILES, out.buffer_address()])
+    writer_args = runtime_args(ttnn, [1 if matmul else TILES, out.buffer_address()])
     compute_args = runtime_args(ttnn, [TILES])
     per_input = [list(ttnn.TensorAccessorArgs(t).get_compile_time_args()) for t in tensors]
     offsets = [sum(len(a) for a in per_input[:k]) for k in range(len(per_input))]
@@ -234,8 +279,9 @@ def run(dev, row: dict, new: bool) -> dict:
     config.fp32_dest_acc_en = row["dtype"] == "f32"
     config.math_approx_mode = False
     config.math_fidelity = ttnn.MathFidelity.HiFi4  # LoFi, the default, multiplies with truncated mantissas
-    if (
-        row["dtype"] == "f32" and row["kind"] != "binary"
+    if row["dtype"] == "f32" and row["kind"] not in (
+        "binary",
+        "matmul",
     ):  # FPU operands unpack to SrcA/SrcB (TF32): only DST takes FP32
         # one mode per circular buffer: tt-metal 0.6x has 32 of them, 0.8x has 64
         config.unpack_to_dest_mode = [unpack_mode(ttnn).UnpackToDestFp32] * (64 if new else 32)
@@ -259,7 +305,10 @@ def run(dev, row: dict, new: bool) -> dict:
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
     got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
     want = reference(row["op"], [x.float() for x in xs])
-    rel = ((got.double() - want).abs() / want.abs().clamp_min(1e-30)).max().item()
+    if matmul:  # a sum of products: its error is relative to the result's scale, not to each element
+        rel = ((got.double() - want).abs().max() / want.abs().max()).item()
+    else:
+        rel = ((got.double() - want).abs() / want.abs().clamp_min(1e-30)).max().item()
     return {"ok": bool(math.isfinite(rel) and rel <= row["tol"]), "rel": rel}
 
 

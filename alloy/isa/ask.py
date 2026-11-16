@@ -232,7 +232,7 @@ def mma(request: Request, verify: bool) -> Answer:
     m, k, n = a.shape[0], a.shape[1], b.shape[1]
     target = "cpu" if request.target in CPU else request.target
     if target == "tensix":
-        return no(request, "tensix mma (matmul_tiles on the FPU) comes with step 3 of the design")
+        return tensix_mma(request, m, n, k, a.dtype)
     try:
         found = tile.plan(target, m, n, k, a.dtype, c.dtype)
     except KeyError as exc:
@@ -252,6 +252,30 @@ def mma(request: Request, verify: bool) -> Answer:
     check = Check(found.verified, found.detail)  # type: ignore[arg-type]
     steps = tuple(Step(unit, s) for s in found.steps)
     return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))
+
+
+def tensix_mma(request: Request, m: int, n: int, k: int, dtype: str) -> Answer:
+    """A Tensix matrix product: ``matmul_tiles`` on the FPU, one call per K tile, accumulated in DST, for every
+    32 x 32 output tile; f32 operands are read at TF32."""
+    if m % 32 or n % 32 or k % 32:
+        return no(request, f"Tensix multiplies 32x32 tiles; got {m}x{n}x{k}", "a, b, c with extents multiples of 32")
+    if dtype not in tensix.dtypes():
+        return no(request, f"Tensix computes {', '.join(tensix.dtypes())}, not {dtype}", "a and b in f32 or bf16")
+    row = next(r for r in tensix.rows() if r.op == "mma")
+    verdict = tensix.verdicts().get(("mma", dtype, row.unit))
+    if row.pending or verdict is None:
+        check = Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
+    else:
+        check = Check("run" if verdict.ok else "unverified", "ttsim")
+    tiles = (m // 32) * (n // 32)
+    steps = (Step("fpu", tensix.spelled(row.init, "v08")), Step("fpu", tensix.spelled(row.call, "v08"), tiles * (k // 32)),
+             Step("fpu", "pack_tile(0, c16)", tiles))  # fmt: skip
+    setup = {"header": row.header, "compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
+             "reader": "per output tile (mt, nt), for kt: A tile mt*Kt+kt into CB 0, B tile kt*Nt+nt into CB 1"}  # fmt: skip
+    code = f"{tensix.spelled(row.init, 'v08')};\n// per output tile: tile_regs_acquire(); for kt: {tensix.spelled(row.call, 'v08')}; ..."
+    notes = ("f32 operands reach the FPU as TF32 (A 10 mantissa bits, B 9 at HiFi4); 0.6x spells "
+             f"{tensix.spelled(row.init, 'v06')} and {tensix.spelled(row.call, 'v06')}",)  # fmt: skip
+    return Feasible(request, "fpu", steps, setup, code, check, notes)
 
 
 def copy(request: Request) -> Answer:

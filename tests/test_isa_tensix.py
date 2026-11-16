@@ -15,6 +15,9 @@ def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image():
 
     for row in tensix.rows():
         for dtype in tensix.dtypes():
+            if row.pending:  # run by the tensix CI job (below), recorded by the next `verify`
+                assert (row.op, dtype, row.unit) not in verdicts
+                continue
             verdict = verdicts[(row.op, dtype, row.unit)]
             assert verdict.ok, (row.op, dtype, row.unit, verdict.error)
     assert tensix.recorded()["image"] == tensix.IMAGE
@@ -83,3 +86,17 @@ def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactor
 
     assert len(found) == len(tensix.rows()) * len(tensix.dtypes())
     assert all(v.ok for v in found), [v for v in found if not v.ok]
+
+
+@pytest.mark.parametrize(("new", "spelled"), [
+    (True, ["compute_kernel_hw_startup<SrcOrder::Reverse>(c0, c1, c16); matmul_init(c0, c1);",
+            "matmul_tiles(c0, c1, 0, 0, 0);", '#include "api/compute/src_order.h"']),
+    (False, ["mm_init(c0, c1, c16);", "matmul_tiles(c0, c1, 0, 0, 0, false);"]),
+])  # fmt: skip
+def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool, spelled: list[str]):
+    row = next(r for r in tensix.harness_rows() if r["op"] == "mma")
+
+    sut = tensix_harness.compute(row, new)
+
+    assert all(text in sut for text in spelled), sut
+    assert sut.count("pack_tile(0, c16)") == 1 and "for (uint32_t kt = 0; kt < num_tiles; ++kt)" in sut

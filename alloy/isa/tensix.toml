@@ -150,3 +150,17 @@ header = "eltwise_binary_sfpu.h"
 init = "div_binary_tile_init()"
 call = "div_binary_tile(0, 1, 0)"
 domain = [0.5, 8.0]
+
+# A matrix product of tiles on the FPU: C (one tile) += A (one row of K tiles) x B (one column of them), accumulated in
+# DST. The FPU reads f32 operands at TF32 (A keeps 10 mantissa bits, B 9 at HiFi4) with fp32_dest_acc_en; without it
+# they are cut to bf16. 0.8x starts the hardware with SrcOrder::Reverse (matmul sends in0 to SrcB) and moves the
+# transpose flag to matmul_init; 0.6x's mm_init configures everything. Sources: alloy-workspace
+# notes/isa-research/tensix-matmul.md.
+[[ops.mma]]
+kind = "matmul"
+unit = "FPU"
+header = "matmul.h"
+init = { v06 = "mm_init(c0, c1, c16)", v08 = "compute_kernel_hw_startup<SrcOrder::Reverse>(c0, c1, c16); matmul_init(c0, c1)" }
+call = { v06 = "matmul_tiles(c0, c1, 0, 0, 0, false)", v08 = "matmul_tiles(c0, c1, 0, 0, 0)" }
+domain = [-1.0, 1.0]
+pending = true

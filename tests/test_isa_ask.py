@@ -44,7 +44,8 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
                               "dst": Operand("vector", "f32", (8,), "row_major", "b128")}), "no swizzle"),
     (Request("sm90", "mma", TILE, unit="za"), "no unit"),
     (Request("riscv", "add"), "no target"),
-    (Request("tensix", "mma", TILE), "step 3"),
+    (Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)), "b": Operand("tile_register", "f32", (48, 32)),
+                               "c": Operand("tile_register", "f32", (32, 32))}), "32x32 tiles"),
     (Request("sme", "mma", TILE), "--in f32 --acc f32"),
 ])  # fmt: skip
 def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_, reason):
@@ -80,3 +81,15 @@ def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys):
     sut = json.loads(capsys.readouterr().out)
     assert code == 2 and sut["feasible"] is False and sut["nearest"]
     assert sut["request"]["target"] == "gfx942" and sut["request"]["operands"]["a"]["shape"] == [64, 64]
+
+
+def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile():
+    tile = {"a": Operand("tile_register", "f32", (64, 96)), "b": Operand("tile_register", "f32", (96, 32)),
+            "c": Operand("tile_register", "f32", (64, 32))}  # fmt: skip
+
+    sut = ask(Request("tensix", "mma", tile), verify=False)
+
+    assert isinstance(sut, Feasible) and sut.unit == "fpu"
+    assert [(step.spelling, step.count) for step in sut.steps][1:] == [
+        ("matmul_tiles(c0, c1, 0, 0, 0)", 6), ("pack_tile(0, c16)", 2)
+    ]  # fmt: skip

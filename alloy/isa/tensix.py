@@ -55,6 +55,8 @@ class Row:
     call: str | dict[str, str]
     domain: tuple[float, float]
     note: str = ""
+    #: Added after the last recorded ttsim run: the CI job runs it, and ``verify`` records it.
+    pending: bool = False
 
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
