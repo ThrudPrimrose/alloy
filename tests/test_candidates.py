@@ -1,7 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import pytest
 
-from alloy import machine
+from alloy import configuration_matrix, machine
 from alloy.backend.candidates import flips, one_factor_at_a_time, vector_options
 from helpers import MATRIX, gcc_only, outlined, scope_with
 
@@ -181,3 +181,20 @@ def test_each_isa_and_tail_says_which_compilers_build_it_or_why_none_can():
     assert sut[("sve", "full_mask")].reason == "host lacks sve"
     assert sut[("avx512", "full_mask")].reason == "" and "gcc" in sut[("avx512", "full_mask")].compilers
     assert "clang" not in sut[("avx512", "masked_remainder")].compilers
+
+
+def test_the_reference_fp_matrix_offers_only_what_the_reference_build_honors():
+    """D3: no reassociation, no reciprocal, no fast-math, no fast vector math library, and no approximation rung."""
+    program = outlined()
+    scopes = scope_with(program, libm=True, reduction=False), scope_with(program, libm=False, reduction=True)
+    full = [c for scope in scopes for c in one_factor_at_a_time(MATRIX, scope)]
+    sut = [c for scope in scopes for c in one_factor_at_a_time(configuration_matrix.at_reference_fp(MATRIX), scope)]
+
+    assert {c.resolved(MATRIX)[0] for c in full} > set(configuration_matrix.REFERENCE_FP_LEVELS)
+    assert {c.resolved(MATRIX)[0] for c in sut} <= set(configuration_matrix.REFERENCE_FP_LEVELS)
+    assert any(c.approx for c in full) and not any(c.approx for c in sut)
+    assert {c.veclib for c in sut} == {c.veclib for c in full if c.resolved(MATRIX)[0] != "fast"}
+    # every other axis keeps its candidates
+    assert {c.note for c in sut} == {
+        c.note for c in full if c.resolved(MATRIX)[0] in configuration_matrix.REFERENCE_FP_LEVELS and not c.approx
+    }

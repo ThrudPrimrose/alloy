@@ -5,7 +5,13 @@ from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import FlavorOptimizer
 from hpcagent_bench.harness.task import Task
 
-__all__ = ["AlloyProfileOptimizer", "AlloyReferenceOptimizer", "AlloySpeculativeOptimizer", "AlloyToolStub"]
+__all__ = [
+    "AlloyProfileOptimizer",
+    "AlloyProfileReferenceFPOptimizer",
+    "AlloyReferenceOptimizer",
+    "AlloySpeculativeOptimizer",
+    "AlloyToolStub",
+]
 
 
 class AlloyProfileOptimizer(FlavorOptimizer):
@@ -17,6 +23,19 @@ class AlloyProfileOptimizer(FlavorOptimizer):
         from alloy.hb_plugin import adapter
 
         return adapter.optimize(task, pipeline, lambda code, link: self.deliver(task, code, link), self.keep_record)
+
+
+class AlloyProfileReferenceFPOptimizer(FlavorOptimizer):
+    """Profile mode at the reference's FP flags: no reassociation, no fast-math, no approximation rung."""
+
+    __slots__ = ()
+
+    def tune(self, task: Task, pipeline: str) -> Submission:
+        from alloy.hb_plugin import adapter
+
+        return adapter.optimize(
+            task, pipeline, lambda code, link: self.deliver(task, code, link), self.keep_record, reference_fp=True
+        )
 
 
 class AlloyReferenceOptimizer(FlavorOptimizer):

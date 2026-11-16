@@ -317,10 +317,11 @@ def scratch_folder(spec: BenchSpec) -> pathlib.Path:
     return out
 
 
-def optimize(task: Task, pipeline: str, deliver: Deliver, keep: Keep) -> Submission:
+def optimize(task: Task, pipeline: str, deliver: Deliver, keep: Keep, *, reference_fp: bool = False) -> Submission:
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
     slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
-    GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`)."""
+    GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`). ``reference_fp`` searches
+    only the reference's FP semantics (:func:`configuration_matrix.at_reference_fp`)."""
     if target_of(task) is Target.GPU:
         return profile_gpu(task, pipeline, keep)
     started = time.monotonic()
@@ -328,6 +329,7 @@ def optimize(task: Task, pipeline: str, deliver: Deliver, keep: Keep) -> Submiss
     spec = BenchSpec.load(task.kernel)
     deadline = started + resolve_kernel_timeout(spec)
     matrix = configuration_matrix.load()
+    matrix = configuration_matrix.at_reference_fp(matrix) if reference_fp else matrix
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
     if nothing_to_generate(sdfg, matrix):
         submission = rendered(task, spec, sdfg, deliver)

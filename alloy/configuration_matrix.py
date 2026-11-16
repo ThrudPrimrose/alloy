@@ -154,6 +154,7 @@ class Matrix:
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     timing: Timing
+    approximation: bool = True  # the ladder rungs of a scope's libm calls (alloy.isa.approximation) are candidates
 
     def host_isas(self, cpu_flags: frozenset[str]) -> tuple[str, ...]:
         """The declared ISAs a host with ``cpu_flags`` (:func:`alloy.machine.cpu_flags`) can run."""
@@ -255,3 +256,15 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
     )
     check_consistency(matrix)
     return matrix
+
+
+#: The FP levels the C reference's build honors: -O3 contracts and skips errno, and never reassociates or relaxes.
+REFERENCE_FP_LEVELS = ("strict", "contract", "noerrno")
+
+
+def at_reference_fp(matrix: Matrix) -> Matrix:
+    """``matrix`` restricted to the reference's FP semantics: only :data:`REFERENCE_FP_LEVELS` (a vector math library
+    at another level drops with it) and no approximation rung. E1's column at the reference's flags (design item D3)
+    separates the compilers' variance from FP relaxation."""
+    levels = {name: level for name, level in matrix.fp_levels.items() if name in REFERENCE_FP_LEVELS}
+    return dataclasses.replace(matrix, fp_levels=levels, approximation=False)

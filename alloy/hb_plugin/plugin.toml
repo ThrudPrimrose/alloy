@@ -51,6 +51,13 @@ optimizer = "alloy.hb_plugin.tuners:AlloyProfileOptimizer"
 # GPU: canon only, the one pipeline that hands its offloaded program to a tuner (PipelineContext.offloaded)
 extends = ["dace_cpu_canon", "dace_cpu_parallel", "dace_cpu_autoopt", "dace_gpu_canon"]
 
+# E1's column at the reference's FP flags (design item D3): CPU canon only.
+[flavors.alloy_profile_ref_fp]
+name = "Alloy profile, reference FP"
+full_name = "Alloy (profiled, at the reference's FP flags)"
+optimizer = "alloy.hb_plugin.tuners:AlloyProfileReferenceFPOptimizer"
+extends = ["dace_cpu_canon"]
+
 [flavors.alloy_speculative]
 name = "Alloy speculative"
 full_name = "Alloy (speculative)"

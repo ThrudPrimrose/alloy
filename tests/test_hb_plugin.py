@@ -78,6 +78,7 @@ def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> N
     [
         "dace_cpu_parallel_alloy_profile",
         "dace_cpu_canon_alloy_profile",
+        "dace_cpu_canon_alloy_profile_ref_fp",
         "dace_cpu_canon_alloy_speculative",
         "dace_cpu_canon_alloy_none",
     ],
@@ -109,7 +110,11 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
     assert kept.schema_version == record["schema"] == episode.SCHEMA
     assert set(record) == {"schema", "mode", "kernel", "seconds", "stubs", "scopes", "truncated"}
     assert set(record["seconds"]) == {"generate", "time_stubs", "score", "total"}
-    assert (record["mode"], record["kernel"], record["truncated"]) == (flavor.rsplit("_", 1)[1], kernel, False)
+    assert (record["mode"], record["kernel"], record["truncated"]) == (
+        flavor.split("_alloy_")[1].split("_")[0],
+        kernel,
+        False,
+    )
     for scope in record["scopes"]:
         assert set(scope) == {"symbol", "reference", "chosen", "note", "axes", "search"}
         assert (scope["chosen"] == episode.PLAIN[0]) == (not scope["axes"])
