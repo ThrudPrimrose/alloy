@@ -473,9 +473,11 @@ def team_of(archive: pathlib.Path, load: Load | None, cores: int) -> tuple[float
     return (load.regions, load.elements / load.span) if runtime.openmp_needs(archive) else (0.0, 1.0)
 
 
-def memory_term(loops: tuple[LoopCost, ...], footprint: int, share: float) -> float:
-    """Cycles per element on ``share`` of the bandwidth, once ``footprint`` bytes leave the cache."""
-    if footprint <= CACHE_RESIDENT * machine.largest_cache_bytes():
+def memory_term(loops: tuple[LoopCost, ...], footprint: int, team: float, cores: int) -> float:
+    """Cycles per element on ``team / cores`` of the bandwidth, once ``footprint`` bytes leave the cache the team's
+    cores reach (one L3 of an EPYC for a serial build, all of them for a full team)."""
+    share = team / cores
+    if footprint <= CACHE_RESIDENT * machine.largest_cache_bytes(math.ceil(team)):
         return 0.0
     bandwidth = share * machine.memory_bandwidth().bytes_per_second / machine.max_frequency_hz()
     return sum(c.weight * c.bytes for c in loops) / bandwidth
@@ -520,7 +522,7 @@ def predict(
     if regions > 0:
         compute += regions * REGION_NS * 1e-9 * machine.max_frequency_hz() / elements
     footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
-    memory = memory_term(loops, footprint, team / cores)
+    memory = memory_term(loops, footprint, team, cores)
     return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops), regions, elements)
 
 

@@ -35,8 +35,18 @@ def physical_cores() -> tuple[int, ...]:
     return tuple(cores)
 
 
-def largest_cache_bytes() -> int:
-    """The largest cache level among the usable CPUs, summed over its distinct instances."""
+def cpu_list(text: str) -> set[int]:
+    """The CPUs of a sysfs list such as ``0-7,16-23``."""
+    cpus: set[int] = set()
+    for part in filter(None, text.strip().split(",")):
+        low, _, high = part.partition("-")
+        cpus.update(range(int(low), int(high or low) + 1))
+    return cpus
+
+
+def cache_instances() -> list[tuple[int, int]]:
+    """The largest cache level among the usable CPUs: ``(bytes, usable physical cores sharing it)`` per instance,
+    the instance of the first usable core first; empty when sysfs lists no cache with a size."""
     sizes: dict[tuple[str, str], int] = {}
     for cpu in os.sched_getaffinity(0):
         for index in pathlib.Path(f"/sys/devices/system/cpu/cpu{cpu}/cache").glob("index*"):
@@ -48,11 +58,29 @@ def largest_cache_bytes() -> int:
             key = ((index / "level").read_text().strip(), (index / "shared_cpu_list").read_text().strip())
             sizes[key] = int(size[:-1]) * 1024
     if not sizes:
+        return []
+    top = max(level for level, unused in sizes)
+    cores = physical_cores()
+    instances = [(size, cpu_list(shared)) for (level, shared), size in sizes.items() if level == top]
+    instances.sort(key=lambda inst: min(inst[1] & set(cores), default=1 << 30))
+    return [(size, len(shared & set(cores))) for size, shared in instances]
+
+
+def largest_cache_bytes(threads: int | None = None) -> int:
+    """The bytes of the largest cache level a team of ``threads`` (one per physical core, packed onto the instances
+    in turn) reaches; ``None``, every usable core: the sum over its instances. A serial build sees one instance."""
+    instances = cache_instances()
+    if not instances:
         if (l3 := os.sysconf("SC_LEVEL3_CACHE_SIZE")) > 0:  # containers and some aarch64 VMs hide sysfs cache
             return l3
         raise RuntimeError("/sys/devices/system/cpu/cpu*/cache lists no cache")
-    top = max(level for level, unused in sizes)
-    return sum(size for (level, unused), size in sizes.items() if level == top)
+    total, left = 0, len(physical_cores()) if threads is None else max(1, threads)
+    for size, cores in instances:
+        if left <= 0:
+            break
+        total += size
+        left -= max(1, cores)
+    return total
 
 
 def cpu_flags() -> frozenset[str]:

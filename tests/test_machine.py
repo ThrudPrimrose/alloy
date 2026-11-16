@@ -63,3 +63,17 @@ def test_lscpu_fields_are_read_from_nested_children():
     ]
 
     assert machine.lscpu_fields(entries)["CPU max MHz:"] == "3456.0"
+
+
+def test_a_team_reaches_the_l3_of_the_complexes_it_spans_and_a_serial_build_one(monkeypatch):
+    """A9.1, team-aware (owner, 2026-11-16): three 32 MiB L3s of eight cores each, as an EPYC's complexes."""
+    monkeypatch.setattr(machine, "cache_instances", lambda: [(32 << 20, 8)] * 3)
+    monkeypatch.setattr(machine, "physical_cores", lambda: tuple(range(24)))
+
+    assert machine.largest_cache_bytes() == 96 << 20
+    assert machine.largest_cache_bytes(1) == 32 << 20
+    assert machine.largest_cache_bytes(9) == 64 << 20
+
+
+def test_a_sysfs_cpu_list_reads_ranges_and_singles():
+    assert machine.cpu_list("0-3,8,10-11\n") == {0, 1, 2, 3, 8, 10, 11}
