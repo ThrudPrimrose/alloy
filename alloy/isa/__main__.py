@@ -294,7 +294,7 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
             print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}".rstrip())
     if function in functions():
         if args.json:
-            raise KeyError(f"{function} has no table row, only kernels, which print as C: drop --json")
+            return print_kernels_json(table, args.isa, function, args.dtype, args.level, not args.no_verify)
         return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
     return 0
 
@@ -390,6 +390,31 @@ def ladder_line(function: str, dtype: str, target: str) -> str:
     return "; ".join(
         f"{k.level} {error_text(k)}, {render(k, target).intrinsics} intrinsics" for k in ladder(function, dtype)
     )
+
+
+def print_kernels_json(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:
+    """The kernels of a function as one JSON list, one record per rung, as the text form prints them (A9.6); a rung
+    that fails its gate is left out and the exit code is 3."""
+    table.isa(isa)
+    target = target_of(isa)
+    find(function, dtype, level or LEVELS[0])
+    records, status = [], 0
+    for name in (level,) if level else LEVELS:
+        k = find(function, dtype, name)
+        spelled = render(k, target)
+        verdict = validate_kernel(k.fn, dtype, name, target) if verify else None
+        if verdict is not None and verdict.ok is False:
+            status = 3
+            continue
+        records.append({
+            "function": function, "dtype": dtype, "isa": isa, "level": name, "error_ulp": k.error_ulp,
+            "error_abs": k.error_abs, "contract": k.contract, "branch": bool(k.guard),
+            "intrinsics": spelled.intrinsics, "source": spelled.source,
+            "libraries": libraries(function, dtype, target, name),
+            "verdict": None if verdict is None else {"ok": verdict.ok, "basis": verdict.basis},
+        })  # fmt: skip
+    print(json.dumps(records))
+    return status
 
 
 def print_kernels(table: Table, isa: str, function: str, dtype: str, level: str | None, verify: bool) -> int:

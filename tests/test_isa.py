@@ -3,6 +3,7 @@
 matrix's ISA widths, every spelling verified against the clang resource headers, and the CLI."""
 
 import functools
+import json
 import pathlib
 import re
 import subprocess
@@ -611,3 +612,15 @@ def test_a_scalar_fma_reverses_to_the_packed_math_on_one_lane_once():
 
     assert [(h.op, h.dtype, h.via) for h in sut] == [("fma", "f64", "scalar")]
     assert all(h.via != "scalar" for h in load_table().reverse("vfmadd231pd"))
+
+
+def test_a_function_with_only_kernels_answers_lookup_json_with_its_rungs(capsys):
+    """A9.6: the JSON form answers as the text form does, one record per rung, where it used to refuse."""
+    from alloy.isa.__main__ import main
+
+    code = main(["lookup", "avx512", "log1p", "f64", "--no-verify", "--json"])
+
+    sut = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert [r["level"] for r in sut] == ["strict", "relaxed", "fast"]
+    assert all(r["source"] and r["contract"] and r["intrinsics"] > 0 for r in sut)
