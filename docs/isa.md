@@ -91,20 +91,24 @@ The FPU row (`add_tiles`) reads both operands from SrcA and SrcB, which hold TF3
 copies both operands into DST and keeps f32. The dtypes are `f32` and `bf16`, since Tensix has no f64.
 `reduce_add` and `reduce_max` run `reduce_tile` on the FPU: every data tile reduces into one DST tile against a scaler
 tile (1 in the first row of each 16x16 face), and the value lands at `[0, 0]` of the packed tile. `scan_add` runs
-`cumsum_tile` on the SFPU down each column, with `first` set only for the top tile of a column. These three rows are
-`pending`: the CI job `tensix` runs them, and the next `verify` records them.
+`cumsum_tile` on the SFPU down each column, with `first` set only for the top tile of a column.
 
 Each row is verified by running it. `tensix_harness.py` builds a one-core program from an inline reader, a compute
 kernel around the row's call, and a writer, launches it with `ttnn.generic_op`, and compares the result with torch.
 `python -m alloy.isa.tensix verify` runs every row on Tenstorrent's simulator ttsim (v1.16.0, Blackhole) inside a
-pinned tt-metal 0.8x release image and records the result in `tensix_verified.toml`. The CI job `tensix` reruns it.
-All 34 recorded row and dtype pairs pass; the pending rows (`mma`, the reductions, and the scan) have no record yet. The measured errors are what a kernel author needs to know.
+pinned tt-metal 0.8x release image and records the result in `tensix_verified.toml`. The CI job `tensix` reruns it
+and uploads the file it would write (artifact `tensix-verified`), so a new row, added with `pending = true`, is
+recorded from CI. All 42 row and dtype pairs pass on ttsim. The measured errors are what a kernel author needs to
+know.
 
 | Path | f32 max relative error | bf16 |
 |---|---|---|
 | SFPU unary (`exp_tile`, `log_tile`, ...) | 6e-8 to 1.2e-7 | 4e-3 to 6e-3 |
 | FPU binary (`add_tiles`, `mul_tiles`) | 4.9e-4 (add), 2.0e-3 (mul) | 2e-3 to 9e-3 |
 | SFPU binary (`add_binary_tile`, ...) | 4e-8 to 7e-8 | 2e-3 to 6e-3 |
+| FPU `mma` (`matmul_tiles`, over 2 K tiles) | 1.0e-3 | 2.9e-3 |
+| FPU reduction (`reduce_tile`, sum and max of 2 tiles) | 8.3e-4 (sum), 0 (max) | 1.5e-6 (sum), 0 (max) |
+| SFPU scan (`cumsum_tile`, 2 tiles of a column) | 5.7e-7 | 7.5e-3 |
 
 Full f32 needs `fp32_dest_acc_en`, and `UnpackToDestFp32` for tiles copied into DST. Without them f32 data passes
 DST at bf16 precision (2^-9). The FPU error does not improve at the `HiFi4` fidelity, because SrcA and SrcB hold TF32.

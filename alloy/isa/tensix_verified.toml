@@ -241,3 +241,59 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0036542338709676593
+
+[[verdicts]]
+op = "mma"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0010107476559308532
+
+[[verdicts]]
+op = "mma"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0028633085951892206
+
+[[verdicts]]
+op = "reduce_add"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0008300781482637376
+
+[[verdicts]]
+op = "reduce_add"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 1.5258765779471162e-06
+
+[[verdicts]]
+op = "reduce_max"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "reduce_max"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0
+
+[[verdicts]]
+op = "scan_add"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 5.653105974431299e-07
+
+[[verdicts]]
+op = "scan_add"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0074582692080028415

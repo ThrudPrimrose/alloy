@@ -220,15 +220,31 @@ def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the
 
 
 @pytest.mark.parametrize("op", ["reduce_add", "reduce_max", "scan_add"])
-def test_a_pending_row_is_offered_unverified_with_one_call_per_tile(op: str):
-    from alloy.isa.ask import Feasible, Operand, Request, ask
+def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_call_per_tile(op: str):
+    from alloy.isa.ask import Check, Feasible, Operand, Request, ask
 
     answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (64, 64))}), verify=False)
 
     assert isinstance(answer, Feasible), answer
-    assert answer.check.status == "unverified" and "pending" in answer.check.basis
+    assert answer.check == Check("run", "ttsim")
     assert answer.steps[1].count == 4
     assert [s.spelling for s in answer.steps].count("pack_tile(0, c16)") == (op != "scan_add")
+
+
+def test_a_pending_row_is_offered_unverified_until_its_ttsim_run_is_recorded(monkeypatch: pytest.MonkeyPatch):
+    import dataclasses
+
+    from alloy.isa import ask as ask_module
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    pending = tuple(dataclasses.replace(r, pending=True) if r.op == "scan_add" else r for r in tensix.rows())
+    monkeypatch.setattr(ask_module.tensix, "rows", lambda: pending)
+    monkeypatch.setattr(ask_module.tensix, "verdicts", dict)
+
+    answer = ask(Request("tensix", "scan_add", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
+
+    assert isinstance(answer, Feasible), answer
+    assert answer.check.status == "unverified" and "pending" in answer.check.basis
 
 
 def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
