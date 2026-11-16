@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any
 
-from alloy.isa import ALIASES, OPS, load, simt, tensix
+from alloy.isa import ALIASES, OPS, load, simt, tensix, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -112,6 +112,17 @@ def main(argv: list[str] | None = None) -> int:
     skeleton_p.add_argument("dtype")
     skeleton_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
 
+    tile_p = commands.add_parser("tile", help="a matrix tile's plan and checked program: tile cpu gemm 64 64 64")
+    tile_p.add_argument("target", help="cpu (sm90 and gfx942: GH200 and MI300A)")
+    tile_p.add_argument("operation", choices=["gemm"])
+    tile_p.add_argument("m", type=int)
+    tile_p.add_argument("n", type=int)
+    tile_p.add_argument("k", type=int)
+    tile_p.add_argument("--in", dest="in_type", default="f32", help="input element type")
+    tile_p.add_argument("--acc", dest="acc_type", default="f32", help="accumulator element type")
+    tile_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
+    tile_p.add_argument("--json", action="store_true", help="the plan as JSON")
+
     args = parser.parse_args(argv)
     for field in ("isa", "op", "dtype", "function"):
         if isinstance(value := vars(args).get(field), str):
@@ -128,6 +139,8 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
     """Run the subcommand; its exit code."""
     if args.command == "lookup":
         return lookup_command(table, args)
+    if args.command == "tile":
+        return tile_command(args)
     if args.command == "kernel":
         level = args.level
         table.isa(args.isa)
@@ -587,6 +600,28 @@ def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bo
         failed = verdict.ok is False
     print(text, file=sys.stderr if failed else sys.stdout)
     return 3 if failed else 0
+
+
+def tile_command(args: argparse.Namespace) -> int:
+    """A tile's plan: its steps, layout, descriptors, and program, checked here unless ``--no-verify``; exit 3 when
+    the check could not run or failed, as an unverified lookup does."""
+    found = tile.plan(args.target, args.m, args.n, args.k, args.in_type, args.acc_type)
+    if not args.no_verify:
+        found = tile.verify(found)
+    if args.json:
+        print(json.dumps(dataclasses.asdict(found)))
+        return 0 if found.verified == "run" else 3
+    print(f"{found.target}: gemm {found.m}x{found.n}x{found.k}, {found.in_type} in, {found.acc_type} accumulate")
+    print(f"  check: {found.verified}" + (f" ({found.detail})" if found.detail else ""))
+    print(f"  layout: {found.layout}")
+    for name, value in found.descriptors.items():
+        print(f"  {name}: {value}")
+    print("  steps:")
+    for step in found.steps:
+        print(f"    {step}")
+    print("  program:")
+    print(found.program)
+    return 0 if found.verified == "run" else 3
 
 
 if __name__ == "__main__":
