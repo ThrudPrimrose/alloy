@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from alloy.isa import simt, tile
 from alloy.isa.__main__ import main
 from alloy.isa.ask import Feasible, Infeasible, Operand, Request, ask
 
@@ -39,7 +40,7 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
 
 
 @pytest.mark.parametrize(("request_", "reason"), [
-    (Request("gfx942", "mma", TILE | {"a": Operand("shared", "f32", (64, 64))}), "--in f16 --acc f32"),
+    (Request("gfx942", "mma", TILE | {name: Operand("shared", "f32", (64, 64)) for name in "ab"}), "--in f16 --acc f32"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)),
                               "dst": Operand("vector", "f32", (8,), "row_major", "b128")}), "no swizzle"),
     (Request("sm90", "mma", TILE, unit="za"), "no unit"),
@@ -56,7 +57,9 @@ def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_, r
 
 
 def test_the_nearest_request_of_an_infeasible_tile_is_feasible():
-    refused = ask(Request("gfx942", "mma", TILE | {"a": Operand("shared", "f32", (64, 64))}), verify=False)
+    refused = ask(
+        Request("gfx942", "mma", TILE | {name: Operand("shared", "f32", (64, 64)) for name in "ab"}), verify=False
+    )
     assert isinstance(refused, Infeasible) and refused.nearest
     a, b, c = (Operand.parse(part.split(" ", 1)[1]) for part in refused.nearest[0].split(", "))
 
@@ -93,3 +96,196 @@ def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile():
     assert [(step.spelling, step.count) for step in sut.steps][1:] == [
         ("matmul_tiles(c0, c1, 0, 0, 0)", 6), ("pack_tile(0, c16)", 2)
     ]  # fmt: skip
+
+
+def answered(request_: Request) -> Feasible | Infeasible:
+    return ask(request_, verify=False)
+
+
+LDS = Operand("shared", "f16", (64, 64), "row_major", "xor:8")
+B128 = Operand("shared", "f16", (64, 64), "row_major", "b128")
+GLOBAL = Operand("global", "f16", (256, 256))
+
+
+@pytest.mark.parametrize(("request_", "reason"), [
+    (Request("sm90", "mma", TILE | {"b": Operand("shared", "bf16", (64, 64))}), "one element type"),
+    (Request("avx2", "mma", {"a": Operand("vector", "f32", (16, 8)), "b": Operand("vector", "f64", (8, 16)),
+                             "c": Operand("vector", "f64", (16, 16))}), "one element type"),
+    (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), "accumulates c in register"),
+    (Request("sm90", "mma", TILE | {"b": Operand("register", "f16", (64, 64))}), "reads b from shared"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), "swizzle b128"),
+    (Request("gfx942", "mma", TILE | {"a": B128}), "swizzle xor:8"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major")}), "row-major"),
+    (Request("avx2", "mma", {"a": Operand("vector", "f32", (16, 8), "row_major", "b128"),
+                             "b": Operand("vector", "f32", (8, 16)), "c": Operand("vector", "f32", (16, 16))}),
+     "no swizzle"),
+    (Request("tensix", "mma", {"a": Operand("tile_register", "bf16", (32, 32)),
+                               "b": Operand("tile_register", "f32", (32, 32)),
+                               "c": Operand("tile_register", "bf16", (32, 32))}), "one element type"),
+])  # fmt: skip
+def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request_, reason):
+    sut = answered(request_)
+
+    assert isinstance(sut, Infeasible), sut
+    assert reason in sut.reason
+
+
+@pytest.mark.parametrize(("request_", "runs_on"), [
+    (Request("sm90", "mma", TILE, unit="warp"), "warpgroup"),
+    (Request("sm90", "mma", TILE, unit="tma"), "warpgroup"),
+    (Request("tensix", "mma", {name: Operand("tile_register", "f32", (32, 32)) for name in "abc"}, unit="sfpu"), "fpu"),
+    (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}, unit="scalar"), "vector"),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": LDS}, unit="mfma"), "lds"),
+    (Request("sm90", "reduce_add", {"x": Operand("register", "f32")}, unit="thread"), "warp"),
+    (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}, unit="fpu"), "sfpu"),
+])  # fmt: skip
+def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_the_unit_that_does(request_, runs_on):
+    sut = answered(request_)
+
+    assert isinstance(sut, Infeasible), sut
+    assert f"runs on {runs_on}" in sut.reason and sut.nearest == (f"unit {runs_on}",)
+
+
+@pytest.mark.parametrize(("request_", "reason"), [
+    (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f64", (7,))}),
+     "f16 halves"),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), "xor:8"),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (64, 64))}), "xor:8"),
+    (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f64", (4,))}),
+     "converts nothing"),
+    (Request("avx2", "copy", {"src": Operand("shared", "f32", (8,)), "dst": Operand("shared", "f32", (8,))}),
+     "loads global memory into a register"),
+    (Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
+     "8 f32 lanes"),
+    (Request("avx512", "copy", {"src": Operand("global", "f32", (64, 64)), "dst": Operand("vector", "f32", (64, 64))}),
+     "16 f32 lanes"),
+    (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), "shared memory only"),
+    (Request("sm90", "copy", {"src": Operand("global", "f32", (256, 256)), "dst": B128}), "converts nothing"),
+    (Request("sm90", "copy", {"src": Operand("global", "f16", (8, 8)), "dst": B128}), "at least the box"),
+    (Request("sm90", "copy", {"src": Operand("global", "f16", (256,)), "dst": B128}), "two-dimensional"),
+    (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256), "col_major"), "dst": B128}), "row-major"),
+])  # fmt: skip
+def test_a_copy_the_unit_cannot_carry_out_is_infeasible(request_, reason):
+    sut = answered(request_)
+
+    assert isinstance(sut, Infeasible), sut
+    assert reason in sut.reason
+
+
+def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load():
+    register, memory = Operand("vector", "f32", (8,)), Operand("global", "f32", (8,))
+
+    store = answered(Request("avx2", "copy", {"src": register, "dst": memory}))
+    loaded = answered(Request("avx2", "copy", {"src": memory, "dst": register}))
+
+    assert isinstance(store, Feasible) and isinstance(loaded, Feasible)
+    assert "store" in store.steps[0].spelling and "load" in loaded.steps[0].spelling
+    assert store.request.op == "copy"
+
+
+@pytest.mark.parametrize("op", [row.op for row in simt.rows()])
+def test_every_device_row_is_reachable_on_both_gpu_targets(op: str):
+    for target in ("sm90", "gfx942"):
+        sut = answered(Request(target, op))
+
+        assert isinstance(sut, Feasible), sut
+        assert sut.steps[0].spelling
+
+
+@pytest.mark.parametrize(("request_", "reason"), [
+    (Request("sm90", "fma", {"x": Operand("register", "f64")}), "computes in f32"),
+    (Request("sm90", "fma", {"x": Operand("shared", "f32", (64, 64))}), "one thread on scalars"),
+    (Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}), "4 f64 lanes"),
+    (Request("avx2", "add", {"a": Operand("vector", "f64", (4,)), "b": Operand("vector", "f32", (8,))}), "mix"),
+    (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}, max_ulp=1.0), "add is exact"),
+    (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}), "one 32x32 tile"),
+    (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
+    (Request("sme", "add"), "mma only"),
+])  # fmt: skip
+def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(request_, reason):
+    sut = answered(request_)
+
+    assert isinstance(sut, Infeasible), sut
+    assert reason in sut.reason
+
+
+def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code():
+    sut = answered(Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}))
+
+    assert isinstance(sut, Feasible)
+    assert sut.steps[0].spelling == "alloy_exp_f32_strict" and "_mm256_" in sut.code
+    assert "rung strict" in sut.notes[0]
+
+
+@pytest.mark.parametrize("refused", [
+    Request("avx2", "mma", {"a": Operand("vector", "f16", (16, 8)), "b": Operand("vector", "f16", (8, 16)),
+                            "c": Operand("vector", "f32", (16, 16))}),
+    Request("sme", "mma", TILE),
+    Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}),
+    Request("gfx942", "mma", TILE | {"a": B128}),
+    Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)),
+                              "b": Operand("tile_register", "f32", (48, 32)),
+                              "c": Operand("tile_register", "f32", (32, 32))}),
+    Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}),
+    Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}),
+    Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
+    Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}),
+    Request("sm90", "fma", {"x": Operand("register", "f64")}),
+    Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}),
+    Request("sme", "add"),
+])  # fmt: skip
+def test_every_nearest_request_of_a_refusal_is_itself_feasible(refused: Request):
+    sut = answered(refused)
+    assert isinstance(sut, Infeasible) and sut.nearest
+
+    for near in sut.nearest:
+        operands = {name: Operand.parse(text) for name, text in (part.split(" ", 1) for part in near.split(", "))}
+        op = "mma" if refused.target == "sme" else refused.op
+        assert isinstance(answered(Request(refused.target, op, operands)), Feasible), near
+
+
+def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.MonkeyPatch):
+    def failing(plan_: tile.TilePlan) -> tile.TilePlan:
+        return tile.replace_check(plan_, "failed", "relative error 0.5 against the f64 reference")
+
+    monkeypatch.setattr(tile, "verify", failing)
+    operands = {"a": Operand("vector", "f32", (16, 8)), "b": Operand("vector", "f32", (8, 16)),
+                "c": Operand("vector", "f32", (16, 16))}  # fmt: skip
+
+    sut = ask(Request("avx2", "mma", operands))
+
+    assert isinstance(sut, Infeasible) and "failed its check" in sut.reason
+
+
+def test_a_device_row_whose_recorded_check_failed_is_infeasible(monkeypatch: pytest.MonkeyPatch):
+    failed = {("fma", "cuda"): simt.Verdict("fma", "cuda", "an sm_90 device", ok=False, error="relative error 0.5")}
+    monkeypatch.setattr(simt, "verdicts", lambda: failed)
+
+    sut = answered(Request("sm90", "fma", {"x": Operand("register", "f32")}))
+
+    assert isinstance(sut, Infeasible) and "relative error 0.5" in sut.reason
+
+
+@pytest.mark.parametrize("operand", [
+    "shared:f16:64y64", "smem:f16:64x64", "shared:f16:64x64:b128", "shared:f16:64x64:row_major:b128:extra",
+    "shared:f16:0x64", "shared",
+])  # fmt: skip
+def test_the_cli_rejects_a_malformed_operand_as_a_usage_error_apart_from_infeasible(operand: str, capsys):
+    code = main(["ask", "sm90", "mma", "--a", operand, "--b", "shared:f16:64x64", "--c", "register:f32:64x64"])
+
+    printed = capsys.readouterr()
+    assert code == 64 and printed.out == "" and operand in printed.err
+
+
+def test_the_cli_reads_a_target_in_any_case_and_an_lds_swizzle_with_its_colon(capsys):
+    code = main(["ask", "GFX942", "copy", "--src", "global:f16:256x256", "--dst", "shared:f16:64x64:row_major:xor:8",
+                 "--json"])  # fmt: skip
+
+    sut = json.loads(capsys.readouterr().out)
+    assert code == 0 and sut["unit"] == "lds" and sut["request"]["operands"]["dst"]["swizzle"] == "xor:8"
+
+
+def test_an_operand_spells_back_to_what_parses_to_it():
+    for text in ("register:f32", "vector:f64:4", "shared:f16:64x64:row_major:b128", "shared:f16:64x64:col_major",
+                 "shared:f16:64x64:row_major:xor:8"):  # fmt: skip
+        assert Operand.parse(text).spelled() == text

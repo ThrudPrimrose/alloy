@@ -100,3 +100,23 @@ def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool,
 
     assert all(text in sut for text in spelled), sut
     assert sut.count("pack_tile(0, c16)") == 1 and "for (uint32_t kt = 0; kt < num_tiles; ++kt)" in sut
+
+
+@pytest.mark.parametrize("op", ["add", "sub", "mul", "div"])
+def test_the_reference_of_an_elementwise_row_takes_tiles_that_do_not_chain_as_a_product(op: str):
+    import torch
+
+    x, y = torch.full((64, 32), 6.0), torch.full((64, 32), 3.0)
+
+    sut = tensix_harness.reference(op, [x, y])
+
+    assert sut.shape == (64, 32)
+    assert sut[0, 0].item() == {"add": 9.0, "sub": 3.0, "mul": 18.0, "div": 2.0}[op]
+
+
+def test_the_reference_of_an_mma_row_is_the_matrix_product():
+    import torch
+
+    sut = tensix_harness.reference("mma", [torch.ones(32, 64), torch.ones(64, 32)])
+
+    assert sut.shape == (32, 32) and sut[0, 0].item() == 64.0

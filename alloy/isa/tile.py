@@ -36,7 +36,8 @@ TIMEOUT = 300
 class TilePlan:
     """A tile operation on one target: the shape and types, the instruction loop as steps, the descriptors and the
     layout its operands need, the program that runs it once against a reference, and the check's outcome
-    (``run``: matched the reference here; ``compiled``: built, no device to run it; ``unverified``)."""
+    (``run``: matched the reference here; ``compiled``: built, no device to run it; ``failed``: did not build or
+    missed the reference; ``unverified``: no tool here to check it)."""
 
     target: str
     m: int
@@ -122,11 +123,11 @@ def verify(plan_: TilePlan) -> TilePlan:
             capture_output=True, text=True, check=False, timeout=TIMEOUT,
         )  # fmt: skip
         if built.returncode != 0:
-            return replace_check(plan_, "unverified", f"did not compile: {built.stderr.strip()[-500:]}")
+            return replace_check(plan_, "failed", f"did not compile: {built.stderr.strip()[-500:]}")
         ran = subprocess.run([str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
     error = ran.stdout.strip()
     if ran.returncode != 0:
-        return replace_check(plan_, "unverified", f"relative error {error} against the f64 reference")
+        return replace_check(plan_, "failed", f"relative error {error} against the f64 reference")
     return replace_check(plan_, "run", f"relative error {error} against the f64 reference")
 
 
@@ -293,14 +294,14 @@ def gpu_verify(plan_: TilePlan) -> TilePlan:
         except FileNotFoundError:
             return replace_check(plan_, "unverified", f"{argv[0]} is not installed here")
         if built.returncode != 0:
-            return replace_check(plan_, "unverified", f"did not compile: {built.stderr.strip()[-500:]}")
+            return replace_check(plan_, "failed", f"did not compile: {built.stderr.strip()[-500:]}")
         if not here_too:
             return replace_check(
                 plan_, "compiled", f"compiled for {plan_.target}; no {plan_.target} GPU here to run it"
             )
         ran = subprocess.run([str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
     error = ran.stdout.strip()
-    verdict = "run" if ran.returncode == 0 else "unverified"
+    verdict = "run" if ran.returncode == 0 else "failed"
     return replace_check(plan_, verdict, f"relative error {error} against the f64 reference")
 
 
@@ -368,12 +369,12 @@ def sme_verify(plan_: TilePlan) -> TilePlan:
             link = [cc, "-static", str(binary.with_suffix(".o")), "-o", str(binary), "-lm"]
             built = subprocess.run(link, capture_output=True, text=True, check=False, timeout=TIMEOUT)
         if built.returncode != 0:
-            return replace_check(plan_, "unverified", f"did not build: {built.stderr.strip()[-500:]}")
+            return replace_check(plan_, "failed", f"did not build: {built.stderr.strip()[-500:]}")
         if qemu is None:
             return replace_check(plan_, "compiled", "compiled for armv9-a+sme; no qemu-aarch64 here to run it")
         ran = subprocess.run([qemu, "-cpu", "max,sme=on", str(binary)], capture_output=True, text=True, check=False,
                              timeout=TIMEOUT)  # fmt: skip
-    verdict = "run" if ran.returncode == 0 else "unverified"
+    verdict = "run" if ran.returncode == 0 else "failed"
     return replace_check(plan_, verdict, f"under qemu (SME): relative error {ran.stdout.strip()}")
 
 

@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     ask_p.add_argument("--json", action="store_true", help="the Feasible or Infeasible answer as JSON")
 
     args = parser.parse_args(argv)
-    for field in ("isa", "op", "dtype", "function"):
+    for field in ("isa", "op", "dtype", "function", "target", "unit"):
         if isinstance(value := vars(args).get(field), str):
             setattr(args, field, value.lower())
     table = load()
@@ -661,13 +661,22 @@ def tile_command(args: argparse.Namespace) -> int:
     return 0 if found.verified == "run" else 3
 
 
+#: The exit code of a malformed request (sysexits' EX_USAGE), apart from 2, an infeasible one.
+USAGE = 64
+
+
 def ask_command(args: argparse.Namespace) -> int:
-    """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible."""
-    operands = {
-        name: ask.Operand.parse(value)
-        for name in ("a", "b", "c", "x", "src", "dst")
-        if isinstance(value := vars(args).get(name), str)
-    }
+    """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible, and 64
+    (a usage error) for an operand that does not parse."""
+    try:
+        operands = {
+            name: ask.Operand.parse(value)
+            for name in ("a", "b", "c", "x", "src", "dst")
+            if isinstance(value := vars(args).get(name), str)
+        }
+    except KeyError as exc:
+        print(f"alloy.isa ask: {exc.args[0]}", file=sys.stderr)
+        return USAGE
     request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp)
     answer = ask.ask(request, verify=not args.no_verify)
     if args.json:

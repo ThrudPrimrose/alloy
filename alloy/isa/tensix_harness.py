@@ -242,7 +242,8 @@ def reference(op: str, xs: list):
     if op in unary:
         return unary[op](x)
     y = xs[1].double()
-    return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y, "mma": x @ y}[op]
+    binary = {"add": torch.add, "sub": torch.sub, "mul": torch.mul, "div": torch.div, "mma": torch.matmul}
+    return binary[op](x, y)  # by name: an elementwise row's tiles do not chain as a product
 
 
 def run(dev, row: dict, new: bool) -> dict:
