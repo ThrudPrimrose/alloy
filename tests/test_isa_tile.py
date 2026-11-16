@@ -2,6 +2,8 @@
 """A11: the tile ISA. A CPU answers a GEMM tile with the FMA fallback (no AMX or SME on the evaluated CPUs), checked
 against an f64 reference, and refuses a tile type it has no instruction for."""
 
+import shutil
+
 import pytest
 
 from alloy.isa import tile
@@ -68,3 +70,16 @@ def test_the_gfx942_program_compiles_for_gfx942():
     sut = tile.verify(tile.plan("gfx942", 64, 64, 128, "f16", "f32"))
 
     assert sut.verified in ("compiled", "run"), sut.detail
+
+
+@pytest.mark.skipif(
+    not (shutil.which("aarch64-linux-gnu-gcc") and shutil.which("clang")),
+    reason="needs clang and the aarch64 cross compiler",
+)
+def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else():
+    """No evaluated CPU has SME: CI runs the FMOPA tile under qemu (-cpu max,sme=on), a box without qemu compiles it."""
+    sut = tile.verify(tile.plan("sme", 70, 33, 9, "f32", "f32"))
+
+    expected = "run" if (shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")) else "compiled"
+    assert sut.verified == expected, sut.detail
+    assert any("svmopa_za32_f32_m" in step for step in sut.steps)

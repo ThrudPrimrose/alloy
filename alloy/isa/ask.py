@@ -231,13 +231,15 @@ def mma(request: Request, verify: bool) -> Answer:
         return no(request, f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}")
     m, k, n = a.shape[0], a.shape[1], b.shape[1]
     target = "cpu" if request.target in CPU else request.target
-    if target in ("sme", "tensix"):
-        return no(request, f"{request.target} mma comes with step 3 of the design (fmopa into ZA; matmul_tiles)")
+    if target == "tensix":
+        return no(request, "tensix mma (matmul_tiles on the FPU) comes with step 3 of the design")
     try:
         found = tile.plan(target, m, n, k, a.dtype, c.dtype)
     except KeyError as exc:
         if target == "cpu":
             nearest = tuple(f"a vector:{i}:{m}x{k}, c vector:{o}:{m}x{n}" for i, o in tile.CPU_TYPES)
+        elif target == "sme":
+            nearest = (f"a tile_register:f32:{m}x{k}, b tile_register:f32:{k}x{n}, c tile_register:f32:{m}x{n}",)
         else:
             nearest = tuple(
                 f"a shared:f16:{bm}x64, b shared:f16:64x{bn}, c register:f32:{bm}x{bn}"
@@ -246,7 +248,7 @@ def mma(request: Request, verify: bool) -> Answer:
         return no(request, str(exc.args[0]), *nearest)
     if verify:
         found = tile.verify(found)
-    unit = {"cpu": "vector", "sm90": "warpgroup", "gfx942": "mfma"}[target]
+    unit = {"cpu": "vector", "sme": "za", "sm90": "warpgroup", "gfx942": "mfma"}[target]
     check = Check(found.verified, found.detail)  # type: ignore[arg-type]
     steps = tuple(Step(unit, s) for s in found.steps)
     return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))

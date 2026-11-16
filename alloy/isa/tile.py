@@ -11,6 +11,7 @@ fallback).
 """
 
 import pathlib
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -110,6 +111,8 @@ def verify(plan_: TilePlan) -> TilePlan:
     target this machine does not have."""
     if plan_.target in GPU_TILES:
         return gpu_verify(plan_)
+    if plan_.target == "sme":
+        return sme_verify(plan_)
     with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
         source, binary = pathlib.Path(folder) / "tile.c", pathlib.Path(folder) / "tile"
         source.write_text(plan_.program)
@@ -301,6 +304,78 @@ def gpu_verify(plan_: TilePlan) -> TilePlan:
     return replace_check(plan_, verdict, f"relative error {error} against the f64 reference")
 
 
+CROSS_CC = "aarch64-linux-gnu-gcc"
+
+
+def sme_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
+    """SME: outer products (FMOPA) into the ZA tile za0.s, A given transposed (``alloy_tile_sme.h``)."""
+    if (in_type, acc_type) != ("f32", "f32"):
+        raise KeyError(f"an SME tile here takes --in f32 --acc f32 (FMOPA into za0.s); got {in_type}, {acc_type}")
+    steps = (
+        "for each SVL/32 x SVL/32 block of C: svld1_hor_za32 loads its rows into za0.s (predicated at the edges)",
+        f"  {k} x svmopa_za32_f32_m: the outer product of a column of A (from at, contiguous) and a row of B",
+        "  svst1_hor_za32 stores the rows back; the function runs in streaming mode (__arm_locally_streaming)",
+    )
+    layout = "A transposed (k x m row-major), B k x n row-major, C m x n row-major; ZA holds one block of C; no swizzle"
+    program = f"""#include <math.h>
+#include <stdio.h>
+#include "alloy_tile_sme.h"
+
+enum {{ M = {m}, N = {n}, K = {k} }};
+static float AT[K * M], B[K * N], C[M * N];
+
+int main(void) {{
+  for (int i = 0; i < K * M; ++i) AT[i] = (float)((i % 13) - 6) / 8;
+  for (int i = 0; i < K * N; ++i) B[i] = (float)((i % 7) - 3) / 4;
+  for (int i = 0; i < M * N; ++i) C[i] = (float)((i % 5) - 2);
+  static double want[M * N];
+  for (int i = 0; i < M; ++i)
+    for (int j = 0; j < N; ++j) {{
+      double s = C[i * N + j];
+      for (int p = 0; p < K; ++p) s += (double)AT[p * M + i] * (double)B[p * N + j];
+      want[i * N + j] = s;
+    }}
+  alloy_mma_sme_f32(M, N, K, AT, M, B, N, C, N);
+  double worst = 0.0;
+  for (int i = 0; i < M * N; ++i) {{
+    double rel = fabs((double)C[i] - want[i]) / fmax(1.0, fabs(want[i]));
+    if (rel > worst) worst = rel;
+  }}
+  printf("%.3e\\n", worst);
+  return worst <= {TOLERANCE["f32"]} ? 0 : 1;
+}}
+"""
+    descriptors = {"build": "-march=armv9-a+sme (gcc 14 or later, clang 18 or later)",
+                   "hardware": "no evaluated CPU has SME; checked under qemu -cpu max,sme=on"}  # fmt: skip
+    return TilePlan("sme", m, n, k, in_type, acc_type, steps, layout, program, descriptors)
+
+
+def sme_verify(plan_: TilePlan) -> TilePlan:
+    """Compile ``plan_`` for armv9-a+sme with clang (gcc has the SME intrinsics only from 14), link it statically with
+    the aarch64 cross compiler, and run it under qemu with SME; compile only without qemu."""
+    cc, clang = shutil.which(CROSS_CC), shutil.which("clang")
+    if cc is None or clang is None:
+        return replace_check(plan_, "unverified", f"needs clang and {CROSS_CC}")
+    qemu = shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")
+    with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
+        source, binary = pathlib.Path(folder) / "tile.c", pathlib.Path(folder) / "tile"
+        source.write_text(plan_.program)
+        compile_argv = [clang, "--target=aarch64-linux-gnu", "-march=armv9-a+sme", "-O2", f"-I{HERE}", "-c",
+                        str(source), "-o", str(binary.with_suffix(".o"))]  # fmt: skip
+        built = subprocess.run(compile_argv, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+        if built.returncode == 0 and qemu is not None:
+            link = [cc, "-static", str(binary.with_suffix(".o")), "-o", str(binary), "-lm"]
+            built = subprocess.run(link, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+        if built.returncode != 0:
+            return replace_check(plan_, "unverified", f"did not build: {built.stderr.strip()[-500:]}")
+        if qemu is None:
+            return replace_check(plan_, "compiled", "compiled for armv9-a+sme; no qemu-aarch64 here to run it")
+        ran = subprocess.run([qemu, "-cpu", "max,sme=on", str(binary)], capture_output=True, text=True, check=False,
+                             timeout=TIMEOUT)  # fmt: skip
+    verdict = "run" if ran.returncode == 0 else "unverified"
+    return replace_check(plan_, verdict, f"under qemu (SME): relative error {ran.stdout.strip()}")
+
+
 def plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     """The tile plan of ``target``; a target or shape it cannot take is a ``KeyError`` naming what it takes."""
     if min(m, n, k) <= 0:
@@ -309,4 +384,6 @@ def plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> Ti
         return cpu_plan(m, n, k, in_type, acc_type)
     if target in GPU_TILES:
         return gpu_plan(target, m, n, k, in_type, acc_type)
-    raise KeyError(f"tile targets: cpu, sm90 (GH200), gfx942 (MI300A); got {target!r}")
+    if target == "sme":
+        return sme_plan(m, n, k, in_type, acc_type)
+    raise KeyError(f"tile targets: cpu, sme, sm90 (GH200), gfx942 (MI300A); got {target!r}")

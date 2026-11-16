@@ -44,7 +44,8 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
                               "dst": Operand("vector", "f32", (8,), "row_major", "b128")}), "no swizzle"),
     (Request("sm90", "mma", TILE, unit="za"), "no unit"),
     (Request("riscv", "add"), "no target"),
-    (Request("sme", "mma", TILE), "step 3"),
+    (Request("tensix", "mma", TILE), "step 3"),
+    (Request("sme", "mma", TILE), "--in f32 --acc f32"),
 ])  # fmt: skip
 def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_, reason):
     sut = ask(request_, verify=False)
