@@ -24,7 +24,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy import gpu
 
-__all__ = ["DIALECTS", "Row", "Verdict", "program", "rows", "verdicts", "verify"]
+__all__ = ["DIALECTS", "Row", "Verdict", "merged", "program", "rows", "verdicts", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "simt.toml"
@@ -166,7 +166,7 @@ def build(source: str, dialect: str, folder: pathlib.Path, run: bool) -> list[st
             else ["nvcc", "-O2", "-c", str(unit), "-o", str(folder / "row.o")]
         )
     if run:
-        return ["hipcc", "-O2", str(unit), "-o", str(folder / "row")]
+        return ["hipcc", "-O2", "--offload-arch=native", str(unit), "-o", str(folder / "row")]
     return ["hipcc", "-O2", *(f"--offload-arch={a}" for a in HIP_ARCHS), "-c", str(unit), "-o", str(folder / "row.o")]
 
 
@@ -226,6 +226,19 @@ def verdicts_text(found: list[Verdict]) -> str:
     return "\n".join(head + body)
 
 
+def merged(new: Verdict, old: Verdict | None) -> Verdict:
+    """``new`` with the runs of ``old`` on other GPUs of its dialect kept beside it (an MI250X's and an MI300A's run of
+    one HIP row): correct only if every run is, at the worst error of them."""
+    if old is None or new.ok is None or old.ok is None:
+        return new
+    runs = new.basis.split("; ")
+    others = [part for part in old.basis.split("; ") if part.startswith("ran on ") and part not in runs]
+    if not others:
+        return new
+    rel = max((r for r in (new.rel, old.rel) if r is not None), default=None)
+    return Verdict(new.op, new.dialect, "; ".join([*runs, *others]), new.ok and old.ok, rel, new.error or old.error)
+
+
 def verify() -> list[Verdict]:
     here = runnable()
     kept = verdicts()
@@ -235,6 +248,8 @@ def verify() -> list[Verdict]:
         kept[v.op, v.dialect] if v.ok is None and (v.op, v.dialect) in kept and kept[v.op, v.dialect].ok else v
         for v in found
     ]
+    # a row run here keeps its runs on the dialect's other GPUs
+    found = [merged(v, kept.get((v.op, v.dialect))) for v in found]
     VERDICTS_PATH.write_text(verdicts_text(found))
     recorded.cache_clear()
     return found

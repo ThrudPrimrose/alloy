@@ -83,3 +83,17 @@ def test_each_row_compiles_for_cdna(row: simt.Row):
     sut = simt.check(row, "hip", runs=False)
 
     assert sut.ok is None and "compiled" in sut.basis, sut
+
+
+def test_a_row_run_on_a_second_gpu_keeps_the_first_gpus_run_and_the_worse_error():
+    mi250x = simt.Verdict("fma", "hip", "ran on gfx90a", ok=True, rel=1e-7)
+    mi300a = simt.Verdict("fma", "hip", "ran on gfx942", ok=True, rel=2e-7)
+
+    sut = simt.merged(mi300a, mi250x)
+
+    assert sut == simt.Verdict("fma", "hip", "ran on gfx942; ran on gfx90a", ok=True, rel=2e-7)
+    assert simt.merged(sut, mi250x) == sut, "a rerun on one GPU does not repeat it"
+    failed = simt.merged(mi300a, simt.Verdict("fma", "hip", "ran on gfx90a", ok=False, rel=0.5))
+    assert (failed.ok, failed.rel) == (False, 0.5), "a row correct on one GPU and wrong on another is wrong"
+    compiled = simt.Verdict("fma", "hip", "compiled for gfx90a, gfx942, not run (no such GPU here)")
+    assert simt.merged(mi300a, compiled) == mi300a, "a compile-only record adds no run"
