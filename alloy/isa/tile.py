@@ -352,7 +352,8 @@ int main(void) {{
 
 def sme_verify(plan_: TilePlan) -> TilePlan:
     """Compile ``plan_`` for armv9-a+sme with clang (gcc has the SME intrinsics only from 14), link it statically with
-    the aarch64 cross compiler, and run it under qemu with SME; compile only without qemu."""
+    the aarch64 cross compiler (gcc 14 or later: its libgcc has the SME ABI routines such as ``__arm_tpidr2_save``),
+    and run it under qemu with SME; compile only without qemu."""
     cc, clang = shutil.which(CROSS_CC), shutil.which("clang")
     if cc is None or clang is None:
         return replace_check(plan_, "unverified", f"needs clang and {CROSS_CC}")

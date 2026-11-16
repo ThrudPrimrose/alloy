@@ -51,7 +51,7 @@ def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: s
         ["kernel", "tensix", "sin", "f32", "--max-ulp", "2"],
         ["kernel", "avx2", "sin", "f64", "--level", "fast", "--max-ulp", "2"],
         ["kernel", "avx2", "foo", "f64"],
-        ["lookup", "avx2", "tan", "f64", "--json", "--no-verify"],
+        ["lookup", "avx2", "foo", "f64", "--json", "--no-verify"],
     ],
 )
 def test_a_request_the_tool_cannot_answer_prints_nothing_to_stdout(argv: list[str], capsys: pytest.CaptureFixture[str]):
