@@ -198,16 +198,28 @@ def theoretical_bandwidth(text: str) -> float | None:
     return total or None
 
 
+#: The share of the available memory the copy measurement may hold, sources and targets together.
+STREAM_MEMORY_SHARE = 0.125
+
+
+def stream_bytes_per_thread(threads: int) -> int:
+    """Bytes each thread's copy streams: :data:`STREAM_BYTES_PER_THREAD`, less where the copies of every thread would
+    hold more than :data:`STREAM_MEMORY_SHARE` of the available memory (A9.3), and never below 8 MiB."""
+    budget = int(STREAM_MEMORY_SHARE * available_memory()) // (2 * max(1, threads))
+    return max(8 << 20, min(STREAM_BYTES_PER_THREAD, budget))
+
+
 def stream_bandwidth(threads: int, rounds: int = 3) -> float:
     """The best of ``rounds`` parallel copies (numpy releases the GIL), in bytes read plus written per second."""
-    sources = [np.ones(STREAM_BYTES_PER_THREAD // 8) for _ in range(threads)]
+    per_thread = stream_bytes_per_thread(threads)
+    sources = [np.ones(per_thread // 8) for _ in range(threads)]
     targets = [np.empty_like(s) for s in sources]
     best = 0.0
     with ThreadPoolExecutor(max_workers=threads) as pool:
         for _ in range(rounds):
             start = time.perf_counter()
             list(pool.map(np.copyto, targets, sources))
-            best = max(best, 2 * STREAM_BYTES_PER_THREAD * threads / (time.perf_counter() - start))
+            best = max(best, 2 * per_thread * threads / (time.perf_counter() - start))
     return best
 
 

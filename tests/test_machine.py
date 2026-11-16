@@ -81,3 +81,13 @@ def test_a_team_reaches_the_l3_of_the_complexes_it_spans_and_a_serial_build_one(
 
 def test_a_sysfs_cpu_list_reads_ranges_and_singles():
     assert machine.cpu_list("0-3,8,10-11\n") == {0, 1, 2, 3, 8, 10, 11}
+
+
+def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(monkeypatch):
+    """A9.3: 128 MiB per core on a 64-core node with little free memory would push the probe into swap."""
+    monkeypatch.setattr(machine, "available_memory", lambda: 4 << 30)
+
+    assert machine.stream_bytes_per_thread(64) == 8 << 20  # 512 MiB budget / (2 x 64) = 4 MiB, raised to the floor
+    assert machine.stream_bytes_per_thread(2) == machine.STREAM_BYTES_PER_THREAD
+    monkeypatch.setattr(machine, "available_memory", lambda: 1 << 30)
+    assert machine.stream_bytes_per_thread(4) == 16 << 20
