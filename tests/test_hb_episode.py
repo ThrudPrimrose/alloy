@@ -1,6 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """An Alloy episode's plugin record: the delivered build's axes, the search's counts, the default's and the per-axis
-best stub times, the plain program's empty axes, truncation under the bench's cap, and a tuner outside a run."""
+best stub times, the compiler-only best, the plain program's empty axes, truncation under the bench's cap, and a tuner outside a run."""
 
 import dataclasses
 import pathlib
@@ -83,12 +83,32 @@ def test_a_scope_record_counts_the_search_and_keeps_each_axis_best_at_its_defaul
     assert sut.search.vectorized == 3
 
 
+def test_the_compiler_only_best_is_the_fastest_build_differing_from_the_reference_in_the_compiler_alone() -> None:
+    clang, clang_contract = built(Candidate("c", "clang")), built(Candidate("c", "clang", fp_level="contract"))
+    report = FakeReport(FakeScope("s0"), (REF, SER, CON, clang, clang_contract))
+    timed = TIMED | {clang.name: 70.0, clang_contract.name: 50.0}
+
+    sut = scope_record(report, MATRIX, CON, VERDICTS, timed)  # type: ignore[arg-type]
+
+    assert sut.search is not None
+    # clang at the defaults beats gcc's reference; the faster contract and serial builds change another axis too
+    assert sut.search.best_compiler_ns == 70.0
+    assert sut.search.best_ns_by_axis["fp_level"] == 70.0
+    only_gcc = scope_record(REPORT, MATRIX, CON, VERDICTS, TIMED)  # type: ignore[arg-type]
+    assert only_gcc.search is not None and only_gcc.search.best_compiler_ns == 100.0
+
+
 def test_the_plain_program_records_no_axes_and_an_untimed_search_no_default() -> None:
     sut = scope_record(REPORT, MATRIX, None, VERDICTS, {})  # type: ignore[arg-type]
 
     assert (sut.chosen, sut.note, sut.axes) == (*episode.PLAIN, {})
     assert sut.search is not None
-    assert (sut.search.timed, sut.search.default_ns, sut.search.best_ns_by_axis) == (0, None, {})
+    assert (sut.search.timed, sut.search.default_ns, sut.search.best_ns_by_axis, sut.search.best_compiler_ns) == (
+        0,
+        None,
+        {},
+        None,
+    )
 
 
 def test_a_record_over_the_cap_keeps_every_delivered_build_and_says_it_is_truncated() -> None:

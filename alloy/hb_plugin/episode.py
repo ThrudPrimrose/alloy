@@ -68,7 +68,9 @@ class ScopeSearch:
     """What a scope's search did. The counts are of candidates other than the reference: built (an object, no
     duplicate), verified correct, rejected by verification, and timed as stubs. ``default_ns`` is the reference's stub
     time, ``None`` untimed; ``best_ns_by_axis[axis]`` the fastest stub among the timed builds whose ``axis`` holds the
-    reference's value; ``predicted_gain`` the reference's predicted cycles over the delivered build's, ``None``
+    reference's value; ``best_compiler_ns`` the fastest stub among the timed builds that differ from the reference in
+    the compiler alone, the reference included (per-scope compiler selection at default flags, as MCompiler does);
+    ``predicted_gain`` the reference's predicted cycles over the delivered build's, ``None``
     without both predictions; ``fastest`` the :data:`FASTEST` builds of the fewest stub ns, fastest first (E1's hit
     rate at 1 and 5); ``vectorized`` the loops the compiler reports vectorized in the delivered build."""
 
@@ -78,6 +80,7 @@ class ScopeSearch:
     timed: int
     default_ns: float | None
     best_ns_by_axis: dict[str, float]
+    best_compiler_ns: float | None
     predicted_gain: float | None
     fastest: tuple[str, ...]
     vectorized: int
@@ -141,6 +144,16 @@ def best_by_axis(
     return best
 
 
+def best_compiler_only(
+    reference: dict[str, str], timed: Mapping[str, float], axes_of: Mapping[str, dict[str, str]]
+) -> float | None:
+    """The fastest of ``timed`` among the builds whose every axis but the compiler holds ``reference``'s value."""
+    same = [
+        ns for name, ns in timed.items() if all(v == reference[a] for a, v in axes_of[name].items() if a != "compiler")
+    ]
+    return min(same, default=None)
+
+
 def predicted_gain(
     predicted: Mapping[str, Prediction] | None, reference: Build, delivered: Build | None
 ) -> float | None:
@@ -170,6 +183,7 @@ def scope_record(
         timed=sum(name != reference.name for name in stubs),
         default_ns=stubs.get(reference.name),
         best_ns_by_axis=best_by_axis(axes_of[reference.name], stubs, axes_of),
+        best_compiler_ns=best_compiler_only(axes_of[reference.name], stubs, axes_of),
         predicted_gain=predicted_gain(predicted, reference, delivered),
         fastest=tuple(sorted(stubs, key=stubs.__getitem__)[:FASTEST]),
         vectorized=(delivered or reference).remarks.vectorized,
