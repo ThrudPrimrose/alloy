@@ -468,3 +468,35 @@ def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target):
         assert tile.plan(target, 64, 64, 64, in_type, acc_type).in_type == in_type
     with pytest.raises(KeyError):
         tile.plan(target, 64, 64, 64, "bf16", "f32")
+
+
+@pytest.mark.parametrize(("ok", "detail", "status"), [(True, "0.9 ulp", "run"), (None, "builds", "compiled"),
+                                                      (None, "", "unverified")])  # fmt: skip
+def test_a_math_kernel_answer_carries_the_kernel_gate_verdict(ok, detail, status, monkeypatch):
+    from alloy.isa import mathcheck
+    from alloy.isa.validate import Verdict
+
+    seen: list[tuple[str, str, str, str]] = []
+
+    def gate(fn: str, dtype: str, level: str, isa: str) -> Verdict:
+        seen.append((fn, dtype, level, isa))
+        return Verdict(ok, "kernel vs wider libm", detail)
+
+    monkeypatch.setattr(mathcheck, "validate_kernel", gate)
+    sut = ask(Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}, max_ulp=4.0))
+
+    assert isinstance(sut, Feasible)
+    assert sut.check.status == status
+    assert [(fn, dtype, isa) for fn, dtype, _, isa in seen] == [("exp", "f32", "avx2")]
+
+
+def test_a_math_kernel_that_fails_its_gate_is_infeasible(monkeypatch):
+    from alloy.isa import mathcheck
+    from alloy.isa.validate import Verdict
+
+    monkeypatch.setattr(mathcheck, "validate_kernel", lambda *args: Verdict(False, "kernel vs wider libm", "9 ulp"))
+
+    sut = ask(Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}, max_ulp=4.0))
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why is Why.CHECK_FAILED and "9 ulp" in sut.reason

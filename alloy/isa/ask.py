@@ -330,7 +330,7 @@ def vector_op(request: Request, verify: bool) -> Answer:
                 spell(x=register),
             )
     if request.op in functions() and (request.op not in OPS or request.max_ulp is not None):
-        return math_kernel(request, isa, dtype)
+        return math_kernel(request, isa, dtype, verify)
     try:
         entry = table.entry(isa, request.op, dtype)
     except KeyError as exc:
@@ -338,7 +338,7 @@ def vector_op(request: Request, verify: bool) -> Answer:
         return no(request, Why.NO_ROW, str(exc.args[0]), *(spell(x=o) for o in others))
     if not entry.intrinsic and not entry.recipe:
         if request.op in functions():
-            return math_kernel(request, isa, dtype)
+            return math_kernel(request, isa, dtype, verify)
         return no(request, Why.NO_ROW, f"{isa} has no instruction or recipe for {request.op} on {dtype}")
     steps = (Step("vector", entry.intrinsic),) if entry.intrinsic else tuple(Step("vector", s) for s in entry.recipe)
     check = Check("unverified")
@@ -353,8 +353,9 @@ def vector_op(request: Request, verify: bool) -> Answer:
     return Feasible(request, "vector", steps, {}, code, check, (entry.note,) if entry.note else ())
 
 
-def math_kernel(request: Request, isa: str, dtype: str) -> Answer:
-    """The rung of the function with the fewest intrinsics within ``max_ulp`` (the strict rung without a bound)."""
+def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
+    """The rung of the function with the fewest intrinsics within ``max_ulp`` (the strict rung without a bound);
+    ``verify`` runs the kernel gate (``mathcheck.validate_kernel``) on it."""
     try:
         if request.max_ulp is None:
             spelled = render(kernel(request.op, dtype, "strict"), target_of(isa))
@@ -364,8 +365,18 @@ def math_kernel(request: Request, isa: str, dtype: str) -> Answer:
         return no(request, Why.NO_RUNG, str(exc.args[0]))
     k = spelled.kernel
     notes = (f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",)
-    return Feasible(request, "vector", (Step("vector", k.name),), {}, spelled.source,
-                    Check("unverified", "math kernels are checked by `kernel` and `validate`"), notes)  # fmt: skip
+    check = Check("unverified", "not checked (verify off)")
+    if verify:
+        from alloy.isa.mathcheck import validate_kernel
+
+        verdict = validate_kernel(k.fn, dtype, k.level, isa)
+        if verdict.ok is False:
+            return no(request, Why.CHECK_FAILED, f"the {k.level} kernel failed its check: {verdict.detail}")
+        status: Literal["run", "compiled", "unverified"] = (
+            "run" if verdict.ok else "compiled" if verdict.detail == "builds" else "unverified"
+        )
+        check = Check(status, f"{verdict.basis}: {verdict.detail}" if verdict.detail else verdict.basis)
+    return Feasible(request, "vector", (Step("vector", k.name),), {}, spelled.source, check, notes)
 
 
 def thread_op(request: Request) -> Answer:
