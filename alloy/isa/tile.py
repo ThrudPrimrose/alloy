@@ -3,9 +3,9 @@
 instructions that fits it, the layout and descriptors its loads need, and a C or C++ program that uses Alloy's tile
 functions on row-major tiles, checked against a host reference before it is printed.
 
-Targets: ``sm90`` (GH200), ``gfx942`` (MI300A), and ``cpu``. A CPU has no swizzle, and the evaluated CPUs have neither
-AMX nor SME, so ``mma`` on a CPU is an FMA loop over blocks of four rows that the host compiler vectorizes (the
-fallback).
+Targets: ``sm90`` (GH200), ``gfx942`` (MI300A), ``gfx90a`` (MI250X), and ``cpu``. A CPU has no swizzle, and the
+evaluated CPUs have neither AMX nor SME, so ``mma`` on a CPU is an FMA loop over blocks of four rows that the host
+compiler vectorizes (the fallback).
 
     python -m alloy.isa tile cpu gemm 64 64 64 --in f32 --acc f32
 """
@@ -36,10 +36,12 @@ CPU_TYPES = {
     ("f64", "f64"): ("double", "double"),
     ("f32", "f64"): ("float", "double"),
 }
+#: The AMD CDNA targets: one tile kernel (v_mfma_f32_32x32x8_f16, plain LDS stores), built for each arch.
+CDNA = ("gfx90a", "gfx942")
 #: The (input, accumulator) element types each tile target's checked kernels take.
 TYPES: dict[str, tuple[tuple[str, str], ...]] = {
-    "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"),), "sm90": (("f16", "f32"),), "gfx942": (("f16", "f32"),),
-}  # fmt: skip
+    "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"),), "sm90": (("f16", "f32"),),
+} | dict.fromkeys(CDNA, (("f16", "f32"),))  # fmt: skip
 #: Rows of A one CPU micro-kernel step keeps in registers.
 CPU_MR = 4
 #: Relative error a product may show against the f64 reference, per accumulator type.
@@ -156,11 +158,10 @@ def replace_check(plan_: TilePlan, verified: str, detail: str) -> TilePlan:
 #: GPU tile shapes per target: (BM, BN) output tile per block and the kernel computing it; K is a multiple of 64.
 GPU_TILES = {
     "sm90": {(64, 64): "alloy_gemm_64x64x64", (128, 128): "alloy_gemm_128x128x64"},
-    "gfx942": {(64, 64): "alloy_gemm_64x64x64"},
-}
-GPU_HEADER = {"sm90": "alloy_tile_sm90.cuh", "gfx942": "alloy_tile_gfx942.hip.h"}
-#: Threads per block of each kernel: one warpgroup (128) per 64 rows on sm_90, four wave64 on gfx942.
-GPU_THREADS = {("sm90", 64): 128, ("sm90", 128): 256, ("gfx942", 64): 256}
+} | {arch: {(64, 64): "alloy_gemm_64x64x64"} for arch in CDNA}
+GPU_HEADER = {"sm90": "alloy_tile_sm90.cuh"} | dict.fromkeys(CDNA, "alloy_tile_gfx942.hip.h")
+#: Threads per block of each kernel: one warpgroup (128) per 64 rows on sm_90, four wave64 on CDNA.
+GPU_THREADS = {("sm90", 64): 128, ("sm90", 128): 256} | {(arch, 64): 256 for arch in CDNA}
 
 
 def gpu_steps(target: str, bm: int, bn: int, k: int) -> tuple[tuple[str, ...], str, dict[str, str]]:
@@ -199,7 +200,7 @@ def gpu_steps(target: str, bm: int, bn: int, k: int) -> tuple[tuple[str, ...], s
         "store: accumulator g of a lane is D[8 * (g / 4) + 4 * (lane / 32) + g % 4][lane % 32], 16 per lane",
     )
     layout = "LDS: 64 rows x 8 chunks of 16 bytes per operand, XOR swizzle slot = chunk ^ (row % 8), no padding"
-    descriptors = {"build": "hipcc --offload-arch=gfx942"}
+    descriptors = {"build": f"hipcc --offload-arch={target}"}
     return steps, layout, descriptors
 
 
@@ -270,7 +271,7 @@ def gpu_block(target: str, m: int, n: int, k: int) -> tuple[int, int]:
 
 
 def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
-    """An f16 GEMM on sm_90 or gfx942, tiled by the target's tile kernel; refuses what the kernels do not cover."""
+    """An f16 GEMM on sm_90 or CDNA (gfx90a, gfx942), tiled by the target's tile kernel; refuses what the kernels do not cover."""
     tiles = GPU_TILES[target]
     if (in_type, acc_type) not in TYPES[target]:
         raise KeyError(
@@ -285,9 +286,9 @@ def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -
 
 
 def native_gpu() -> str:
-    """The tile target of this machine's GPU ("" without sm_90 or gfx942)."""
+    """The tile target of this machine's GPU ("" without sm_90, gfx90a, or gfx942)."""
     for argv, target, wanted in ((["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"], "sm90", "9.0"),
-                                 (["amdgpu-arch"], "gfx942", "gfx942")):  # fmt: skip
+                                 *((["amdgpu-arch"], arch, arch) for arch in CDNA)):  # fmt: skip
         try:
             found = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=60).stdout.split()
         except FileNotFoundError:
@@ -310,7 +311,7 @@ def gpu_verify(plan_: TilePlan) -> TilePlan:
             argv = ["nvcc", "-gencode", "arch=compute_90a,code=sm_90a", "-std=c++17", "-O2", f"-I{HERE}", *output,
                     str(source), *(["-lcuda"] if here_too else [])]  # fmt: skip
         else:
-            argv = ["hipcc", "--offload-arch=gfx942", "-O2", f"-I{HERE}", *output, str(source)]
+            argv = ["hipcc", f"--offload-arch={plan_.target}", "-O2", f"-I{HERE}", *output, str(source)]
         try:
             built = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=TIMEOUT)
         except FileNotFoundError:
@@ -410,4 +411,4 @@ def plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> Ti
         return gpu_plan(target, m, n, k, in_type, acc_type)
     if target == "sme":
         return sme_plan(m, n, k, in_type, acc_type)
-    raise KeyError(f"tile targets: cpu, sme, sm90 (GH200), gfx942 (MI300A); got {target!r}")
+    raise KeyError(f"tile targets: cpu, sme, sm90 (GH200), gfx942 (MI300A), gfx90a (MI250X); got {target!r}")

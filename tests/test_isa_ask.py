@@ -21,6 +21,7 @@ MFMA_TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "xor:8"),
     (Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}, max_ulp=4.0), "vector"),
     (Request("sm90", "mma", TILE), "warpgroup"),
     (Request("gfx942", "mma", MFMA_TILE), "mfma"),
+    (Request("gfx90a", "mma", MFMA_TILE), "mfma"),
     (Request("sm90", "fma", {"a": Operand("register", "f32")}), "thread"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}), "sfpu"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256)),
@@ -193,8 +194,8 @@ def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load(
 
 
 @pytest.mark.parametrize("op", [row.op for row in simt.rows()])
-def test_every_device_row_is_reachable_on_both_gpu_targets(op: str):
-    for target in ("sm90", "gfx942"):
+def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
+    for target in ("sm90", "gfx942", "gfx90a"):
         sut = answered(Request(target, op))
 
         assert isinstance(sut, Feasible), sut
@@ -412,6 +413,7 @@ def test_an_mma_on_a_tile_the_kernel_would_misread_is_infeasible_and_says_how_to
 @pytest.mark.parametrize(("request_", "header"), [
     (Request("sm90", "copy", {"src": GLOBAL, "dst": B128}), "sm90"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": LDS}), "gfx942"),
+    (Request("gfx90a", "copy", {"src": GLOBAL, "dst": LDS}), "gfx90a"),
 ])  # fmt: skip
 def test_a_gpu_copy_is_checked_by_the_tile_program_that_runs_it(request_, header, monkeypatch):
     seen: list[tuple[str, int, int, int]] = []

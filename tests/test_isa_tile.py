@@ -3,6 +3,7 @@
 against an f64 reference, and refuses a tile type it has no instruction for."""
 
 import shutil
+import subprocess
 
 import pytest
 
@@ -40,9 +41,11 @@ def test_an_sm90_plan_loads_with_tma_into_128b_swizzled_tiles_and_runs_four_wgmm
     assert "alloy_make_tmap(&ta, dA, M, K, 128)" in sut.program
 
 
-def test_a_gfx942_plan_swizzles_lds_and_runs_eight_mfma_per_k_block():
-    sut = tile.plan("gfx942", 64, 128, 64, "f16", "f32")
+@pytest.mark.parametrize("target", tile.CDNA)
+def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its_own_arch(target):
+    sut = tile.plan(target, 64, 128, 64, "f16", "f32")
 
+    assert sut.target == target and sut.descriptors["build"] == f"hipcc --offload-arch={target}"
     assert "chunk ^ (row % 8)" in sut.layout
     assert any("8 x v_mfma_f32_32x32x8_f16" in step for step in sut.steps)
     assert "alloy_gemm_64x64x64<<<dim3(N / 64, M / 64), 256>>>" in sut.program
@@ -52,6 +55,7 @@ def test_a_gfx942_plan_swizzles_lds_and_runs_eight_mfma_per_k_block():
     ("sm90", (64, 64, 100), ("f16", "f32"), "K a multiple of 64"),
     ("sm90", (32, 64, 64), ("f16", "f32"), "64x64 blocks, 128x128 blocks"),
     ("gfx942", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
+    ("gfx90a", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
 ])  # fmt: skip
 def test_a_gpu_tile_the_kernels_do_not_cover_is_refused_with_what_they_take(target, shape, types, reason):
     with pytest.raises(KeyError, match=reason):
@@ -66,10 +70,12 @@ def test_the_sm90_program_compiles_for_sm90a():
 
 
 @pytest.mark.hip
-def test_the_gfx942_program_compiles_for_gfx942():
-    sut = tile.verify(tile.plan("gfx942", 64, 64, 128, "f16", "f32"))
+@pytest.mark.parametrize("target", tile.CDNA)
+def test_the_cdna_program_compiles_for_its_arch(target):
+    sut = tile.verify(tile.plan(target, 64, 64, 128, "f16", "f32"))
 
     assert sut.verified in ("compiled", "run"), sut.detail
+    assert target in sut.detail or sut.verified == "run"
 
 
 @pytest.mark.skipif(
@@ -83,3 +89,24 @@ def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else()
     expected = "run" if (shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")) else "compiled"
     assert sut.verified == expected, sut.detail
     assert any("svmopa_za32_f32_m" in step for step in sut.steps)
+
+
+@pytest.mark.parametrize("arch", tile.CDNA)
+def test_an_amd_gpu_is_the_tile_target_of_its_own_arch_and_its_program_builds_for_it(arch, monkeypatch):
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        out = f"{arch}\n" if argv[0] == "amdgpu-arch" else ""
+        if argv[0] == "nvidia-smi":
+            raise FileNotFoundError(argv[0])
+        return subprocess.CompletedProcess(argv, 1 if argv[0] == "hipcc" else 0, out, "stopped after the build line")
+
+    monkeypatch.setattr(tile.subprocess, "run", run)
+
+    assert tile.native_gpu() == arch
+    sut = tile.verify(tile.plan(arch, 64, 64, 64, "f16", "f32"))
+
+    (hipcc,) = [argv for argv in calls if argv[0] == "hipcc"]
+    assert f"--offload-arch={arch}" in hipcc and "-c" not in hipcc  # this machine has the GPU: built to run
+    assert sut.verified == "failed" and "stopped after the build line" in sut.detail

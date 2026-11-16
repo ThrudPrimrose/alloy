@@ -41,13 +41,13 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
 - `command="tile", arguments=["sm90", "gemm", "128", "128", "128", "--in", "f16", "--acc", "f32"]`: a matrix tile
   plan with a complete kernel to copy. On `sm90` (GH200) it loads row-major f16 tiles with TMA into 128B-swizzled
   shared memory and multiplies them with `wgmma`; the answer gives the tensor map's parameters and the build line
-  (`compute_90a`, `-lcuda`). On `gfx942` (MI300A) it loads into LDS with an XOR swizzle and multiplies with
-  `v_mfma_f32_32x32x8_f16`. On `cpu` there is no matrix unit, and the answer is a vectorized FMA loop. B is given as
+  (`compute_90a`, `-lcuda`). On `gfx942` (MI300A) and `gfx90a` (MI250X) it loads into LDS with an XOR swizzle and
+  multiplies with `v_mfma_f32_32x32x8_f16`. On `cpu` there is no matrix unit, and the answer is a vectorized FMA loop. B is given as
   N x K row-major on the GPUs. A shape or type the kernels do not cover is refused with what they take; the answer
   says `run` where this machine has the GPU, and `compiled` elsewhere.
 - `command="ask", arguments=["sm90", "mma", "--a", "shared:f16:64x64", "--b", "shared:f16:64x64", "--c",
   "register:f32:64x64"]`: one form for every target (`avx2`, `avx512`, `neon`, `sve`, `sme`, `sm90`, `gfx942`,
-  `tensix`) and every operation, including `mma` and `copy` with each operand's place, type, shape, layout, and
-  swizzle (`space:dtype:RxC:layout:swizzle`, for example `shared:f16:128x64:row_major:b128`). The answer is feasible,
+  `gfx90a`, `tensix`) and every operation, including `mma` and `copy` with each operand's place, type, shape, layout,
+  and swizzle (`space:dtype:RxC:layout:swizzle`, for example `shared:f16:128x64:row_major:b128`). The answer is feasible,
   with the unit that runs it (`--unit tma` pins one), its steps, its setup, and code, or infeasible, with the reason
   and the nearest requests the target takes. Ask one of those instead.

@@ -61,12 +61,13 @@ UNITS: dict[str, tuple[str, ...]] = {
     "sme": ("streaming_vector", "za"),
     "sm90": ("thread", "warp", "warpgroup", "tma", "cp_async"),
     "gfx942": ("thread", "wave", "mfma", "lds_dma", "lds"),
+    "gfx90a": ("thread", "wave", "mfma", "lds_dma", "lds"),
     "tensix": ("sfpu", "fpu", "noc"),
 }
 TARGETS = tuple(UNITS)
 CPU = ("avx2", "avx512", "neon", "sve")
 #: The dialect of a GPU target's per-thread rows (simt.toml).
-DIALECT = {"sm90": "cuda", "gfx942": "hip"}
+DIALECT = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: Per tile target, what its mma kernel reads, exactly: the space of the inputs (a, b), their swizzle, the space of the
 #: accumulator (c), and the layout of a, b, and c. A request that names anything else is infeasible, so an answer never
 #: computes on a tile laid out differently from the one the caller holds. The GPU kernels read B with K contiguous
@@ -76,6 +77,7 @@ MMA_OPERANDS: dict[str, tuple[tuple[str, ...], str, tuple[str, ...], tuple[str, 
     "sme": (("global",), "none", ("tile_register", "global"), ("col_major", "row_major", "row_major")),
     "sm90": (("shared",), "b128", ("register", "tile_register"), ("row_major", "col_major", "row_major")),
     "gfx942": (("shared",), "xor:8", ("register", "tile_register"), ("row_major", "col_major", "row_major")),
+    "gfx90a": (("shared",), "xor:8", ("register", "tile_register"), ("row_major", "col_major", "row_major")),
     "tensix": (("tile_register",), "none", ("tile_register",), ("row_major", "row_major", "row_major")),
 }  # fmt: skip
 #: What a layout of an mma operand means in memory, for the refusal's reason.
@@ -511,6 +513,7 @@ INTO_SPACE = {
     "sme": "FMOPA reads its vectors from memory: pass the arrays as global",
     "tensix": "the reader kernel sends each tile into a circular buffer: pass tiles as tile_register",
 }
+INTO_SPACE["gfx90a"] = INTO_SPACE["gfx942"]
 #: How a caller gives an mma input the swizzle its target reads.
 INTO_SWIZZLE = {
     "sm90": "the kernel's wgmma descriptor reads 128B-swizzled rows: fill the tile with the TMA copy (dst swizzle "
@@ -518,6 +521,7 @@ INTO_SWIZZLE = {
     "gfx942": "the kernel reads LDS chunk c of row r at slot c ^ (r % 8): fill the tile with the LDS copy (dst swizzle "
     "xor:8), and ask the mma with that swizzle",
 }
+INTO_SWIZZLE["gfx90a"] = INTO_SWIZZLE["gfx942"]
 #: How a caller gives an mma operand the layout its target reads.
 INTO_LAYOUT = {
     ("sm90", "b"): "wgmma reads both inputs K-contiguous, so B is held transposed. Keep Bt (N rows of K) in global "
@@ -529,6 +533,7 @@ INTO_LAYOUT = {
     ("sme", "a"): "FMOPA takes one column of A per outer product, so A is held transposed. Keep At (K rows of M) in "
     "memory, or copy A into At once before the loop. Streaming mode has no gather to read a column in place.",
 }
+INTO_LAYOUT["gfx90a", "b"] = INTO_LAYOUT["gfx942", "b"]
 
 
 def misplaced(target: str, a: Operand, b: Operand, c: Operand) -> tuple[Why, str, str] | None:
@@ -587,7 +592,7 @@ def mma(request: Request, verify: bool) -> Answer:
         found = tile.verify(found)
         if found.verified == "failed":
             return no(request, Why.CHECK_FAILED, f"the tile program failed its check: {found.detail}")
-    unit = {"cpu": "vector", "sme": "za", "sm90": "warpgroup", "gfx942": "mfma"}[target]
+    unit = ({"cpu": "vector", "sme": "za", "sm90": "warpgroup"} | dict.fromkeys(tile.CDNA, "mfma"))[target]
     check = Check(found.verified, found.detail)  # type: ignore[arg-type]
     steps = tuple(Step(unit, s) for s in found.steps)
     return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))
@@ -644,7 +649,7 @@ def copy_check(target: str, verify: bool) -> Check | None:
 
 def copy(request: Request, verify: bool) -> Answer:
     """A copy between two spaces: a CPU's vector load or store, sm_90's TMA into a 128B-swizzled shared tile, or
-    gfx942's XOR-swizzled LDS stores. A copy converts nothing, so both sides share one element type."""
+    CDNA's XOR-swizzled LDS stores. A copy converts nothing, so both sides share one element type."""
     ops = request.operands
     if not {"src", "dst"} <= ops.keys():
         return bad(request, Why.OPERANDS, "copy takes operands src and dst")
@@ -655,7 +660,7 @@ def copy(request: Request, verify: bool) -> Answer:
     source = Operand("global", "f16", src.shape if len(src.shape) == 2 and src.dtype == "f16" else (256, 256))
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
-    if request.target == "gfx942" and (src.space, dst.space) == ("global", "shared"):
+    if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
         tile_ = Operand("shared", "f16", (box[0], 64), "row_major", "xor:8")
         nearest = spell(src=source, dst=tile_)
         if (src.dtype, dst.dtype) != ("f16", "f16"):
@@ -676,8 +681,10 @@ def copy(request: Request, verify: bool) -> Answer:
             return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
         steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
         code = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_half8*>(A + r * K + 8 * c);"
-        if (check := copy_check("gfx942", verify)) is None:
-            return no(request, Why.CHECK_FAILED, "the gfx942 tile program that runs this copy failed its check")
+        if (check := copy_check(request.target, verify)) is None:
+            return no(
+                request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check"
+            )
         return Feasible(request, "lds", steps, {}, code, check, ("16 bytes per lane",))
     return no(
         request,
