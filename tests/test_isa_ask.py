@@ -407,3 +407,64 @@ def test_an_mma_on_a_tile_the_kernel_would_misread_is_infeasible_and_says_how_to
     assert isinstance(sut, Infeasible), sut
     assert sut.why is why and fix in sut.fix
     assert sut.nearest and all("swizzle" not in near for near in sut.nearest)
+
+
+@pytest.mark.parametrize(("request_", "header"), [
+    (Request("sm90", "copy", {"src": GLOBAL, "dst": B128}), "sm90"),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": LDS}), "gfx942"),
+])  # fmt: skip
+def test_a_gpu_copy_is_checked_by_the_tile_program_that_runs_it(request_, header, monkeypatch):
+    seen: list[tuple[str, int, int, int]] = []
+
+    def verified(plan_: tile.TilePlan) -> tile.TilePlan:
+        seen.append((plan_.target, plan_.m, plan_.n, plan_.k))
+        return tile.replace_check(plan_, "compiled", "compiled here")
+
+    monkeypatch.setattr(tile, "verify", verified)
+    checked, unchecked = ask(request_), ask(request_, verify=False)
+
+    assert isinstance(checked, Feasible) and isinstance(unchecked, Feasible)
+    assert seen == [(header, 64, 64, 64)]
+    assert checked.check.status == "compiled" and "tile program" in checked.check.basis
+    assert unchecked.check.status == "unverified" and "verify off" in unchecked.check.basis
+
+
+def test_a_gpu_copy_whose_tile_program_fails_is_infeasible(monkeypatch):
+    monkeypatch.setattr(tile, "verify", lambda plan_: tile.replace_check(plan_, "failed", "did not compile"))
+
+    sut = ask(Request("sm90", "copy", {"src": GLOBAL, "dst": B128}))
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why is Why.CHECK_FAILED
+
+
+def test_a_tma_answer_states_the_shared_alignment_the_swizzle_needs():
+    sut = answered(Request("sm90", "copy", {"src": GLOBAL, "dst": B128}))
+
+    assert isinstance(sut, Feasible)
+    assert "alignas(1024)" in sut.setup["shared tile"] and "barrier" in sut.setup
+
+
+def test_a_per_thread_row_refuses_an_operand_in_memory_and_says_to_load_it():
+    sut = answered(Request("sm90", "fma", {"x": Operand("global", "f32")}))
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why is Why.SPACE and "register" in sut.fix
+    assert sut.nearest == ("x register:f32",)
+
+
+def test_a_per_thread_row_computes_in_its_table_element_type():
+    half2 = next(row for row in simt.rows() if row.op == "add_half2")
+
+    assert half2.dtype == "f16"
+    assert {row.dtype for row in simt.rows() if row.op != "add_half2"} == {"f32"}
+    assert isinstance(answered(Request("sm90", "add_half2", {"x": Operand("register", "f16")})), Feasible)
+    assert answered(Request("sm90", "add_half2", {"x": Operand("register", "f32")})).status == "infeasible"
+
+
+@pytest.mark.parametrize("target", sorted(tile.TYPES))
+def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target):
+    for in_type, acc_type in tile.TYPES[target]:
+        assert tile.plan(target, 64, 64, 64, in_type, acc_type).in_type == in_type
+    with pytest.raises(KeyError):
+        tile.plan(target, 64, 64, 64, "bf16", "f32")

@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 
-__all__ = ["CPU_TYPES", "GPU_TILES", "TilePlan", "cpu_plan", "gpu_plan", "native_gpu", "plan", "verify"]
+__all__ = ["CPU_TYPES", "GPU_TILES", "TYPES", "TilePlan", "cpu_plan", "gpu_plan", "native_gpu", "plan", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 #: Element types a CPU tile takes: (input, accumulator) pairs with a C spelling each.
@@ -25,6 +25,10 @@ CPU_TYPES = {
     ("f64", "f64"): ("double", "double"),
     ("f32", "f64"): ("float", "double"),
 }
+#: The (input, accumulator) element types each tile target's checked kernels take.
+TYPES: dict[str, tuple[tuple[str, str], ...]] = {
+    "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"),), "sm90": (("f16", "f32"),), "gfx942": (("f16", "f32"),),
+}  # fmt: skip
 #: Rows of A one CPU micro-kernel step keeps in registers.
 CPU_MR = 4
 #: Relative error a product may show against the f64 reference, per accumulator type.
@@ -247,7 +251,7 @@ def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -
     """An f16 GEMM on sm_90 or gfx942, tiled by the target's tile kernel; refuses what the kernels do not cover."""
     tiles = GPU_TILES[target]
     legal = ", ".join(f"{bm}x{bn} blocks" for bm, bn in tiles)
-    if (in_type, acc_type) != ("f16", "f32"):
+    if (in_type, acc_type) not in TYPES[target]:
         raise KeyError(
             f"{target} tiles take --in f16 --acc f32 (the kernels the table checks); got {in_type}, {acc_type}"
         )
@@ -310,7 +314,7 @@ CROSS_CC = "aarch64-linux-gnu-gcc"
 
 def sme_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     """SME: outer products (FMOPA) into the ZA tile za0.s, A given transposed (``alloy_tile_sme.h``)."""
-    if (in_type, acc_type) != ("f32", "f32"):
+    if (in_type, acc_type) not in TYPES["sme"]:
         raise KeyError(f"an SME tile here takes --in f32 --acc f32 (FMOPA into za0.s); got {in_type}, {acc_type}")
     steps = (
         "for each SVL/32 x SVL/32 block of C: svld1_hor_za32 loads its rows into za0.s (predicated at the edges)",

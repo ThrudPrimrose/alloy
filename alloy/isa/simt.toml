@@ -91,6 +91,7 @@ cuda = "__low2float(__hadd2(__floats2half2_rn(a, b), __floats2half2_rn(b, a)))"
 hip = "__low2float(__hadd2(__floats2half2_rn(a, b), __floats2half2_rn(b, a)))"
 ref = "a + b"
 tol = 2e-3
+dtype = "f16"
 note = "Two f16 additions in one instruction; the result is f16, so expect 2^-11 relative error."
 
 [ops.load_wide]

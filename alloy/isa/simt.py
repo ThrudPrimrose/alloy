@@ -57,6 +57,8 @@ class Row:
     tol: float
     domain: tuple[float, float] = DOMAIN
     check: str = "all"
+    #: The element type the row computes in (its arguments and result are f32 scalars either way).
+    dtype: str = "f32"
     note: str = ""
 
     def spelled(self, dialect: str) -> str:
