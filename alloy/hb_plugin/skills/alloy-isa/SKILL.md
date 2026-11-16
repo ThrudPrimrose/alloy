@@ -38,3 +38,10 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
   range reduction; a reference, take `kernel` for code.
 - `command="skeleton", arguments=["avx512", "<schedule>", "f64"]`: a loop in a legal schedule; `command="schedule",
   arguments=["avx512"]` lists the schedules.
+- `command="tile", arguments=["sm90", "gemm", "128", "128", "128", "--in", "f16", "--acc", "f32"]`: a matrix tile
+  plan with a complete kernel to copy. On `sm90` (GH200) it loads row-major f16 tiles with TMA into 128B-swizzled
+  shared memory and multiplies them with `wgmma`; the answer gives the tensor map's parameters and the build line
+  (`compute_90a`, `-lcuda`). On `gfx942` (MI300A) it loads into LDS with an XOR swizzle and multiplies with
+  `v_mfma_f32_32x32x8_f16`. On `cpu` there is no matrix unit, and the answer is a vectorized FMA loop. B is given as
+  N x K row-major on the GPUs. A shape or type the kernels do not cover is refused with what they take; the answer
+  says `run` where this machine has the GPU, and `compiled` elsewhere.
