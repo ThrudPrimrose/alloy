@@ -116,11 +116,11 @@ simulator interface, which tt-metal 0.6x does not, so 0.6x spellings are checked
 runs 0.6x, and its jobs live in the `alloy-tenstorrent` repository.
 
 On that Blackhole (tt-metal 0.63, runs of 2026-11-16) every row compiles and runs, and 30 of the 34 row and dtype
-pairs hold the table's bound. All six FPU pairs pass, and so do 12 of the 14 SFPU rows at each dtype. The two f32
-rows that miss the bound are `log` and `tanh`. tt-metal 0.63 computes `log` with a low-order approximation and `tanh`
-from a lookup table, and their relative error near the function's zero exceeds 0.3 and 0.1. The two rows carry a
-`note` that the lookup prints. The job reports only exit codes, so it gives these error ranges and not exact values,
-and it does not name the two failing bf16 rows.
+pairs hold the table's bound. All six FPU pairs pass, and so do 12 of the 14 SFPU rows at each dtype. The two rows
+that miss the bound at both dtypes are `log` and `tanh`. tt-metal 0.63 computes `log` with a low-order approximation
+and `tanh` from a lookup table, and their f32 relative error near the function's zero exceeds 0.3 and 0.1. The two
+rows carry a `note` that the lookup prints. The job reports only exit codes, so it gives these error ranges and not
+exact values.
 
 The Python side of `ttnn.generic_op` also differs in 0.6x, and the harness handles both versions. In 0.6x the
 runtime arguments are nested lists, `SourceType` and `UnpackToDestMode` live in `ttnn._ttnn.program_descriptor`, and
