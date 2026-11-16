@@ -62,7 +62,7 @@ ALIASES = {"avx512_256": "avx512"}
 KNOWN_ISAS = "avx2, avx512, neon, sve (avx512_256 is a compiler width knob, not a target)"
 
 #: An fma family form as the assembler prints it: ``vfnmadd231pd`` -> mnemonic ``vfnmadd``, dtype f64.
-FMA_FORM = re.compile(r"^(vfn?m(?:add|sub))(?:132|213|231)?[ps]([dsh])$")
+FMA_FORM = re.compile(r"^(vfn?m(?:add|sub))(?:132|213|231)?([ps])([dsh])$")
 FMA_DTYPE = {"d": "f64", "s": "f32", "h": "f16"}
 
 #: A disassembler's flag suffix (an EVEX ``vaddpd.z``); no mnemonic of the table holds a dot.
@@ -257,8 +257,14 @@ class Table:
         if hits := hits if signed == masked else hits + self.by_intrinsic.get(signed, ()):
             return hits
         token = token.lower()
-        if (m := FMA_FORM.match(token)) is not None:
-            return tuple(h for h in self.mnemonic_hits(m.group(1)) if h.dtype == FMA_DTYPE[m.group(2)])
+        if (m := FMA_FORM.match(token)) is not None:  # vfmadd231sd is the packed form's math on one lane
+            hits = tuple(h for h in self.mnemonic_hits(m.group(1)) if h.dtype == FMA_DTYPE[m.group(3)])
+            if m.group(2) == "p":
+                return hits
+            first: dict[tuple[str, str], Hit] = {}
+            for h in hits:
+                first.setdefault((h.op, h.dtype), dataclasses.replace(h, via="scalar"))
+            return tuple(first.values())
         return self.mnemonic_hits(token)
 
     def mnemonic_hits(self, token: str) -> tuple[Hit, ...]:

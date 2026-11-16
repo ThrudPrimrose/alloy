@@ -601,3 +601,13 @@ def test_every_sve_dtype_has_a_tail_predicate():
     sut = TABLE.entry("sve", "gen_mask", "f16")
 
     assert sut.intrinsic == "svwhilelt_b16_s64"
+
+
+def test_a_scalar_fma_reverses_to_the_packed_math_on_one_lane_once():
+    """A9.5: vfmadd231sd is vfmadd231pd's math on one lane, said once, never claimed as a packed row."""
+    from alloy.isa.table import load as load_table
+
+    sut = load_table().reverse("vfmadd231sd")
+
+    assert [(h.op, h.dtype, h.via) for h in sut] == [("fma", "f64", "scalar")]
+    assert all(h.via != "scalar" for h in load_table().reverse("vfmadd231pd"))
