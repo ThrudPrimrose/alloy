@@ -260,6 +260,55 @@ uops = 1
 latency = 3
 rthroughput = 0.5
 
+[[rows."avx2/f32/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxps %xmm15, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx2/f32/reduce_max"]]
+cpu = "znver4"
+instruction = "vmovshdup %xmm0, %xmm1"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx2/f32/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxss %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 1.0
+
+[[rows."avx2/f32/reduce_min"]]
+cpu = "znver4"
+instruction = "vminps %xmm15, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx2/f32/reduce_min"]]
+cpu = "znver4"
+instruction = "vmovshdup %xmm0, %xmm1"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx2/f32/reduce_min"]]
+cpu = "znver4"
+instruction = "vminss %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 1.0
+
+[[rows."avx2/f32/scan_add"]]
+cpu = "znver4"
+instruction = "vaddps %ymm1, %ymm0, %ymm0"
+uops = 1
+latency = 3
+rthroughput = 0.5
+
 [[rows."avx2/f32/sqrt"]]
 cpu = "znver4"
 instruction = "vsqrtps %ymm15, %ymm0"
@@ -396,6 +445,41 @@ rthroughput = 0.5
 [[rows."avx2/f64/reduce_add"]]
 cpu = "znver4"
 instruction = "vaddsd %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 3
+rthroughput = 0.5
+
+[[rows."avx2/f64/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxpd %xmm15, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx2/f64/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxsd %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 1.0
+
+[[rows."avx2/f64/reduce_min"]]
+cpu = "znver4"
+instruction = "vminpd %xmm15, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx2/f64/reduce_min"]]
+cpu = "znver4"
+instruction = "vminsd %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 1.0
+
+[[rows."avx2/f64/scan_add"]]
+cpu = "znver4"
+instruction = "vaddpd %ymm2, %ymm0, %ymm0"
 uops = 1
 latency = 3
 rthroughput = 0.5
@@ -827,6 +911,27 @@ uops = 1
 latency = 3
 rthroughput = 1.0
 
+[[rows."avx512/f32/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxps %ymm15, %ymm0, %ymm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx512/f32/reduce_min"]]
+cpu = "znver4"
+instruction = "vminps %ymm15, %ymm0, %ymm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx512/f32/scan_add"]]
+cpu = "znver4"
+instruction = "vaddps %zmm1, %zmm0, %zmm0"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
 [[rows."avx512/f32/scatter"]]
 cpu = "znver4"
 instruction = "vscatterdps %zmm0, (%rcx,%zmm1,4) {%k1}"
@@ -963,6 +1068,27 @@ rthroughput = 0.5
 [[rows."avx512/f64/reduce_add"]]
 cpu = "znver4"
 instruction = "vaddpd %zmm15, %zmm0, %zmm0"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."avx512/f64/reduce_max"]]
+cpu = "znver4"
+instruction = "vmaxpd %ymm15, %ymm0, %ymm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx512/f64/reduce_min"]]
+cpu = "znver4"
+instruction = "vminpd %ymm15, %ymm0, %ymm0"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."avx512/f64/scan_add"]]
+cpu = "znver4"
+instruction = "vaddpd %zmm1, %zmm0, %zmm0"
 uops = 1
 latency = 3
 rthroughput = 1.0
@@ -1338,6 +1464,34 @@ uops = 1
 latency = 2
 rthroughput = 0.25
 
+[[rows."neon/f32/reduce_max"]]
+cpu = "neoverse-v2"
+instruction = "fmaxv s0, v0.4s"
+uops = 2
+latency = 4
+rthroughput = 0.5
+
+[[rows."neon/f32/reduce_min"]]
+cpu = "neoverse-v2"
+instruction = "fminv s0, v0.4s"
+uops = 2
+latency = 4
+rthroughput = 0.5
+
+[[rows."neon/f32/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "ext v2.16b, v0.16b, v1.16b, #12"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f32/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "fadd v1.4s, v1.4s, v2.4s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
 [[rows."neon/f32/scatter"]]
 cpu = "neoverse-v2"
 instruction = "str s0, [x3, x8, lsl #2]"
@@ -1481,6 +1635,34 @@ rthroughput = 0.25
 [[rows."neon/f64/reduce_add"]]
 cpu = "neoverse-v2"
 instruction = "faddp d0, v0.2d"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f64/reduce_max"]]
+cpu = "neoverse-v2"
+instruction = "fmaxp d0, v0.2d"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f64/reduce_min"]]
+cpu = "neoverse-v2"
+instruction = "fminp d0, v0.2d"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f64/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "ext v0.16b, v0.16b, v1.16b, #8"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f64/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "fadd v0.2d, v1.2d, v0.2d"
 uops = 1
 latency = 2
 rthroughput = 0.25
@@ -1982,6 +2164,41 @@ uops = 3
 latency = 6
 rthroughput = 0.75
 
+[[rows."sve/f32/reduce_max"]]
+cpu = "neoverse-v2"
+instruction = "fmaxv s0, p0, z0.s"
+uops = 3
+latency = 6
+rthroughput = 0.75
+
+[[rows."sve/f32/reduce_min"]]
+cpu = "neoverse-v2"
+instruction = "fminv s0, p0, z0.s"
+uops = 3
+latency = 6
+rthroughput = 0.75
+
+[[rows."sve/f32/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "index z1.s, #0, #1"
+uops = 1
+latency = 4
+rthroughput = 0.5
+
+[[rows."sve/f32/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "tbl z2.s, { z0.s }, z2.s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."sve/f32/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "fadd z0.s, z0.s, z2.s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
 [[rows."sve/f32/scatter"]]
 cpu = "neoverse-v2"
 instruction = "st1w { z1.s }, p0, [x3, z0.s, sxtw #2]"
@@ -2142,6 +2359,41 @@ instruction = "faddv d0, p0, z0.d"
 uops = 2
 latency = 4
 rthroughput = 0.5
+
+[[rows."sve/f64/reduce_max"]]
+cpu = "neoverse-v2"
+instruction = "fmaxv d0, p0, z0.d"
+uops = 2
+latency = 4
+rthroughput = 0.5
+
+[[rows."sve/f64/reduce_min"]]
+cpu = "neoverse-v2"
+instruction = "fminv d0, p0, z0.d"
+uops = 2
+latency = 4
+rthroughput = 0.5
+
+[[rows."sve/f64/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "index z1.d, #0, #1"
+uops = 2
+latency = 5
+rthroughput = 1.0
+
+[[rows."sve/f64/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "tbl z2.d, { z0.d }, z2.d"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."sve/f64/scan_add"]]
+cpu = "neoverse-v2"
+instruction = "fadd z0.d, z0.d, z2.d"
+uops = 1
+latency = 2
+rthroughput = 0.25
 
 [[rows."sve/f64/scatter"]]
 cpu = "neoverse-v2"

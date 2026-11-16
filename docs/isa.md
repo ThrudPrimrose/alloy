@@ -62,7 +62,7 @@ A `lookup` ends with a `cost:` line when `costs.toml` has the row: µops, latenc
 stream, as llvm-mca models the row's compiled instruction. x86 rows are modelled on Zen 4 (`znver4`, the host of
 beverin's MI300A) and Arm rows on Neoverse V2 (`neoverse-v2`, GH200's Grace). The cost is the arithmetic's own cost.
 Clang folds a row's operand load into the instruction, so `helpers/isacost.py` measures the register form instead.
-The column records 307 of 349 rows that name a mnemonic. The rest are rows whose instruction the compiler replaced.
+The column records 331 of 373 rows that name a mnemonic. The rest are rows whose instruction the compiler replaced.
 
 The column shows what an intrinsic name hides. On Zen 4 a 512-bit `vaddpd` has the latency of a 256-bit one and
 half its throughput, because Zen 4 issues it as two 256-bit halves. Where AVX-512 wins on Zen 4, masking and the
