@@ -348,6 +348,69 @@ def max_frequency_hz() -> float:
     return clock().hz
 
 
+#: Empty worksharing loops on a warm team, one iteration per thread: the best of five rounds, in ns per region.
+REGION = """#include <omp.h>
+#include <stdio.h>
+int main(void) {
+  double best = 1e30;
+  int team = omp_get_max_threads();
+#pragma omp parallel
+  { asm volatile("" ::: "memory"); }
+  for (int round = 0; round < 5; ++round) {
+    double start = omp_get_wtime();
+    for (int r = 0; r < 2000; ++r) {
+#pragma omp parallel for schedule(static)
+      for (int i = 0; i < team; ++i) asm volatile("" ::: "memory");
+    }
+    double ns = (omp_get_wtime() - start) / 2000 * 1e9;
+    if (ns < best) best = ns;
+  }
+  printf("%.1f\\n", best);
+  return 0;
+}
+"""
+#: The region cost where none can be measured: the cheapest empty region on libomp on the Zen 4 host of beverin.
+REGION_NS = 470.0
+
+
+@dataclass(slots=True, frozen=True)
+class RegionCost:
+    """What a parallel region with a worksharing loop costs a team on every physical core, in ns: ``measured`` on
+    the process's OpenMP runtime (A15), or ``default`` (:data:`REGION_NS`) without a C compiler or the runtime."""
+
+    ns: float
+    source: str
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def region_cost(library: pathlib.Path | None, soname: str) -> RegionCost:
+    """:data:`REGION` built by the system C compiler, linked against ``library`` (``lib<soname>.so``, the runtime
+    every candidate links), and run on one thread per physical core, bound close."""
+    if library is None:
+        return RegionCost(REGION_NS, "default")
+    with tempfile.TemporaryDirectory(prefix="alloy_region_") as folder:
+        source, binary = pathlib.Path(folder) / "region.c", pathlib.Path(folder) / "region"
+        source.write_text(REGION)
+        link = [f"-L{library.parent}", f"-l{soname}", f"-Wl,-rpath,{library.parent}"]
+        try:
+            subprocess.run(
+                ["cc", "-O2", "-fopenmp", "-c", str(source), "-o", f"{binary}.o"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            subprocess.run(["cc", f"{binary}.o", *link, "-o", str(binary)], check=True, capture_output=True, timeout=60)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return RegionCost(REGION_NS, "default")
+        env = os.environ | {
+            "OMP_NUM_THREADS": str(len(physical_cores())),
+            "OMP_PROC_BIND": "close",
+            "OMP_PLACES": "cores",
+        }
+        run = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=120, env=env)
+    return RegionCost(float(run.stdout.split()[0]), "measured")
+
+
 def pin_worker(cpus: set[int]) -> None:
     """Confine a worker process to ``cpus``; an empty set (unreadable topology) leaves it unpinned. Lives here, not in
     the route module, because a spawned worker imports the module that defines its initializer."""
@@ -358,3 +421,12 @@ def pin_worker(cpus: set[int]) -> None:
 if __name__ == "__main__":
     found = clock()
     print(f"clock {found.hz / 1e9:.3f} GHz from {found.source}")
+    bandwidth = memory_bandwidth()
+    print(f"bandwidth {bandwidth.bytes_per_second / 1e9:.1f} GB/s from {bandwidth.source}")
+    from alloy import configuration_matrix
+    from alloy.backend import runtime
+
+    matrix = configuration_matrix.load()
+    name = matrix.defaults.openmp_runtime
+    region = region_cost(runtime.default_library(matrix, name), matrix.openmp_runtimes[name])
+    print(f"parallel region {region.ns:.0f} ns on {name} from {region.source}")

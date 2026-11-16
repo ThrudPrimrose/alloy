@@ -336,6 +336,7 @@ def ten_cycle_loop(archive: pathlib.Path, source: pathlib.Path) -> dict[str, lis
 def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core(tmp_path, monkeypatch):
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     monkeypatch.setattr(machine, "max_frequency_hz", lambda: 3.0e9)
+    monkeypatch.setattr(predict, "region_ns", lambda matrix: 470.0)
     monkeypatch.setattr(predict, "disassembly", ten_cycle_loop)
     monkeypatch.setattr(predict, "mca_cycles", lambda body, cpu: 10.0)
     rep = parallel_and_serial(only_scope(roots), tmp_path)

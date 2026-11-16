@@ -52,8 +52,6 @@ GATHER = re.compile(r"^v(gather|scatter|pgather|pscatter)")
 #: An atomic read-modify-write: x86's ``lock`` prefix (objdump splits it off as the mnemonic), aarch64's LSE atomics
 #: and exclusive pairs. Every thread's update of one address is serialized: an ``omp atomic`` per element.
 ATOMIC = re.compile(r"^(lock$|ld(add|clr|eor|set|smax|smin|umax|umin)|casp?[albh]*$|swp|ld[a]?xr|st[l]?xr)")
-#: What a region or a worksharing loop costs a team: the cheapest empty region measured on libomp.
-REGION_NS = 470.0
 
 #: Cycles per call in a loop: llvm-mca cannot see a callee, so one call per vector ranks above one per element.
 CALL_CYCLES = 30.0
@@ -466,6 +464,17 @@ def weighted(
     )
 
 
+def region_ns(matrix: Matrix) -> float:
+    """What a region with a worksharing loop costs a full team on this host and the matrix's OpenMP runtime
+    (:func:`machine.region_cost`); the constant :data:`machine.REGION_NS` when the runtime is not found."""
+    name = matrix.defaults.openmp_runtime
+    try:
+        library: pathlib.Path | None = runtime.default_library(matrix, name)
+    except LookupError:
+        library = None
+    return machine.region_cost(library, matrix.openmp_runtimes[name]).ns
+
+
 def team_of(archive: pathlib.Path, load: Load | None, cores: int) -> tuple[float, float]:
     """``(regions, threads sharing the work)``: at an unknown size every core and no region is the whole model."""
     if load is None:
@@ -520,7 +529,7 @@ def predict(
         c.weight * (c.cycles + CALL_CYCLES * c.calls) / c.elements / (1.0 if c.atomic else team) for c in loops
     )
     if regions > 0:
-        compute += regions * REGION_NS * 1e-9 * machine.max_frequency_hz() / elements
+        compute += regions * region_ns(matrix) * 1e-9 * machine.max_frequency_hz() / elements
     footprint = timing.footprint(scope.sdfg, sizes) + temporaries(rendered, sizes) if sizes else 0
     memory = memory_term(loops, footprint, team, cores)
     return Prediction(max(compute, memory), compute, memory, loops, len(machine_loops), regions, elements)

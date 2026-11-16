@@ -91,3 +91,22 @@ def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(mo
     assert machine.stream_bytes_per_thread(2) == machine.STREAM_BYTES_PER_THREAD
     monkeypatch.setattr(machine, "available_memory", lambda: 1 << 30)
     assert machine.stream_bytes_per_thread(4) == 16 << 20
+
+
+def test_a_host_without_the_openmp_runtime_prices_a_region_at_the_default():
+    assert machine.region_cost(None, "omp") == machine.RegionCost(machine.REGION_NS, "default")
+
+
+def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host():
+    """A15: the prediction's region cost comes from this host and runtime, not Zen 4's constant."""
+    from alloy import configuration_matrix
+    from alloy.backend import runtime
+    from alloy.heuristics import predict
+
+    matrix = configuration_matrix.load()
+    name = matrix.defaults.openmp_runtime
+    sut = machine.region_cost(runtime.default_library(matrix, name), matrix.openmp_runtimes[name])
+
+    assert sut.source == "measured"
+    assert 0.0 < sut.ns < 1e6  # an empty region on a warm team: well under a millisecond on any host
+    assert predict.region_ns(matrix) == sut.ns
