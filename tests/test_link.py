@@ -269,3 +269,15 @@ def test_best_compiles_a_winner_into_the_code_that_was_measured(tmp_path):
 def text_section(obj: pathlib.Path) -> list[str]:
     listing = subprocess.run(["llvm-objdump", "-d", "--no-show-raw-insn", str(obj)], capture_output=True, text=True)
     return listing.stdout.splitlines()[2:]
+
+
+def test_a_library_in_a_default_linker_folder_is_found_where_no_driver_reports_it(tmp_path, monkeypatch):
+    """CI installs SLEEF into /usr/local/lib: the linker searches it, clang's -print-file-name does not."""
+    from alloy.backend import runtime
+
+    assert "/usr/local/lib" in runtime.linker_search_dirs()
+    (tmp_path / "libnowheresleef.so").write_text("")
+    monkeypatch.delenv("LIBRARY_PATH", raising=False)
+    monkeypatch.setattr(runtime, "linker_search_dirs", lambda: (str(tmp_path),))
+
+    assert runtime.find_library("nowheresleef", ("gcc",)) == tmp_path / "libnowheresleef.so"

@@ -33,15 +33,27 @@ def driver_path(executable: str, soname: str) -> pathlib.Path | None:
 
 @functools.lru_cache(maxsize=None, typed=True)
 def find_library(soname: str, executables: tuple[str, ...]) -> pathlib.Path | None:
-    """The first ``lib<soname>.so`` any of ``executables`` resolves, in order, else the first in ``LIBRARY_PATH``,
-    which every driver's link searches but clang's ``-print-file-name`` does not."""
+    """The first ``lib<soname>.so`` any of ``executables`` resolves, in order, else the first in ``LIBRARY_PATH`` and
+    then in the linker's default folders, which every driver's link searches but clang's ``-print-file-name`` does
+    not."""
     for executable in executables:
         if (path := driver_path(executable, soname)) is not None:
             return path
-    for folder in filter(None, os.environ.get("LIBRARY_PATH", "").split(os.pathsep)):
+    for folder in (*filter(None, os.environ.get("LIBRARY_PATH", "").split(os.pathsep)), *linker_search_dirs()):
         if (path := pathlib.Path(folder) / f"lib{soname}.so").is_file():
             return path
     return None
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def linker_search_dirs() -> tuple[str, ...]:
+    """The folders the system linker searches by default (``ld --verbose``): ``/usr/local/lib`` among them, which
+    no driver's ``-print-file-name`` reports."""
+    try:
+        listing = subprocess.run(["ld", "--verbose"], capture_output=True, text=True, check=False, timeout=60).stdout
+    except FileNotFoundError:
+        return ()
+    return tuple(folder.lstrip("=") for folder in re.findall(r'SEARCH_DIR\("([^"]+)"\)', listing))
 
 
 def symbols(path: pathlib.Path, *args: str) -> frozenset[str]:
