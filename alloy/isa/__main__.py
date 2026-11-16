@@ -123,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     tile_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
     tile_p.add_argument("--json", action="store_true", help="the plan as JSON")
 
-    ask_p = commands.add_parser("ask", help="any target, any operation: ask sm90 mma --a shared:f16:64x64 ...")
+    ask_p = commands.add_parser(
+        "ask", help="any target, any operation: ask sm90 mma --a shared:f16:64x64:row_major:b128 ..."
+    )
     ask_p.add_argument("target", help=", ".join(ask.TARGETS))
     ask_p.add_argument("op", help="an op of `ops`, a math function, mma, or copy")
     for name in ("a", "b", "c", "x", "src", "dst"):
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     ask_p.add_argument("--unit", default="", help="pin the implementation (tma, warpgroup, mfma, vector, ...)")
     ask_p.add_argument("--max-ulp", type=float, help="for a math function: the cheapest rung within this bound")
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
-    ask_p.add_argument("--json", action="store_true", help="the Feasible or Infeasible answer as JSON")
+    ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
 
     args = parser.parse_args(argv)
     for field in ("isa", "op", "dtype", "function", "target", "unit"):
@@ -661,13 +663,14 @@ def tile_command(args: argparse.Namespace) -> int:
     return 0 if found.verified == "run" else 3
 
 
-#: The exit code of a malformed request (sysexits' EX_USAGE), apart from 2, an infeasible one.
+#: The exit code of an invalid request (sysexits' EX_USAGE), apart from 2, an infeasible one.
 USAGE = 64
 
 
 def ask_command(args: argparse.Namespace) -> int:
-    """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible, and 64
-    (a usage error) for an operand that does not parse."""
+    """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible (the target
+    cannot), and 64 when invalid (the request is wrong on every target, or an operand does not parse)."""
+    answer: ask.Answer
     try:
         operands = {
             name: ask.Operand.parse(value)
@@ -675,18 +678,22 @@ def ask_command(args: argparse.Namespace) -> int:
             if isinstance(value := vars(args).get(name), str)
         }
     except KeyError as exc:
-        print(f"alloy.isa ask: {exc.args[0]}", file=sys.stderr)
-        return USAGE
-    request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp)
-    answer = ask.ask(request, verify=not args.no_verify)
+        answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "space:dtype[:RxC or N][:layout][:swizzle]")
+    else:
+        request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp)
+        answer = ask.ask(request, verify=not args.no_verify)
+    code = {"feasible": 0, "infeasible": 2, "invalid": USAGE}[answer.status]
     if args.json:
         print(json.dumps(dataclasses.asdict(answer)))
-        return 0 if answer.feasible else 2
-    if isinstance(answer, ask.Infeasible):
-        print(f"{args.target} {args.op}: infeasible: {answer.reason}")
-        for near in answer.nearest:
-            print(f"  nearest: {near}")
-        return 2
+        return code
+    if not isinstance(answer, ask.Feasible):
+        print(f"{args.target} {args.op}: {answer.status} ({answer.why.value}): {answer.reason}")
+        near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
+        for line in near:
+            print(f"  {'nearest' if isinstance(answer, ask.Infeasible) else 'expected'}: {line}")
+        if isinstance(answer, ask.Infeasible) and answer.fix:
+            print(f"  fix: {answer.fix}")
+        return code
     print(
         f"{args.target} {args.op}: feasible on {answer.unit}; check: {answer.check.status} {answer.check.basis}".rstrip()
     )

@@ -8,17 +8,19 @@ import pytest
 
 from alloy.isa import simt, tile
 from alloy.isa.__main__ import main
-from alloy.isa.ask import Feasible, Infeasible, Operand, Request, ask
+from alloy.isa.ask import INVALID, Feasible, Infeasible, Invalid, Operand, Request, Why, ask
 
-TILE = {"a": Operand("shared", "f16", (64, 64)), "b": Operand("shared", "f16", (64, 64)),
-        "c": Operand("register", "f32", (64, 64))}  # fmt: skip
+TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
+        "b": Operand("shared", "f16", (64, 64), "col_major", "b128"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
+MFMA_TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "xor:8"),
+             "b": Operand("shared", "f16", (64, 64), "col_major", "xor:8"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
 
 
 @pytest.mark.parametrize(("request_", "unit"), [
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}), "vector"),
     (Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}, max_ulp=4.0), "vector"),
     (Request("sm90", "mma", TILE), "warpgroup"),
-    (Request("gfx942", "mma", TILE), "mfma"),
+    (Request("gfx942", "mma", MFMA_TILE), "mfma"),
     (Request("sm90", "fma", {"a": Operand("register", "f32")}), "thread"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}), "sfpu"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256)),
@@ -40,7 +42,7 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
 
 
 @pytest.mark.parametrize(("request_", "reason"), [
-    (Request("gfx942", "mma", TILE | {name: Operand("shared", "f32", (64, 64)) for name in "ab"}), "--in f16 --acc f32"),
+    (Request("gfx942", "mma", MFMA_TILE | {"a": Operand("shared", "f32", (64, 64)), "b": Operand("shared", "f32", (64, 64), "col_major")}), "--in f16 --acc f32"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)),
                               "dst": Operand("vector", "f32", (8,), "row_major", "b128")}), "no swizzle"),
     (Request("sm90", "mma", TILE, unit="za"), "no unit"),
@@ -52,13 +54,18 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
 def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_, reason):
     sut = ask(request_, verify=False)
 
-    assert isinstance(sut, Infeasible)
+    assert isinstance(sut, Infeasible | Invalid)
     assert reason in sut.reason
 
 
 def test_the_nearest_request_of_an_infeasible_tile_is_feasible():
     refused = ask(
-        Request("gfx942", "mma", TILE | {name: Operand("shared", "f32", (64, 64)) for name in "ab"}), verify=False
+        Request(
+            "gfx942",
+            "mma",
+            TILE | {"a": Operand("shared", "f32", (64, 64)), "b": Operand("shared", "f32", (64, 64), "col_major")},
+        ),
+        verify=False,
     )
     assert isinstance(refused, Infeasible) and refused.nearest
     a, b, c = (Operand.parse(part.split(" ", 1)[1]) for part in refused.nearest[0].split(", "))
@@ -69,8 +76,8 @@ def test_the_nearest_request_of_an_infeasible_tile_is_feasible():
 
 
 def test_a_cpu_mma_is_the_checked_fma_fallback():
-    tile = {"a": Operand("vector", "f32", (16, 8)), "b": Operand("vector", "f32", (8, 16)),
-            "c": Operand("vector", "f32", (16, 16))}  # fmt: skip
+    tile = {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f32", (8, 16)),
+            "c": Operand("global", "f32", (16, 16))}  # fmt: skip
 
     sut = ask(Request("avx2", "mma", tile))
 
@@ -78,8 +85,8 @@ def test_a_cpu_mma_is_the_checked_fma_fallback():
 
 
 def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys):
-    code = main(["ask", "gfx942", "mma", "--a", "shared:f32:64x64", "--b", "shared:f32:64x64", "--c",
-                 "register:f32:64x64", "--json"])  # fmt: skip
+    code = main(["ask", "gfx942", "mma", "--a", "shared:f32:64x64:row_major:xor:8", "--b",
+                 "shared:f32:64x64:col_major:xor:8", "--c", "register:f32:64x64", "--json"])  # fmt: skip
 
     sut = json.loads(capsys.readouterr().out)
     assert code == 2 and sut["feasible"] is False and sut["nearest"]
@@ -98,7 +105,7 @@ def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile():
     ]  # fmt: skip
 
 
-def answered(request_: Request) -> Feasible | Infeasible:
+def answered(request_: Request) -> Feasible | Infeasible | Invalid:
     return ask(request_, verify=False)
 
 
@@ -109,15 +116,17 @@ GLOBAL = Operand("global", "f16", (256, 256))
 
 @pytest.mark.parametrize(("request_", "reason"), [
     (Request("sm90", "mma", TILE | {"b": Operand("shared", "bf16", (64, 64))}), "one element type"),
-    (Request("avx2", "mma", {"a": Operand("vector", "f32", (16, 8)), "b": Operand("vector", "f64", (8, 16)),
-                             "c": Operand("vector", "f64", (16, 16))}), "one element type"),
+    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f64", (8, 16)),
+                             "c": Operand("global", "f64", (16, 16))}), "one element type"),
     (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), "accumulates c in register"),
     (Request("sm90", "mma", TILE | {"b": Operand("register", "f16", (64, 64))}), "reads b from shared"),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), "swizzle b128"),
-    (Request("gfx942", "mma", TILE | {"a": B128}), "swizzle xor:8"),
-    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major")}), "row-major"),
-    (Request("avx2", "mma", {"a": Operand("vector", "f32", (16, 8), "row_major", "b128"),
-                             "b": Operand("vector", "f32", (8, 16)), "c": Operand("vector", "f32", (16, 16))}),
+    (Request("gfx942", "mma", MFMA_TILE | {"a": B128}), "swizzle xor:8"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major", "b128")}), "takes a row_major"),
+    (Request("sm90", "mma", TILE | {"b": B128}), "takes b col_major (Bt, N rows of K)"),
+    (Request("gfx942", "mma", MFMA_TILE | {"b": LDS}), "takes b col_major (Bt, N rows of K)"),
+    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8), "row_major", "b128"),
+                             "b": Operand("global", "f32", (8, 16)), "c": Operand("global", "f32", (16, 16))}),
      "no swizzle"),
     (Request("tensix", "mma", {"a": Operand("tile_register", "bf16", (32, 32)),
                                "b": Operand("tile_register", "f32", (32, 32)),
@@ -126,7 +135,7 @@ GLOBAL = Operand("global", "f16", (256, 256))
 def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request_, reason):
     sut = answered(request_)
 
-    assert isinstance(sut, Infeasible), sut
+    assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
@@ -168,7 +177,7 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
 def test_a_copy_the_unit_cannot_carry_out_is_infeasible(request_, reason):
     sut = answered(request_)
 
-    assert isinstance(sut, Infeasible), sut
+    assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
@@ -205,7 +214,7 @@ def test_every_device_row_is_reachable_on_both_gpu_targets(op: str):
 def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(request_, reason):
     sut = answered(request_)
 
-    assert isinstance(sut, Infeasible), sut
+    assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
@@ -218,11 +227,11 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code():
 
 
 @pytest.mark.parametrize("refused", [
-    Request("avx2", "mma", {"a": Operand("vector", "f16", (16, 8)), "b": Operand("vector", "f16", (8, 16)),
-                            "c": Operand("vector", "f32", (16, 16))}),
+    Request("avx2", "mma", {"a": Operand("global", "f16", (16, 8)), "b": Operand("global", "f16", (8, 16)),
+                            "c": Operand("global", "f32", (16, 16))}),
     Request("sme", "mma", TILE),
     Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}),
-    Request("gfx942", "mma", TILE | {"a": B128}),
+    Request("gfx942", "mma", MFMA_TILE | {"a": B128}),
     Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)),
                               "b": Operand("tile_register", "f32", (48, 32)),
                               "c": Operand("tile_register", "f32", (32, 32))}),
@@ -249,8 +258,8 @@ def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.M
         return tile.replace_check(plan_, "failed", "relative error 0.5 against the f64 reference")
 
     monkeypatch.setattr(tile, "verify", failing)
-    operands = {"a": Operand("vector", "f32", (16, 8)), "b": Operand("vector", "f32", (8, 16)),
-                "c": Operand("vector", "f32", (16, 16))}  # fmt: skip
+    operands = {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f32", (8, 16)),
+                "c": Operand("global", "f32", (16, 16))}  # fmt: skip
 
     sut = ask(Request("avx2", "mma", operands))
 
@@ -274,7 +283,7 @@ def test_the_cli_rejects_a_malformed_operand_as_a_usage_error_apart_from_infeasi
     code = main(["ask", "sm90", "mma", "--a", operand, "--b", "shared:f16:64x64", "--c", "register:f32:64x64"])
 
     printed = capsys.readouterr()
-    assert code == 64 and printed.out == "" and operand in printed.err
+    assert code == 64 and "invalid (malformed_operand)" in printed.out and operand in printed.out
 
 
 def test_the_cli_reads_a_target_in_any_case_and_an_lds_swizzle_with_its_colon(capsys):
@@ -289,3 +298,112 @@ def test_an_operand_spells_back_to_what_parses_to_it():
     for text in ("register:f32", "vector:f64:4", "shared:f16:64x64:row_major:b128", "shared:f16:64x64:col_major",
                  "shared:f16:64x64:row_major:xor:8"):  # fmt: skip
         assert Operand.parse(text).spelled() == text
+
+
+SME = {"a": Operand("global", "f32", (70, 9), "col_major"), "b": Operand("global", "f32", (9, 33)),
+       "c": Operand("tile_register", "f32", (70, 33))}  # fmt: skip
+REGISTER = Operand("vector", "f64", (4,))
+
+
+@pytest.mark.parametrize(("request_", "why"), [
+    (Request("riscv", "add"), Why.TARGET),
+    (Request("sm90", "mma", TILE, unit="za"), Why.UNIT_NAME),
+    (Request("avx2", "frobnicate"), Why.OPERATION),
+    (Request("avx2", "add"), Why.OPERANDS),
+    (Request("tensix", "exp"), Why.OPERANDS),
+    (Request("avx2", "add", {"x": Operand("shared", "f64", (4,))}), Why.SPACE),
+    (Request("tensix", "exp", {"x": Operand("global", "f32", (32, 32))}), Why.SPACE),
+    (Request("tensix", "mma", {name: Operand("shared", "f32", (32, 32)) for name in "abc"}), Why.SPACE),
+    (Request("sm90", "mma", {"a": TILE["a"]}), Why.OPERANDS),
+    (Request("sm90", "copy", {"src": GLOBAL}), Why.OPERANDS),
+    (Request("sm90", "mma", TILE | {"c": Operand("register", "f32", (64, 32))}), Why.CHAIN),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "bf16", (64, 64))}), Why.MIXED_TYPES),
+    (Request("avx2", "add", {"a": REGISTER, "b": Operand("vector", "f32", (8,))}), Why.MIXED_TYPES),
+    (Request("sm90", "copy", {"src": Operand("global", "f32", (256, 256)), "dst": B128}), Why.MIXED_TYPES),
+    (Request("avx2", "add", {"a": REGISTER}, max_ulp=1.0), Why.BOUND),
+    (Request("sm90", "fma", {"x": Operand("register", "f32")}, max_ulp=1.0), Why.BOUND),
+    (Request("sm90", "mma", TILE, unit="warp"), Why.UNIT),
+    (Request("sm90", "frobnicate"), Why.NO_ROW),
+    (Request("tensix", "frobnicate"), Why.OPERATION),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f32", (64, 64)),
+                                    "b": Operand("shared", "f32", (64, 64), "col_major")}), Why.ELEMENT_TYPE),
+    (Request("sm90", "fma", {"x": Operand("register", "f64")}), Why.ELEMENT_TYPE),
+    (Request("sm90", "mma", {"a": Operand("shared", "f16", (48, 64), "row_major", "b128"), "b": TILE["b"],
+                             "c": Operand("register", "f32", (48, 64))}), Why.SHAPE),
+    (Request("avx2", "add", {"x": Operand("vector", "f64", (8,))}), Why.SHAPE),
+    (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), Why.SPACE),
+    (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), Why.SPACE),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), Why.SWIZZLE),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), Why.SWIZZLE),
+    (Request("avx2", "add", {"x": Operand("vector", "f64", (4,), "row_major", "b128")}), Why.SWIZZLE),
+    (Request("sm90", "mma", TILE | {"b": B128}), Why.LAYOUT),
+    (Request("sme", "mma", SME | {"a": Operand("global", "f32", (70, 9))}), Why.LAYOUT),
+    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8), "col_major"),
+                             "b": Operand("global", "f32", (8, 16)), "c": Operand("global", "f32", (16, 16))}), Why.LAYOUT),
+    (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256), "col_major"), "dst": B128}), Why.LAYOUT),
+    (Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}, max_ulp=1e-9), Why.NO_RUNG),
+    (Request("sme", "add"), Why.NOT_COVERED),
+    (Request("gfx942", "copy", {"src": LDS, "dst": GLOBAL}), Why.NOT_COVERED),
+])  # fmt: skip
+def test_every_refusal_carries_its_reason_code_and_the_class_the_code_belongs_to(request_: Request, why: Why):
+    sut = answered(request_)
+
+    assert not isinstance(sut, Feasible), sut
+    assert sut.why is why, sut.reason
+    assert isinstance(sut, Invalid if why in INVALID else Infeasible)
+    assert sut.status == ("invalid" if why in INVALID else "infeasible") and sut.feasible is False
+
+
+def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap():
+    infeasible = set(Why) - INVALID
+
+    assert INVALID and infeasible and Why.MALFORMED in INVALID
+    assert {Why.UNIT, Why.NO_ROW, Why.ELEMENT_TYPE, Why.SHAPE, Why.SPACE, Why.SWIZZLE, Why.LAYOUT, Why.NO_RUNG,
+            Why.NOT_COVERED, Why.CHECK_FAILED} == infeasible  # fmt: skip
+
+
+def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za():
+    sut = answered(Request("sme", "mma", SME))
+
+    assert isinstance(sut, Feasible) and sut.unit == "za"
+    assert any("svmopa_za32_f32_m" in step.spelling for step in sut.steps)
+
+
+@pytest.mark.parametrize(("argv", "code", "status"), [
+    (["sm90", "mma", "--a", "shared:f16:64x64:row_major:b128", "--b", "shared:f16:64x64:col_major:b128", "--c",
+      "register:f32:64x64"], 0, "feasible"),
+    (["sm90", "mma", "--a", "shared:f16:64x64:row_major:b128", "--b", "shared:f16:64x64:row_major:b128", "--c",
+      "register:f32:64x64"], 2, "infeasible"),
+    (["sm90", "mma", "--a", "shared:f16:64x64"], 64, "invalid"),
+    (["sm90", "mma", "--a", "shared:f16:64y64"], 64, "invalid"),
+])  # fmt: skip
+def test_the_cli_exit_code_and_json_status_tell_feasible_infeasible_and_invalid_apart(argv, code, status, capsys):
+    exit_code = main(["ask", *argv, "--json", "--no-verify"])
+
+    sut = json.loads(capsys.readouterr().out)
+    assert exit_code == code and sut["status"] == status
+    assert ("why" in sut) == (status != "feasible")
+
+
+@pytest.mark.parametrize(("request_", "why", "fix"), [
+    (Request("sm90", "mma", TILE | {"b": B128}), Why.LAYOUT, "Keep Bt (N rows of K) in global memory"),
+    (Request("gfx942", "mma", MFMA_TILE | {"b": LDS}), Why.LAYOUT, "write element (k, n) of B to row n"),
+    (Request("sme", "mma", SME | {"a": Operand("global", "f32", (70, 9))}), Why.LAYOUT, "Keep At (K rows of M)"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64))}), Why.SWIZZLE, "TMA copy (dst swizzle b128"),
+    (Request("gfx942", "mma", MFMA_TILE | {"a": Operand("shared", "f16", (64, 64))}), Why.SWIZZLE,
+     "LDS copy (dst swizzle xor:8)"),
+    (Request("sm90", "mma", TILE | {"a": Operand("global", "f16", (64, 64))}), Why.SPACE, "ask copy with src global"),
+    (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), Why.SPACE, "store the result to shared"),
+    (Request("avx2", "mma", {"a": Operand("vector", "f32", (16, 8)), "b": Operand("global", "f32", (8, 16)),
+                             "c": Operand("global", "f32", (16, 16))}), Why.SPACE, "pass the arrays as global"),
+])  # fmt: skip
+def test_an_mma_on_a_tile_the_kernel_would_misread_is_infeasible_and_says_how_to_get_the_tile_it_reads(
+    request_: Request, why: Why, fix: str
+):
+    """A swizzle, a layout, or a space the kernel does not read never answers with the kernel: its code would compute
+    on the wrong bytes."""
+    sut = answered(request_)
+
+    assert isinstance(sut, Infeasible), sut
+    assert sut.why is why and fix in sut.fix
+    assert sut.nearest and all("swizzle" not in near for near in sut.nearest)
