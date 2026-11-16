@@ -23,14 +23,18 @@ def without_sources(monkeypatch, *names: str) -> None:
 
 def test_a_host_without_cpufreq_cpuinfo_or_lscpu_measures_its_clock_within_a_fifth(monkeypatch):
     """A3: an aarch64 kernel lists no cpu MHz and a container hides cpufreq; the measured clock still answers."""
-    truth = machine.cpufreq_hz() or machine.cpuinfo_hz() or machine.lscpu_hz()
+    # only cpufreq's maximum bounds a running clock: cpuinfo lists the current or the nominal clock, which a boosting
+    # core exceeds (3.56 GHz measured against a listed 2.6 GHz on a CI VM)
+    maximum = machine.cpufreq_hz()
     without_sources(monkeypatch, "cpufreq", "cpuinfo", "lscpu")
 
     sut = machine.clock()
 
     assert sut.source == "measured"
-    if truth is not None:  # the running clock sits below the maximum, or above a listed base clock under boost
-        assert 0.8 * truth <= sut.hz <= 1.25 * truth, (sut.hz, truth)
+    if maximum is not None:
+        assert 0.8 * maximum <= sut.hz <= 1.05 * maximum, (sut.hz, maximum)
+    else:
+        assert 0.5e9 <= sut.hz <= 6.5e9, sut.hz
     machine.clock.cache_clear()
 
 
