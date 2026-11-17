@@ -9,8 +9,10 @@ machine has is run; otherwise its program is compiled for the target archs and r
 """
 
 import argparse
+import dataclasses
 import datetime
 import functools
+import hashlib
 import json
 import pathlib
 import shutil
@@ -24,7 +26,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy import gpu
 
-__all__ = ["DIALECTS", "Row", "Verdict", "merged", "program", "rows", "verdicts", "verify"]
+__all__ = ["DIALECTS", "Row", "Verdict", "digest", "merged", "program", "rows", "verdicts", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "simt.toml"
@@ -67,7 +69,8 @@ class Row:
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
 class Verdict:
-    """One row's check: ``ok`` None means compiled but not run (no such GPU here)."""
+    """One row's check: ``ok`` None means compiled but not run (no such GPU here). ``digest`` is :func:`digest` of
+    the row as it was checked."""
 
     op: str
     dialect: str
@@ -75,6 +78,7 @@ class Verdict:
     ok: bool | None = None
     rel: float | None = None
     error: str = ""
+    digest: str = ""
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -91,8 +95,18 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
-def verdicts() -> dict[tuple[str, str], Verdict]:
-    return {(v["op"], v["dialect"]): Verdict(**v) for v in recorded().get("verdicts", [])}
+def digest(row: Row, dialect: str) -> str:
+    """What a check of ``row`` on ``dialect`` ran: the spelling, the inputs, the reference, and what it compared."""
+    checked = [row.kind, row.spelled(dialect), row.ref, list(row.domain), row.check, row.tol, row.dtype]
+    return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
+
+
+def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str], Verdict]:
+    """The recorded verdict of each row as it is now: a record of a row changed since its check is stale and left
+    out, so the row is unverified until it runs again."""
+    current = {(row.op, dialect): digest(row, dialect) for row in rows() for dialect in DIALECTS}
+    found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
+    return {(v.op, v.dialect): v for v in found if current.get((v.op, v.dialect)) == v.digest}
 
 
 def bindings(dialect: str) -> str:
@@ -230,6 +244,7 @@ def verdicts_text(found: list[Verdict]) -> str:
             "basis": v.basis,
             "rel": v.rel,
             "error": v.error or None,
+            "digest": v.digest or None,
         }
         body += ["[[verdicts]]", *(f"{k} = {json.dumps(x)}" for k, x in fields.items() if x is not None), ""]
     return "\n".join(head + body)
@@ -245,13 +260,19 @@ def merged(new: Verdict, old: Verdict | None) -> Verdict:
     if not others:
         return new
     rel = max((r for r in (new.rel, old.rel) if r is not None), default=None)
-    return Verdict(new.op, new.dialect, "; ".join([*runs, *others]), new.ok and old.ok, rel, new.error or old.error)
+    return Verdict(
+        new.op, new.dialect, "; ".join([*runs, *others]), new.ok and old.ok, rel, new.error or old.error, new.digest
+    )
 
 
 def verify() -> list[Verdict]:
     here = runnable()
     kept = verdicts()
-    found = [check(row, dialect, dialect in here) for row in rows() for dialect in DIALECTS]
+    found = [
+        dataclasses.replace(check(row, dialect, dialect in here), digest=digest(row, dialect))
+        for row in rows()
+        for dialect in DIALECTS
+    ]
     # a row this machine can only compile keeps the verdict of the machine that ran it
     found = [
         kept[v.op, v.dialect] if v.ok is None and (v.op, v.dialect) in kept and kept[v.op, v.dialect].ok else v

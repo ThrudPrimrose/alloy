@@ -25,6 +25,20 @@ def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image():
     assert tensix.recorded()["image"] == tensix.IMAGE
 
 
+def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path: pathlib.Path):
+    exp = next(r for r in tensix.rows() if r.op == "exp")
+    current = tensix.Verdict("exp", "f32", exp.unit, ok=True, rel=1e-7, digest=tensix.digest(exp, "f32"))
+    changed = tensix.Verdict("exp", "bf16", exp.unit, ok=False, rel=0.5, digest="0123456789abcdef")
+    path = tmp_path / "verified.toml"
+    library = tmp_path / "libttsim.so"
+    library.write_bytes(b"sim")
+    path.write_text(tensix.verdicts_text([current, changed], library, tensix.IMAGE))
+
+    sut = tensix.verdicts(path)
+
+    assert sut == {("exp", "f32", exp.unit): current}
+
+
 def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32():
     verdicts = tensix.verdicts()
 

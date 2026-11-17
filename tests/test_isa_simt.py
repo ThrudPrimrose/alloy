@@ -1,6 +1,8 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """The CUDA and HIP rows: recorded checks, the dialect differences the lookup must keep, and the device runs."""
 
+import dataclasses
+
 import pytest
 
 from alloy.isa import simt
@@ -119,3 +121,28 @@ def test_a_row_run_on_a_second_gpu_keeps_the_first_gpus_run_and_the_worse_error(
     assert (failed.ok, failed.rel) == (False, 0.5), "a row correct on one GPU and wrong on another is wrong"
     compiled = simt.Verdict("fma", "hip", "compiled for gfx90a, gfx942, not run (no such GPU here)")
     assert simt.merged(mi300a, compiled) == mi300a, "a compile-only record adds no run"
+
+
+def test_a_record_of_a_row_changed_since_its_check_is_stale_and_left_out(tmp_path):
+    fma, rsqrt = (next(r for r in simt.rows() if r.op == op) for op in ("fma", "rsqrt"))
+    current = simt.Verdict("fma", "cuda", "ran on a GPU", ok=True, rel=0.0, digest=simt.digest(fma, "cuda"))
+    changed = simt.Verdict("rsqrt", "cuda", "ran on a GPU", ok=True, rel=0.0, digest="0123456789abcdef")
+    path = tmp_path / "verified.toml"
+    path.write_text(simt.verdicts_text([current, changed]))
+
+    sut = simt.verdicts(path)
+
+    assert sut == {("fma", "cuda"): current}
+    assert simt.digest(rsqrt, "cuda") != changed.digest
+
+
+def test_a_rows_digest_changes_with_its_spelling_and_its_check_but_not_its_note():
+    row = next(r for r in simt.rows() if r.op == "reduce_add")
+    respelled = dataclasses.replace(row, cuda=row.cuda.replace("+=", "-="))
+    rechecked = dataclasses.replace(row, check="all")
+    renoted = dataclasses.replace(row, note="another note")
+
+    sut = simt.digest(row, "cuda")
+
+    assert sut != simt.digest(respelled, "cuda") and sut != simt.digest(rechecked, "cuda")
+    assert sut == simt.digest(renoted, "cuda")

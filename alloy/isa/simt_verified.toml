@@ -7,6 +7,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "06b72e31f7dcfc30"
 
 [[verdicts]]
 op = "fma"
@@ -14,6 +15,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "06b72e31f7dcfc30"
 
 [[verdicts]]
 op = "exp_fast"
@@ -21,6 +23,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 1.13259e-07
+digest = "7fd98978be589cb9"
 
 [[verdicts]]
 op = "exp_fast"
@@ -28,6 +31,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 1.09774e-07
+digest = "7fd98978be589cb9"
 
 [[verdicts]]
 op = "sin_fast"
@@ -35,6 +39,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 2.08616e-07
+digest = "13a12744b755c04f"
 
 [[verdicts]]
 op = "sin_fast"
@@ -42,6 +47,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 1.19209e-07
+digest = "13a12744b755c04f"
 
 [[verdicts]]
 op = "div_fast"
@@ -49,6 +55,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 1.1296e-07
+digest = "5f567b524ae6d1d3"
 
 [[verdicts]]
 op = "div_fast"
@@ -56,6 +63,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "5f567b524ae6d1d3"
 
 [[verdicts]]
 op = "rsqrt"
@@ -63,6 +71,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 1.04839e-07
+digest = "00090db55ba4ccec"
 
 [[verdicts]]
 op = "rsqrt"
@@ -70,6 +79,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 1.17095e-07
+digest = "00090db55ba4ccec"
 
 [[verdicts]]
 op = "reduce_add"
@@ -77,6 +87,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "daeb55f36d633cda"
 
 [[verdicts]]
 op = "reduce_add"
@@ -84,6 +95,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "2b22bd2f3c443d2a"
 
 [[verdicts]]
 op = "reduce_min"
@@ -91,6 +103,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "77c85be5f68816c9"
 
 [[verdicts]]
 op = "reduce_min"
@@ -98,6 +111,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "6b7c864b20c6b8ce"
 
 [[verdicts]]
 op = "reduce_max"
@@ -105,6 +119,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "e25760ebac8886ca"
 
 [[verdicts]]
 op = "reduce_max"
@@ -112,6 +127,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "95b696b6e6fb4393"
 
 [[verdicts]]
 op = "scan_add"
@@ -119,6 +135,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "8766f4005caefd33"
 
 [[verdicts]]
 op = "scan_add"
@@ -126,6 +143,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "120dd319b99e0ed7"
 
 [[verdicts]]
 op = "broadcast"
@@ -133,6 +151,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "4a31917e50ba95e4"
 
 [[verdicts]]
 op = "broadcast"
@@ -140,6 +159,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "fe4991ea5b22654c"
 
 [[verdicts]]
 op = "gen_mask"
@@ -147,6 +167,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "580b1ada07694bb1"
 
 [[verdicts]]
 op = "gen_mask"
@@ -154,6 +175,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "48e24c5954e19814"
 
 [[verdicts]]
 op = "add_half2"
@@ -161,6 +183,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "db6aeaafad45e9eb"
 
 [[verdicts]]
 op = "add_half2"
@@ -168,6 +191,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "db6aeaafad45e9eb"
 
 [[verdicts]]
 op = "load_wide"
@@ -175,6 +199,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "dc106d46c2a1010b"
 
 [[verdicts]]
 op = "load_wide"
@@ -182,6 +207,7 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "dc106d46c2a1010b"
 
 [[verdicts]]
 op = "atomic_add"
@@ -189,6 +215,7 @@ dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
+digest = "41f7eafaa81d7c6f"
 
 [[verdicts]]
 op = "atomic_add"
@@ -196,3 +223,4 @@ dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
+digest = "a90a40eb7fdf1bf0"
