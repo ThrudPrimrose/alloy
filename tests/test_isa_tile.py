@@ -17,7 +17,10 @@ def test_a_cpu_tile_runs_the_fallback_and_matches_the_reference(m, n, k, in_type
 
     assert sut.verified == "run", sut.detail
     assert f"alloy_mma_{in_type}_{acc_type}(M, N, K" in sut.program
-    assert "no swizzle" in sut.layout and sut.descriptors == {}
+    assert "no swizzle" in sut.layout and sut.descriptors == {
+        "build": "cc -O3 -march=native -std=c11 tile.c -o tile -lm"
+    }
+    assert '#include "alloy' not in sut.program and f"ALLOY_MMA(alloy_mma_{in_type}_{acc_type}," in sut.program
 
 
 def test_a_cpu_tile_of_half_precision_is_refused_with_the_types_it_takes():
@@ -45,7 +48,7 @@ def test_an_sm90_plan_loads_with_tma_into_128b_swizzled_tiles_and_runs_four_wgmm
 def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its_own_arch(target):
     sut = tile.plan(target, 64, 128, 64, "f16", "f32")
 
-    assert sut.target == target and sut.descriptors["build"] == f"hipcc --offload-arch={target}"
+    assert sut.target == target and sut.descriptors["build"] == f"hipcc --offload-arch={target} -O2 tile.hip -o tile"
     assert "chunk ^ (row % 8)" in sut.layout
     assert any("8 x v_mfma_f32_32x32x8_f16" in step for step in sut.steps)
     assert "alloy_gemm_64x64<ALLOY_F16><<<dim3(N / 64, M / 64), 256>>>" in sut.program

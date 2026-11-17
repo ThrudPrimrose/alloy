@@ -1064,8 +1064,9 @@ def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion():
 
     assert isinstance(sut, Feasible) and sut.completion is not None
     assert sut.completion.wait == "wait on=mbarrier"
-    assert not any("try_wait" in step.spelling for step in sut.steps) and "alloy_mbar_wait" not in sut.code
-    assert sut.code.startswith("if (threadIdx.x == 0) { alloy_mbar_arrive_expect_tx(&bar, 8192);")
+    issued = sut.code.split("void alloy_copy_tma(")[1]  # the copy's own function, after the helpers it may call
+    assert not any("try_wait" in step.spelling for step in sut.steps) and "alloy_mbar_wait" not in issued
+    assert "  if (threadIdx.x == 0) { alloy_mbar_arrive_expect_tx(bar, 8192);" in sut.code
 
 
 def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it():

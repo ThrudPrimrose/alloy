@@ -11,6 +11,8 @@ compiler vectorizes (the fallback).
 """
 
 import pathlib
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +27,7 @@ __all__ = [
     "cpu_plan",
     "gpu_block",
     "gpu_plan",
+    "inlined",
     "k_block",
     "native_gpu",
     "plan",
@@ -113,8 +116,46 @@ class TilePlan:
     detail: str = ""
 
 
-def cpu_header() -> str:
-    return (HERE / "alloy_tile_cpu.h").read_text()
+#: A tag that ties a header line to types and shapes: "// alloy-only: <tokens>" at its end, or alone on the line that
+#: opens a block closed by "// alloy-end".
+ONLY = re.compile(r"\s*// alloy-only: ([\w ]+)$")
+
+
+def inlined(header: str, keep: frozenset[str]) -> str:
+    """The text of Alloy's tile header ``header`` as an answer pastes it instead of including the file: the blocks
+    and lines tagged for tokens outside ``keep`` (other types, shapes, the mma when only a copy is asked) left out."""
+    kept: list[str] = []
+    blocks: list[set[str]] = []
+    for line in (HERE / header).read_text().splitlines():
+        opened = ONLY.fullmatch(line)
+        if opened:
+            blocks.append(set(opened.group(1).split()))
+        elif line.strip() == "// alloy-end":
+            blocks.pop()
+        elif line.strip() != "#pragma once":
+            tag = ONLY.search(line)
+            tokens = set().union(*blocks, tag.group(1).split() if tag else ())
+            if tokens <= keep:
+                kept.append(ONLY.sub("", line))
+    return "\n".join(kept)
+
+
+#: The line that builds each tile target's program, saved as tile.c, tile.cu, or tile.hip in the current folder. The
+#: program pastes Alloy's tile functions, so it needs no include path.
+BUILD = {
+    "cpu": "cc -O3 -march=native -std=c11 tile.c -o tile -lm",
+    "sm90": "nvcc -gencode arch=compute_90a,code=sm_90a -std=c++17 -O2 tile.cu -o tile -lcuda",
+    "sme": "clang --target=aarch64-linux-gnu -march=armv9-a+sme -O2 -c tile.c -o tile.o",
+} | {arch: f"hipcc --offload-arch={arch} -O2 tile.hip -o tile" for arch in ("gfx90a", "gfx942")}
+#: SME's link: the aarch64 cross compiler's libgcc has the SME ABI routines (gcc 14 or later).
+SME_LINK = "aarch64-linux-gnu-gcc -static tile.o -o tile -lm"
+
+
+def compile_only(argv: list[str]) -> list[str]:
+    """``argv`` building an object, not a program: -c, no libraries (a machine without the GPU often lacks them)."""
+    argv = [a for a in argv if not a.startswith("-l")]
+    at = argv.index("-o")
+    return [*argv[:at], "-c", "-o", f"{argv[at + 1]}.o", *argv[at + 2 :]]
 
 
 def cpu_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
@@ -130,15 +171,16 @@ def cpu_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     )
     layout = "row-major A, B, and C with leading dimensions lda, ldb, ldc; no swizzle on a CPU"
     program = cpu_program(m, n, k, a_type, c_type, in_type, acc_type)
-    return TilePlan("cpu", m, n, k, in_type, acc_type, steps, layout, program)
+    return TilePlan("cpu", m, n, k, in_type, acc_type, steps, layout, program, {"build": BUILD["cpu"]})
 
 
 def cpu_program(m: int, n: int, k: int, a_type: str, c_type: str, in_type: str, acc_type: str) -> str:
     """A program that runs the tile once on deterministic inputs and prints the largest relative error against an
     f64 reference; it exits 1 above the accumulator's tolerance."""
+    tiles = inlined("alloy_tile_cpu.h", frozenset({f"{in_type}_{acc_type}"}))
     return f"""#include <math.h>
 #include <stdio.h>
-#include "alloy_tile_cpu.h"
+{tiles}
 
 enum {{ M = {m}, N = {n}, K = {k} }};
 static {a_type} A[M * K], B[K * N];
@@ -175,13 +217,10 @@ def verify(plan_: TilePlan) -> TilePlan:
     if plan_.target == "sme":
         return sme_verify(plan_)
     with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
-        source, binary = pathlib.Path(folder) / "tile.c", pathlib.Path(folder) / "tile"
-        source.write_text(plan_.program)
-        (pathlib.Path(folder) / "alloy_tile_cpu.h").write_text(cpu_header())
-        built = subprocess.run(
-            ["cc", "-O3", "-march=native", "-std=c11", str(source), "-o", str(binary), "-lm"],
-            capture_output=True, text=True, check=False, timeout=TIMEOUT,
-        )  # fmt: skip
+        binary = pathlib.Path(folder) / "tile"
+        (pathlib.Path(folder) / "tile.c").write_text(plan_.program)
+        built = subprocess.run(shlex.split(BUILD["cpu"]), cwd=folder, capture_output=True, text=True, check=False,
+                               timeout=TIMEOUT)  # fmt: skip
         if built.returncode != 0:
             return replace_check(plan_, "failed", f"did not compile: {built.stderr.strip()[-500:]}")
         ran = subprocess.run([str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
@@ -212,7 +251,7 @@ def replace_check(plan_: TilePlan, verified: str, detail: str) -> TilePlan:
 GPU_TILES = {
     "sm90": {(64, 64): "alloy_gemm_64x64", (128, 128): "alloy_gemm_128x128"},
 } | {arch: {(64, 64): "alloy_gemm_64x64"} for arch in CDNA}
-GPU_HEADER = {"sm90": "alloy_tile_sm90.cuh"} | dict.fromkeys(CDNA, "alloy_tile_gfx942.hip.h")
+GPU_HEADER = {"sm90": "alloy_tile_sm90.cuh"} | dict.fromkeys(CDNA, "alloy_tile_cdna.hip.h")
 #: Threads per block of each kernel: one warpgroup (128) per 64 rows on sm_90, four wave64 on CDNA.
 GPU_THREADS = {("sm90", 64): 128, ("sm90", 128): 256} | {(arch, 64): 256 for arch in CDNA}
 
@@ -255,7 +294,8 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
             f"{GPU_BYTES[in_type]} bytes}}, box {{{kb}, {bm} for A or {bn} for B}}, element strides {{1, 1}}, "
             "INTERLEAVE_NONE, SWIZZLE_128B, L2_PROMOTION_L2_128B, OOB_FILL_NONE): alloy_make_tmap<E>; the global "
             f"address 16-byte aligned, K * {GPU_BYTES[in_type]} a multiple of 16",
-            "build": "nvcc -gencode arch=compute_90a,code=sm_90a (plain sm_90 rejects wgmma) and -lcuda",
+            "build": BUILD["sm90"],
+            "arch": "sm_90a: plain sm_90 rejects wgmma",
             "type": type_note(target, in_type),
         }
         return steps, layout, descriptors
@@ -270,7 +310,7 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
         "store: accumulator g of a lane is D[8 * (g / 4) + 4 * (lane / 32) + g % 4][lane % 32], 16 per lane",
     )
     layout = "LDS: 64 rows x 8 chunks of 16 bytes per operand, XOR swizzle slot = chunk ^ (row % 8), no padding"
-    descriptors = {"build": f"hipcc --offload-arch={target}", "type": type_note(target, in_type)}
+    descriptors = {"build": BUILD[target], "type": type_note(target, in_type)}
     return steps, layout, descriptors
 
 
@@ -293,10 +333,11 @@ def gpu_program(target: str, bm: int, bn: int, m: int, n: int, k: int, in_type: 
     return 2;
   }}
   {kernel}<<<dim3(N / {bn}, M / {bm}), {threads}>>>(ta, tb, dC, N, K);"""
-        include = f'#include "{GPU_HEADER[target]}"\n#include <cuda_runtime.h>'
+        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type, f"n{bn}", f"{bm}x{bn}"}))
+        include += "\n#include <cuda_runtime.h>"
     else:
         setup = f"  {kernel}<<<dim3(N / {bn}, M / {bm}), {threads}>>>(dA, dB, dC, N, K);"
-        include = f'#include "{GPU_HEADER[target]}"'
+        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type}))
     return f"""{include}
 #include <math.h>
 #include <stdio.h>
@@ -400,18 +441,13 @@ def gpu_verify(plan_: TilePlan) -> TilePlan:
     """Compile ``plan_``'s program for its target; run it when this machine has that GPU."""
     with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
         here = pathlib.Path(folder)
-        suffix = "cu" if plan_.target == "sm90" else "hip"
-        source, binary = here / f"tile.{suffix}", here / "tile"
-        source.write_text(plan_.program)
+        binary = here / "tile"
+        (here / ("tile.cu" if plan_.target == "sm90" else "tile.hip")).write_text(plan_.program)
         here_too = native_gpu() == plan_.target  # without the GPU (and often its runtime), compile without linking
-        output = ["-o", str(binary)] if here_too else ["-c", "-o", str(binary.with_suffix(".o"))]
-        if plan_.target == "sm90":
-            argv = ["nvcc", "-gencode", "arch=compute_90a,code=sm_90a", "-std=c++17", "-O2", f"-I{HERE}", *output,
-                    str(source), *(["-lcuda"] if here_too else [])]  # fmt: skip
-        else:
-            argv = ["hipcc", f"--offload-arch={plan_.target}", "-O2", f"-I{HERE}", *output, str(source)]
+        argv = shlex.split(BUILD[plan_.target])
+        argv = argv if here_too else compile_only(argv)
         try:
-            built = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+            built = subprocess.run(argv, cwd=folder, capture_output=True, text=True, check=False, timeout=TIMEOUT)
         except FileNotFoundError:
             return replace_check(plan_, "unverified", f"{argv[0]} is not installed here")
         if built.returncode != 0:
@@ -437,9 +473,10 @@ def sme_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
         "  svst1_hor_za32 stores the rows back; the function runs in streaming mode (__arm_locally_streaming)",
     )
     layout = "A transposed (k x m row-major), B k x n row-major, C m x n row-major; ZA holds one block of C; no swizzle"
+    tiles = inlined("alloy_tile_sme.h", frozenset())
     program = f"""#include <math.h>
 #include <stdio.h>
-#include "alloy_tile_sme.h"
+{tiles}
 
 enum {{ M = {m}, N = {n}, K = {k} }};
 static float AT[K * M], B[K * N], C[M * N];
@@ -465,8 +502,8 @@ int main(void) {{
   return worst <= {TOLERANCE["f32"]} ? 0 : 1;
 }}
 """
-    descriptors = {"build": "-march=armv9-a+sme (gcc 14 or later, clang 18 or later)",
-                   "hardware": "no evaluated CPU has SME; checked under qemu -cpu max,sme=on"}  # fmt: skip
+    descriptors = {"build": BUILD["sme"], "link": SME_LINK,
+                   "hardware": "no evaluated CPU has SME; checked under qemu -cpu max,sme=on; the link needs gcc 14 or later"}  # fmt: skip
     return TilePlan("sme", m, n, k, in_type, acc_type, steps, layout, program, descriptors)
 
 
@@ -479,14 +516,13 @@ def sme_verify(plan_: TilePlan) -> TilePlan:
         return replace_check(plan_, "unverified", f"needs clang and {CROSS_CC}")
     qemu = shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")
     with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
-        source, binary = pathlib.Path(folder) / "tile.c", pathlib.Path(folder) / "tile"
-        source.write_text(plan_.program)
-        compile_argv = [clang, "--target=aarch64-linux-gnu", "-march=armv9-a+sme", "-O2", f"-I{HERE}", "-c",
-                        str(source), "-o", str(binary.with_suffix(".o"))]  # fmt: skip
-        built = subprocess.run(compile_argv, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+        binary = pathlib.Path(folder) / "tile"
+        (pathlib.Path(folder) / "tile.c").write_text(plan_.program)
+        built = subprocess.run(shlex.split(BUILD["sme"]), cwd=folder, capture_output=True, text=True, check=False,
+                               timeout=TIMEOUT)  # fmt: skip
         if built.returncode == 0 and qemu is not None:
-            link = [cc, "-static", str(binary.with_suffix(".o")), "-o", str(binary), "-lm"]
-            built = subprocess.run(link, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+            built = subprocess.run(shlex.split(SME_LINK), cwd=folder, capture_output=True, text=True, check=False,
+                                   timeout=TIMEOUT)  # fmt: skip
         if built.returncode != 0:
             return replace_check(plan_, "failed", f"did not build: {built.stderr.strip()[-500:]}")
         if qemu is None:

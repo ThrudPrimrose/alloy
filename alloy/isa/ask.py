@@ -473,6 +473,27 @@ def manual_check(target: str, name: str) -> Check:
     return Check("unverified", "from the ISA manuals; no checked program issues it")
 
 
+def gpu_build(target: str) -> str:
+    """The line that compiles a GPU answer's code, saved as alloy.cu (sm90) or alloy.hip (CDNA), with no include path:
+    the code carries every helper it calls."""
+    if target == "sm90":
+        return "nvcc -gencode arch=compute_90a,code=sm_90a -std=c++17 -O2 -c alloy.cu -o alloy.o"
+    return f"hipcc --offload-arch={target} -O2 -c alloy.hip -o alloy.o"
+
+
+def device_code(helpers: str, signature: str, body: str) -> str:
+    """One self-contained block: the helpers ``body`` calls, then ``body`` as the device function ``signature``."""
+    lines = "".join(f"  {line}\n" for line in body.splitlines())
+    return f"{helpers}\n\n__device__ {signature} {{\n{lines}}}\n".lstrip("\n")
+
+
+def gpu_helpers(target: str) -> str:
+    """Alloy's tile helpers of ``target`` without the mma: the barriers, the TMA, the tensor map, the LDS chunk type."""
+    if target in DIALECT:
+        return tile.inlined(tile.GPU_HEADER[target], frozenset())
+    return ""
+
+
 def wait_answer(request: Request) -> Answer:
     """``wait on=<token>``: the instruction that completes the work a token names."""
     tokens = WAITS.get(request.target, {})
@@ -483,7 +504,12 @@ def wait_answer(request: Request) -> Answer:
                   else f"{request.target} issues no asynchronous work to wait on")  # fmt: skip
         return no(request, Why.NO_ROW, reason, *(f"wait on={t}" for t in tokens))
     spelling, what = tokens[request.on]
-    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+    code, setup = spelling, {}
+    if request.target in DIALECT:
+        mbarrier = "uint64_t& bar, uint32_t& phase" if "&bar" in spelling else ""
+        code = device_code(gpu_helpers(request.target), f"void alloy_wait_{request.on}({mbarrier})", spelling)
+        setup = {"build": gpu_build(request.target)}
+    return Feasible(request, "thread", (Step("thread", spelling),), setup, code,
                     manual_check(request.target, request.on), (what,))  # fmt: skip
 
 
@@ -495,7 +521,8 @@ def fence_answer(request: Request) -> Answer:
     if request.kind not in fences:
         return no(request, Why.NO_ROW, f"{request.target} {NO_FENCE[request.kind]}")
     spelling, what = fences[request.kind]
-    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+    code = device_code(gpu_helpers(request.target), f"void alloy_fence_{request.kind}()", spelling)
+    return Feasible(request, "thread", (Step("thread", spelling),), {"build": gpu_build(request.target)}, code,
                     manual_check(request.target, request.kind), (what,))  # fmt: skip
 
 
@@ -709,7 +736,11 @@ def cpu_setup(isa: str, dtype: str, table: Table, entry: Entry | None = None) ->
     """What a CPU answer needs around its code: the header and the compiler flags, and on AVX-512 the row's masked
     form for the last block with the mask it takes."""
     flags = " ".join(c_flags(isa, dtype)) or f"none: {isa} is in the target's baseline"
-    setup = {"header": f"#include <{HEADERS[isa]}>", "flags": flags}
+    compiler = "aarch64-linux-gnu-gcc" if isa in ("neon", "sve") else "gcc"
+    setup = {"header": f"#include <{HEADERS[isa]}>", "flags": flags,
+             "build": " ".join([compiler, "-O2", *c_flags(isa, dtype), "-c", "alloy.c", "-o", "alloy.o"])}  # fmt: skip
+    if isa in ("neon", "sve"):
+        setup["tune"] = "-mcpu=neoverse-v2 for Grace (GH200), on a native compiler"
     mask = table.isa(isa).entries(dtype).get("gen_mask")
     if entry is not None and mask is not None and (entry.masked or entry is mask):
         if entry.masked:
@@ -742,7 +773,8 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
         )
         check = Check(status, f"{verdict.basis}: {verdict.detail}" if verdict.detail else verdict.basis)
     setup = cpu_setup(isa, dtype, load()) | {"header": f"#include <{HEADERS[isa]}> and <math.h>"}
-    return Feasible(request, "vector", (Step("vector", k.name),), setup, spelled.source, check, notes)
+    code = f"#include <{HEADERS[isa]}>\n#include <math.h>\n{spelled.source}"  # standalone with its build line
+    return Feasible(request, "vector", (Step("vector", k.name),), setup, code, check, notes)
 
 
 #: Bytes per element of the SIMT rows' element types.
@@ -813,7 +845,21 @@ def thread_op(request: Request) -> Answer:
     unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
     spread = (f"{count * per_thread(row)} elements: {count} threads, {per_thread(row)} each",) if count > 1 else ()
     notes = (*((row.note,) if row.note else ()), *spread, simt.bindings(dialect))
-    return Feasible(request, unit, (Step(unit, spelling, count),), {}, spelling, check, notes)
+    setup = {"build": gpu_build(request.target)}
+    return Feasible(request, unit, (Step(unit, spelling, count),), setup, row_code(row, dialect), check, notes)
+
+
+def row_code(row: simt.Row, dialect: str) -> str:
+    """A SIMT row as one device function that compiles on its own: the names its code uses are the parameters and the
+    locals ``bindings`` describes, and it returns ``out``."""
+    headers = [*(["hip/hip_runtime.h"] if dialect == "hip" else []), *simt.table()["target"][dialect]["headers"]]
+    preamble = "\n".join(f"#include <{h}>" for h in headers) + f"\ntypedef {simt.ELEMENTS[dialect, row.dtype][0]} elem;"
+    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)}\n{row.read}".rstrip()
+    signature = (f"float alloy_{row.op}(float v, float a, float b, float c, const elem* x, elem* y, const float* wide, "
+                 "float* total)")  # fmt: skip
+    locals_ = ("const int lanes = warpSize, lane = threadIdx.x % warpSize, i = blockIdx.x * blockDim.x + threadIdx.x;"
+               "\nfloat out = 0.0f;")  # fmt: skip
+    return device_code(preamble, signature, f"{locals_}\n{body}\nreturn out;")
 
 
 def memory_row(request: Request, typed: list[simt.Row], dtype: str) -> tuple[simt.Row, int] | Answer:
@@ -1145,12 +1191,18 @@ def copy(request: Request, verify: bool) -> Answer:
         if src.layout != "row_major" or dst.layout != "row_major":
             return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
         steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
-        code = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+        spelled = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+        loop = ("for (int it = 0; it < 2; ++it) {  // 512 chunks of 16 bytes per 64-row tile, 256 threads\n"
+                "  const int idx = threadIdx.x + 256 * it, r = idx / 8, c = idx % 8;\n"
+                f"  {spelled}\n}}")  # fmt: skip
+        signature = "void alloy_copy_lds(alloy_long2* sA, const char* a, long row_bytes)"
+        code = device_code(gpu_helpers(request.target), signature, loop)
         if (check := copy_check(request.target, verify, dtype)) is None:
             return no(
                 request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check"
             )
-        return Feasible(request, "lds", steps, {}, code, check, ("16 bytes per lane",))
+        notes = ("16 bytes per lane; a points at the block's first element (row 0, column k0)",)
+        return Feasible(request, "lds", steps, {"build": gpu_build(request.target)}, code, check, notes)
     return no(
         request,
         Why.NOT_COVERED,
@@ -1244,10 +1296,11 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
     # the wait is the completion's own request (wait on=mbarrier): the copy only issues
     steps = (Step("tma", f"mbarrier.arrive.expect_tx with {rows * 128} bytes"),
              Step("tma", "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"))  # fmt: skip
-    code = (
-        f"if (threadIdx.x == 0) {{ alloy_mbar_arrive_expect_tx(&bar, {rows * 128}); "
-        "alloy_tma_load_2d(tile, &map, &bar, k0, row0); }"
-    )
+    issue = (f"if (threadIdx.x == 0) {{ alloy_mbar_arrive_expect_tx(bar, {rows * 128}); "
+             "alloy_tma_load_2d(tile, map, bar, k0, row0); }")  # fmt: skip
+    signature = "void alloy_copy_tma(void* tile, const CUtensorMap* map, uint64_t* bar, int k0, int row0)"
+    code = device_code(gpu_helpers("sm90"), signature, issue)
+    setup["build"] = gpu_build("sm90")
     if (check := copy_check("sm90", verify, dtype)) is None:
         return no(request, Why.CHECK_FAILED, "the sm90 tile program that runs this copy failed its check")
     return Feasible(request, "tma", steps, setup, code, check)

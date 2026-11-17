@@ -41,10 +41,14 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
 The answer has one of three states:
 
 - **feasible**: the unit that runs it, the `steps` with how often each runs (`6 x vector: _mm512_add_ps`), the
-  `setup` (on a CPU the `header` and the compiler `flags`; on AVX-512 the row's `masked` form for the last block and
-  the `mask` k it takes; on a GPU the tensor map, shared-memory size and alignment, launch, build line, and the FP8
-  encoding), the `code` to copy (on a CPU a C statement on the operand names of the row's signature, `v =
-  _mm512_add_pd(a, b);`), and the `check` (above).
+  `setup` (the exact `build` line; on a CPU the `header` and the compiler `flags`; on AVX-512 the row's `masked`
+  form for the last block and the `mask` k it takes; on a GPU the tensor map, shared-memory size and alignment,
+  launch, and the FP8 encoding), the `code` to copy, and the `check` (above).
+  - The `code` is self-contained: a GPU, SME, or tile answer carries the helper functions it calls inline, trimmed
+    to the requested type and shape, followed by the kernel or device function. There is no Alloy header to
+    include: save the code under the file name the `build` line names and run that line.
+  - On a CPU the `code` is one C statement on the operand names of the row's signature (`v = _mm512_add_pd(a,
+    b);`); a math function's `code` is its kernel with its includes.
 - **infeasible**: the `reason`; the `nearest` requests the target takes, so ask one of them; the `block` the shape
   must be a whole multiple of; and the `fix` for the rest (a mask, a scalar remainder loop, padding, another swizzle).
 - **invalid**: the request itself is malformed (operands missing, shapes that do not chain, mixed types). The answer
