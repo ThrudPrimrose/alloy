@@ -1,9 +1,9 @@
-// Alloy's tile functions on CDNA (gfx90a: MI250X, gfx942: MI300A), alloy/isa/tile.py: row-major tiles loaded into
-// LDS with an XOR swizzle (16-byte chunk c of row r at slot c ^ (r % 8), no padding), read with ds_read_b128, and
+// Alloy's tile functions on CDNA (gfx90a: MI250X, gfx942: MI300A), alloy/isa/tile.py: row-major tiles loaded into LDS
+// with an XOR swizzle (16-byte chunk c of row r at slot c ^ (r % 8), no padding), read with ds_read_b128, and
 // multiplied with a 32x32 MFMA into f32 accumulators. A is M x K row-major; B is given as N x K row-major (B
-// transposed, K contiguous); C is M x N row-major f32. A K block is 128 bytes of a row for every input type: 64
-// halves (f16, bf16) or 128 bytes (e4m3, e5m2: the FNUZ formats of gfx942, which gfx90a lacks). Facts and sources:
-// alloy-workspace notes/isa-research/tensor.md, sections 6 to 8.
+// transposed, K contiguous); C is M x N row-major f32, read and written: C = A x B + C. A K block is 128 bytes of a row
+// for every input type: 64 halves (f16, bf16) or 128 bytes (e4m3, e5m2: the FNUZ formats of gfx942, which gfx90a
+// lacks). Facts and sources: alloy-workspace notes/isa-research/tensor.md, sections 6 to 8.
 #pragma once
 #include <hip/hip_runtime.h>
 
@@ -54,7 +54,10 @@ __global__ __launch_bounds__(256) void alloy_gemm_64x64(const void* __restrict__
   const long row_bytes = static_cast<long>(K) * bytes;
   const int tid = threadIdx.x, wave = tid / 64, lane = tid % 64;
   const int wm = wave / 2, wn = wave % 2, m0 = blockIdx.y * 64, n0 = blockIdx.x * 64;
-  alloy_floatx16 acc = {};
+  alloy_floatx16 acc;
+#pragma unroll
+  for (int g = 0; g < 16; ++g)  // the accumulators start as C: D = A x B + C
+    acc[g] = C[(m0 + 32 * wm + 8 * (g / 4) + 4 * (lane / 32) + g % 4) * N + n0 + 32 * wn + lane % 32];
   for (int k0 = 0; k0 < K; k0 += block) {
 #pragma unroll
     for (int it = 0; it < 2; ++it) {  // 512 chunks per operand / 256 threads

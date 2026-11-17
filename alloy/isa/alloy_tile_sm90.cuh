@@ -2,9 +2,9 @@
 // through an mbarrier, and wgmma on f16, bf16, e4m3, or e5m2 tiles (OCP FP8) with an f32 accumulator. Build for sm_90a
 // (-gencode arch=compute_90a,code=sm_90a): plain sm_90 rejects wgmma. A is M x K row-major; B is given as N x K
 // row-major (each column of B contiguous, K-major, the layout wgmma reads without a transpose); C is M x N row-major
-// f32. A K block is 128 bytes of a row for every input type (64 halves or 128 FP8 values), so the swizzle, the
-// descriptor, and the 32-byte step per wgmma are the same for all four. Facts and sources: alloy-workspace
-// notes/isa-research/tensor.md, sections 1, 3, and 5.
+// f32, read and written: C = A x B + C. A K block is 128 bytes of a row for every input type (64 halves or 128 FP8
+// values), so the swizzle, the descriptor, and the 32-byte step per wgmma are the same for all four. Facts and sources:
+// alloy-workspace notes/isa-research/tensor.md, sections 1, 3, and 5.
 #pragma once
 #include <cuda.h>
 #include <cuda_fp16.h>
@@ -99,9 +99,15 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
   __shared__ alignas(1024) uint8_t sB[ALLOY_BN * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
   const int tid = threadIdx.x, m0 = blockIdx.y * ALLOY_BM, n0 = blockIdx.x * ALLOY_BN;
+  const int warp = tid / 32, lane = tid % 32;
+  const int r = m0 + 16 * warp + lane / 4;
   float d[32];
 #pragma unroll
-  for (int i = 0; i < 32; ++i) d[i] = 0.f;
+  for (int i = 0; i < ALLOY_BN / 8; ++i) {  // the accumulators start as C: D = A x B + C
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
+    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+  }
   if (tid == 0) {
     alloy_mbar_init(&bar, 1);
     asm volatile("fence.proxy.async.shared::cta;" ::: "memory");  // make init visible to the async proxy
@@ -126,8 +132,6 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
     asm volatile("wgmma.wait_group.sync.aligned 0;" ::: "memory");
     __syncthreads();  // single stage: all reads of sA/sB done before the next TMA overwrites them
   }
-  const int warp = tid / 32, lane = tid % 32;
-  const int r = m0 + 16 * warp + lane / 4;
 #pragma unroll
   for (int i = 0; i < ALLOY_BN / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);
@@ -146,9 +150,15 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
   __shared__ alignas(1024) uint8_t sB[128 * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
   const int tid = threadIdx.x, wg = tid / 128, m0 = blockIdx.y * 128, n0 = blockIdx.x * 128;
+  const int warp = (tid % 128) / 32, lane = tid % 32;
+  const int r = m0 + 64 * wg + 16 * warp + lane / 4;
   float d[64];
 #pragma unroll
-  for (int i = 0; i < 64; ++i) d[i] = 0.f;
+  for (int i = 0; i < 128 / 8; ++i) {  // the accumulators start as C: D = A x B + C
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
+    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+  }
   if (tid == 0) { alloy_mbar_init(&bar, 1); asm volatile("fence.proxy.async.shared::cta;" ::: "memory"); }
   __syncthreads();
   uint32_t phase = 0;
@@ -170,8 +180,6 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
     asm volatile("wgmma.wait_group.sync.aligned 0;" ::: "memory");
     __syncthreads();
   }
-  const int warp = (tid % 128) / 32, lane = tid % 32;
-  const int r = m0 + 64 * wg + 16 * warp + lane / 4;
 #pragma unroll
   for (int i = 0; i < 128 / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);

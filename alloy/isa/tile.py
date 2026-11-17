@@ -185,10 +185,19 @@ def verify(plan_: TilePlan) -> TilePlan:
         if built.returncode != 0:
             return replace_check(plan_, "failed", f"did not compile: {built.stderr.strip()[-500:]}")
         ran = subprocess.run([str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
-    error = ran.stdout.strip()
-    if ran.returncode != 0:
-        return replace_check(plan_, "failed", f"relative error {error} against the f64 reference")
-    return replace_check(plan_, "run", f"relative error {error} against the f64 reference")
+    return replace_check(plan_, *outcome(ran))
+
+
+def outcome(ran: subprocess.CompletedProcess[str]) -> tuple[str, str]:
+    """The check of a tile program's run: exit 0 within the tolerance, 1 above it (both print the relative error),
+    anything else a failure before the comparison, such as a refused launch, printed as the program said it."""
+    said = ran.stdout.strip()
+    if ran.returncode in (0, 1):
+        return "run" if ran.returncode == 0 else "failed", f"relative error {said} against the f64 reference"
+    return (
+        "failed",
+        f"the program stopped before the comparison (exit {ran.returncode}): {said or ran.stderr.strip()[-300:]}",
+    )
 
 
 def replace_check(plan_: TilePlan, verified: str, detail: str) -> TilePlan:
@@ -225,6 +234,7 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
         shape = f"m64n{bn}k{step}"
         map_type = {"f16": "FLOAT16", "bf16": "BFLOAT16"}.get(in_type, "UINT8")
         steps: tuple[str, ...] = (
+            f"every thread: load its {bn // 2} accumulators from C (D = A x B + C), in the layout of the store",
             "thread 0: mbarrier.init (count 1), then fence.proxy.async.shared::cta; __syncthreads",
             f"for each of the {blocks} K blocks of {kb} ({in_type}, 128 bytes of a row):",
             f"  thread 0: mbarrier.arrive.expect_tx with {(bm + bn) * 128} bytes, then two "
@@ -251,6 +261,7 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
         return steps, layout, descriptors
     mnemonic, builtin, per = CDNA_MFMA[in_type]
     steps = (
+        "every lane: load its 16 accumulators from C (D = A x B + C), in the layout of the store",
         f"for each of the {blocks} K blocks of {kb} ({in_type}, 128 bytes of a row):",
         "  each of 256 threads: two global_load_dwordx4 per operand (16 bytes) and ds_write_b128 into LDS, "
         "chunk c of row r at slot c ^ (r % 8); __syncthreads",
@@ -311,8 +322,10 @@ int main(void) {{
   unsigned char* hA = (unsigned char*)malloc((size_t)BYTES * M * K);
   unsigned char* hB = (unsigned char*)malloc((size_t)BYTES * N * K);
   float* hC = (float*)malloc(sizeof(float) * M * N);
+  float* fC = (float*)malloc(sizeof(float) * M * N);  // C before the product: the kernel computes C = A x B + C
   for (int i = 0; i < M * K; ++i) put(fA[i] = (float)((i % 13) - 6) / 8, hA + (size_t)BYTES * i);
   for (int i = 0; i < N * K; ++i) put(fB[i] = (float)((i % 7) - 3) / 4, hB + (size_t)BYTES * i);
+  for (int i = 0; i < M * N; ++i) hC[i] = fC[i] = (float)((i % 5) - 2);
   void *dA, *dB;
   float* dC;
   {api}Malloc(&dA, (size_t)BYTES * M * K);
@@ -320,6 +333,7 @@ int main(void) {{
   {api}Malloc((void**)&dC, sizeof(float) * M * N);
   {api}Memcpy(dA, hA, (size_t)BYTES * M * K, {api}MemcpyHostToDevice);
   {api}Memcpy(dB, hB, (size_t)BYTES * N * K, {api}MemcpyHostToDevice);
+  {api}Memcpy(dC, hC, sizeof(float) * M * N, {api}MemcpyHostToDevice);
 {setup}
   if ({api}DeviceSynchronize() != {api}Success) {{
     printf("launch failed\\n");
@@ -329,7 +343,7 @@ int main(void) {{
   double worst = 0.0;
   for (int i = 0; i < M; ++i)
     for (int j = 0; j < N; ++j) {{
-      double want = 0.0;
+      double want = fC[i * N + j];
       for (int p = 0; p < K; ++p) want += (double)fA[i * K + p] * (double)fB[j * K + p];
       double rel = fabs((double)hC[i * N + j] - want) / fmax(1.0, fabs(want));
       if (rel > worst) worst = rel;
@@ -407,9 +421,7 @@ def gpu_verify(plan_: TilePlan) -> TilePlan:
                 plan_, "compiled", f"compiled for {plan_.target}; no {plan_.target} GPU here to run it"
             )
         ran = subprocess.run([str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
-    error = ran.stdout.strip()
-    verdict = "run" if ran.returncode == 0 else "failed"
-    return replace_check(plan_, verdict, f"relative error {error} against the f64 reference")
+    return replace_check(plan_, *outcome(ran))
 
 
 CROSS_CC = "aarch64-linux-gnu-gcc"

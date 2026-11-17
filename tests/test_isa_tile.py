@@ -157,3 +157,27 @@ def test_gfx90a_takes_f16_and_bf16_and_refuses_fp8_with_what_it_takes():
 def test_an_fp8_tile_needs_k_in_blocks_of_128():
     with pytest.raises(KeyError, match="K a multiple of 128 for e4m3; got 64x64x64"):
         tile.plan("gfx942", 64, 64, 64, "e4m3", "f32")
+
+
+@pytest.mark.parametrize(("target", "starts_as_c"), [
+    ("sm90", "d[4 * i + 0] = C[r * N + c]"),
+    ("gfx942", "acc[g] = C[(m0 + 32 * wm"),
+])  # fmt: skip
+def test_a_gpu_tile_program_feeds_a_nonzero_c_and_checks_a_times_b_plus_c(target, starts_as_c):
+    sut = tile.plan(target, 64, 64, 64, "f16", "f32")
+
+    assert "hC[i] = fC[i] = (float)((i % 5) - 2);" in sut.program
+    assert "Memcpy(dC, hC, sizeof(float) * M * N" in sut.program
+    assert "double want = fC[i * N + j];" in sut.program
+    assert starts_as_c in (tile.HERE / tile.GPU_HEADER[target]).read_text()
+    assert "load its" in sut.steps[0] and "D = A x B + C" in sut.steps[0]
+
+
+def test_a_tile_program_that_stops_before_its_comparison_reports_why_not_a_relative_error():
+    launch = subprocess.CompletedProcess(["tile"], 2, "launch failed\n", "")
+    above = subprocess.CompletedProcess(["tile"], 1, "3.000e-01\n", "")
+
+    status, detail = tile.outcome(launch)
+
+    assert status == "failed" and "launch failed" in detail and "relative error" not in detail
+    assert tile.outcome(above) == ("failed", "relative error 3.000e-01 against the f64 reference")
