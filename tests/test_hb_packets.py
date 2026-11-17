@@ -161,6 +161,7 @@ def test_the_profile_tool_answers_sources_whose_library_the_judge_grades_correct
     assert grade.build_ok is True and grade.correct is True, grade.detail
 
 
+@pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative", "alloy"])
 def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet: str) -> None:
     plugins.load()
 
