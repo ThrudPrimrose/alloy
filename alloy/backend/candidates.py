@@ -92,7 +92,7 @@ class Candidate:
         return params
 
     def flags(self, matrix: Matrix) -> tuple[str, ...]:
-        """Compile flags: language standard, build flags, then this compiler's spelling of the default OpenMP
+        """Compile flags: language standard, build flags, this compiler's code alignment, then its spelling of the default OpenMP
         runtime (of no region at all under ``serial``), the FP level, the cost model, the vector library, the ISA and
         the loop tail."""
         comp = matrix.compilers[self.compiler]
@@ -103,6 +103,7 @@ class Candidate:
         return (
             matrix.languages[self.language].std,
             *matrix.build_flags,
+            *comp.align,
             *(comp.serial if self.serial else comp.openmp[matrix.defaults.openmp_runtime]),
             *comp.fp[level],
             *comp.cost_model[model],

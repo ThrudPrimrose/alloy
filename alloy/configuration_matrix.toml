@@ -161,6 +161,7 @@ c = "gcc"
 cpp = "g++"
 remarks = ["-fopt-info-vec-optimized", "-fopt-info-vec-missed"]
 line_tables = ["-g1"]
+align = ["-falign-functions=64", "-falign-loops=64"]  # every candidate's loops and functions on a 64-byte line
 serial = ["-fopenmp-simd"]
 
 [compilers.gcc.openmp]
@@ -202,6 +203,7 @@ c = "clang"
 cpp = "clang++"
 remarks = ["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize"]
 line_tables = ["-gline-tables-only"]
+align = ["-falign-functions=64", "-falign-loops=64"]
 serial = ["-fopenmp-simd"]
 
 [compilers.clang.openmp]
@@ -246,6 +248,7 @@ c = "icx"
 cpp = "icpx"
 remarks = []  # icx prints no -Rpass remark: its vectorized loop count is unknown
 line_tables = ["-gline-tables-only"]
+align = ["-falign-functions=64", "-falign-loops=64"]
 serial = ["-fopenmp-simd"]
 support_libraries = ["svml", "imf", "intlc"]  # -fp-model=fast calls __svml_* for libm in loops
 
@@ -277,6 +280,7 @@ c = "nvc"
 cpp = "nvc++"
 remarks = ["-Minfo=vect"]
 line_tables = ["-gopt"]
+align = []  # nvc has no code-alignment switch (-Mcache_align aligns data only)
 support_libraries = ["nvc", "nvcpumath"]  # nvc objects call its runtime helpers (e.g. __c_mset8)
 
 [compilers.nvhpc.openmp]

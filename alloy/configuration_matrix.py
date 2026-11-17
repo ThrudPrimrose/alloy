@@ -81,6 +81,9 @@ class Compiler:
     tail: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     support_libraries: tuple[str, ...] = ()
     line_tables: tuple[str, ...] = ()
+    #: Fixed code alignment on every candidate, so that candidates differ less by where their loops land (layout bias,
+    #: Mytkowicz et al. ASPLOS'09); empty for a compiler with no such switch.
+    align: tuple[str, ...] = ()
     #: Replaces the OpenMP runtime flags in a serial build.
     serial: tuple[str, ...] = ()
 

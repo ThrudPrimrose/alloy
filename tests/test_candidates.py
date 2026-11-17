@@ -198,3 +198,21 @@ def test_the_reference_fp_matrix_offers_only_what_the_reference_build_honors():
     assert {c.note for c in sut} == {
         c.note for c in full if c.resolved(MATRIX)[0] in configuration_matrix.REFERENCE_FP_LEVELS and not c.approx
     }
+
+
+@pytest.mark.parametrize("compiler", ["gcc", "clang", "icx"])
+def test_every_candidate_of_a_compiler_with_an_alignment_switch_aligns_its_code_to_a_cache_line(compiler):
+    scope = scope_with(outlined(), libm=True, reduction=False)
+
+    candidates = flips(MATRIX, scope, "c", compiler, finite_inputs=False)
+
+    assert candidates
+    for candidate in candidates:
+        assert {"-falign-functions=64", "-falign-loops=64"} <= set(candidate.flags(MATRIX)), candidate.name(MATRIX)
+
+
+def test_nvc_candidates_carry_no_alignment_switch_it_would_refuse():
+    scope = scope_with(outlined(), libm=False, reduction=True)
+
+    for candidate in flips(MATRIX, scope, "c", "nvhpc", finite_inputs=False):
+        assert not any(flag.startswith("-falign") for flag in candidate.flags(MATRIX))
