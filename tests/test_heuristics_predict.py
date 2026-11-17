@@ -654,3 +654,18 @@ def test_an_atomic_update_per_element_handles_one_element_per_iteration_whatever
     assert sut is not None
     atomic = [c for c in sut.loops if c.atomic]
     assert atomic and all(c.elements == 1.0 for c in atomic), [(c.elements, c.cycles) for c in atomic]
+
+
+@dace.program
+def axpy_in_place(a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        a[i] += 2.0 * b[i]
+
+
+def test_an_update_in_place_counts_as_a_read_and_a_write_of_its_element():
+    """A12: ``a[i] += 2 * b[i]`` is one WCR memlet on ``a``, and the element is read and written: three accesses per
+    element. Counted as two, a vector loop moving 3 x 64 bytes took 12 elements an iteration instead of 8, and the
+    memory term saw a third less traffic."""
+    facts = set(predict.innermost_maps(only_scope(axpy_in_place).sdfg).values())
+
+    assert [f.accesses for f in facts] == [3]

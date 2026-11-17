@@ -340,11 +340,14 @@ class MapFacts:
 
 def map_facts(state: dace.SDFGState, entry: nodes.MapEntry, index: int) -> MapFacts:
     param, exit_node = entry.map.params[-1], state.exit_node(entry)
-    accessed = {  # a read and a write of one element are two accesses; two reads of it are one
-        (e.data.data, str(e.data.subset), e.dst is exit_node)
+    indexed = [
+        e
         for e in [*state.out_edges(entry), *state.in_edges(exit_node)]
         if e.data.subset is not None and param in {str(s) for s in e.data.subset.free_symbols}
-    }
+    ]
+    accessed = {  # a read and a write of one element are two accesses; two reads of it are one
+        (e.data.data, str(e.data.subset), e.dst is exit_node) for e in indexed
+    } | {(e.data.data, str(e.data.subset), False) for e in indexed if e.data.wcr is not None}  # an update reads too
     volume, enclosing = sympy.Integer(1), entry
     while isinstance(enclosing, nodes.MapEntry):
         volume *= enclosing.map.range.num_elements()
