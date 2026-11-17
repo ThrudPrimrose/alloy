@@ -35,6 +35,7 @@ from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.pipeline import judge_endpoints
 from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
+from hpcagent_bench.harness.requests_api import Requests
 from hpcagent_bench.harness.scoring import resolve_kernel_timeout
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.harness.tools import JudgeClient
@@ -492,9 +493,15 @@ ANALYSIS_DIALECT = {"nvidia": "cuda", "amd": "hip"}
 
 def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str) -> Submission:
     """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``: a host and a device
-    source."""
+    source, requesting the catalog libraries the form calls (hipBLAS for a BLAS node), since the judge builds the
+    pair itself."""
     form = render_canonical(spec, spec.short_name, sdfg, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
-    submission = Submission(language=Language.parse(dialect), source=form.code, device_source=form.device_code)
+    submission = Submission(
+        language=Language.parse(dialect),
+        source=form.code,
+        device_source=form.device_code,
+        requests=Requests.of(libraries=form.libraries),
+    )
     return with_scratch(submission, form.workspace_bytes)
 
 

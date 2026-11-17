@@ -367,3 +367,19 @@ def test_a_speculative_gpu_episode_whose_shapes_fail_records_the_fallback(monkey
         {"symbol": "program", "reference": "pipeline", "chosen": "none", "note": "dropped: no compiler report",
          "axes": {}, "search": None}
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(("libraries", "requested"), [(("hipblas",), ("hipblas",)), ((), ())])
+def test_a_gpu_source_submission_requests_the_libraries_its_form_calls(libraries, requested, monkeypatch):
+    """The judge builds a host and device pair itself: a BLAS node's hipBLAS calls link only when the submission
+    requests the library (S2 on MI200: atax loaded with ``undefined symbol: hipblasCreate``)."""
+    form = SimpleNamespace(code="host", device_code="device", libraries=libraries, workspace_bytes="0")
+    monkeypatch.setattr(adapter, "render_canonical", lambda *args: form)
+    task = Task("atax", SourceMode.ANY, Language.HIP, image="amd")
+
+    sut = adapter.device_submission(
+        task, cast(BenchSpec, SimpleNamespace(short_name="atax")), cast(object, None), "hip"
+    )  # type: ignore[arg-type]
+
+    assert sut.requests.startup.load == requested
+    assert (sut.source, sut.device_source) == ("host", "device")
