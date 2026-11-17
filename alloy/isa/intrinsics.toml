@@ -229,13 +229,13 @@ note = "2^k scaling, the ldexp of the exp k-split: exp(x) = 2^k * exp(r) in one 
 [[isa.avx512.assists]]
 name = "_mm512_getexp_pd"
 mnemonic = "vgetexppd"
-helps = "exp"
+helps = "log"
 note = "floor(log2|x|) per lane, which is frexp's e minus 1; pairs with getmant under _MM_MANT_NORM_1_2"
 
 [[isa.avx512.assists]]
 name = "_mm512_getmant_pd"
 mnemonic = "vgetmantpd"
-helps = "exp"
+helps = "log"
 note = "mantissa in [1,2) under _MM_MANT_NORM_1_2, which is 2 * frexp's m; pairs with getexp"
 
 [[isa.avx512.assists]]
@@ -417,8 +417,7 @@ note = "Intel order: products first, accumulator last; masked inactive lanes kee
 
 [isa.avx512.f32.reduce_add]
 intrinsic = "_mm512_reduce_add_ps"
-mnemonic = "vextractf32x8 + vaddps + ..."
-observed = ["vextractf64x4"]
+mnemonic = "vextractf64x4 + vaddps + ..."
 signature = "(v) -> s"
 semantics = "s = sum of the 16 lanes of v"
 note = "header composite, not one instruction: shuffle-add chain the compiler expands"
@@ -630,7 +629,7 @@ note = "ldexp-style scaling by 2^floor(n): the 2^k of the exp k-split, predicate
 [[isa.sve.assists]]
 name = "svlogb_f64_x"
 mnemonic = "flogb"
-helps = "exp"
+helps = "log"
 note = "SVE2 only (-march=armv8-a+sve2), returns svint64_t: floor(log2|x|) per lane, frexp's e minus 1, predicated"
 
 [[isa.sve.assists]]
@@ -1468,7 +1467,7 @@ masked = "_mm512_mask_min_pd"
 mnemonic = "vminpd"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "x86 min/max return the second operand when either is NaN"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f64.max]
 intrinsic = "_mm512_max_pd"
@@ -1476,7 +1475,7 @@ masked = "_mm512_mask_max_pd"
 mnemonic = "vmaxpd"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "x86 min/max return the second operand when either is NaN"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f64.abs]
 mnemonic = "vpandq"
@@ -1540,7 +1539,7 @@ masked = "_mm512_mask_min_ps"
 mnemonic = "vminps"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "x86 min/max return the second operand when either is NaN"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f32.max]
 intrinsic = "_mm512_max_ps"
@@ -1548,7 +1547,7 @@ masked = "_mm512_mask_max_ps"
 mnemonic = "vmaxps"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "x86 min/max return the second operand when either is NaN"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f32.abs]
 mnemonic = "vpandd"
@@ -1610,13 +1609,14 @@ intrinsic = "vminq_f64"
 mnemonic = "fmin"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "vminq/vmaxq propagate NaN; vminnmq/vmaxnmq are the IEEE minNum forms"
+note = "vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form"
 
 [isa.neon.f64.max]
 intrinsic = "vmaxq_f64"
 mnemonic = "fmax"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
+note = "vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form"
 
 [isa.neon.f64.abs]
 intrinsic = "vabsq_f64"
@@ -1673,13 +1673,14 @@ intrinsic = "vminq_f32"
 mnemonic = "fmin"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "vminq/vmaxq propagate NaN; vminnmq/vmaxnmq are the IEEE minNum forms"
+note = "vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form"
 
 [isa.neon.f32.max]
 intrinsic = "vmaxq_f32"
 mnemonic = "fmax"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
+note = "vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form"
 
 [isa.neon.f32.abs]
 intrinsic = "vabsq_f32"
@@ -1736,13 +1737,14 @@ intrinsic = "svmin_f64_x"
 mnemonic = "fmin"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]) for active lanes"
-note = "svmin propagates NaN; svminnm_f64_x is the IEEE minNum form"
+note = "svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form"
 
 [isa.sve.f64.max]
 intrinsic = "svmax_f64_x"
 mnemonic = "fmax"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]) for active lanes"
+note = "svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form"
 
 [isa.sve.f64.abs]
 intrinsic = "svabs_f64_x"
@@ -1799,13 +1801,14 @@ intrinsic = "svmin_f32_x"
 mnemonic = "fmin"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]) for active lanes"
-note = "svmin propagates NaN; svminnm_f32_x is the IEEE minNum form"
+note = "svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form"
 
 [isa.sve.f32.max]
 intrinsic = "svmax_f32_x"
 mnemonic = "fmax"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]) for active lanes"
+note = "svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form"
 
 [isa.sve.f32.abs]
 intrinsic = "svabs_f32_x"
@@ -2011,6 +2014,7 @@ masked = "_mm512_mask_min_ph"
 mnemonic = "vminph"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f16.max]
 intrinsic = "_mm512_max_ph"
@@ -2018,6 +2022,7 @@ masked = "_mm512_mask_max_ph"
 mnemonic = "vmaxph"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
+note = "x86 min/max return the second operand when either is NaN or both are zero"
 
 [isa.avx512.f16.load]
 intrinsic = "_mm512_loadu_ph"
@@ -2068,63 +2073,63 @@ intrinsic = "vaddq_f16"
 mnemonic = "fadd"
 signature = "(a, b) -> v"
 semantics = "v[j] = add(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.sub]
 intrinsic = "vsubq_f16"
 mnemonic = "fsub"
 signature = "(a, b) -> v"
 semantics = "v[j] = sub(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.mul]
 intrinsic = "vmulq_f16"
 mnemonic = "fmul"
 signature = "(a, b) -> v"
 semantics = "v[j] = mul(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.div]
 intrinsic = "vdivq_f16"
 mnemonic = "fdiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = div(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.sqrt]
 intrinsic = "vsqrtq_f16"
 mnemonic = "fsqrt"
 signature = "(v) -> v"
 semantics = "v[j] = sqrt(x[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.min]
 intrinsic = "vminq_f16"
 mnemonic = "fmin"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.max]
 intrinsic = "vmaxq_f16"
 mnemonic = "fmax"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form"
 
 [isa.neon.f16.abs]
 intrinsic = "vabsq_f16"
 mnemonic = "fabs"
 signature = "(v) -> v"
 semantics = "v[j] = abs(x[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form"
 
 [isa.neon.f16.neg]
 intrinsic = "vnegq_f16"
 mnemonic = "fneg"
 signature = "(v) -> v"
 semantics = "v[j] = neg(x[j])"
-note = "requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.fma]
 intrinsic = "vfmaq_f16"
@@ -2219,12 +2224,14 @@ mnemonic = "fmax"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
 
+note = "svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form"
 [isa.sve.f16.abs]
 intrinsic = "svabs_f16_x"
 mnemonic = "fabs"
 signature = "(pg, v) -> v"
 semantics = "v[j] = |x[j]|"
 
+note = "svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form"
 [isa.sve.f16.neg]
 intrinsic = "svneg_f16_x"
 mnemonic = "fneg"
@@ -2907,13 +2914,15 @@ code = ["vbslq_s64(vcgtq_s64(a, b), a, b)"]
 
 [isa.neon.i64.load]
 intrinsic = "vld1q_s64"
-mnemonic = "ldr"
+mnemonic = "ld1"
+observed = ["ldr"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j]"
 
 [isa.neon.i64.store]
 intrinsic = "vst1q_s64"
-mnemonic = "str"
+mnemonic = "st1"
+observed = ["str"]
 signature = "(p, v)"
 semantics = "p[j] = v[j]"
 
@@ -2962,13 +2971,15 @@ semantics = "v[j] = max(a[j], b[j]), signed"
 
 [isa.neon.i32.load]
 intrinsic = "vld1q_s32"
-mnemonic = "ldr"
+mnemonic = "ld1"
+observed = ["ldr"]
 signature = "(p) -> v"
 semantics = "v[j] = p[j]"
 
 [isa.neon.i32.store]
 intrinsic = "vst1q_s32"
-mnemonic = "str"
+mnemonic = "st1"
+observed = ["str"]
 signature = "(p, v)"
 semantics = "p[j] = v[j]"
 

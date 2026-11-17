@@ -438,6 +438,14 @@ def test_every_assist_spelling_exists_in_the_clang_headers():
     include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
+@pytest.mark.parametrize("name", ["_mm512_getexp_pd", "_mm512_getmant_pd", "svlogb_f64_x"])
+def test_the_exponent_and_mantissa_assists_help_log(name):
+    """frexp's split is the range reduction of log; exp scales by 2^k instead (scalef, fexpa)."""
+    (hit,) = TABLE.assist(name)
+
+    assert hit.assist.helps == "log"
+
+
     blob = header_blob()
     missing = [
         assist.name

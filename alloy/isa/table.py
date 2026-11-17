@@ -445,8 +445,8 @@ def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo],
     if isa.vector_bytes < 0 or any(isa.lanes[d] * LANE_BYTES[d] != isa.vector_bytes for d in lanes):
         raise ValueError(f"{where}.lanes disagree with vector_bytes {isa.vector_bytes}")
     for assist in isa.assists:
-        if not assist.name or assist.helps not in OPS:
-            raise ValueError(f"{path}: assist {assist.name!r} helps {assist.helps!r}, not an abstract op")
+        if not assist.name or (assist.helps not in OPS and assist.helps not in functions()):
+            raise ValueError(f"{path}: assist {assist.name!r} helps {assist.helps!r}, not an abstract op or math function")
 
 
 def checked_coverage(isa_name: str, isa: Isa, dtype: str, path: pathlib.Path) -> None:
