@@ -26,6 +26,7 @@ __all__ = [
     "ALL_DTYPES",
     "DTYPES",
     "F16",
+    "HALF_OPS",
     "INT_DTYPES",
     "INT_OPS",
     "DEFAULT_PATH",
@@ -57,6 +58,8 @@ REQUIRED_DTYPES = set(DTYPES) | set(INT_DTYPES)
 #: :data:`INT_ONLY_OPS` exist only under i64/i32; the rest of INT_OPS also on floats, ``mod`` as fmod there.
 INT_ONLY_OPS = frozenset({"and", "or", "shl", "shr", "land", "lor"})
 INT_OPS = INT_ONLY_OPS | {"mod", "add", "sub", "mul", "min", "max", "load", "store", "broadcast", "lt"}
+#: Loads and stores of 16-bit float storage: they exist only under f32, the lanes they widen to and narrow from.
+HALF_OPS = frozenset({"load_f16", "store_f16", "load_bf16", "store_bf16"})
 
 DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"
 
@@ -249,6 +252,8 @@ class Table:
             raise KeyError(f"{dtype!r}: unknown dtype{suggestion(dtype, ALL_DTYPES)} (one of: {', '.join(ALL_DTYPES)})")
         if dtype in DTYPES and op in INT_ONLY_OPS:
             raise KeyError(f"{isa}/{dtype}/{op}: integer op (look under i64/i32)")
+        if dtype != "f32" and op in HALF_OPS:
+            raise KeyError(f"{isa}/{dtype}/{op}: converts 16-bit storage to f32 lanes and back (look under f32)")
         entries = target.entries(dtype)
         if op not in entries:
             if op == "gen_mask" and not target.mask:
@@ -453,7 +458,9 @@ def checked_machine(isa_name: str, isa: Isa, schedules: dict[str, ScheduleInfo],
         raise ValueError(f"{where}.lanes disagree with vector_bytes {isa.vector_bytes}")
     for assist in isa.assists:
         if not assist.name or (assist.helps not in OPS and assist.helps not in functions()):
-            raise ValueError(f"{path}: assist {assist.name!r} helps {assist.helps!r}, not an abstract op or math function")
+            raise ValueError(
+                f"{path}: assist {assist.name!r} helps {assist.helps!r}, not an abstract op or math function"
+            )
 
 
 def checked_coverage(isa_name: str, isa: Isa, dtype: str, path: pathlib.Path) -> None:
@@ -463,7 +470,12 @@ def checked_coverage(isa_name: str, isa: Isa, dtype: str, path: pathlib.Path) ->
         raise ValueError(f"{where} is empty")
     if dtype in DTYPES:
         missing = [
-            op for op in OPS if op not in INT_ONLY_OPS and op not in entries and not (op == "gen_mask" and not isa.mask)
+            op
+            for op in OPS
+            if op not in INT_ONLY_OPS
+            and (op not in HALF_OPS or dtype == "f32")
+            and op not in entries
+            and not (op == "gen_mask" and not isa.mask)
         ]
         if missing:
             raise ValueError(f"{where} lacks ops {missing}")

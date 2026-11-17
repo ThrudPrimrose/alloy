@@ -3353,3 +3353,131 @@ semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg"
 recipe = ["svtbl_f32", "svsub_n_u32_x", "svindex_u32", "svadd_f32_x"]
 code = ["svfloat32_t t = v", "for (uint32_t d = 1; d < svcntw(); d *= 2) t = svadd_f32_x(pg, t, svtbl_f32(t, svsub_n_u32_x(pg, svindex_u32(0, 1), d)))", "t"]
 note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
+
+[isa.avx2.f32.load_f16]
+mnemonic = "vcvtph2ps"
+signature = "(p) -> v"
+semantics = "v[j] = (float)p[j], p holding 8 f16 (16 bytes)"
+recipe = ["_mm_loadu_si128", "_mm256_cvtph_ps"]
+code = ["_mm256_cvtph_ps(_mm_loadu_si128((const __m128i*)p))"]
+note = "F16C (-mf16c): f16 storage, f32 arithmetic; exact"
+
+[isa.avx2.f32.store_f16]
+mnemonic = "vcvtps2ph"
+signature = "(p, v)"
+semantics = "p[j] = (f16)v[j], rounded to nearest even, 8 f16 (16 bytes)"
+recipe = ["_mm256_cvtps_ph", "_mm_storeu_si128"]
+code = ["_mm_storeu_si128((__m128i*)p, _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC))"]
+note = "F16C (-mf16c); the rounding is the immediate, not MXCSR"
+
+[isa.avx2.f32.load_bf16]
+mnemonic = "vpmovzxwd + vpslld"
+signature = "(p) -> v"
+semantics = "v[j] = the f32 whose upper 16 bits are p[j], 8 bf16 (16 bytes)"
+recipe = ["_mm_loadu_si128", "_mm256_cvtepu16_epi32", "_mm256_slli_epi32", "_mm256_castsi256_ps"]
+code = ["_mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i*)p)), 16))"]
+note = "no bf16 instruction on AVX2: widen each 16-bit lane and shift it into the top half; exact"
+
+[isa.avx2.f32.store_bf16]
+mnemonic = "vpaddd + vpsrld + vpackusdw"
+signature = "(p, v)"
+semantics = "p[j] = v[j] rounded to nearest even bf16, 8 bf16 (16 bytes)"
+recipe = ["_mm256_castps_si256", "_mm256_srli_epi32", "_mm256_add_epi32", "_mm256_set1_epi32", "_mm256_and_si256", "_mm_storeu_si128", "_mm_packus_epi32", "_mm256_castsi256_si128", "_mm256_extracti128_si256"]
+code = ["__m256i x = _mm256_castps_si256(v)", "__m256i r = _mm256_srli_epi32(_mm256_add_epi32(x, _mm256_add_epi32(_mm256_set1_epi32(0x7fff), _mm256_and_si256(_mm256_srli_epi32(x, 16), _mm256_set1_epi32(1)))), 16)", "_mm_storeu_si128((__m128i*)p, _mm_packus_epi32(_mm256_castsi256_si128(r), _mm256_extracti128_si256(r, 1)))"]
+note = "round to nearest even by adding 0x7fff plus the lowest kept bit, then keep the top half; a NaN whose payload sits in the low half may round to infinity: quiet it first if NaN can occur"
+
+[isa.avx512.f32.load_f16]
+mnemonic = "vcvtph2ps"
+signature = "(p) -> v"
+semantics = "v[j] = (float)p[j], p holding 16 f16 (32 bytes)"
+recipe = ["_mm256_loadu_si256", "_mm512_cvtph_ps"]
+code = ["_mm512_cvtph_ps(_mm256_loadu_si256((const __m256i*)p))"]
+note = "AVX-512F: f16 storage, f32 arithmetic, no AVX512-FP16 needed; exact"
+
+[isa.avx512.f32.store_f16]
+mnemonic = "vcvtps2ph"
+signature = "(p, v)"
+semantics = "p[j] = (f16)v[j], rounded to nearest even, 16 f16 (32 bytes)"
+recipe = ["_mm512_cvtps_ph", "_mm256_storeu_si256"]
+code = ["_mm256_storeu_si256((__m256i*)p, _mm512_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC))"]
+note = "AVX-512F, no AVX512-FP16 needed; the rounding is the immediate, not MXCSR"
+
+[isa.avx512.f32.load_bf16]
+mnemonic = "vpmovzxwd + vpslld"
+signature = "(p) -> v"
+semantics = "v[j] = the f32 whose upper 16 bits are p[j], 16 bf16 (32 bytes)"
+recipe = ["_mm256_loadu_si256", "_mm512_cvtepu16_epi32", "_mm512_slli_epi32", "_mm512_castsi512_ps"]
+code = ["_mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i*)p)), 16))"]
+note = "widen each 16-bit lane and shift it into the top half; exact. AVX512-BF16 (_mm512_cvtpbh_ps) does the same where the CPU has it (Zen 4 does)"
+
+[isa.avx512.f32.store_bf16]
+mnemonic = "vpaddd + vpsrld + vpmovdw"
+signature = "(p, v)"
+semantics = "p[j] = v[j] rounded to nearest even bf16, 16 bf16 (32 bytes)"
+recipe = ["_mm512_castps_si512", "_mm512_srli_epi32", "_mm512_add_epi32", "_mm512_set1_epi32", "_mm512_and_si512", "_mm256_storeu_si256", "_mm512_cvtepi32_epi16"]
+code = ["__m512i x = _mm512_castps_si512(v)", "__m512i r = _mm512_srli_epi32(_mm512_add_epi32(x, _mm512_add_epi32(_mm512_set1_epi32(0x7fff), _mm512_and_si512(_mm512_srli_epi32(x, 16), _mm512_set1_epi32(1)))), 16)", "_mm256_storeu_si256((__m256i*)p, _mm512_cvtepi32_epi16(r))"]
+note = "round to nearest even by adding 0x7fff plus the lowest kept bit, then keep the top half; a NaN may round to infinity: quiet it first if NaN can occur. AVX512-BF16 has _mm512_cvtneps_pbh (Zen 4 does)"
+
+[isa.neon.f32.load_f16]
+mnemonic = "fcvtl"
+signature = "(p) -> v"
+semantics = "v[j] = (float)p[j], p holding 4 f16 (8 bytes)"
+recipe = ["vld1_f16", "vcvt_f32_f16"]
+code = ["vcvt_f32_f16(vld1_f16((const float16_t*)p))"]
+note = "base Armv8, no +fp16 needed; 8 f16 are vld1q_f16 then vcvt_f32_f16(vget_low_f16) and vcvt_high_f32_f16; exact"
+
+[isa.neon.f32.store_f16]
+mnemonic = "fcvtn"
+signature = "(p, v)"
+semantics = "p[j] = (f16)v[j], rounded to nearest even, 4 f16 (8 bytes)"
+recipe = ["vcvt_f16_f32", "vst1_f16"]
+code = ["vst1_f16((float16_t*)p, vcvt_f16_f32(v))"]
+note = "base Armv8, no +fp16 needed; rounds by FPCR (nearest even by default)"
+
+[isa.neon.f32.load_bf16]
+mnemonic = "ldr + shll"
+signature = "(p) -> v"
+semantics = "v[j] = the f32 whose upper 16 bits are p[j], 4 bf16 (8 bytes)"
+recipe = ["vld1_u16", "vshll_n_u16", "vreinterpretq_f32_u32"]
+code = ["vreinterpretq_f32_u32(vshll_n_u16(vld1_u16(p), 16))"]
+note = "widen and shift into the top half; exact on every Armv8 (vcvtq_low_f32_bf16 needs +bf16)"
+
+[isa.neon.f32.store_bf16]
+mnemonic = "add + shrn"
+signature = "(p, v)"
+semantics = "p[j] = v[j] rounded to nearest even bf16, 4 bf16 (8 bytes)"
+recipe = ["vreinterpretq_u32_f32", "vaddq_u32", "vdupq_n_u32", "vandq_u32", "vshrq_n_u32", "vst1_u16", "vshrn_n_u32"]
+code = ["uint32x4_t x = vreinterpretq_u32_f32(v)", "uint32x4_t r = vaddq_u32(x, vaddq_u32(vdupq_n_u32(0x7fff), vandq_u32(vshrq_n_u32(x, 16), vdupq_n_u32(1))))", "vst1_u16(p, vshrn_n_u32(r, 16))"]
+note = "round to nearest even by adding 0x7fff plus the lowest kept bit, then keep the top half; a NaN may round to infinity: quiet it first if NaN can occur. With +bf16, vcvt_bf16_f32 rounds in one instruction"
+
+[isa.sve.f32.load_f16]
+mnemonic = "ld1h + fcvt"
+signature = "(pg, p) -> v"
+semantics = "v[j] = (float)p[j] for active lanes, one f16 per 32-bit lane (svcntw() f16)"
+recipe = ["svld1uh_u32", "svreinterpret_f16_u32", "svcvt_f32_f16_x"]
+code = ["svcvt_f32_f16_x(pg, svreinterpret_f16_u32(svld1uh_u32(pg, p)))"]
+note = "the f16 goes to the low half of each 32-bit lane, where svcvt_f32_f16 reads it; exact"
+
+[isa.sve.f32.store_f16]
+mnemonic = "fcvt + st1h"
+signature = "(pg, p, v)"
+semantics = "p[j] = (f16)v[j] for active lanes, rounded by FPCR (nearest even by default)"
+recipe = ["svcvt_f16_f32_x", "svreinterpret_u32_f16", "svst1h_u32"]
+code = ["svst1h_u32(pg, p, svreinterpret_u32_f16(svcvt_f16_f32_x(pg, v)))"]
+note = "svcvt_f16_f32 leaves the f16 in the low half of each 32-bit lane; svst1h stores those halves"
+
+[isa.sve.f32.load_bf16]
+mnemonic = "ld1h + lsl"
+signature = "(pg, p) -> v"
+semantics = "v[j] = the f32 whose upper 16 bits are p[j], for active lanes"
+recipe = ["svld1uh_u32", "svlsl_n_u32_x", "svreinterpret_f32_u32"]
+code = ["svreinterpret_f32_u32(svlsl_n_u32_x(pg, svld1uh_u32(pg, p), 16))"]
+note = "widen and shift into the top half; exact"
+
+[isa.sve.f32.store_bf16]
+mnemonic = "add + lsr + st1h"
+signature = "(pg, p, v)"
+semantics = "p[j] = v[j] rounded to nearest even bf16, for active lanes"
+recipe = ["svreinterpret_u32_f32", "svadd_u32_x", "svadd_n_u32_x", "svand_n_u32_x", "svlsr_n_u32_x", "svst1h_u32"]
+code = ["svuint32_t x = svreinterpret_u32_f32(v)", "svuint32_t r = svadd_u32_x(pg, x, svadd_n_u32_x(pg, svand_n_u32_x(pg, svlsr_n_u32_x(pg, x, 16), 1), 0x7fff))", "svst1h_u32(pg, p, svlsr_n_u32_x(pg, r, 16))"]
+note = "round to nearest even by adding 0x7fff plus the lowest kept bit, then keep the top half; a NaN may round to infinity: quiet it first if NaN can occur. With +bf16, svcvt_bf16_f32_x rounds in one instruction"

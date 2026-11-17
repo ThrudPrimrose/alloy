@@ -712,3 +712,52 @@ def test_a_verdict_says_a_note_stays_unchecked():
     sut = validate("avx2", "add", "f64", TABLE)
 
     assert "note unchecked" in sut.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "op, fields",
+    [
+        ("store_f16", {"code": ("_mm_storeu_si128((__m128i*)p, _mm256_cvtps_ph(v, _MM_FROUND_TO_ZERO))",)}),
+        (
+            "store_bf16",  # truncates instead of rounding to nearest even
+            {
+                "code": (
+                    "_mm_storeu_si128((__m128i*)p, _mm_packus_epi32(_mm256_castsi256_si128(_mm256_srli_epi32("
+                    "_mm256_castps_si256(v), 16)), _mm256_extracti128_si256(_mm256_srli_epi32("
+                    "_mm256_castps_si256(v), 16), 1)))",
+                ),  # fmt: skip
+                "recipe": (
+                    "_mm256_castps_si256",
+                    "_mm256_srli_epi32",
+                    "_mm_storeu_si128",
+                    "_mm_packus_epi32",
+                    "_mm256_castsi256_si128",
+                    "_mm256_extracti128_si256",
+                ),  # fmt: skip
+            },
+        ),
+        (
+            "load_bf16",  # shifts by 8, not 16
+            {
+                "code": (
+                    "_mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128("
+                    "(const __m128i*)p)), 8))",
+                )
+            },  # fmt: skip
+        ),
+    ],
+)
+def test_a_half_storage_row_that_converts_wrongly_fails(op, fields):
+    """f16 and bf16 storage: a load is compared with C's widening, a store with nearest-even narrowing."""
+    sut = validate("avx2", op, "f32", with_row("avx2", "f32", op, **dict(fields)))
+
+    assert sut.ok is False, sut.detail
+
+
+@pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
+@pytest.mark.parametrize("op", ["load_f16", "store_f16", "load_bf16", "store_bf16"])
+def test_every_cpu_target_converts_f16_and_bf16_storage_on_f32_lanes(isa, op):
+    assert TABLE.entry(isa, op, "f32").code
+    with pytest.raises(KeyError, match="look under f32"):
+        TABLE.entry(isa, op, "f64")

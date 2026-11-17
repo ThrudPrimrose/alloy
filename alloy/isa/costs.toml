@@ -443,6 +443,27 @@ uops = 1
 latency = 8
 rthroughput = 0.5
 
+[[rows."avx2/f32/load_bf16"]]
+cpu = "znver4"
+instruction = "vpmovzxwd -24(%rsp), %ymm0"
+uops = 1
+latency = 11
+rthroughput = 1.5
+
+[[rows."avx2/f32/load_bf16"]]
+cpu = "znver4"
+instruction = "vpslld $16, %ymm0, %ymm0"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx2/f32/load_f16"]]
+cpu = "znver4"
+instruction = "vcvtph2ps -24(%rsp), %ymm0"
+uops = 1
+latency = 11
+rthroughput = 1.0
+
 [[rows."avx2/f32/lt"]]
 cpu = "znver4"
 instruction = "vcmpltps %ymm15, %ymm0, %ymm0"
@@ -631,6 +652,48 @@ cpu = "znver4"
 instruction = "vmovups %ymm0, (%rcx)"
 uops = 1
 latency = 1
+rthroughput = 1.0
+
+[[rows."avx2/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpsrld $16, %ymm0, %ymm1"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx2/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpaddd %ymm2, %ymm0, %ymm0"
+uops = 1
+latency = 1
+rthroughput = 0.25
+
+[[rows."avx2/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpaddd %ymm1, %ymm0, %ymm0"
+uops = 1
+latency = 1
+rthroughput = 0.25
+
+[[rows."avx2/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpsrld $16, %ymm0, %ymm0"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx2/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpackusdw %xmm1, %xmm0, %xmm0"
+uops = 1
+latency = 2
+rthroughput = 1.0
+
+[[rows."avx2/f32/store_f16"]]
+cpu = "znver4"
+instruction = "vcvtps2ph $8, %ymm0, -24(%rsp)"
+uops = 3
+latency = 7
 rthroughput = 1.0
 
 [[rows."avx2/f32/sub"]]
@@ -1308,6 +1371,27 @@ uops = 1
 latency = 8
 rthroughput = 0.5
 
+[[rows."avx512/f32/load_bf16"]]
+cpu = "znver4"
+instruction = "vpmovzxwd -40(%rsp), %zmm0"
+uops = 1
+latency = 11
+rthroughput = 1.5
+
+[[rows."avx512/f32/load_bf16"]]
+cpu = "znver4"
+instruction = "vpslld $16, %zmm0, %zmm0"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx512/f32/load_f16"]]
+cpu = "znver4"
+instruction = "vcvtph2ps -40(%rsp), %zmm0"
+uops = 3
+latency = 11
+rthroughput = 2.0
+
 [[rows."avx512/f32/lt"]]
 cpu = "znver4"
 instruction = "vcmpltps %zmm15, %zmm0, %k1"
@@ -1559,6 +1643,48 @@ cpu = "znver4"
 instruction = "vmovups %zmm0, (%rcx)"
 uops = 1
 latency = 1
+rthroughput = 1.0
+
+[[rows."avx512/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpsrld $16, %zmm0, %zmm1"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx512/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpaddd %zmm1, %zmm0, %zmm0"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx512/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpaddd .LCPI0_1(%rip){1to16}, %zmm0, %zmm0"
+uops = 1
+latency = 8
+rthroughput = 0.5
+
+[[rows."avx512/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpsrld $16, %zmm0, %zmm0"
+uops = 1
+latency = 1
+rthroughput = 0.5
+
+[[rows."avx512/f32/store_bf16"]]
+cpu = "znver4"
+instruction = "vpmovdw %zmm0, -40(%rsp)"
+uops = 1
+latency = 11
+rthroughput = 1.5
+
+[[rows."avx512/f32/store_f16"]]
+cpu = "znver4"
+instruction = "vcvtps2ph $0, {sae}, %zmm0, %ymm0"
+uops = 2
+latency = 6
 rthroughput = 1.0
 
 [[rows."avx512/f32/sub"]]
@@ -2284,6 +2410,34 @@ uops = 1
 latency = 6
 rthroughput = 0.33
 
+[[rows."neon/f32/load_bf16"]]
+cpu = "neoverse-v2"
+instruction = "ldrh w10, [x10, #2]"
+uops = 1
+latency = 4
+rthroughput = 0.33
+
+[[rows."neon/f32/load_bf16"]]
+cpu = "neoverse-v2"
+instruction = "ldr d0, [sp, #8]"
+uops = 1
+latency = 6
+rthroughput = 0.33
+
+[[rows."neon/f32/load_bf16"]]
+cpu = "neoverse-v2"
+instruction = "shll v0.4s, v0.4h, #16"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."neon/f32/load_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvtl v0.4s, v0.4h"
+uops = 2
+latency = 4
+rthroughput = 1.0
+
 [[rows."neon/f32/lt"]]
 cpu = "neoverse-v2"
 instruction = "fcmgt v1.4s, v1.4s, v2.4s"
@@ -2423,6 +2577,48 @@ instruction = "str q0, [x3]"
 uops = 2
 latency = 2
 rthroughput = 0.5
+
+[[rows."neon/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add x9, sp, #8"
+uops = 1
+latency = 1
+rthroughput = 0.17
+
+[[rows."neon/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add v0.4s, v0.4s, v1.4s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "addhn v0.4h, v0.4s, v2.4s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."neon/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add x8, x8, #1"
+uops = 1
+latency = 1
+rthroughput = 0.17
+
+[[rows."neon/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add sp, sp, #16"
+uops = 1
+latency = 1
+rthroughput = 0.17
+
+[[rows."neon/f32/store_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvtn v0.4h, v0.4s"
+uops = 2
+latency = 4
+rthroughput = 1.0
 
 [[rows."neon/f32/sub"]]
 cpu = "neoverse-v2"
@@ -3082,6 +3278,41 @@ uops = 1
 latency = 6
 rthroughput = 0.33
 
+[[rows."sve/f32/load_bf16"]]
+cpu = "neoverse-v2"
+instruction = "ld1h { z0.s }, p0/z, [x8]"
+uops = 1
+latency = 6
+rthroughput = 0.33
+
+[[rows."sve/f32/load_bf16"]]
+cpu = "neoverse-v2"
+instruction = "lsl z0.s, z0.s, #16"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/load_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvt h0, s0"
+uops = 1
+latency = 3
+rthroughput = 0.5
+
+[[rows."sve/f32/load_f16"]]
+cpu = "neoverse-v2"
+instruction = "ld1h { z0.s }, p0/z, [x8]"
+uops = 1
+latency = 6
+rthroughput = 0.33
+
+[[rows."sve/f32/load_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvt z0.s, p0/m, z0.h"
+uops = 2
+latency = 4
+rthroughput = 1.0
+
 [[rows."sve/f32/lt"]]
 cpu = "neoverse-v2"
 instruction = "fcmgt p1.s, p0/z, z0.s, z1.s"
@@ -3206,6 +3437,76 @@ cpu = "neoverse-v2"
 instruction = "st1w { z0.s }, p0, [x3]"
 uops = 2
 latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "lsr z2.s, z0.s, #16"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add z0.s, z0.s, z1.s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add z0.s, z2.s, z0.s"
+uops = 1
+latency = 2
+rthroughput = 0.25
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "lsr z0.s, z0.s, #16"
+uops = 1
+latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "st1h { z0.s }, p0, [x9]"
+uops = 2
+latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add x8, x8, #1"
+uops = 1
+latency = 1
+rthroughput = 0.17
+
+[[rows."sve/f32/store_bf16"]]
+cpu = "neoverse-v2"
+instruction = "add sp, sp, #128"
+uops = 1
+latency = 1
+rthroughput = 0.17
+
+[[rows."sve/f32/store_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvt z0.h, p0/m, z0.s"
+uops = 2
+latency = 4
+rthroughput = 1.0
+
+[[rows."sve/f32/store_f16"]]
+cpu = "neoverse-v2"
+instruction = "st1h { z0.s }, p0, [x9]"
+uops = 2
+latency = 2
+rthroughput = 0.5
+
+[[rows."sve/f32/store_f16"]]
+cpu = "neoverse-v2"
+instruction = "fcvt s0, h0"
+uops = 1
+latency = 3
 rthroughput = 0.5
 
 [[rows."sve/f32/sub"]]

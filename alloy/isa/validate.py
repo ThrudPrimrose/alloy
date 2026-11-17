@@ -180,7 +180,7 @@ def c_flags(isa: str, dtype: str) -> list[str]:
     if isa == "sve":
         return ["-march=armv8-a+sve"]
     if isa == "avx2":
-        return ["-mavx2", "-mfma", "-mf16c"] if dtype == "f16" else ["-mavx2", "-mfma"]
+        return ["-mavx2", "-mfma", "-mf16c"]  # every AVX2 CPU has F16C; f32 rows convert f16 storage with it
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
 
 
@@ -427,6 +427,45 @@ def logical_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     return k.stored(f"{tests}{mask}\n  {k.vector} vr = {blended(k, 'm')};"), lane_ref(f"({truth}) ? 1 : 0")
 
 
+#: How a kernel holds 16-bit storage ``h`` of each kind: its declaration, how lane j is written from an f32, and the
+#: f32 that lane j holds. bf16 is the upper half of an f32.
+HALF_STORAGE = {
+    "f16": ("_Float16 hf[LANES];\n  uint16_t *h = (uint16_t*)hf;", "hf[j] = (_Float16)a[j];", "out[j] = (float)hf[j];"),
+    "bf16": (
+        "uint16_t h[LANES];",
+        "{ uint32_t u; __builtin_memcpy(&u, &a[j], 4); h[j] = (uint16_t)(u >> 16); }",
+        "{ uint32_t u = (uint32_t)h[j] << 16; __builtin_memcpy(&out[j], &u, 4); }",
+    ),
+}
+#: The f32 that lane j of the storage holds, as the reference.
+WIDENED = {
+    "f16": "ref[j] = (float)hf[j];",
+    "bf16": "{ uint32_t u = (uint32_t)h[j] << 16; float f; __builtin_memcpy(&f, &u, 4); ref[j] = f; }",
+}
+#: The f32 a store into 16-bit storage keeps of a[j]: nearest even.
+NARROWED = {
+    "f16": "ref[j] = (float)(_Float16)a[j];",
+    "bf16": "{ uint32_t u; float f; __builtin_memcpy(&u, &a[j], 4); u = (u + 0x7fffu + ((u >> 16) & 1u)) & 0xffff0000u; "
+    "__builtin_memcpy(&f, &u, 4); ref[j] = f; }",
+}
+
+
+def half_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
+    """A load widens storage written from ``a``, and its f32 lanes are stored; a store narrows ``a`` into the storage,
+    which is read back. Each is compared with C's own conversion."""
+    kind = op.split("_")[1]
+    declared, written, read = HALF_STORAGE[kind]
+    names = operands(k) | {"p": "h", "v": "va"}
+    lanes = "for (int j = 0; j < VL; j++) "
+    if op.startswith("load"):
+        compute = (
+            f"{declared}\n  {lanes}{written}\n  {k.loads}\n  {assigned(f'{k.vector} vr = ', entry, names)}\n  {k.store}"
+        )
+        return compute, f"{lanes}{WIDENED[kind]}"
+    compute = f"{declared}\n  {k.loads}\n  {assigned('', entry, names)}\n  {lanes}{read}"
+    return compute, f"{lanes}{NARROWED[kind]}"
+
+
 #: Ops whose kernel is more than one row on the frame's operands.
 BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
     "store": store_body,
@@ -441,6 +480,7 @@ BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
     "gen_mask": gen_mask_body,
     "land": logical_body,
     "lor": logical_body,
+    **dict.fromkeys(("load_f16", "store_f16", "load_bf16", "store_bf16"), half_body),
 }
 
 

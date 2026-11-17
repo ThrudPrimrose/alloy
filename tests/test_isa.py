@@ -247,7 +247,8 @@ def test_every_spelling_exists_in_the_clang_headers():
         for name in [entry.intrinsic, *entry.recipe]
         if name and IDENTIFIER.fullmatch(name)
     ]
-    missing = [name for name in dict.fromkeys(names) if not re.search(rf"\b{re.escape(name)}\s*\(", blob)]
+    spelled = r"\b{0}\s*\(|#define\s+{0}\s"  # a function, a function macro, or an alias of one
+    missing = [name for name in dict.fromkeys(names) if not re.search(spelled.format(re.escape(name)), blob)]
     assert not missing
 
 

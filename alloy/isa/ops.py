@@ -136,4 +136,26 @@ OPS: dict[str, AbstractOp] = {
         "gen_mask", "j < N - i", "mask", 2, "mask", "lane j active iff i + j < N (the loop tail predicate)"
     ),
     "zero": AbstractOp("zero", "0", "constant", 0, "vector", "v[j] = 0 for every lane j"),
+    "load_f16": AbstractOp(
+        "load_f16", "v = (f32)h[]", "memory", 1, "vector", "v[j] = (float)p[j]: f16 storage widened to f32 lanes"
+    ),
+    "store_f16": AbstractOp(
+        "store_f16",
+        "h[] = (f16)v",
+        "memory",
+        2,
+        "none",
+        "p[j] = (f16)v[j], rounded to nearest even: f32 lanes to f16 storage",
+    ),
+    "load_bf16": AbstractOp(
+        "load_bf16", "v = (f32)h[]", "memory", 1, "vector", "v[j] = (float)p[j]: bf16 storage widened to f32 lanes"
+    ),
+    "store_bf16": AbstractOp(
+        "store_bf16",
+        "h[] = (bf16)v",
+        "memory",
+        2,
+        "none",
+        "p[j] = (bf16)v[j], rounded to nearest even: f32 lanes to bf16 storage",
+    ),
 }

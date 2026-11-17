@@ -37,6 +37,10 @@ The machine abstract math ISA and its per-target spellings. The abstract ops:
 | `cos` | v[j] = cos(x[j]) | transcendental | vector |
 | `gen_mask` | lane j active iff i + j < N (the loop tail predicate) | mask | mask |
 | `zero` | v[j] = 0 for every lane j | constant | vector |
+| `load_f16` | v[j] = (float)p[j]: f16 storage widened to f32 lanes | memory | vector |
+| `store_f16` | p[j] = (f16)v[j], rounded to nearest even: f32 lanes to f16 storage | memory | none |
+| `load_bf16` | v[j] = (float)p[j]: bf16 storage widened to f32 lanes | memory | vector |
+| `store_bf16` | p[j] = (bf16)v[j], rounded to nearest even: f32 lanes to bf16 storage | memory | none |
 
 Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the integer ops. A scalar operand of a binary op is broadcast.
 
