@@ -158,8 +158,8 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
 
 
 @pytest.mark.parametrize(("request_", "reason"), [
-    (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f64", (7,))}),
-     "f16 halves"),
+    (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f32", (7,))}),
+     "copies f16, bf16, e4m3, e5m2 tiles on gfx942, not f32"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), "xor:8"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (64, 64))}), "xor:8"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f64", (4,))}),
@@ -478,9 +478,10 @@ def test_a_per_thread_row_computes_in_its_table_element_type():
 @pytest.mark.parametrize("target", sorted(tile.TYPES))
 def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target):
     for in_type, acc_type in tile.TYPES[target]:
-        assert tile.plan(target, 64, 64, 64, in_type, acc_type).in_type == in_type
+        k = tile.k_block(in_type) if in_type in tile.GPU_BYTES else 64
+        assert tile.plan(target, 64, 64, k, in_type, acc_type).in_type == in_type
     with pytest.raises(KeyError):
-        tile.plan(target, 64, 64, 64, "bf16", "f32")
+        tile.plan(target, 64, 64, 64, "f64", "f32")
 
 
 @pytest.mark.parametrize(("ok", "detail", "status"), [(True, "0.9 ulp", "run"), (None, "builds", "compiled"),
@@ -845,3 +846,38 @@ def test_an_uncovered_gpu_copy_says_how_to_write_it_without_naming_the_design():
     assert sut.why == Why.NOT_COVERED
     assert "design" not in sut.reason
     assert "plain device code" in sut.fix
+
+
+def test_a_bf16_mma_on_gfx90a_is_feasible_and_its_nearest_requests_keep_its_type():
+    sut = ask(Request("gfx90a", "mma", {"a": Operand("shared", "bf16", (64, 64), "row_major", "xor:8"),
+                                        "b": Operand("shared", "bf16", (64, 64), "col_major", "xor:8"),
+                                        "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    assert sut.unit == "mfma"
+    assert sut.setup["tile"].startswith("alloy_gemm_64x64<ALLOY_BF16>")
+    odd = ask(Request("gfx90a", "mma", {"a": Operand("shared", "bf16", (64, 100)), "b": Operand("shared", "bf16", (100, 64)),
+                                        "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
+    assert isinstance(odd, Infeasible) and odd.why == Why.SHAPE
+    assert odd.block == (64, 64, 64)
+    assert all("bf16" in nearest for nearest in odd.nearest)
+
+
+@pytest.mark.parametrize(("target", "swizzle"), [("gfx942", "xor:8"), ("sm90", "b128")])
+def test_an_fp8_copy_fills_rows_of_128_bytes(target, swizzle):
+    good = ask(Request(target, "copy", {"src": Operand("global", "e4m3", (256, 256)),
+                                       "dst": Operand("shared", "e4m3", (64, 128), "row_major", swizzle)}), verify=False)  # fmt: skip
+    narrow = ask(Request(target, "copy", {"src": Operand("global", "e4m3", (256, 256)),
+                                         "dst": Operand("shared", "e4m3", (64, 64), "row_major", swizzle)}), verify=False)  # fmt: skip
+
+    assert isinstance(good, Feasible)
+    assert isinstance(narrow, Infeasible) and narrow.why == Why.SHAPE
+    assert narrow.nearest == (f"src global:e4m3:256x256, dst shared:e4m3:64x128:row_major:{swizzle}",)
+
+
+def test_gfx90a_refuses_an_fp8_copy_with_the_types_it_takes():
+    sut = ask(Request("gfx90a", "copy", {"src": Operand("global", "e4m3", (256, 256)),
+                                         "dst": Operand("shared", "e4m3", (64, 128), "row_major", "xor:8")}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Infeasible) and sut.why == Why.ELEMENT_TYPE
+    assert "copies f16, bf16 tiles on gfx90a, not e4m3" in sut.reason

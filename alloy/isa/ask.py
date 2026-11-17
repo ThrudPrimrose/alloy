@@ -615,8 +615,9 @@ def tile_call(request: Request) -> Answer:
     return Feasible(request, unit, steps, setup, f"{init};\n{call};", check, notes)
 
 
-def mma_nearest(target: str, m: int, n: int, k: int) -> tuple[str, ...]:
-    """The mma requests ``target`` takes that are closest to an ``m`` x ``n`` x ``k`` product."""
+def mma_nearest(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tuple[str, ...]:
+    """The mma requests ``target`` takes that are closest to an ``m`` x ``n`` x ``k`` product: of ``in_type`` when the
+    target takes it, else of every input type it takes."""
     inputs, swizzle, outputs, layouts = MMA_OPERANDS[target]
 
     def tile_(space: str, dtype: str, rows: int, cols: int, layout: str, swizzle: str = "none") -> Operand:
@@ -634,13 +635,16 @@ def mma_nearest(target: str, m: int, n: int, k: int) -> tuple[str, ...]:
     if target == "tensix":
         up = [max(32, -(-extent // 32) * 32) for extent in (m, n, k)]
         return tuple(request(d, d, *up) for d in tensix.dtypes())
-    return tuple(request("f16", "f32", bm, bn, 64) for bm, bn in tile.GPU_TILES[target])
+    types = [t for t in tile.TYPES[target] if t[0] == in_type] or list(tile.TYPES[target])
+    return tuple(request(i, o, bm, bn, tile.k_block(i)) for i, o in types for bm, bn in tile.GPU_TILES[target])
 
 
 #: How a caller moves an mma input into the space its target reads, by target.
 INTO_SPACE = {
-    "sm90": "load it into shared memory first: ask copy with src global and dst shared:f16:<rows>x64:row_major:b128 (TMA)",
-    "gfx942": "load it into LDS first: ask copy with src global and dst shared:f16:<rows>x64:row_major:xor:8",
+    "sm90": "load it into shared memory first: ask copy with src global and dst shared:<type>:<rows>x<128 bytes of "
+    "the type: 64 f16 or bf16, 128 e4m3 or e5m2>:row_major:b128 (TMA)",
+    "gfx942": "load it into LDS first: ask copy with src global and dst shared:<type>:<rows>x<128 bytes of the type: "
+    "64 f16 or bf16, 128 e4m3 or e5m2>:row_major:xor:8",
     "cpu": "the fallback reads memory through pointers: pass the arrays as global",
     "sme": "FMOPA reads its vectors from memory: pass the arrays as global",
     "tensix": "the reader kernel sends each tile into a circular buffer: pass tiles as tile_register",
@@ -703,7 +707,7 @@ def mma(request: Request, verify: bool) -> Answer:
         return bad(request, Why.CHAIN, f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}")
     m, k, n = a.shape[0], a.shape[1], b.shape[1]
     target = "cpu" if request.target in CPU else request.target
-    nearest = mma_nearest(target, m, n, k)
+    nearest = mma_nearest(target, m, n, k, a.dtype)
     if a.dtype != b.dtype:
         return bad(
             request,
@@ -717,7 +721,8 @@ def mma(request: Request, verify: bool) -> Answer:
         found = tile.plan(target, m, n, k, a.dtype, c.dtype)
     except KeyError as exc:
         code = Why.SHAPE if (a.dtype, c.dtype) in tile.TYPES[target] else Why.ELEMENT_TYPE
-        block = (*next(iter(tile.GPU_TILES[target])), 64) if code is Why.SHAPE and target in tile.GPU_TILES else ()
+        gpu_shape = code is Why.SHAPE and target in tile.GPU_TILES
+        block = (*next(iter(tile.GPU_TILES[target])), tile.k_block(a.dtype)) if gpu_shape else ()
         return no(request, code, str(exc.args[0]), *nearest, block=block)
     if misplaced_ := misplaced(target, a, b, c):
         return no(request, *misplaced_[:2], *nearest, fix=misplaced_[2])
@@ -769,15 +774,16 @@ def tensix_mma(request: Request, m: int, n: int, k: int, nearest: tuple[str, ...
     return Feasible(request, "fpu", steps, setup, code, check, notes)
 
 
-def copy_check(target: str, verify: bool) -> Check | None:
+def copy_check(target: str, verify: bool, dtype: str = "f16") -> Check | None:
     """The check of a GPU copy: the copy has no program of its own, so it is the check of the smallest tile program
     that runs it (None when that program failed)."""
     if not verify:
         return Check("unverified", f"runs inside the {target} tile program; not checked (verify off)")
-    found = tile.verify(tile.plan(target, 64, 64, 64, "f16", "f32"))
+    k = tile.k_block(dtype)
+    found = tile.verify(tile.plan(target, 64, 64, k, dtype, "f32"))
     if found.verified == "failed":
         return None
-    return Check(found.verified, f"the {target} 64x64x64 tile program that runs this copy: {found.detail}")  # type: ignore[arg-type]
+    return Check(found.verified, f"the {target} 64x64x{k} {dtype} tile program that runs this copy: {found.detail}")  # type: ignore[arg-type]
 
 
 def copy(request: Request, verify: bool) -> Answer:
@@ -789,32 +795,33 @@ def copy(request: Request, verify: bool) -> Answer:
     src, dst = ops["src"], ops["dst"]
     if request.target in CPU:
         return cpu_copy(request, src, dst)
-    box = dst.shape if len(dst.shape) == 2 else (64, 64)
-    source = Operand("global", "f16", src.shape if len(src.shape) == 2 and src.dtype == "f16" else (256, 256))
+    taken = [i for i, _ in tile.TYPES.get(request.target, ())]
+    dtype = dst.dtype if dst.dtype in taken else "f16"  # the type of the nearest requests
+    width = tile.k_block(dtype)
+    box = dst.shape if len(dst.shape) == 2 else (64, width)
+    source = Operand("global", dtype, src.shape if len(src.shape) == 2 and src.dtype == dtype else (256, 256))
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
     if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
-        tile_ = Operand("shared", "f16", (box[0], 64), "row_major", "xor:8")
+        tile_ = Operand("shared", dtype, (box[0], width), "row_major", "xor:8")
         nearest = spell(src=source, dst=tile_)
-        if (src.dtype, dst.dtype) != ("f16", "f16"):
-            return no(
-                request,
-                Why.ELEMENT_TYPE,
-                f"the checked LDS load copies f16 halves, not {src.dtype} to {dst.dtype}",
-                nearest,
-            )
-        if len(dst.shape) != 2 or dst.shape[1] != 64:
-            return no(
-                request, Why.SHAPE, "the checked LDS load fills rows of 64 halves (8 chunks of 16 bytes)", nearest
-            )
+        if src.dtype != dst.dtype:
+            return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}",
+                       nearest)  # fmt: skip
+        if dst.dtype not in taken:
+            return no(request, Why.ELEMENT_TYPE, f"the checked LDS load copies {', '.join(taken)} tiles on "
+                      f"{request.target}, not {dst.dtype}", nearest)  # fmt: skip
+        if len(dst.shape) != 2 or dst.shape[1] != width:
+            return no(request, Why.SHAPE, f"the checked LDS load fills rows of 128 bytes ({width} {dtype}, 8 chunks "
+                      "of 16 bytes)", nearest)  # fmt: skip
         if dst.swizzle != "xor:8" or src.swizzle != "none":
             return no(request, Why.SWIZZLE, "the checked LDS load stores each chunk at slot chunk ^ (row % 8) (dst "
                       "swizzle xor:8) from an unswizzled global tile", nearest)  # fmt: skip
         if src.layout != "row_major" or dst.layout != "row_major":
             return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
         steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
-        code = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_half8*>(A + r * K + 8 * c);"
-        if (check := copy_check(request.target, verify)) is None:
+        code = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+        if (check := copy_check(request.target, verify, dtype)) is None:
             return no(
                 request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check"
             )
@@ -854,17 +861,22 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
 
 
 def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, verify: bool) -> Answer:
-    """sm_90's TMA: one box of a row-major f16 global tile into a 128B-swizzled shared tile."""
+    """sm_90's TMA: one box of a row-major global tile (f16, bf16, e4m3, or e5m2) into a 128B-swizzled shared tile."""
+    taken = [i for i, _ in tile.TYPES["sm90"]]
+    dtype = source.dtype
+    width = tile.k_block(dtype)
     rows = dst.shape[0] if len(dst.shape) == 2 and dst.shape[0] in (64, 128) else 64
-    nearest = spell(src=source, dst=Operand("shared", "f16", (rows, 64), "row_major", "b128"))
+    nearest = spell(src=source, dst=Operand("shared", dtype, (rows, width), "row_major", "b128"))
     if dst.space != "shared":
         return no(request, Why.SPACE, f"TMA writes shared memory only, not {dst.space}", nearest)
-    if dst.dtype != "f16":
-        return no(request, Why.ELEMENT_TYPE, "the checked TMA load fills an f16 tile with the 128B swizzle", nearest)
+    if dst.dtype not in taken:
+        return no(request, Why.ELEMENT_TYPE, f"the checked TMA load fills {', '.join(taken)} tiles with the 128B "
+                  f"swizzle, not {dst.dtype}", nearest)  # fmt: skip
     if dst.swizzle != "b128":
-        return no(request, Why.SWIZZLE, "the checked TMA load fills an f16 tile with the 128B swizzle", nearest)
-    if dst.shape not in ((64, 64), (128, 64)):
-        return no(request, Why.SHAPE, "a TMA box here is 64 f16 wide (128 bytes) and 64 or 128 rows", nearest)
+        return no(request, Why.SWIZZLE, f"the checked TMA load fills a {dtype} tile with the 128B swizzle", nearest)
+    if dst.shape not in ((64, width), (128, width)):
+        return no(request, Why.SHAPE, f"a TMA box here is 128 bytes wide ({width} {dtype}) and 64 or 128 rows",
+                  nearest)  # fmt: skip
     if src.dtype != dst.dtype:
         return bad(request, Why.MIXED_TYPES, f"TMA converts nothing: src is {src.dtype}, dst is {dst.dtype}", nearest)
     if len(src.shape) != 2 or src.shape[0] < dst.shape[0] or src.shape[1] < dst.shape[1]:
@@ -878,15 +890,18 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
         return no(request, Why.SWIZZLE, "TMA reads an unswizzled global tile", nearest)
     if src.layout != "row_major" or dst.layout != "row_major":
         return no(request, Why.LAYOUT, "the checked TMA load copies row-major tiles", nearest)
-    setup = {"tensor map": f"alloy_make_tmap(&map, global, rows, K, {rows}): FLOAT16, box {{64, {rows}}}, SWIZZLE_128B; "
-             "the global address 16-byte aligned, K * 2 a multiple of 16",
-             "shared tile": f"__shared__ alignas(1024) __half tile[{rows} * 64] (the 128B swizzle needs 1024-byte "
+    map_type, size = {"f16": "FLOAT16", "bf16": "BFLOAT16"}.get(dtype, "UINT8"), tile.GPU_BYTES[dtype]
+    setup = {"tensor map": f"alloy_make_tmap<{tile.ELEM[dtype]}>(&map, global, rows, K, {rows}): {map_type}, box "
+             f"{{{width}, {rows}}}, SWIZZLE_128B; the global address 16-byte aligned, K * {size} a multiple of 16",
+             "shared tile": f"__shared__ alignas(1024) uint8_t tile[{rows} * 128] (the 128B swizzle needs 1024-byte "
              "alignment)", "barrier": "__shared__ alignas(8) uint64_t bar, initialized by one thread, then "
              "fence.proxy.async.shared::cta"}  # fmt: skip
+    if dtype in tile.FP8_NAMES["sm90"]:
+        setup["type"] = tile.type_note("sm90", dtype)
     steps = (Step("tma", "mbarrier.arrive.expect_tx"), Step("tma", "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"),
              Step("thread", "mbarrier.try_wait.parity"))  # fmt: skip
     code = "alloy_mbar_arrive_expect_tx(&bar, bytes); alloy_tma_load_2d(tile, &map, &bar, k0, row0); alloy_mbar_wait(&bar, phase);"
-    if (check := copy_check("sm90", verify)) is None:
+    if (check := copy_check("sm90", verify, dtype)) is None:
         return no(request, Why.CHECK_FAILED, "the sm90 tile program that runs this copy failed its check")
     return Feasible(request, "tma", steps, setup, code, check)
 
@@ -952,10 +967,11 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
     target, mma_ = requests[j].target, requests[j]
     a, b = mma_.operands["a"], mma_.operands["b"]
     m, k, n = a.shape[0], a.shape[1], b.shape[1]
-    bm, bn = tile.gpu_block(target, m, n, k)
+    bm, bn = tile.gpu_block(target, m, n, k, a.dtype)
+    kb = tile.k_block(a.dtype)
     blocks = {
-        "a": (Operand("global", a.dtype, (m, k)), Operand("shared", a.dtype, (bm, 64), "row_major", a.swizzle)),
-        "b": (Operand("global", b.dtype, (n, k)), Operand("shared", b.dtype, (bn, 64), "row_major", b.swizzle)),
+        "a": (Operand("global", a.dtype, (m, k)), Operand("shared", a.dtype, (bm, kb), "row_major", a.swizzle)),
+        "b": (Operand("global", b.dtype, (n, k)), Operand("shared", b.dtype, (bn, kb), "row_major", b.swizzle)),
     }
     nearest = tuple(dict.fromkeys(f"copy {spell(src=src, dst=dst)}" for src, dst in blocks.values()))
     fed: dict[int, str] = {}
@@ -968,7 +984,7 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
             reason = (f"request {i} copies {src.spelled()} into {dst.spelled()}, which the tile program of request {j} "
                       f"(mma) does not load: it loads A as {blocks['a'][1].spelled()} from {m}x{k} and Bt as "
                       f"{blocks['b'][1].spelled()} from {n}x{k}")  # fmt: skip
-            fix = (f"copy one K block of 64 per step: A from the {m} x {k} matrix, and B from Bt ({n} rows of {k}) "
+            fix = (f"copy one K block of {kb} per step: A from the {m} x {k} matrix, and B from Bt ({n} rows of {k}) "
                    "in global memory, since the mma reads B transposed")  # fmt: skip
             return no(request, Why.COMBINE, reason, *nearest, fix=fix)
         fed[i] = " or ".join(names)

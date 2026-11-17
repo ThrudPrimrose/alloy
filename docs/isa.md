@@ -158,7 +158,7 @@ scan `scan_add` (the inclusive prefix sum), and `mma`. `copy` moves data between
 `space:dtype:shape[:layout[:swizzle]]`, and its shape is the extent of the data, not of a register.
 
 Every lowering has a block, the extent one instruction takes: the lanes of a register (16 f32 on AVX-512), one 32x32
-tile on Tensix, and the 64-row K block of a GPU product. A shape that is a whole multiple of the block is feasible, and
+tile on Tensix, and the K block of a GPU product (128 bytes of a row: 64 f16 or bf16, 128 e4m3 or e5m2). A shape that is a whole multiple of the block is feasible, and
 each step of the answer carries how often the request runs it:
 
 ```text
@@ -184,6 +184,23 @@ On CUDA and HIP, `reduce_min` and `reduce_max` are `__shfl_down` trees into lane
 scan in log2(lanes) steps (`simt.toml`). Tensix has no MIN pool, so `reduce_min` there is refused with the maximum of
 the negated tiles. Not built yet: the Tensix moves and layout calls (`copy_tile`, `pack_tile`, `tilize`,
 `transpose`); the lookup refuses them with `no_row`.
+
+## GPU tile types
+
+Each GPU tile kernel takes its input type as a template argument and accumulates in f32. A K block is 128 bytes of a
+row for every type, so the LDS swizzle (chunk ^ row % 8), the 128B TMA swizzle, and the 32-byte step per instruction
+are shared by all of them.
+
+| Target | f16 | bf16 | e4m3 | e5m2 |
+|---|---|---|---|---|
+| `gfx90a` (MI250X) | `v_mfma_f32_32x32x8_f16` | `v_mfma_f32_32x32x8bf16_1k` | no FP8 MFMA | no FP8 MFMA |
+| `gfx942` (MI300A) | `v_mfma_f32_32x32x8_f16` | `v_mfma_f32_32x32x8_bf16` | `v_mfma_f32_32x32x16_fp8_fp8`, E4M3FNUZ (bias 8) | `v_mfma_f32_32x32x16_bf8_bf8`, E5M2FNUZ (bias 16) |
+| `sm90` (H100) | `wgmma m64nNk16 .f16` | `wgmma m64nNk16 .bf16` | `wgmma m64nNk32 .e4m3`, OCP (bias 7) | `wgmma m64nNk32 .e5m2`, OCP (bias 15) |
+
+gfx942 reads the FNUZ encodings (no infinity, no negative zero, one more in the bias) and sm90 the OCP ones, so an FP8
+answer names the encoding of its target. Each tile's program encodes its inputs by that bit layout and checks the
+product against an f64 reference; every type compiles for its targets (`hipcc`, `nvcc -arch=sm_90a`), and a type
+runs where the GPU is.
 
 ## Maintaining the table
 
