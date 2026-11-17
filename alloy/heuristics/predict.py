@@ -10,10 +10,13 @@ import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass as plain
+from typing import Any
 
 import dace
 import sympy
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.iteration_domain import loop_trip_count
 from pydantic.dataclasses import dataclass
 
 from alloy import machine
@@ -356,13 +359,45 @@ def map_facts(state: dace.SDFGState, entry: nodes.MapEntry, index: int) -> MapFa
 
 
 def innermost_maps(sdfg: dace.SDFG) -> dict[str, MapFacts]:
-    """Every tasklet label of ``sdfg``'s innermost maps, with its map's facts."""
+    """Every tasklet label of ``sdfg``'s innermost maps, with its map's facts, and of its innermost sequential loops
+    (:func:`loop_facts`) for the tasklets no map holds."""
     out: dict[str, MapFacts] = {}
-    states = [b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, dace.SDFGState)]
+    blocks = list(sdfg.all_control_flow_blocks(recursive=True))
+    states = [b for b in blocks if isinstance(b, dace.SDFGState)]
     for index, (state, entry) in enumerate((s, e) for s in states for e in prune.innermost_entries(s)):
         facts = map_facts(state, entry, index)
         out |= {n.label: facts for n in state.scope_children()[entry] if isinstance(n, nodes.Tasklet)}
+    loops = [b for b in blocks if isinstance(b, LoopRegion) and not any(isinstance(c, LoopRegion) for c in inner(b))]
+    for index, loop in enumerate(loops, start=len(out) + len(states)):
+        facts = loop_facts(loop, index)
+        out |= {
+            n.label: facts
+            for state in loop.states()
+            for n in state.nodes()
+            if isinstance(n, nodes.Tasklet) and n.label not in out
+        }
     return out
+
+
+def inner(loop: LoopRegion) -> list[Any]:
+    return [b for b in loop.all_control_flow_blocks(recursive=True) if b is not loop]
+
+
+def loop_facts(loop: LoopRegion, index: int) -> MapFacts:
+    """A sequential loop as a map: the memlets on its variable (an update counts a read and a write) and its trip
+    count times those of the sequential loops around it in its SDFG (a fresh symbol, so unknown, when not countable)."""
+    accessed = {
+        (e.data.data, str(e.data.subset), isinstance(e.dst, nodes.AccessNode) and e.dst.data == e.data.data)
+        for state in loop.states()
+        for e in state.edges()
+        if e.data.subset is not None and loop.loop_variable in {str(s) for s in e.data.subset.free_symbols}
+    }
+    volume, region = sympy.Integer(1), loop
+    while isinstance(region, LoopRegion):
+        count = loop_trip_count(region)
+        volume *= sympy.sympify(count) if count is not None else sympy.Symbol(f"__trips_{index}")
+        region = region.parent_graph
+    return MapFacts(max(1, len(accessed)), volume, index)
 
 
 def library_accesses(sdfg: dace.SDFG) -> int:

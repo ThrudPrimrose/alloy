@@ -669,3 +669,19 @@ def test_an_update_in_place_counts_as_a_read_and_a_write_of_its_element():
     facts = set(predict.innermost_maps(only_scope(axpy_in_place).sdfg).values())
 
     assert [f.accesses for f in facts] == [3]
+
+
+@dace.program
+def first_order_recurrence(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(1, N):
+        a[i] = a[i - 1] + b[i]
+
+
+def test_a_sequential_loop_counts_its_own_accesses_and_iterations_like_a_map():
+    """A12: a scope whose innermost loop is sequential (a recurrence, an expanded scan) had no map facts: its loop
+    fell back to one access per element, so a scalar loop moving three elements' bytes took three elements an
+    iteration, and it weighed as much as a map of any size beside it."""
+    facts = predict.innermost_maps(only_scope(first_order_recurrence).sdfg)
+
+    assert {f.accesses for f in facts.values()} == {3}
+    assert {predict.evaluated(f.volume, {"N": 100}) for f in facts.values()} == {99.0}
