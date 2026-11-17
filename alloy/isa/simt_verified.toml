@@ -162,7 +162,7 @@ rel = 0.0
 digest = "fe4991ea5b22654c"
 
 [[verdicts]]
-op = "gen_mask"
+op = "ballot_count"
 dialect = "cuda"
 ok = true
 basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
@@ -170,7 +170,7 @@ rel = 0.0
 digest = "580b1ada07694bb1"
 
 [[verdicts]]
-op = "gen_mask"
+op = "ballot_count"
 dialect = "hip"
 ok = true
 basis = "ran on gfx942; ran on gfx90a"

@@ -633,9 +633,10 @@ def thread_op(request: Request) -> Answer:
     if request.op not in rows:
         related = [op for op in rows if request.op in op] or difflib.get_close_matches(request.op, list(rows), n=3)
         nearest = related or list(rows)  # the related rows, else every row
-        return no(
-            request, Why.NO_ROW, f"no {dialect} row for {request.op}", *(f"{request.target} {op}" for op in nearest)
-        )
+        tail = "a GPU loop tail is a per-thread bounds check (if (i < n)); ballot_count counts the lanes of a predicate"
+        fix = tail if request.op == "gen_mask" else ""
+        return no(request, Why.NO_ROW, f"no {dialect} row for {request.op}",
+                  *(f"{request.target} {op}" for op in nearest), fix=fix)  # fmt: skip
     row, verdict = rows[request.op], simt.verdicts().get((request.op, dialect))
     scalar = Operand("register", row.dtype)
     for operand in request.operands.values():

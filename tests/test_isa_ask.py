@@ -1032,3 +1032,10 @@ def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys):
 
     assert exited.value.code == 64
     capsys.readouterr()
+
+
+def test_a_gpu_tail_mask_request_says_a_gpu_tail_is_a_bounds_check_and_offers_the_ballot_count():
+    answer = answered(Request("sm90", "gen_mask", {"x": Operand("register", "f32")}))
+
+    assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
+    assert "bounds check" in answer.fix and "ballot_count" in answer.fix

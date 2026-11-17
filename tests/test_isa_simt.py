@@ -2,17 +2,24 @@
 """The CUDA and HIP rows: recorded checks, the dialect differences the lookup must keep, and the device runs."""
 
 import dataclasses
+from collections.abc import Callable
 
 import pytest
 
 from alloy.isa import simt
 from alloy.isa.__main__ import main
 
+#: Rows changed since their recorded runs: their records are stale until the GPUs rerun them.
+RERUN = {"reduce_min", "add_half2"}
+
 
 def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip():
     verdicts = simt.verdicts()
 
     for row in simt.rows():
+        if row.op in RERUN:
+            assert (row.op, "cuda") not in verdicts and (row.op, "hip") not in verdicts
+            continue
         assert verdicts[(row.op, "cuda")].ok is True, verdicts[(row.op, "cuda")]
         assert verdicts[(row.op, "hip")].ok is not False, verdicts[(row.op, "hip")]
 
@@ -47,6 +54,27 @@ def test_a_warp_min_or_max_takes_the_c_function_and_is_exact_in_lane_0(op: str, 
     assert row.check == "first"
 
 
+@pytest.mark.parametrize(("op", "pick"), [("reduce_min", min), ("reduce_max", max)])
+def test_a_warp_min_or_max_finds_its_extreme_in_the_last_lane_so_it_crosses_the_whole_tree(
+    op: str, pick: Callable[[list[float]], float]
+):
+    row = next(r for r in simt.rows() if r.op == op)
+    lo, hi = row.domain
+
+    for lanes in simt.LANES.values():
+        values = [lo + (hi - lo) * (k + 0.5) / lanes for k in range(lanes)]
+        assert values.index(pick(values)) == lanes - 1
+
+
+def test_a_packed_half_addition_is_checked_in_both_halves():
+    row = next(r for r in simt.rows() if r.op == "add_half2")
+
+    for dialect in simt.DIALECTS:
+        sut = row.spelled(dialect)
+        assert "__low2float(h)" in sut and "__high2float(h)" in sut
+    assert row.ref == "(a + c) + 2.0f * (b + a)", "the halves add different operands, so a swap shows"
+
+
 def test_a_nan_on_any_lane_stays_the_programs_worst_error():
     row = next(r for r in simt.rows() if r.op == "rsqrt")
 
@@ -55,7 +83,7 @@ def test_a_nan_on_any_lane_stays_the_programs_worst_error():
     assert "if (rel != rel || rel > worst) worst = rel;" in sut
 
 
-@pytest.mark.parametrize("op", ["reduce_add", "reduce_min", "reduce_max", "scan_add", "atomic_add", "gen_mask"])
+@pytest.mark.parametrize("op", ["reduce_add", "reduce_min", "reduce_max", "scan_add", "atomic_add", "ballot_count"])
 def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: str):
     row = next(r for r in simt.rows() if r.op == op)
     lo, hi = row.domain
@@ -84,11 +112,11 @@ def test_a_request_the_tool_cannot_answer_prints_nothing_to_stdout(argv: list[st
 
 
 def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.CaptureFixture[str]):
-    assert main(["lookup", "hip", "gen_mask", "f32"]) == 0
+    assert main(["lookup", "hip", "ballot_count", "f32"]) == 0
 
     printed = capsys.readouterr().out
     assert "__popcll(__ballot(v > 0.0f))" in printed
-    recorded = simt.verdicts()[("gen_mask", "hip")]
+    recorded = simt.verdicts()[("ballot_count", "hip")]
     assert f"verified: {recorded.basis}" in printed  # the recorded check, word for word
     assert "ran on gfx90a" in recorded.basis and "ran on gfx942" in recorded.basis
 

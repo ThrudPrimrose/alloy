@@ -103,7 +103,7 @@ before the wait is a race, and issuing without the fence reads stale data.
   the operand order.
 - `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA, in f32.
   - Rows: `fma`, `exp_fast`, `sin_fast`, `div_fast`, `rsqrt`, the reductions and `scan_add`, `broadcast`,
-    `gen_mask`, `add_half2`, `load_wide`, `atomic_add`.
+    `ballot_count` (lanes whose predicate holds), `add_half2`, `load_wide`, `atomic_add`.
   - A wavefront has 64 lanes on MI200 and MI300A. The row's code names `lanes` (= `warpSize`), `lane` (=
     `threadIdx.x % warpSize`, the lane in its warp), `v` (the lane's input), and `out`; the answer's `bind:` line
     says so, and a reduction loops from `lanes / 2`.
