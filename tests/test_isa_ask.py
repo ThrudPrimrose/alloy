@@ -2,14 +2,30 @@
 """The unified ISA (notes/isa-design.md, step 1): every target answers Feasible, with its unit, steps, and check, or
 Infeasible, with a reason and the nearest requests it takes, from the surfaces it wraps."""
 
+import dataclasses
 import json
 import math
+import subprocess
 
 import pytest
 
-from alloy.isa import simt, tile
+from alloy.isa import ask as ask_module
+from alloy.isa import simt, tensix, tile
 from alloy.isa.__main__ import main
-from alloy.isa.ask import INVALID, UNITS, Combined, Feasible, Infeasible, Invalid, Operand, Request, Why, ask, ask_all
+from alloy.isa.ask import (
+    INVALID,
+    UNITS,
+    Check,
+    Combined,
+    Feasible,
+    Infeasible,
+    Invalid,
+    Operand,
+    Request,
+    Why,
+    ask,
+    ask_all,
+)
 
 TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
         "b": Operand("shared", "f16", (64, 64), "col_major", "b128"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
@@ -688,7 +704,7 @@ def test_a_scan_over_several_registers_carries_the_last_lane_into_the_next():
     assert all(s.count == 1 for s in one.steps)
     carry = [(s.spelling, s.count) for s in sut.steps[len(one.steps) :]]
     assert [s.count for s in sut.steps[: len(one.steps)]] == [3] * len(one.steps)
-    assert carry == [("vdupq_n_f32", 2), ("vaddq_f32", 2)]
+    assert carry == [("vdupq_laneq_f32(t, 3)", 2), ("vaddq_f32", 2)]
 
 
 @pytest.mark.parametrize(("op", "src", "dst", "spelling"), [
@@ -1039,3 +1055,188 @@ def test_a_gpu_tail_mask_request_says_a_gpu_tail_is_a_bounds_check_and_offers_th
 
     assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
     assert "bounds check" in answer.fix and "ballot_count" in answer.fix
+
+
+def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion():
+    copy_ = Request("sm90", "copy", {"src": GLOBAL, "dst": B128})
+
+    sut = answered(copy_)
+
+    assert isinstance(sut, Feasible) and sut.completion is not None
+    assert sut.completion.wait == "wait on=mbarrier"
+    assert not any("try_wait" in step.spelling for step in sut.steps) and "alloy_mbar_wait" not in sut.code
+    assert sut.code.startswith("if (threadIdx.x == 0) { alloy_mbar_arrive_expect_tx(&bar, 8192);")
+
+
+def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it():
+    sut = answered(Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (128, 64), "row_major",
+                                                                          "b128")}))  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    assert "256 threads per block" in sut.setup["launch"] and "threadIdx.x == 0" in sut.setup["launch"]
+    assert tile.GPU_THREADS["sm90", 128] == 256
+
+
+def test_a_cpu_load_of_one_register_from_a_larger_array_is_a_block_of_it():
+    sut = answered(Request("avx512", "load", {"src": Operand("global", "f64", (64,)), "dst": Operand("vector", "f64",
+                                                                                                    (8,))}))  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    assert [(s.spelling, s.count) for s in sut.steps] == [("_mm512_loadu_pd", 1)]
+    assert "a block of 8 of the 64 elements" in sut.notes[-1]
+
+
+def test_a_cpu_load_from_an_array_smaller_than_the_registers_is_refused():
+    sut = answered(Request("avx512", "load", {"src": Operand("global", "f64", (8,)), "dst": Operand("vector", "f64",
+                                                                                                   (16,))}))  # fmt: skip
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
+    assert "src holds 8 elements, fewer than the 16" in sut.reason
+
+
+@pytest.mark.parametrize(("op", "combine", "reduce_"), [("reduce_add", "svadd_f64_m", "svaddv_f64"),
+                                                        ("reduce_max", "svmax_f64_m", "svmaxv_f64")])  # fmt: skip
+def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once(op, combine, reduce_):
+    sut = answered(Request("sve", op, {"x": Operand("vector", "f64", (64,))}))
+
+    assert isinstance(sut, Feasible)
+    assert [s.spelling for s in sut.steps] == [
+        "each block of svcntd() lanes: svwhilelt_b64_s64(i, N)",
+        "each block of svcntd() lanes: svld1_f64",
+        f"each block of svcntd() lanes: {combine} into the accumulator (_m: its masked-off lanes stay)",
+        reduce_,
+    ]
+    assert "for (int64_t i = 0; i < 64; i += svcntd())" in sut.code
+    assert f"acc = {combine}(pg, acc, svld1_f64(pg, x + i));" in sut.code
+    assert sut.code.endswith(f"double s = {reduce_}(svptrue_b64(), acc);")
+
+
+@pytest.mark.parametrize(("op", "fix"), [
+    ("reduce_add", "_mm512_maskz_loadu_pd(k, p) so its masked-off lanes hold 0"),
+    ("reduce_min", "_mm512_mask_loadu_pd(_mm512_set1_pd(INFINITY), k, p) so its masked-off lanes hold INFINITY"),
+    ("add", "compute with _mm512_mask_add_pd(src, k, a, b), store with _mm512_mask_storeu_pd(p, k, v)"),
+])  # fmt: skip
+def test_an_avx512_tail_fix_names_the_masked_spelling_each_op_needs(op, fix):
+    sut = answered(Request("avx512", op, {"x": Operand("vector", "f64", (100,))}))
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
+    assert fix in sut.fix and "masked form" not in sut.fix
+
+
+@pytest.mark.parametrize(("request_", "header", "flags", "code"), [
+    (Request("avx512", "add", {"x": Operand("vector", "f64", (8,))}), "#include <immintrin.h>", "-mavx512f -mavx512dq",
+     "v = _mm512_add_pd(a, b);"),
+    (Request("neon", "fma", {"x": Operand("vector", "f64", (2,))}), "#include <arm_neon.h>", "none",
+     "v = vfmaq_f64(a, b, c);"),
+    (Request("avx2", "reduce_add", {"x": Operand("vector", "f64", (4,))}), "#include <immintrin.h>", "-mavx2 -mfma",
+     "__m128d s2 = _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1));\ns = _mm_cvtsd_f64("),
+    (Request("avx512", "exp", {"x": Operand("vector", "f64", (8,))}), "#include <immintrin.h> and <math.h>",
+     "-mavx512f", "alloy_exp_f64_strict"),
+])  # fmt: skip
+def test_a_cpu_answer_carries_its_header_its_flags_and_a_statement_to_copy(request_, header, flags, code):
+    sut = answered(request_)
+
+    assert isinstance(sut, Feasible)
+    assert sut.setup["header"] == header and sut.setup["flags"].startswith(flags)
+    assert code in sut.code
+
+
+@pytest.mark.parametrize(("op", "masked"), [("load", "_mm512_maskz_loadu_pd(k, p)"),
+                                            ("store", "_mm512_mask_storeu_pd(p, k, v)")])  # fmt: skip
+def test_an_avx512_load_or_store_answer_shows_its_masked_form_and_the_mask_it_takes(op, masked):
+    vector, memory = Operand("vector", "f64", (8,)), Operand("global", "f64", (8,))
+    operands = {"src": memory, "dst": vector} if op == "load" else {"src": vector, "dst": memory}
+
+    sut = answered(Request("avx512", op, operands))
+
+    assert isinstance(sut, Feasible)
+    assert sut.setup["masked"].startswith(masked)
+    assert (
+        sut.setup["mask"].startswith("k = _mm512_cmplt_epu64_mask(iota, n): ")
+        and "clamp(N - i, 0, 8)" in sut.setup["mask"]
+    )
+
+
+def test_an_avx512_mask_answer_says_how_to_build_iota_and_n():
+    sut = answered(Request("avx512", "gen_mask", {"x": Operand("vector", "f64", (8,))}))
+
+    assert isinstance(sut, Feasible) and sut.code == "k = _mm512_cmplt_epu64_mask(iota, n);"
+    assert "iota = _mm512_setr_epi64(0..7)" in sut.setup["mask"]
+
+
+@pytest.mark.parametrize("source", [Operand("register", "f64"), Operand("register", "f64", (1,))])
+def test_a_broadcast_takes_its_scalar_source_with_or_without_a_shape_of_one(source):
+    sut = answered(Request("avx512", "broadcast", {"x": source}))
+
+    assert isinstance(sut, Feasible) and sut.code == "v = _mm512_set1_pd(s);"
+
+
+def test_a_broadcast_from_a_partial_register_names_the_scalar_form():
+    sut = answered(Request("avx512", "broadcast", {"x": Operand("register", "f64", (3,))}))
+
+    assert isinstance(sut, Infeasible) and "--x register:f64 (or register:f64:1)" in sut.reason
+
+
+def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible():
+    vector = Operand("vector", "f64", (8,))
+
+    sut = answered(Request("avx512", "mma", {"a": vector, "b": vector, "c": vector}))
+
+    assert isinstance(sut, Invalid) and sut.why is Why.CHAIN
+    assert "a global:f64:64x64, b global:f64:64x64, c global:f64:64x64" in sut.expected
+    for near in sut.expected:
+        operands = {name: Operand.parse(text) for name, text in (part.split(" ", 1) for part in near.split(", "))}
+        assert isinstance(answered(Request("avx512", "mma", operands)), Feasible), near
+
+
+@pytest.mark.parametrize(("target", "dtype", "lanes"), [("avx512", "f64", 8), ("avx512", "f32", 16),
+                                                        ("avx2", "f64", 4), ("avx2", "f32", 8)])  # fmt: skip
+@pytest.mark.avx512
+def test_the_carry_of_a_scan_broadcasts_the_last_lane_of_the_register_before(target, dtype, lanes, tmp_path):
+    scalar, vector = ("double", "__m512d" if target == "avx512" else "__m256d") if dtype == "f64" else (
+        "float", "__m512" if target == "avx512" else "__m256")  # fmt: skip
+    width = "512" if target == "avx512" else "256"
+    suffix = "pd" if dtype == "f64" else "ps"
+    source = tmp_path / "carry.c"
+    source.write_text(f"""#include <immintrin.h>
+#include <stdio.h>
+int main(void) {{
+  {scalar} in[{lanes}], out[{lanes}];
+  for (int j = 0; j < {lanes}; ++j) in[j] = j + 1;
+  {vector} t = _mm{width}_loadu_{suffix}(in);
+  _mm{width}_storeu_{suffix}(out, {ask_module.LAST_LANE[target, dtype]});
+  for (int j = 0; j < {lanes}; ++j) printf("%g ", (double)out[j]);
+  return 0;
+}}
+""")
+    binary = tmp_path / "carry"
+    subprocess.run(["cc", "-O2", "-mavx512f", "-mavx2", "-mfma", str(source), "-o", str(binary)], check=True)
+
+    printed = subprocess.run([str(binary)], capture_output=True, text=True, check=True).stdout
+
+    assert printed.split() == [str(lanes)] * lanes
+
+
+def test_a_pending_tensix_row_with_a_stale_failure_is_unverified_for_an_elementwise_call_and_an_mma(monkeypatch):
+    rows = tuple(dataclasses.replace(r, pending=True) if r.op in ("add", "mma") else r for r in tensix.rows())
+    failed = {(r.op, d, r.unit): tensix.Verdict(r.op, d, r.unit, ok=False, rel=0.5) for r in rows for d in ("f32",)}
+    monkeypatch.setattr(tensix, "rows", lambda: rows)
+    monkeypatch.setattr(tensix, "verdicts", lambda: failed)
+    tiles = Operand("tile_register", "f32", (32, 32))
+
+    add = answered(Request("tensix", "add", {"x": tiles}))
+    mma = answered(Request("tensix", "mma", {"a": tiles, "b": tiles, "c": tiles}))
+    exp = answered(Request("tensix", "exp", {"x": tiles}))
+
+    assert isinstance(add, Feasible) and isinstance(mma, Feasible)
+    assert add.check == mma.check == Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
+    assert isinstance(exp, Infeasible) and exp.why is Why.CHECK_FAILED, "a row that is not pending is refused"
+
+
+def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_it_per_block():
+    sut = answered(Request("sve", "exp", {"x": Operand("vector", "f64", (64,))}))
+
+    assert isinstance(sut, Feasible)
+    kernel, loop = sut.code.split("for (int64_t i = 0; i < 64; i += svcntd()) {")
+    assert "static inline svfloat64_t alloy_exp_f64_strict(svfloat64_t x)" in kernel
+    assert "static inline" not in loop and "v = alloy_exp_f64_strict(v);" in loop
