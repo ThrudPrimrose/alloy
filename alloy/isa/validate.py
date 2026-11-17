@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -135,26 +135,34 @@ ARM_LANES = {
 }
 
 
-def track_error(got: str, ref: str, indent: str = "    ") -> str:
+#: How a kernel compares a lane: relative error, bit-exact floats (NaN matches NaN, a zero's sign counts), or integers.
+Compare = Literal["relative", "bits", "integer"]
+
+
+def track_error(got: str, ref: str, indent: str = "    ", compare: Compare = "relative") -> str:
     """The per-lane error update of a kernel: a NaN must stick, a plain ``>`` would drop it."""
-    lines = (
-        f"double d = fabs({got} - {ref});",
-        f"double m = fabs({ref}) > 1 ? fabs({ref}) : 1;",
-        "double e = d / m;",
-        "if (isnan(e) || e > maxrel) maxrel = e;",
-    )
-    return f"\n{indent}".join(lines)
+    if compare == "integer":  # no detour through double, which rounds lanes past 2^53
+        lines: tuple[str, ...] = (f"double e = {got} != {ref};",)
+    elif compare == "bits":
+        lines = (f"double e = isnan({ref}) ? !isnan({got}) : {got} != {ref} || signbit({got}) != signbit({ref});",)
+    else:
+        lines = (
+            f"double d = fabs({got} - {ref});",
+            f"double m = fabs({ref}) > 1 ? fabs({ref}) : 1;",
+            "double e = d / m;",
+        )
+    return f"\n{indent}".join((*lines, "if (isnan(e) || e > maxrel) maxrel = e;"))
 
 
 #: How a kernel ends: the worst error, in the line :data:`VERIFY_LINE` reads.
 REPORT_ERROR = 'printf("ALLOY-VERIFY rel=%.6e\\n", maxrel);\n  return 0;\n}'
 
 
-def lane_errors(got: str, ref: str) -> str:
+def lane_errors(got: str, ref: str, compare: Compare = "relative") -> str:
     """The end of a kernel comparing every lane."""
     return f"""double maxrel = 0;
   for (int j = 0; j < VL; j++) {{
-    {track_error(got, ref)}
+    {track_error(got, ref, compare=compare)}
   }}
   {REPORT_ERROR}"""
 
@@ -334,17 +342,24 @@ def select_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
     return k.stored(f"{k.mask} k = {k.below};\n  {pick}"), lane_ref("a[j] < b[j] ? b[j] : a[j]")
 
 
-#: The scalar reference of each reduction.
+#: The value a min or max reduction plants, larger than every input in magnitude and exact in f16.
+EXTREME = {"reduce_min": "-1024", "reduce_max": "1024"}
+#: The scalar reference of a reduction: the sum once; a min or max with lane p holding the extreme, for every p.
 REDUCED = {
     "reduce_add": "for (int j = 0; j < VL; j++) ref[0] += a[j];",
-    "reduce_min": "ref[0] = a[0];\nfor (int j = 1; j < VL; j++) if (a[j] < ref[0]) ref[0] = a[j];",
-    "reduce_max": "ref[0] = a[0];\nfor (int j = 1; j < VL; j++) if (a[j] > ref[0]) ref[0] = a[j];",
+    "reduce_min": "for (int p = 0; p < VL; p++) ref[p] = -1024;",
+    "reduce_max": "for (int p = 0; p < VL; p++) ref[p] = 1024;",
 }
 
 
 def reduce_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
+    """A sum runs once. A min or max runs once per lane p with the extreme in lane p, so a reduction that skips a
+    lane, the upper half or the last lane above all, misses it."""
     compute = assigned(f"{k.scalar} r = ", entry, operands(k))
-    return f"{k.loads}\n  {compute}\n  out[0] = r;", REDUCED[op]
+    if op not in EXTREME:
+        return f"{k.loads}\n  {compute}\n  out[0] = r;", REDUCED[op]
+    body = f"{k.scalar} kept = a[p];\n  a[p] = {EXTREME[op]};\n  {k.loads}\n  {compute}\n  out[p] = r;\n  a[p] = kept;"
+    return f"for (int p = 0; p < VL; p++) {{\n  {body}\n  }}", REDUCED[op]
 
 
 def scan_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
@@ -419,6 +434,12 @@ BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
 }
 
 
+#: Arm's FMIN and FMAX: a NaN operand gives NaN, and -0 is below +0. x86 min and max return the second operand when
+#: either is NaN or both are zero, which ``a < b ? a : b`` states.
+ARM_MIN = "isnan(a[j]) || isnan(b[j]) ? NAN : a[j] == b[j] ? (signbit(a[j]) ? a[j] : b[j]) : a[j] < b[j] ? a[j] : b[j]"
+ARM_MAX = "isnan(a[j]) || isnan(b[j]) ? NAN : a[j] == b[j] ? (signbit(a[j]) ? b[j] : a[j]) : a[j] > b[j] ? a[j] : b[j]"
+
+
 def scalar_ref(k: Frame, op: str) -> str:
     if k.dtype in INT_DTYPES:
         s, u = ("int64_t", "uint64_t") if k.dtype == "i64" else ("int32_t", "uint32_t")
@@ -444,11 +465,11 @@ def scalar_ref(k: Frame, op: str) -> str:
         "sub": "a[j] - b[j]",
         "mul": "a[j] * b[j]",
         "div": "a[j] / b[j]",
-        "min": "a[j] < b[j] ? a[j] : b[j]",
-        "max": "a[j] > b[j] ? a[j] : b[j]",
+        "min": "a[j] < b[j] ? a[j] : b[j]" if k.isa not in CROSS else ARM_MIN,
+        "max": "a[j] > b[j] ? a[j] : b[j]" if k.isa not in CROSS else ARM_MAX,
         "fma": f"fma{f}(b[j], c[j], a[j])" if k.isa in CROSS else f"fma{f}(a[j], b[j], c[j])",
         "sqrt": f"sqrt{f}(a[j])",
-        "abs": "a[j] < 0 ? -a[j] : a[j]",
+        "abs": "fabs(a[j])",
         "neg": "-a[j]",
         "mod": f"fmod{f}(a[j], b[j])",
         "load": "a[j]",
@@ -468,14 +489,51 @@ F16_B = (0.25, 3.0, 0.75, 2.5, 1.5, -0.5, 2.0, -1.0, 0.5, 1.25, -2.0, 0.375, 3.5
 F16_C = (0.75, -1.5, 2.25, 0.5, 3.0, 1.25, -0.125, 2.0, -0.75, 1.5, 0.25, -3.5, 1.0, 0.375, -2.0, 0.5)
 
 
+INT64_MIN, INT64_MAX = -(1 << 63), (1 << 63) - 1
+#: i64 operands past 32 bits: a carry or a borrow crosses bit 32 (lanes 1 and 2), the halves of lane 1 order the
+#: other way as 32-bit lanes, and INT64_MIN and INT64_MAX sit at the ends. ``b`` is never 0 or -1, a legal divisor.
+I64_A = (INT64_MIN, 0xFFFFFFFF, -(1 << 32) + 3, INT64_MAX, (1 << 40) + 7, -0x100000001, 0x7FFFFFFF, -5)
+I64_B = (3, 1, 5, -2, (1 << 40) - 1, 1 << 32, 0x80000001, -(1 << 33))
+#: i64 shift counts, some past 31, where a 32-bit shift differs.
+I64_COUNTS = (1, 33, 5, 40, 63, 12, 31, 2)
+
+
 def integer_inputs(op: str, dtype: str, lanes: int) -> tuple[list[int], list[int], list[int]]:
     """Signs alternate, so an arithmetic shift cannot pass for a logical one; land/lor get every zero / non-zero
-    combination; the operands differ on every lane, so no order of a three-operand op passes for another; ``b`` stays
-    a legal shift count at any vector length."""
-    logical = op in ("land", "lor")
-    high = 1 << 40 if dtype == "i64" and op in ("and", "or", "shl", "shr") else 0  # a bit past lane 32's reach
-    a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) + high for j in range(lanes)]
-    return a, [0 if logical and j % 4 < 2 else 1 + j % 29 for j in range(lanes)], [2 + 5 * j for j in range(lanes)]
+    combination, an i64 non-zero with its low 32 bits clear; the operands differ on every lane, so no order of a
+    three-operand op passes for another; ``b`` stays a legal shift count at any vector length."""
+    logical, shift = op in ("land", "lor"), op in ("shl", "shr")
+    c = [2 + 5 * j for j in range(lanes)]
+    if dtype == "i64":
+        a = [I64_A[j % 8] for j in range(lanes)]
+        if logical:  # INT64_MIN and 1 << 32 are non-zero with their low 32 bits clear
+            a = [0 if j % 2 == 0 else INT64_MIN if j % 4 == 1 else a[j] for j in range(lanes)]
+            return a, [0 if j % 4 < 2 else 1 << 32 for j in range(lanes)], c
+        return a, [(I64_COUNTS if shift else I64_B)[j % 8] for j in range(lanes)], c
+    a = [0 if logical and j % 2 == 0 else (7 + 3 * j) * (-1 if j % 2 else 1) for j in range(lanes)]
+    return a, [0 if logical and j % 4 < 2 else 1 + j % 29 for j in range(lanes)], c
+
+
+#: Ops whose rows state what NaN and signed zeros give; their kernels feed :data:`SPECIAL` and compare bits.
+SPECIAL_OPS = frozenset({"lt", "min", "max", "select", "abs", "neg"})
+#: The first lanes of ``(a, b)`` for :data:`SPECIAL_OPS`: NaN on either side, zeros of both signs in both orders, and
+#: infinities. A two-lane vector sees a NaN first and the zeros.
+SPECIAL = (
+    (math.nan, 1.5),
+    (-0.0, 0.0),
+    (1.5, math.nan),
+    (0.0, -0.0),
+    (-math.inf, 2.0),
+    (3.0, math.inf),
+)
+
+
+def with_special(op: str, a: list[float], b: list[float]) -> tuple[list[float], list[float]]:
+    """``a`` and ``b`` with :data:`SPECIAL` in their first lanes, for an op that states its NaN and zero semantics."""
+    if op not in SPECIAL_OPS:
+        return a, b
+    n = min(len(a), len(SPECIAL))
+    return [x for x, _ in SPECIAL[:n]] + a[n:], [y for _, y in SPECIAL[:n]] + b[n:]
 
 
 def float_inputs(op: str, lanes: int) -> tuple[list[float], list[float], list[float]]:
@@ -484,12 +542,32 @@ def float_inputs(op: str, lanes: int) -> tuple[list[float], list[float], list[fl
     # every third lane is larger than b, so a compare goes both ways and a quotient passes 1
     scale = [10.0 if j % 3 == 2 else 1.0 for j in range(lanes)]
     a = [(0.5371 + 0.3 * j) * scale[j] * (-1 if j % 2 and op != "sqrt" else 1) for j in range(lanes)]
-    return a, [1.25 + 0.7 * j for j in range(lanes)], [0.3171 + 0.9 * j for j in range(lanes)]
+    a, b = with_special(op, a, [1.25 + 0.7 * j for j in range(lanes)])
+    return a, b, [0.3171 + 0.9 * j for j in range(lanes)]
 
 
 def f16_inputs(op: str, lanes: int) -> tuple[list[float], list[float], list[float]]:
     a = [abs(F16_A[j % 16]) if op == "sqrt" else F16_A[j % 16] for j in range(lanes)]
-    return a, [F16_B[j % 16] for j in range(lanes)], [F16_C[j % 16] for j in range(lanes)]
+    a, b = with_special(op, a, [F16_B[j % 16] for j in range(lanes)])
+    return a, b, [F16_C[j % 16] for j in range(lanes)]
+
+
+def c_value(value: float) -> str:
+    """A C literal of ``value``: the macros for NaN and infinity, INT64_MIN as an expression that does not overflow."""
+    if isinstance(value, int):
+        return f"({INT64_MIN + 1} - 1)" if value == INT64_MIN else repr(value)
+    if math.isnan(value):
+        return "NAN"
+    if math.isinf(value):
+        return "INFINITY" if value > 0 else "-INFINITY"
+    return repr(value)
+
+
+def comparison(k: Frame, op: str) -> Compare:
+    """How a kernel of ``op`` compares its lanes."""
+    if k.dtype in INT_DTYPES:
+        return "integer"
+    return "bits" if op in SPECIAL_OPS else "relative"
 
 
 def lane_count(k: Frame) -> str:
@@ -507,7 +585,7 @@ def kernel_source(k: Frame, op: str, compute: str, ref: str) -> str:
     """The whole C program of a kernel: ``compute`` on the inputs of ``op``, against the reference ``ref``."""
     a, b, c = kernel_inputs(op, k.dtype, k.lanes)
     mask = "uint16_t mk[LANES];\n  for (int j = 0; j < VL; j++) mk[j] = a[j] < b[j] ? 0xffff : 0;"
-    s = k.scalar
+    s, compare = k.scalar, comparison(k, op)
     return f"""#include <{HEADERS[k.isa]}>
 #include <stdint.h>
 #include <stdio.h>
@@ -515,19 +593,19 @@ def kernel_source(k: Frame, op: str, compute: str, ref: str) -> str:
 #define LANES {k.lanes}
 #define VL {lane_count(k)}
 int main(void) {{
-  _Alignas(64) {s} a_lanes[LANES + 1] = {{0, {", ".join(map(repr, a))}}};
-  _Alignas(64) {s} b_lanes[LANES + 1] = {{0, {", ".join(map(repr, b))}}};
-  _Alignas(64) {s} c_lanes[LANES + 1] = {{0, {", ".join(map(repr, c))}}};
+  _Alignas(64) {s} a_lanes[LANES + 1] = {{0, {", ".join(map(c_value, a))}}};
+  _Alignas(64) {s} b_lanes[LANES + 1] = {{0, {", ".join(map(c_value, b))}}};
+  _Alignas(64) {s} c_lanes[LANES + 1] = {{0, {", ".join(map(c_value, c))}}};
   _Alignas(64) {s} out_lanes[LANES + 1] = {{0}};
   {s} *a = a_lanes + 1, *b = b_lanes + 1, *c = c_lanes + 1, *out = out_lanes + 1;  // {MISALIGNED}
   int64_t idx[LANES];
   int32_t idx32[LANES];
   for (int j = 0; j < VL; j++) idx[j] = idx32[j] = (3 * j + 1) % VL;
-  double ref[LANES] = {{0}};
+  {s if compare == "integer" else "double"} ref[LANES] = {{0}};
   {mask if k.dtype == F16 else ""}
   {compute}
   {ref}
-  {lane_errors("(double)out[j]", "ref[j]")}"""
+  {lane_errors("out[j]" if compare == "integer" else "(double)out[j]", "ref[j]", compare)}"""
 
 
 def kernel_c(isa: str, dtype: str, op: str, table: Table | None = None) -> str | None:
@@ -942,7 +1020,11 @@ def checked_forms(verdict: Verdict, isa: str, op: str, dtype: str, table: Table,
     elif entry.masked:
         notes.append("masked form unchecked")
     if entry.mnemonic:
-        notes.append(f"mnemonic {validate_mnemonic(isa, op, dtype, table).detail}")
+        printed = validate_mnemonic(isa, op, dtype, table)
+        if printed.ok is False and entry.intrinsic and not entry.recipe:  # one intrinsic is one instruction
+            detail = f"the row's one intrinsic compiled to other instructions: {printed.detail}"
+            return Verdict(False, printed.basis, detail, candidates_for(isa, op, dtype, table))
+        notes.append(f"mnemonic {printed.detail}")
     return dataclasses.replace(verdict, detail="; ".join([*notes, "note unchecked"]))
 
 

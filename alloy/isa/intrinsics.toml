@@ -534,6 +534,7 @@ note = "one faddp"
 [isa.neon.f64.zero]
 intrinsic = "vdupq_n_f64"
 mnemonic = "movi"
+observed = ["stp"]  # a zero vector stored at once is a pair of zero registers
 signature = "(0.0) -> v"
 semantics = "v[j] = 0.0"
 
@@ -600,6 +601,7 @@ note = "two faddp"
 [isa.neon.f32.zero]
 intrinsic = "vdupq_n_f32"
 mnemonic = "movi"
+observed = ["stp"]  # a zero vector stored at once is a pair of zero registers
 signature = "(0.0f) -> v"
 semantics = "v[j] = 0.0f"
 
@@ -1497,6 +1499,7 @@ note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with 
 [isa.avx512.f64.select]
 intrinsic = "_mm512_mask_blend_pd"
 mnemonic = "vblendmpd"
+observed = ["vmovapd", "vmovupd"]  # a blend of two loaded vectors compiles to a masked move
 signature = "(k, a, b) -> v"
 semantics = "v[j] = k[j] ? b[j] : a[j]"
 note = "operand-order trap: mask is FIRST and picks b - the opposite surface from AVX2 blendv; x86 calls this op blend"
@@ -1568,6 +1571,7 @@ note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with 
 [isa.avx512.f32.select]
 intrinsic = "_mm512_mask_blend_ps"
 mnemonic = "vblendmps"
+observed = ["vmovaps", "vmovups"]  # a blend of two loaded vectors compiles to a masked move
 signature = "(k, a, b) -> v"
 semantics = "v[j] = k[j] ? b[j] : a[j]"
 note = "operand-order trap: mask is FIRST and picks b - the opposite surface from AVX2 blendv; x86 calls this op blend"
@@ -2054,6 +2058,7 @@ note = "no FP16 neg: XOR (as integers) with 0x8000"
 [isa.avx512.f16.select]
 intrinsic = "_mm512_mask_blend_ph"
 mnemonic = "vpblendmw"
+observed = ["vmovdqu16"]  # a blend of two loaded vectors compiles to a masked move
 signature = "(k, a, b) -> v"
 semantics = "v[j] = k[j] ? b[j] : a[j]"
 note = "mask first, picks b - same surface as the f64 form"

@@ -15,7 +15,7 @@ import pytest
 
 from alloy.isa import load
 from alloy.isa.__main__ import main
-from alloy.isa.table import Table
+from alloy.isa.table import SPELLED, Table
 from alloy.isa.validate import (
     c_flags,
     candidates_for,
@@ -248,7 +248,7 @@ def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
     assert sut.candidates
 
 
-def with_row(isa: str, dtype: str, op: str, **fields: str) -> Table:
+def with_row(isa: str, dtype: str, op: str, **fields: Any) -> Table:
     """The shipped table with one row changed, as a wrong edit of ``intrinsics.toml`` would."""
     target = TABLE.isas[isa]
     entries = {**getattr(target, dtype), op: dataclasses.replace(getattr(target, dtype)[op], **fields)}
@@ -362,8 +362,11 @@ def test_an_avx512_compare_spells_less_than_in_the_order_of_its_signature(dtype)
     ],
 )
 def test_a_recipe_written_in_the_wrong_order_fails_the_gate(op, dtype, code):
-    """The kernel runs the row's ``code``, the text a reader copies, so its order is what is checked."""
-    sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, code=code))
+    """The kernel runs the row's ``code``, the text a reader copies, so its order is what is checked. The recipe keeps
+    the steps the wrong code still calls, as the table's own check demands."""
+    called = " ".join(code)
+    recipe = tuple(s for s in TABLE.entry("avx2", op, dtype).recipe if all(n in called for n in SPELLED.findall(s)))
+    sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, code=code, recipe=recipe))
 
     assert sut.ok is False, sut.basis
 
@@ -525,16 +528,13 @@ MASKED_ROWS = [
     for op, entry in target.entries(dtype).items()
     if entry.masked
 ]
-#: Rows the gate's own frame reshapes, however they compile in a loop: a zero vector stored at once is two zero
-#: registers, and a blend of two loaded vectors is a masked move.
-RESHAPED_BY_THE_FRAME = {("neon", "zero"), ("avx512", "select")}
 MNEMONIC_ROWS = [
     (isa, dtype, op)
     for isa, target in TABLE.isas.items()
     for dtype in ("f64", "f32", "f16", "i64", "i32")
     if (isa, dtype) != ("avx512", "f16")  # no FP16 kernel runs on the hosts this gate was checked on
     for op, entry in target.entries(dtype).items()
-    if entry.mnemonic and not entry.approximations and (isa, op) not in RESHAPED_BY_THE_FRAME
+    if entry.mnemonic and not entry.approximations
 ]
 
 
@@ -572,17 +572,140 @@ def test_a_rows_mnemonic_is_what_gcc_prints_for_it(isa, dtype, op, monkeypatch):
 
 
 @pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
-def test_a_mnemonic_the_compiler_did_not_print_is_reported_and_leaves_the_row_verified():
-    rows = TABLE.isas["avx2"].f64
-    held = rows["add"]
-    rows["add"] = dataclasses.replace(held, mnemonic="vdivpd")
-    try:
-        sut = validate("avx2", "add", "f64", TABLE)
-    finally:
-        rows["add"] = held
+def test_a_one_intrinsic_row_whose_mnemonic_the_compiler_did_not_print_fails():
+    sut = validate("avx2", "add", "f64", with_row("avx2", "f64", "add", mnemonic="vdivpd"))
+
+    assert sut.ok is False
+    assert "printed no vdivpd" in sut.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
+def test_a_recipe_row_whose_mnemonic_the_compiler_did_not_print_is_reported_and_stays_verified():
+    """A recipe is several intrinsics, and a compiler may fuse or replace any of them."""
+    sut = validate("avx2", "min", "i64", with_row("avx2", "i64", "min", mnemonic="vdivpd"))
 
     assert sut.ok is True
     assert "printed no vdivpd" in sut.detail
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "isa, op, right, wrong",
+    [
+        ("avx2", "add", "_mm256_add_epi64", "_mm256_add_epi32"),
+        ("avx2", "sub", "_mm256_sub_epi64", "_mm256_sub_epi32"),
+        ("avx512", "add", "_mm512_add_epi64", "_mm512_add_epi32"),
+        ("avx512", "max", "_mm512_max_epi64", "_mm512_max_epi32"),
+    ],
+)
+def test_an_i64_row_spelled_on_32_bit_lanes_fails(isa, op, right, wrong):
+    """The i64 inputs carry and borrow across bit 32 and hold INT64_MIN, so 32-bit lanes compute other values."""
+    if isa == "avx512" and not AVX512:
+        pytest.skip("host cannot execute AVX-512 kernels")
+    assert TABLE.entry(isa, op, "i64").intrinsic == right
+
+    sut = validate(isa, op, "i64", with_row(isa, "i64", op, intrinsic=wrong))
+
+    assert sut.ok is False
+    assert "max rel err 1.000e+00" in sut.detail
+
+
+def test_every_i64_kernel_feeds_int64_min_and_compares_without_rounding():
+    for op in TABLE.isas["avx2"].i64:
+        sut = str(kernel_c("avx2", "i64", op, TABLE))
+
+        assert "(-9223372036854775807 - 1)" in sut, op
+        assert "int64_t ref[LANES]" in sut, op
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "isa, dtype, op, fields",
+    [
+        ("avx2", "f64", "lt", {"signature": "(a, b, _CMP_NGE_UQ) -> mask"}),  # true on NaN
+        ("avx512", "f32", "lt", {"signature": "(a, b, _CMP_NGE_UQ) -> mask"}),
+        ("avx2", "f64", "min", {"signature": "(b, a) -> v"}),  # the NaN and the zero of the other side
+        ("avx2", "f32", "max", {"signature": "(b, a) -> v"}),
+        (  # max(0 - -0, -0) returns its second operand, -0
+            "avx2",
+            "f64",
+            "abs",
+            {
+                "code": ("_mm256_max_pd(_mm256_sub_pd(_mm256_setzero_pd(), v), v)",),
+                "recipe": ("_mm256_max_pd", "_mm256_sub_pd", "_mm256_setzero_pd"),
+            },
+        ),
+        (  # 0 - 0 is +0
+            "avx2",
+            "f64",
+            "neg",
+            {"code": ("_mm256_sub_pd(_mm256_setzero_pd(), v)",), "recipe": ("_mm256_sub_pd", "_mm256_setzero_pd")},
+        ),
+    ],
+)
+def test_a_row_that_differs_only_on_nan_or_signed_zero_fails(isa, dtype, op, fields):
+    """lt, min, max, select, abs, and neg see NaN, both zeros, and infinities, and compare bits."""
+    if isa == "avx512" and not AVX512:
+        pytest.skip("host cannot execute AVX-512 kernels")
+
+    sut = validate(isa, op, dtype, with_row(isa, dtype, op, **fields))
+
+    assert sut.ok is False, sut.detail
+
+
+@pytest.mark.parametrize("isa, dtype", [("neon", "f64"), ("sve", "f32"), ("avx2", "f16")])
+def test_the_special_lanes_reach_every_vector_and_arm_min_propagates_nan(isa, dtype):
+    sut = str(kernel_c(isa, dtype, "min", TABLE))
+
+    assert "NAN, " in sut and "-0.0" in sut
+    assert ("isnan(a[j]) || isnan(b[j]) ? NAN" in sut) == (isa != "avx2")
+
+
+@pytest.mark.skipif(not AVX2, reason="needs AVX2")
+@pytest.mark.parametrize(
+    "isa, dtype, op, fields",
+    [
+        ("avx512", "f64", "reduce_max", {"intrinsic": "_mm512_mask_reduce_max_pd", "signature": "(15, v) -> s"}),
+        (
+            "avx2",
+            "f32",
+            "reduce_max",
+            {
+                "recipe": (
+                    "_mm_max_ps",
+                    "_mm256_castps256_ps128",
+                    "_mm_movehl_ps",
+                    "_mm_cvtss_f32",
+                    "_mm_max_ss",
+                    "_mm_movehdup_ps",
+                ),
+                "code": (
+                    "__m128 m4 = _mm_max_ps(_mm256_castps256_ps128(v), _mm256_castps256_ps128(v))",
+                    "__m128 m2 = _mm_max_ps(m4, _mm_movehl_ps(m4, m4))",
+                    "_mm_cvtss_f32(_mm_max_ss(m2, _mm_movehdup_ps(m2)))",
+                ),
+            },
+        ),
+        ("avx2", "f64", "reduce_min", {"code": ("_mm256_cvtsd_f64(v)",), "recipe": ("_mm256_cvtsd_f64",)}),
+    ],
+)
+def test_a_reduction_that_skips_a_lane_fails(isa, dtype, op, fields):
+    """The extreme sits in every lane in turn, the last one included."""
+    if isa == "avx512" and not AVX512:
+        pytest.skip("host cannot execute AVX-512 kernels")
+
+    sut = validate(isa, op, dtype, with_row(isa, dtype, op, **dict(fields)))
+
+    assert sut.ok is False, sut.detail
+
+
+@pytest.mark.parametrize("isa", ["neon", "sve", "avx2"])
+def test_a_min_reduction_kernel_plants_the_extreme_in_every_lane_and_compares_every_lane(isa):
+    """A one-lane NEON f64 min returns lane 0; with -1024 in lane 1 its run compares lane 1 and fails."""
+    sut = str(kernel_c(isa, "f64", "reduce_min", TABLE))
+
+    assert "for (int p = 0; p < VL; p++) {" in sut
+    assert "a[p] = -1024;" in sut and "out[p] = r;" in sut
 
 
 def test_a_verdict_says_a_note_stays_unchecked():
