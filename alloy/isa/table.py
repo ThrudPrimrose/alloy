@@ -70,6 +70,8 @@ DOT_SUFFIX = re.compile(r"^([a-z0-9]+)\.[a-z]+$")
 
 #: An intrinsic named anywhere in free text: a bare recipe step, or a prose step or masked note citing one.
 SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_[a-z0-9]+)+)\b")
+#: An intrinsic a row's ``code`` calls.
+CALLED = re.compile(SPELLED.pattern + r"(?=\()")
 
 #: Words an agent may use for an op; difflib would answer sum with sub.
 SYNONYMS = {
@@ -389,6 +391,9 @@ def checked_spelling(where: str, entry: Entry) -> None:
     code = " ".join(entry.code)
     if unspelled := [name for step in entry.recipe for name in SPELLED.findall(step) if name not in code]:
         raise ValueError(f"{where}: the code never calls {unspelled}")
+    listed = {name for step in entry.recipe for name in SPELLED.findall(step)}
+    if unlisted := [name for name in dict.fromkeys(CALLED.findall(code)) if name not in listed]:
+        raise ValueError(f"{where}: the recipe does not list {unlisted}, which the code calls")
 
 
 def checked_entry(where: str, op: str, entry: Entry, integer: bool, isa: Isa, approx: dict[str, Approx]) -> None:

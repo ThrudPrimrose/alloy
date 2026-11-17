@@ -102,10 +102,11 @@ def test_an_isa_alias_resolves_to_its_base_isa():
 
 
 def test_reverse_maps_an_intrinsic_back_to_the_math():
-    (hit,) = reverse("_mm256_add_pd", TABLE)
+    hit, *steps = reverse("_mm256_add_pd", TABLE)
 
     assert (hit.isa, hit.op, hit.dtype) == ("avx2", "add", "f64")
     assert hit.via == "intrinsic"
+    assert [(h.op, h.via) for h in steps] == [("scan_add", "recipe")]  # the scan's recipe lists its add
 
 
 def test_reverse_maps_a_mnemonic_to_every_isa_that_uses_it():
@@ -144,9 +145,11 @@ def test_reverse_reads_disassembly_spellings(name, isa, op, dtype):
 
 @pytest.mark.parametrize("name", ["svadd_f64_m", "svadd_f64_z", "_mm512_maskz_add_pd", "_mm512_mask3_fmadd_pd"])
 def test_reverse_of_a_policy_variant_is_not_duplicated(name):
-    hits = [(h.isa, h.op, h.dtype) for h in reverse(name, TABLE)]
+    found = reverse(name, TABLE)
+    hits = [(h.isa, h.op, h.dtype) for h in found]
 
-    assert len(hits) == len(set(hits)) == 1
+    assert len(hits) == len(set(hits))
+    assert len([h for h in found if h.via != "recipe"]) == 1  # a scan's recipe may list the add as a step
 
 
 @pytest.mark.parametrize("dtype", ["i64", "i32"])
@@ -262,7 +265,14 @@ def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere():
     assert lookup("neon", "add", "f16", TABLE).intrinsic == "vaddq_f16"
     assert lookup("sve", "add", "f16", TABLE).intrinsic == "svadd_f16_x"
     fallback = lookup("avx2", "fma", "f16", TABLE)
-    assert fallback.recipe == ("_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph")
+    assert fallback.recipe == (
+        "_mm256_cvtph_ps",
+        "_mm256_fmadd_ps",
+        "_mm256_cvtps_ph",
+        "_mm256_castsi256_si128",
+        "_mm256_extracti128_si256",
+        "_mm256_set_m128i",
+    )
     # bitwise f16 ops work directly on the storage even on AVX2
     assert lookup("avx2", "abs", "f16", TABLE).recipe == ("_mm256_set1_epi16", "_mm256_and_si256")
 
@@ -513,6 +523,8 @@ def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
             "needs code",
         ),
         ('_mm256_fnmadd_pd(q, b, a)"]', '_mm256_add_pd(q, b)"]', "the code never calls"),
+        ('"_mm256_permute2f128_pd", "_mm256_add_pd"]', '"_mm256_permute2f128_pd"]', "the recipe does not list"),
+        ('"vmlal_u32", "vreinterpretq_u64_s64", ', '"vmlal_u32", ', "the recipe does not list"),
     ],
 )
 def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):

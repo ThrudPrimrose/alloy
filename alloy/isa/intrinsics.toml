@@ -1483,7 +1483,7 @@ mnemonic = "vpandq"
 observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
-recipe = ["_mm512_and_si512"]
+recipe = ["_mm512_and_si512", "_mm512_castsi512_pd", "_mm512_castpd_si512", "_mm512_set1_epi64"]
 code = ["_mm512_castsi512_pd(_mm512_and_si512(_mm512_castpd_si512(v), _mm512_set1_epi64(0x7fffffffffffffffLL)))"]
 note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castpd_si512/_mm512_castsi512_pd, or use _mm512_abs_pd"
 
@@ -1492,7 +1492,7 @@ mnemonic = "vpxorq"
 observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
-recipe = ["_mm512_xor_si512"]
+recipe = ["_mm512_xor_si512", "_mm512_castsi512_pd", "_mm512_castpd_si512", "_mm512_set1_epi64"]
 code = ["_mm512_castsi512_pd(_mm512_xor_si512(_mm512_castpd_si512(v), _mm512_set1_epi64((long long)0x8000000000000000ULL)))"]
 note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castpd_si512/_mm512_castsi512_pd"
 
@@ -1555,7 +1555,7 @@ mnemonic = "vpandd"
 observed = ["vandpd", "vandps", "vpandq", "vpandd"]
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
-recipe = ["_mm512_and_si512"]
+recipe = ["_mm512_and_si512", "_mm512_castsi512_ps", "_mm512_castps_si512", "_mm512_set1_epi32"]
 code = ["_mm512_castsi512_ps(_mm512_and_si512(_mm512_castps_si512(v), _mm512_set1_epi32(0x7fffffff)))"]
 note = "no native FP abs: AND (viewed as integers) with 0x7fff...; go through _mm512_castps_si512/_mm512_castsi512_ps, or use _mm512_abs_ps"
 
@@ -1564,7 +1564,7 @@ mnemonic = "vpxord"
 observed = ["vxorpd", "vxorps", "vpxorq", "vpxord"]
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
-recipe = ["_mm512_xor_si512"]
+recipe = ["_mm512_xor_si512", "_mm512_castsi512_ps", "_mm512_castps_si512", "_mm512_set1_epi32"]
 code = ["_mm512_castsi512_ps(_mm512_xor_si512(_mm512_castps_si512(v), _mm512_set1_epi32((int)0x80000000U)))"]
 note = "no native FP neg: XOR (viewed as integers) with the sign bit; cast with _mm512_castps_si512/_mm512_castsi512_ps"
 
@@ -1652,7 +1652,7 @@ note = "no fmod: q = vrndq_f64(a/b) (frintz, toward zero), r = vfmsq_f64(a, q, b
 mnemonic = "ld1"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 8 (bytes per lane)"
-recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+recipe = ["per-lane scalar loads via vld1q_lane_f64(base + idx[j], v, j); keep indices affine to use vld1q instead", "vdupq_n_f64"]
 code = ["float64x2_t g = vdupq_n_f64(0)", "g = vld1q_lane_f64(base + idx[0], g, 0)", "vld1q_lane_f64(base + idx[1], g, 1)"]
 
 [isa.neon.f64.scatter]
@@ -1715,7 +1715,7 @@ note = "no fmod: q = vrndq_f32(a/b) (frintz, toward zero), r = vfmsq_f32(a, q, b
 mnemonic = "ld1"
 signature = "(base, idx) -> v"
 semantics = "v[j] = base[idx[j]], scale = 4 (bytes per lane)"
-recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead"]
+recipe = ["per-lane scalar loads via vld1q_lane_f32(base + idx[j], v, j); keep indices affine to use vld1q instead", "vdupq_n_f32"]
 code = ["float32x4_t g = vdupq_n_f32(0)", "g = vld1q_lane_f32(base + idx[0], g, 0)", "g = vld1q_lane_f32(base + idx[1], g, 1)", "g = vld1q_lane_f32(base + idx[2], g, 2)", "vld1q_lane_f32(base + idx[3], g, 3)"]
 
 [isa.neon.f32.scatter]
@@ -1874,7 +1874,7 @@ semantics = "v[j] = s, where s is the raw f16 bit pattern (bit-cast the value in
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = add(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_add_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_add_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes; build with -mf16c"
 
@@ -1882,7 +1882,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = sub(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_sub_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_sub_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_sub_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_sub_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1890,7 +1890,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = mul(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_mul_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_mul_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_mul_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_mul_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1898,7 +1898,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = div(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_div_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_div_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_div_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_div_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1906,7 +1906,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b, c) -> v"
 semantics = "v[j] = a[j]*b[j] + c[j] in f16, computed via f32; rounds twice, so not correctly rounded (about 1 f16 ulp)"
-recipe = ["_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_fmadd_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_fmadd_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b)), _mm256_cvtph_ps(_mm256_castsi256_si128(c))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_fmadd_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(c, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1914,7 +1914,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(v) -> v"
 semantics = "v[j] = sqrt(x[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_sqrt_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_sqrt_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_sqrt_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(v))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_sqrt_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(v, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1922,7 +1922,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_min_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_min_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_min_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_min_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -1930,7 +1930,7 @@ note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, conve
 mnemonic = "vcvtph2ps+op+vcvtps2ph"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j]) in f16, computed via f32"
-recipe = ["_mm256_cvtph_ps", "_mm256_max_ps", "_mm256_cvtps_ph"]
+recipe = ["_mm256_cvtph_ps", "_mm256_max_ps", "_mm256_cvtps_ph", "_mm256_castsi256_si128", "_mm256_extracti128_si256", "_mm256_set_m128i"]
 code = ["__m128i lo = _mm256_cvtps_ph(_mm256_max_ps(_mm256_cvtph_ps(_mm256_castsi256_si128(a)), _mm256_cvtph_ps(_mm256_castsi256_si128(b))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "__m128i hi = _mm256_cvtps_ph(_mm256_max_ps(_mm256_cvtph_ps(_mm256_extracti128_si256(a, 1)), _mm256_cvtph_ps(_mm256_extracti128_si256(b, 1))), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC)", "_mm256_set_m128i(hi, lo)"]
 note = "convert 8 f16 -> 8 f32 (twice per 16-lane vector), compute in f32, convert back with _mm256_cvtps_ph(.., _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC); arithmetic effectively runs at 8 lanes"
 
@@ -2043,7 +2043,7 @@ semantics = "v[j] = s"
 mnemonic = "vpandq"
 signature = "(v) -> v"
 semantics = "v[j] = |x[j]|"
-recipe = ["_mm512_and_si512"]
+recipe = ["_mm512_and_si512", "_mm512_castsi512_ph", "_mm512_castph_si512", "_mm512_set1_epi16"]
 code = ["_mm512_castsi512_ph(_mm512_and_si512(_mm512_castph_si512(v), _mm512_set1_epi16(0x7fff)))"]
 note = "AND (as integers) with 0x7fff, or _mm512_abs_ph"
 
@@ -2051,7 +2051,7 @@ note = "AND (as integers) with 0x7fff, or _mm512_abs_ph"
 mnemonic = "vpxorq"
 signature = "(v) -> v"
 semantics = "v[j] = -x[j]"
-recipe = ["_mm512_xor_si512"]
+recipe = ["_mm512_xor_si512", "_mm512_castsi512_ph", "_mm512_castph_si512", "_mm512_set1_epi16"]
 code = ["_mm512_castsi512_ph(_mm512_xor_si512(_mm512_castph_si512(v), _mm512_set1_epi16((short)0x8000)))"]
 note = "no FP16 neg: XOR (as integers) with 0x8000"
 
@@ -2285,7 +2285,7 @@ semantics = "v[j] = a[j] >> counts[j], logical"
 mnemonic = "vpcmpeq+vpandn+vpand"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["_mm256_cmpeq_epi64", "_mm256_andnot_si256", "_mm256_and_si256"]
+recipe = ["_mm256_cmpeq_epi64", "_mm256_andnot_si256", "_mm256_and_si256", "_mm256_set1_epi64x", "_mm256_setzero_si256"]
 code = ["__m256i ones = _mm256_set1_epi64x(-1)", "_mm256_and_si256(_mm256_andnot_si256(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()), ones), _mm256_andnot_si256(_mm256_cmpeq_epi64(b, _mm256_setzero_si256()), ones))"]
 note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
 
@@ -2293,14 +2293,14 @@ note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0
 mnemonic = "vpcmpeq+vpand+vpandn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["_mm256_cmpeq_epi64", "_mm256_and_si256", "_mm256_andnot_si256"]
+recipe = ["_mm256_cmpeq_epi64", "_mm256_and_si256", "_mm256_andnot_si256", "_mm256_setzero_si256", "_mm256_set1_epi64x"]
 code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi64(a, _mm256_setzero_si256()), _mm256_cmpeq_epi64(b, _mm256_setzero_si256())), _mm256_set1_epi64x(-1))"]
 
 [isa.avx2.i64.mod]
 mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1 (idiv traps on both), load the result; f64 division is exact only while |a| < 2^53, and AVX2 has no vcvtqq2pd for i64 lanes", "_mm256_storeu_si256", "_mm256_loadu_si256"]
 code = ["int64_t x[4], y[4]", "_mm256_storeu_si256((__m256i*)x, a)", "_mm256_storeu_si256((__m256i*)y, b)", "for (int j = 0; j < 4; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm256_loadu_si256((const __m256i*)x)"]
 
 [isa.avx2.i32.and]
@@ -2331,7 +2331,7 @@ semantics = "v[j] = a[j] >> counts[j], logical"
 mnemonic = "vpcmpeq+vpandn+vpand"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["_mm256_cmpeq_epi32", "_mm256_andnot_si256", "_mm256_and_si256"]
+recipe = ["_mm256_cmpeq_epi32", "_mm256_andnot_si256", "_mm256_and_si256", "_mm256_set1_epi32", "_mm256_setzero_si256"]
 code = ["__m256i ones = _mm256_set1_epi32(-1)", "_mm256_and_si256(_mm256_andnot_si256(_mm256_cmpeq_epi32(a, _mm256_setzero_si256()), ones), _mm256_andnot_si256(_mm256_cmpeq_epi32(b, _mm256_setzero_si256()), ones))"]
 note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0/1"
 
@@ -2339,14 +2339,14 @@ note = "and the andnot-equals-zero compares; the result is all-ones lanes, not 0
 mnemonic = "vpcmpeq+vpand+vpandn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["_mm256_cmpeq_epi32", "_mm256_and_si256", "_mm256_andnot_si256"]
+recipe = ["_mm256_cmpeq_epi32", "_mm256_and_si256", "_mm256_andnot_si256", "_mm256_setzero_si256", "_mm256_set1_epi32"]
 code = ["_mm256_andnot_si256(_mm256_and_si256(_mm256_cmpeq_epi32(a, _mm256_setzero_si256()), _mm256_cmpeq_epi32(b, _mm256_setzero_si256())), _mm256_set1_epi32(-1))"]
 
 [isa.avx2.i32.mod]
 mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1 (idiv traps on both), load the result; or divide in f64 (vcvtdq2pd), exact for every i32", "_mm256_storeu_si256", "_mm256_loadu_si256"]
 code = ["int32_t x[8], y[8]", "_mm256_storeu_si256((__m256i*)x, a)", "_mm256_storeu_si256((__m256i*)y, b)", "for (int j = 0; j < 8; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm256_loadu_si256((const __m256i*)x)"]
 
 [isa.avx512.i64.and]
@@ -2392,7 +2392,7 @@ semantics = "k = ka || kb, on compare masks"
 mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1 (idiv traps on both), load the result; or divide in f64 (vcvtqq2pd, AVX-512DQ) while |a| < 2^53", "_mm512_storeu_si512", "_mm512_loadu_si512"]
 code = ["int64_t x[8], y[8]", "_mm512_storeu_si512(x, a)", "_mm512_storeu_si512(y, b)", "for (int j = 0; j < 8; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm512_loadu_si512(x)"]
 
 [isa.avx512.i32.and]
@@ -2436,7 +2436,7 @@ semantics = "k = ka || kb, on compare masks"
 mnemonic = "idiv"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1 (idiv traps on both), load the result; or divide in f64 (vcvtdq2pd), exact for every i32", "_mm512_storeu_si512", "_mm512_loadu_si512"]
 code = ["int32_t x[16], y[16]", "_mm512_storeu_si512(x, a)", "_mm512_storeu_si512(y, b)", "for (int j = 0; j < 16; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "_mm512_loadu_si512(x)"]
 
 [isa.neon.i64.and]
@@ -2462,7 +2462,7 @@ semantics = "v[j] = a[j] << counts[j]"
 mnemonic = "neg+ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
-recipe = ["vnegq_s64", "vshlq_u64"]
+recipe = ["vnegq_s64", "vshlq_u64", "vreinterpretq_s64_u64", "vreinterpretq_u64_s64"]
 code = ["vreinterpretq_s64_u64(vshlq_u64(vreinterpretq_u64_s64(a), vnegq_s64(counts)))"]
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; only the low byte of each count is read"
 
@@ -2471,7 +2471,7 @@ mnemonic = "cmeq+eor+and"
 observed = ["orr"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_s64", "veorq_u64", "vandq_u64"]
+recipe = ["vceqzq_s64", "veorq_u64", "vandq_u64", "vdupq_n_u64", "vreinterpretq_s64_u64"]
 code = ["uint64x2_t ones = vdupq_n_u64(~0ULL)", "vreinterpretq_s64_u64(vandq_u64(veorq_u64(vceqzq_s64(a), ones), veorq_u64(vceqzq_s64(b), ones)))"]
 note = "NEON has no vmvn on 64-bit lanes: complement with veorq against all-ones"
 
@@ -2480,14 +2480,14 @@ mnemonic = "cmeq+and+eor"
 observed = ["mvn"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_s64", "vandq_u64", "veorq_u64"]
+recipe = ["vceqzq_s64", "vandq_u64", "veorq_u64", "vreinterpretq_s64_u64", "vdupq_n_u64"]
 code = ["vreinterpretq_s64_u64(veorq_u64(vandq_u64(vceqzq_s64(a), vceqzq_s64(b)), vdupq_n_u64(~0ULL)))"]
 
 [isa.neon.i64.mod]
 mnemonic = "sdiv+msub"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1, load the result; or divide in f64 (scvtf) while |a| < 2^53", "vst1q_s64", "vld1q_s64"]
 code = ["int64_t x[2], y[2]", "vst1q_s64(x, a)", "vst1q_s64(y, b)", "for (int j = 0; j < 2; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "vld1q_s64(x)"]
 
 [isa.neon.i32.and]
@@ -2513,7 +2513,7 @@ semantics = "v[j] = a[j] << counts[j]"
 mnemonic = "neg+ushl"
 signature = "(a, counts) -> v"
 semantics = "v[j] = a[j] >> counts[j], logical"
-recipe = ["vnegq_s32", "vshlq_u32"]
+recipe = ["vnegq_s32", "vshlq_u32", "vreinterpretq_s32_u32", "vreinterpretq_u32_s32"]
 code = ["vreinterpretq_s32_u32(vshlq_u32(vreinterpretq_u32_s32(a), vnegq_s32(counts)))"]
 note = "vshlq shifts RIGHT for negative lane counts: negate the counts vector; only the low byte of each count is read"
 
@@ -2522,21 +2522,21 @@ mnemonic = "cmeq+mvn+and"
 observed = ["orr"]
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) && (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_s32", "vmvnq_u32", "vandq_u32"]
+recipe = ["vceqzq_s32", "vmvnq_u32", "vandq_u32", "vreinterpretq_s32_u32"]
 code = ["vreinterpretq_s32_u32(vandq_u32(vmvnq_u32(vceqzq_s32(a)), vmvnq_u32(vceqzq_s32(b))))"]
 
 [isa.neon.i32.lor]
 mnemonic = "cmeq+and+mvn"
 signature = "(a, b) -> v"
 semantics = "v[j] = (a[j] != 0) || (b[j] != 0), all-ones/0 lanes"
-recipe = ["vceqzq_s32", "vandq_u32", "vmvnq_u32"]
+recipe = ["vceqzq_s32", "vandq_u32", "vmvnq_u32", "vreinterpretq_s32_u32"]
 code = ["vreinterpretq_s32_u32(vmvnq_u32(vandq_u32(vceqzq_s32(a), vceqzq_s32(b))))"]
 
 [isa.neon.i32.mod]
 mnemonic = "sdiv+msub"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["no vector remainder: divide scalar per lane guarding b == 0 and b == -1 (idiv traps on both), or double division while |a| < 2^53 (i64 on AVX2 converts per lane: no vcvtqq2pd or vpmullq)", "r = a - q * b"]
+recipe = ["no vector remainder: store both vectors, take a % b per lane in scalar code guarding b == 0 and b == -1, load the result; or divide in f64, exact for every i32", "vst1q_s32", "vld1q_s32"]
 code = ["int32_t x[4], y[4]", "vst1q_s32(x, a)", "vst1q_s32(y, b)", "for (int j = 0; j < 4; j++) x[j] = y[j] == 0 || y[j] == -1 ? 0 : x[j] % y[j]", "vld1q_s32(x)"]
 
 [isa.sve.i64.and]
@@ -2569,7 +2569,7 @@ code = ["svreinterpret_s64_u64(svlsr_u64_x(pg, svreinterpret_u64_s64(a), svreint
 mnemonic = "cmpne+and"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
-recipe = ["svcmpne_s64", "svand_b_z"]
+recipe = ["svcmpne_s64", "svand_b_z", "svdup_s64"]
 code = ["svand_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))"]
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
@@ -2577,7 +2577,7 @@ note = "yields a predicate; svsel turns it into 0/1 lanes"
 mnemonic = "cmpne+orr"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
-recipe = ["svcmpne_s64", "svorr_b_z"]
+recipe = ["svcmpne_s64", "svorr_b_z", "svdup_s64"]
 code = ["svorr_b_z(pg, svcmpne_s64(pg, a, svdup_s64(0)), svcmpne_s64(pg, b, svdup_s64(0)))"]
 
 [isa.sve.i64.mod]
@@ -2585,7 +2585,7 @@ mnemonic = "sdiv+mls"
 observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["svdiv_s64_x", "svmls_s64_x", "svcmpeq_n_s64", "svsel_s64"]
+recipe = ["svdiv_s64_x", "svmls_s64_x", "svcmpeq_n_s64", "svsel_s64", "svdup_s64"]
 code = ["svint64_t q = svdiv_s64_x(pg, a, b)", "svsel_s64(svcmpeq_n_s64(pg, b, 0), svdup_s64(0), svmls_s64_x(pg, a, q, b))"]
 note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1"
 
@@ -2619,7 +2619,7 @@ code = ["svreinterpret_s32_u32(svlsr_u32_x(pg, svreinterpret_u32_s32(a), svreint
 mnemonic = "cmpne+and"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) && (b[j] != 0)"
-recipe = ["svcmpne_s32", "svand_b_z"]
+recipe = ["svcmpne_s32", "svand_b_z", "svdup_s32"]
 code = ["svand_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))"]
 note = "yields a predicate; svsel turns it into 0/1 lanes"
 
@@ -2627,7 +2627,7 @@ note = "yields a predicate; svsel turns it into 0/1 lanes"
 mnemonic = "cmpne+orr"
 signature = "(pg, a, b) -> pg"
 semantics = "lane j active iff (a[j] != 0) || (b[j] != 0)"
-recipe = ["svcmpne_s32", "svorr_b_z"]
+recipe = ["svcmpne_s32", "svorr_b_z", "svdup_s32"]
 code = ["svorr_b_z(pg, svcmpne_s32(pg, a, svdup_s32(0)), svcmpne_s32(pg, b, svdup_s32(0)))"]
 
 [isa.sve.i32.mod]
@@ -2635,7 +2635,7 @@ mnemonic = "sdiv+mls"
 observed = ["msb"]
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = a[j] % b[j], truncated (sign of a)"
-recipe = ["svdiv_s32_x", "svmls_s32_x", "svcmpeq_n_s32", "svsel_s32"]
+recipe = ["svdiv_s32_x", "svmls_s32_x", "svcmpeq_n_s32", "svsel_s32", "svdup_s32"]
 code = ["svint32_t q = svdiv_s32_x(pg, a, b)", "svsel_s32(svcmpeq_n_s32(pg, b, 0), svdup_s32(0), svmls_s32_x(pg, a, q, b))"]
 note = "q = svdiv(pg, a, b), r = svmls(pg, a, q, b); SDIV gives 0 for b == 0, so r would be a: select 0 there like the other targets; no trap on INT_MIN / -1"
 
@@ -2657,7 +2657,7 @@ semantics = "v[j] = a[j] - b[j], wrapping"
 mnemonic = "vpmuludq+vpmulld+vpsllq+vpaddq"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] * b[j], low bits"
-recipe = ["_mm256_mul_epu32", "_mm256_srli_epi64", "_mm256_mullo_epi32", "_mm256_slli_epi64", "_mm256_add_epi64"]
+recipe = ["_mm256_mul_epu32", "_mm256_srli_epi64", "_mm256_mullo_epi32", "_mm256_slli_epi64", "_mm256_add_epi64", "_mm256_shuffle_epi32"]
 code = ["__m256i cross = _mm256_mullo_epi32(a, _mm256_shuffle_epi32(b, 0xB1))", "__m256i high = _mm256_slli_epi64(_mm256_add_epi64(cross, _mm256_srli_epi64(cross, 32)), 32)", "_mm256_add_epi64(_mm256_mul_epu32(a, b), high)"]
 note = "no vpmullq on AVX2: lo*lo + ((hi(a)*lo(b) + lo(a)*hi(b)) << 32)"
 
@@ -2887,7 +2887,7 @@ semantics = "v[j] = a[j] - b[j], wrapping"
 mnemonic = "umull+umlal"
 signature = "(a, b) -> v"
 semantics = "v[j] = a[j] * b[j], low bits"
-recipe = ["vmovn_u64", "vmull_u32", "vmlal_u32"]
+recipe = ["vmovn_u64", "vmull_u32", "vmlal_u32", "vreinterpretq_u64_s64", "vshrn_n_u64", "vaddq_u64", "vreinterpretq_s64_u64", "vshlq_n_u64"]
 code = ["uint64x2_t ua = vreinterpretq_u64_s64(a), ub = vreinterpretq_u64_s64(b)", "uint32x2_t al = vmovn_u64(ua), bl = vmovn_u64(ub), ah = vshrn_n_u64(ua, 32), bh = vshrn_n_u64(ub, 32)", "uint64x2_t cross = vaddq_u64(vmull_u32(al, bh), vmull_u32(ah, bl))", "vreinterpretq_s64_u64(vmlal_u32(vshlq_n_u64(cross, 32), al, bl))"]
 note = "no vmulq_s64: lo*lo + ((cross terms) << 32), or scalar per lane"
 
@@ -3276,7 +3276,7 @@ note = "one instruction; a NaN lane gives NaN (svmaxnmv_f32 returns the number i
 mnemonic = "vpslldq + vaddpd + vpermilpd + vperm2f128 + vaddpd"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["_mm256_castsi256_pd", "_mm256_slli_si256", "_mm256_castpd_si256", "_mm256_permute_pd", "_mm256_permute2f128_pd"]
+recipe = ["_mm256_castsi256_pd", "_mm256_slli_si256", "_mm256_castpd_si256", "_mm256_permute_pd", "_mm256_permute2f128_pd", "_mm256_add_pd"]
 code = ["__m256d t = _mm256_add_pd(v, _mm256_castsi256_pd(_mm256_slli_si256(_mm256_castpd_si256(v), 8)))", "__m256d u = _mm256_permute_pd(t, 15)", "_mm256_add_pd(t, _mm256_permute2f128_pd(u, u, 8))"]
 note = "no single intrinsic: a byte shift scans each 128-bit half, then the low half's last lane is added to the high half. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3284,7 +3284,7 @@ note = "no single intrinsic: a byte shift scans each 128-bit half, then the low 
 mnemonic = "vpslldq + vaddps + vpslldq + vaddps + vpermilps + vperm2f128 + vaddps"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["_mm256_castsi256_ps", "_mm256_slli_si256", "_mm256_castps_si256", "_mm256_permute_ps", "_mm256_permute2f128_ps"]
+recipe = ["_mm256_castsi256_ps", "_mm256_slli_si256", "_mm256_castps_si256", "_mm256_permute_ps", "_mm256_permute2f128_ps", "_mm256_add_ps"]
 code = ["__m256 t = _mm256_add_ps(v, _mm256_castsi256_ps(_mm256_slli_si256(_mm256_castps_si256(v), 4)))", "t = _mm256_add_ps(t, _mm256_castsi256_ps(_mm256_slli_si256(_mm256_castps_si256(t), 8)))", "__m256 u = _mm256_permute_ps(t, 255)", "_mm256_add_ps(t, _mm256_permute2f128_ps(u, u, 8))"]
 note = "no single intrinsic: two byte shifts scan each 128-bit half, then the low half's last lane is added to the high half. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3292,7 +3292,7 @@ note = "no single intrinsic: two byte shifts scan each 128-bit half, then the lo
 mnemonic = "valignq + vaddpd"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["_mm512_setzero_si512", "_mm512_castsi512_pd", "_mm512_alignr_epi64", "_mm512_castpd_si512"]
+recipe = ["_mm512_setzero_si512", "_mm512_castsi512_pd", "_mm512_alignr_epi64", "_mm512_castpd_si512", "_mm512_add_pd"]
 code = ["__m512i z = _mm512_setzero_si512()", "__m512d t = _mm512_add_pd(v, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(v), z, 7)))", "t = _mm512_add_pd(t, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(t), z, 6)))", "_mm512_add_pd(t, _mm512_castsi512_pd(_mm512_alignr_epi64(_mm512_castpd_si512(t), z, 4)))"]
 note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4 with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3300,7 +3300,7 @@ note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4 with zeros en
 mnemonic = "valignd + vaddps"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["_mm512_setzero_si512", "_mm512_castsi512_ps", "_mm512_alignr_epi32", "_mm512_castps_si512"]
+recipe = ["_mm512_setzero_si512", "_mm512_castsi512_ps", "_mm512_alignr_epi32", "_mm512_castps_si512", "_mm512_add_ps"]
 code = ["__m512i z = _mm512_setzero_si512()", "__m512 t = _mm512_add_ps(v, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(v), z, 15)))", "t = _mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 14)))", "t = _mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 12)))", "_mm512_add_ps(t, _mm512_castsi512_ps(_mm512_alignr_epi32(_mm512_castps_si512(t), z, 8)))"]
 note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4, 8 with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3308,7 +3308,7 @@ note = "no single intrinsic: valign shifts the lanes up by 1, 2, 4, 8 with zeros
 mnemonic = "ext + fadd"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["vextq_f64"]
+recipe = ["vextq_f64", "vaddq_f64", "vdupq_n_f64"]
 code = ["vaddq_f64(v, vextq_f64(vdupq_n_f64(0), v, 1))"]
 note = "no single intrinsic: ext shifts the lanes up by one with a zero entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3316,7 +3316,7 @@ note = "no single intrinsic: ext shifts the lanes up by one with a zero entering
 mnemonic = "ext + fadd"
 signature = "(v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j]"
-recipe = ["vextq_f32"]
+recipe = ["vextq_f32", "vaddq_f32", "vdupq_n_f32"]
 code = ["float32x4_t t = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 3))", "vaddq_f32(t, vextq_f32(vdupq_n_f32(0), t, 2))"]
 note = "no single intrinsic: ext shifts the lanes up by 1, then 2, with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3324,7 +3324,7 @@ note = "no single intrinsic: ext shifts the lanes up by 1, then 2, with zeros en
 mnemonic = "index + tbl + fadd"
 signature = "(pg, v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg"
-recipe = ["svtbl_f64", "svsub_n_u64_x", "svindex_u64"]
+recipe = ["svtbl_f64", "svsub_n_u64_x", "svindex_u64", "svadd_f64_x"]
 code = ["svfloat64_t t = v", "for (uint64_t d = 1; d < svcntd(); d *= 2) t = svadd_f64_x(pg, t, svtbl_f64(t, svsub_n_u64_x(pg, svindex_u64(0, 1), d)))", "t"]
 note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
 
@@ -3332,6 +3332,6 @@ note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (a
 mnemonic = "index + tbl + fadd"
 signature = "(pg, v) -> v"
 semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg"
-recipe = ["svtbl_f32", "svsub_n_u32_x", "svindex_u32"]
+recipe = ["svtbl_f32", "svsub_n_u32_x", "svindex_u32", "svadd_f32_x"]
 code = ["svfloat32_t t = v", "for (uint32_t d = 1; d < svcntw(); d *= 2) t = svadd_f32_x(pg, t, svtbl_f32(t, svsub_n_u32_x(pg, svindex_u32(0, 1), d)))", "t"]
 note = "no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before"
