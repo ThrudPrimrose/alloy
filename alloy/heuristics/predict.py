@@ -60,6 +60,8 @@ CALL_CYCLES = 30.0
 SOURCE_LINE = re.compile(r"^; (.*):(\d+)$")
 #: A rendered statement's trailing comment: the label of the tasklet it renders.
 TASKLET_COMMENT = re.compile(r";\s*//\s*([A-Za-z_]\w*)\s*$")
+#: A tasklet rendered as a block: its opening brace carries the label.
+BLOCK_COMMENT = re.compile(r"\{\s*//\s*([A-Za-z_]\w*)\s*$")
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)\s*(.*?)\s*$")
 FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
 #: A relocation names a call's callee.
@@ -380,8 +382,24 @@ def accesses_per_element(scope: Scope) -> int:
 
 
 def tasklet_lines(source: pathlib.Path) -> dict[int, str]:
+    """Each line naming a tasklet in its trailing comment, and every line of a tasklet rendered as a block (``{  //
+    label`` up to its closing brace), whose statements carry no comment of their own."""
     lines = source.read_text().splitlines() if source.is_file() else []
-    return {n: m.group(1) for n, text in enumerate(lines, start=1) if (m := TASKLET_COMMENT.search(text)) is not None}
+    out: dict[int, str] = {}
+    block, depth = "", 0
+    for n, text in enumerate(lines, start=1):
+        code = text.split("//", 1)[0]
+        if block:
+            own = TASKLET_COMMENT.search(text)
+            out[n] = own.group(1) if own is not None else block
+            depth += code.count("{") - code.count("}")
+            if depth <= 0:
+                block = ""
+        elif (named := TASKLET_COMMENT.search(text) or BLOCK_COMMENT.search(text)) is not None:
+            out[n] = named.group(1)
+            if code.rstrip().endswith("{"):
+                block, depth = named.group(1), code.count("{") - code.count("}")
+    return out
 
 
 def evaluated(volume: sympy.Expr, sizes: dict[str, int] | None) -> float | None:

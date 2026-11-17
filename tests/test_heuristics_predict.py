@@ -423,6 +423,34 @@ def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path
     assert predict.tasklet_lines(source) == {2: "_Mult_", 3: "assign_3"}
 
 
+#: CPF renders a tasklet with a body of several statements as a block whose opening line carries the label.
+BLOCK_TASKLET = """for (i = 0; i < N; i += 1) {
+    t = (2.0 * x[i]);  // _Mult_
+    {  // assign_72_8
+        double __out;
+        __out = t;
+        *(a + i) = *(a + i) + (__out);
+    }
+}
+"""
+
+
+def test_every_statement_of_a_tasklet_rendered_as_a_block_names_that_tasklet(tmp_path):
+    """A12: the write of a WCR tasklet sits inside its block, without a comment of its own; a contracted build puts
+    the fused multiply-add on that line, so the loop named no tasklet and a scope's other loops dropped it."""
+    source = tmp_path / "v0.c"
+    source.write_text(BLOCK_TASKLET)
+
+    assert predict.tasklet_lines(source) == {
+        2: "_Mult_",
+        3: "assign_72_8",
+        4: "assign_72_8",
+        5: "assign_72_8",
+        6: "assign_72_8",
+        7: "assign_72_8",
+    }
+
+
 HEADER = "static inline double twice(double x) {\n  return x * 2.0 + 1.0;\n}\n"
 #: Line 2 names a tasklet the loop never runs; line 2 of the header is the inlined body the loop does run.
 UNIT = """#include "twice.h"
