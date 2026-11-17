@@ -12,6 +12,7 @@ from dace.libraries.blas import nodes as blas
 from dace.libraries.standard.nodes import ArgReduce, Reduce, Scan, external_call
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import LoopRegion
 from dace.transformation import passes
 
 CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -57,13 +58,43 @@ def called_names(sdfg: dace.SDFG) -> set[str]:
 
 
 def has_reduction(sdfg: dace.SDFG) -> bool:
-    """Whether ``sdfg`` reduces: a write-conflict-resolution memlet or a library node of :data:`REDUCING`."""
+    """Whether ``sdfg`` reduces: a library node of :data:`REDUCING`, or a write-conflict-resolution memlet that more
+    than one iteration writes through (:func:`accumulates`). An update in place, ``a[i] += ...`` over a map on ``i``,
+    is a WCR memlet whose element each iteration writes once: nothing reassociates there."""
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, REDUCING):
             return True
-    return any(
-        edge.data.wcr is not None for edge, _ in sdfg.all_edges_recursive() if isinstance(edge.data, dace.Memlet)
-    )
+    return accumulates(sdfg)
+
+
+def enclosing_loop_variables(block: Any) -> set[str]:
+    """The variables of the sequential loops around ``block`` inside its SDFG."""
+    found: set[str] = set()
+    region = block.parent_graph
+    while isinstance(region, LoopRegion) or (region is not None and not isinstance(region, dace.SDFG)):
+        if isinstance(region, LoopRegion):
+            found.add(region.loop_variable)
+        region = region.parent_graph
+    return found
+
+
+def accumulates(sdfg: dace.SDFG) -> bool:
+    """Whether a WCR memlet of ``sdfg`` (or of a nested SDFG) is written by more than one iteration: an enclosing map
+    parameter or sequential loop variable that does not index its destination, or a reduced extent that is not 1."""
+    for state in sdfg.states():
+        scope = state.scope_dict()
+        loops = enclosing_loop_variables(state)
+        for edge in state.edges():
+            if edge.data.is_empty() or edge.data.wcr is None:
+                continue
+            if not isinstance(edge.src, (nodes.Tasklet, nodes.AccessNode, nodes.NestedSDFG)):
+                continue  # a map exit's edge repeats the WCR of the edge inside the map
+            indexed = {str(s) for s in edge.data.subset.free_symbols} if edge.data.subset is not None else set()
+            if loops - indexed or reduced_extent(edge, scope) != 1:
+                return True
+        if any(accumulates(n.sdfg) for n in state.nodes() if isinstance(n, nodes.NestedSDFG)):
+            return True
+    return False
 
 
 def reduced_extent(

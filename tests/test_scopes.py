@@ -129,3 +129,33 @@ def test_a_threaded_blas_sum_reduces_so_its_program_sweeps_team_sizes(program):
     assert scope.has_reduction
     assert str(scope.accumulation_length) == "N"
     assert verify.at_team_sizes(sut, verify.Cases([draw], ("out",))).teams == len(verify.REDUCTION_TEAMS)
+
+
+K = dace.symbol("K", dace.int64)
+
+
+@dace.program
+def update_in_place(a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        a[i] += 2.0 * b[i]
+
+
+@dace.program
+def row_totals_in_order(a: dace.float64[N, K], out: dace.float64[N]):
+    for i in dace.map[0:N]:
+        for k in range(K):
+            out[i] += a[i, k]
+
+
+def test_an_update_in_place_writes_each_element_once_so_its_scope_does_not_reduce():
+    """A12: ``a[i] += ...`` is a WCR memlet that no two iterations share, so nothing reassociates: a scope that only
+    updates in place takes the FP default of an elementwise scope and is verified at one team size."""
+    (sut,) = scopes.outline(update_in_place.to_sdfg(), MATRIX.libm_calls).scopes
+
+    assert not sut.has_reduction
+
+
+def test_an_accumulation_over_a_sequential_loop_reduces_though_no_map_iterations_conflict():
+    (sut,) = scopes.outline(row_totals_in_order.to_sdfg(), MATRIX.libm_calls).scopes
+
+    assert sut.has_reduction
