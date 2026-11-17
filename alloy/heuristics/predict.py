@@ -52,6 +52,8 @@ GATHER = re.compile(r"^v(gather|scatter|pgather|pscatter)")
 #: An atomic read-modify-write: x86's ``lock`` prefix (objdump splits it off as the mnemonic), aarch64's LSE atomics
 #: and exclusive pairs. Every thread's update of one address is serialized: an ``omp atomic`` per element.
 ATOMIC = re.compile(r"^(lock$|ld(add|clr|eor|set|smax|smin|umax|umin)|casp?[albh]*$|swp|ld[a]?xr|st[l]?xr)")
+#: The half of an aarch64 exclusive pair that only reads: its store-exclusive is the update.
+EXCLUSIVE_LOAD = re.compile(r"^ld[a]?xr")
 
 #: Cycles per call in a loop: llvm-mca cannot see a callee, so one call per vector ranks above one per element.
 CALL_CYCLES = 30.0
@@ -420,7 +422,10 @@ def loop_cost(
     per_element = width * accesses
     elements = max(1.0, data_bytes(loop) / per_element)
     cycles += GATHER_LANE_CYCLES * sum(element_lanes(i, width) for i in loop.body if GATHER.match(i.mnemonic))
-    atomic = any(ATOMIC.match(i.mnemonic) for i in loop.body)
+    updates = sum(bool(ATOMIC.match(i.mnemonic)) and not EXCLUSIVE_LOAD.match(i.mnemonic) for i in loop.body)
+    if updates:  # one element per atomic update: its load and compare-and-swap of the target move no array element
+        elements = float(updates)
+    atomic = updates > 0
     return LoopCost(tasklets, cycles, elements, hot_calls(loop, elements), float(per_element), 1.0, atomic)
 
 

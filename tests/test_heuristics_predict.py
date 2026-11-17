@@ -609,3 +609,20 @@ def test_a_parallel_sum_through_an_atomic_per_element_is_predicted_at_a_team_of_
     assert sut is not None and any(c.atomic for c in sut.loops)
     alone = sum(c.weight * (c.cycles + predict.CALL_CYCLES * c.calls) / c.elements for c in sut.loops if c.atomic)
     assert sut.compute >= alone
+
+
+@pytest.mark.gcc
+def test_an_atomic_update_per_element_handles_one_element_per_iteration_whatever_its_read_modify_write_moves(
+    tmp_path,
+):
+    """A12: an atomic add of a double is a load, a compare-and-swap and the array's own load, three 8-byte accesses
+    of which only the array's is per element; counted by bytes, the loop took three elements an iteration and was
+    predicted three times too cheap. Each atomic update is one element."""
+    scope = only_scope(atomic_total)
+    built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
+
+    sut = predict.predict(built, scope, MATRIX)
+
+    assert sut is not None
+    atomic = [c for c in sut.loops if c.atomic]
+    assert atomic and all(c.elements == 1.0 for c in atomic), [(c.elements, c.cycles) for c in atomic]
