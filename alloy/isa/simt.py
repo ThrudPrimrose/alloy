@@ -137,7 +137,9 @@ def program(row: Row, dialect: str) -> str:
     it checks (only lane 0 for a row whose result lands there)."""
     api, lanes = API[dialect], LANES[dialect]
     lo, hi = row.domain
-    includes = "\n".join(f"#include <{h}>" for h in ["cstdio", "cmath", *table()["target"][dialect]["headers"]])
+    includes = "\n".join(
+        f"#include <{h}>" for h in ["cstdio", "cmath", "cstring", *table()["target"][dialect]["headers"]]
+    )
     if dialect == "hip":
         includes = "#include <hip/hip_runtime.h>\n" + includes
     body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)} {row.read}".rstrip()
@@ -153,6 +155,8 @@ def program(row: Row, dialect: str) -> str:
 __host__ __device__ static inline float A(int k) {{ return {lo}f + ({hi}f - {lo}f) * (k + 0.5f) / LANES; }}
 __host__ __device__ static inline float B(int k) {{ return 0.5f + 1.5f * ((k * 7 + 3) % LANES + 0.5f) / LANES; }}
 #define C 0.25f
+// A float rounded to the nearest bf16 (ties to even): the reference of a row that stores bf16.
+static inline float RB(float v) {{ unsigned u; memcpy(&u, &v, 4); u += 0x7fffu + ((u >> 16) & 1u); u &= 0xffff0000u; memcpy(&v, &u, 4); return v; }}
 static inline float wide_ref(int lane) {{ return (float)((lane / 4) * 4) * 0.5f; }}
 
 typedef {elem} elem;
