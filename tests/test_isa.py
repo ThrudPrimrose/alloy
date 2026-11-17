@@ -12,6 +12,7 @@ import sys
 import pytest
 
 from alloy.isa import OPS, load, lookup, reverse
+from alloy.isa.__main__ import main
 from alloy.isa.table import ALIASES, ALL_DTYPES, DEFAULT_PATH, DTYPES
 from helpers import MATRIX
 
@@ -261,7 +262,7 @@ def test_a_float_op_is_refused_on_an_integer_dtype():
 
 
 def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere():
-    assert lookup("avx512", "fma", "f16", TABLE).intrinsic == "_mm512_fmadd_ph"
+    assert lookup("avx512_fp16", "fma", "f16", TABLE).intrinsic == "_mm512_fmadd_ph"
     assert lookup("neon", "add", "f16", TABLE).intrinsic == "vaddq_f16"
     assert lookup("sve", "add", "f16", TABLE).intrinsic == "svadd_f16_x"
     fallback = lookup("avx2", "fma", "f16", TABLE)
@@ -400,9 +401,22 @@ def test_the_cli_refuses_a_maskless_gen_mask():
     assert "no predication" in run.stderr
 
 
-def test_gen_mask_is_not_required_for_f16():
-    with pytest.raises(KeyError, match="unsupported"):
-        lookup("avx512", "gen_mask", "f16", TABLE)
+def test_every_predicated_target_with_f16_lanes_masks_them():
+    assert lookup("avx512_fp16", "gen_mask", "f16", TABLE).intrinsic == "_mm512_cmplt_epu16_mask"
+    assert lookup("sve", "gen_mask", "f16", TABLE).intrinsic == "svwhilelt_b16_s64"
+
+
+@pytest.mark.parametrize("op", ["add", "fma", "load", "gen_mask"])
+def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op):
+    """Zen 4 runs AVX-512 without AVX512-FP16, so an f16 row of plain avx512 would not run there."""
+    with pytest.raises(KeyError, match="use target avx512_fp16"):
+        lookup("avx512", op, "f16", TABLE)
+    assert lookup("avx512_fp16", "add", "f64", TABLE) is lookup("avx512", "add", "f64", TABLE)
+
+
+def test_the_lookup_command_refuses_plain_avx512_f16(capsys):
+    assert main(["lookup", "avx512", "add", "f16", "--no-verify"]) == 2
+    assert "avx512_fp16" in capsys.readouterr().err
 
 
 def test_the_skill_pages_render_from_the_table(tmp_path):
@@ -424,6 +438,14 @@ def test_the_skill_pages_render_from_the_table(tmp_path):
     assert "_ZGVdN4v_sin" in trans
 
 
+@pytest.mark.parametrize("name", ["_mm512_getexp_pd", "_mm512_getmant_pd", "svlogb_f64_x"])
+def test_the_exponent_and_mantissa_assists_help_log(name):
+    """frexp's split is the range reduction of log; exp scales by 2^k instead (scalef, fexpa)."""
+    (hit,) = TABLE.assist(name)
+
+    assert hit.assist.helps == "log"
+
+
 def test_the_assists_reverse_by_name_and_mnemonic():
     (hit,) = TABLE.assist("svexpa_f64")
 
@@ -438,14 +460,6 @@ def test_every_assist_spelling_exists_in_the_clang_headers():
     include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
-@pytest.mark.parametrize("name", ["_mm512_getexp_pd", "_mm512_getmant_pd", "svlogb_f64_x"])
-def test_the_exponent_and_mantissa_assists_help_log(name):
-    """frexp's split is the range reduction of log; exp scales by 2^k instead (scalef, fexpa)."""
-    (hit,) = TABLE.assist(name)
-
-    assert hit.assist.helps == "log"
-
-
     blob = header_blob()
     missing = [
         assist.name

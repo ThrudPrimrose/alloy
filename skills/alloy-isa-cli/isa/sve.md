@@ -41,8 +41,8 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = sin(v[j]) | no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 1023)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `cos` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = cos(v[j]) | no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f64(svuint64)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 1023)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; SVSCALE_F64_X does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `sqrt` | `svsqrt_f64_x` | `fsqrt` | `(pg, v) -> v` | — | v[j] = sqrt(x[j]) for active lanes |  |
-| `min` | `svmin_f64_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) for active lanes | svmin propagates NaN; svminnm_f64_x is the IEEE minNum form |
-| `max` | `svmax_f64_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) for active lanes |  |
+| `min` | `svmin_f64_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) for active lanes | svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form |
+| `max` | `svmax_f64_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) for active lanes | svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form |
 | `abs` | `svabs_f64_x` | `fabs` | `(pg, v) -> v` | — | v[j] = \|x[j]\| for active lanes | native, unlike x86 |
 | `neg` | `svneg_f64_x` | `fneg` | `(pg, v) -> v` | — | v[j] = -x[j] for active lanes | native, unlike x86 |
 | `select` | `svsel_f64` | `sel` | `(pg, t, f) -> v` | — | v[j] = pg[j] ? t[j] : f[j] | predicate FIRST; no activity suffix - SEL is not predicated on a second predicate |
@@ -50,6 +50,9 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `gather` | `svld1_gather_s64index_f64` | `ld1d (gather)` | `(pg, base, idx) -> v` | — | v[j] = base[idx[j]] for active lanes | first-faulting svldff1_gather_... variants exist for speculative access |
 | `scatter` | `svst1_scatter_s64index_f64` | `st1d (scatter)` | `(pg, base, idx, v) -> void` | — | base[idx[j]] = v[j] for active lanes |  |
 | `lt` | `svcmplt_f64` | `fcmgt` | `(pg, a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | a predicate |
+| `reduce_min` | `svminv_f64` | `fminv` | `(pg, v) -> s` | — | s = the smallest of the active lanes of v | one instruction; a NaN lane gives NaN (svminnmv_f64 returns the number instead) |
+| `reduce_max` | `svmaxv_f64` | `fmaxv` | `(pg, v) -> s` | — | s = the largest of the active lanes of v | one instruction; a NaN lane gives NaN (svmaxnmv_f64 returns the number instead) |
+| `scan_add` | recipe: `svfloat64_t t = v`; `for (uint64_t d = 1; d < svcntd(); d *= 2) t = svadd_f64_x(pg, t, svtbl_f64(t, svsub_n_u64_x(pg, svindex_u64(0, 1), d)))`; `t` | `index + tbl + fadd` | `(pg, v) -> v` | — | inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg | no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before |
 
 ### f32
 
@@ -70,8 +73,8 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = sin(v[j]) | no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f32(svuint32)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 127)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; svscale_f32_x does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `cos` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = cos(v[j]) | no native transcendental instruction, but SVE has the best exp assist: SVEXPA (ACLE SVE 6.16.30, svexpa_f32(svuint32)) returns 2^(I/64) with the exponent field replaced - the hardware 2^(j/64) table of the sub-1-ulp route: input (k + 127)*64 + j, SVEXPA yields 2^k*2^(j/64) and a short polynomial finishes; svscale_f32_x does ldexp-style scaling, SVLOGB (SVE2) extracts exponents, SVRECPE/SVRSQRTE give estimates refined by SVRECPS; SLEEF also ships SVE implementations - check the installed sleef.h for the exact spelling; range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `sqrt` | `svsqrt_f32_x` | `fsqrt` | `(pg, v) -> v` | — | v[j] = sqrt(x[j]) for active lanes |  |
-| `min` | `svmin_f32_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) for active lanes | svmin propagates NaN; svminnm_f32_x is the IEEE minNum form |
-| `max` | `svmax_f32_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) for active lanes |  |
+| `min` | `svmin_f32_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) for active lanes | svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form |
+| `max` | `svmax_f32_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) for active lanes | svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form |
 | `abs` | `svabs_f32_x` | `fabs` | `(pg, v) -> v` | — | v[j] = \|x[j]\| for active lanes | native, unlike x86 |
 | `neg` | `svneg_f32_x` | `fneg` | `(pg, v) -> v` | — | v[j] = -x[j] for active lanes | native, unlike x86 |
 | `select` | `svsel_f32` | `sel` | `(pg, t, f) -> v` | — | v[j] = pg[j] ? t[j] : f[j] | predicate FIRST; no activity suffix - SEL is not predicated on a second predicate |
@@ -79,6 +82,9 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `gather` | `svld1_gather_s32index_f32` | `ld1w (gather)` | `(pg, base, idx) -> v` | — | v[j] = base[idx[j]] for active lanes | first-faulting svldff1_gather_... variants exist for speculative access |
 | `scatter` | `svst1_scatter_s32index_f32` | `st1w (scatter)` | `(pg, base, idx, v) -> void` | — | base[idx[j]] = v[j] for active lanes |  |
 | `lt` | `svcmplt_f32` | `fcmgt` | `(pg, a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | a predicate |
+| `reduce_min` | `svminv_f32` | `fminv` | `(pg, v) -> s` | — | s = the smallest of the active lanes of v | one instruction; a NaN lane gives NaN (svminnmv_f32 returns the number instead) |
+| `reduce_max` | `svmaxv_f32` | `fmaxv` | `(pg, v) -> s` | — | s = the largest of the active lanes of v | one instruction; a NaN lane gives NaN (svmaxnmv_f32 returns the number instead) |
+| `scan_add` | recipe: `svfloat32_t t = v`; `for (uint32_t d = 1; d < svcntw(); d *= 2) t = svadd_f32_x(pg, t, svtbl_f32(t, svsub_n_u32_x(pg, svindex_u32(0, 1), d)))`; `t` | `index + tbl + fadd` | `(pg, v) -> v` | — | inclusive prefix sum: v[j] = x[0] + ... + x[j] for an all-true pg | no single intrinsic and no fixed length: tbl shifts the lanes up by d (an index below zero wraps out of range and reads 0), for d = 1, 2, 4, ... below the lane count. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before |
 
 ### f16
 
@@ -91,8 +97,8 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 | `gen_mask` | `svwhilelt_b16_s64` | `whilelt` | `(i, N) -> pg` | — | lane j active iff i + j < N | the standardized gen_mask; the loop steps by svcnth() and never needs a remainder loop |
 | `fma` | `svmla_f16_x` | `fmla` | `(pg, add, m1, m2) -> v` | — | v[j] = add[j] + m1[j]*m2[j] | accumulator FIRST, like every SVE fma |
 | `sqrt` | `svsqrt_f16_x` | `fsqrt` | `(pg, v) -> v` | — | v[j] = sqrt(x[j]) |  |
-| `min` | `svmin_f16_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) |  |
-| `max` | `svmax_f16_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) |  |
+| `min` | `svmin_f16_x` | `fmin` | `(pg, a, b) -> v` | — | v[j] = min(a[j], b[j]) | svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form |
+| `max` | `svmax_f16_x` | `fmax` | `(pg, a, b) -> v` | — | v[j] = max(a[j], b[j]) | svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form |
 | `abs` | `svabs_f16_x` | `fabs` | `(pg, v) -> v` | — | v[j] = \|x[j]\| |  |
 | `neg` | `svneg_f16_x` | `fneg` | `(pg, v) -> v` | — | v[j] = -x[j] |  |
 | `load` | `svld1_f16` | `ld1h` | `(pg, p) -> v` | — | v[j] = p[j] for active lanes |  |
@@ -148,7 +154,7 @@ Scalable: the vector length is fixed at reset (128..2048 bits, 128-bit steps) an
 |---|---|---|---|
 | `svexpa_f64` | `fexpa` | exp | the hardware 2^(I/64) table with the exponent field replaced (ACLE SVE 6.16.30): the input is (k + 1023)*64 + j for f64 and (k + 127)*64 + j for f32 (the biased exponent), EXPA yields 2^k*2^(j/64) and a short polynomial finishes - the sub-1-ulp exp building block |
 | `svscale_f64_x` | `fscale` | exp | ldexp-style scaling by 2^floor(n): the 2^k of the exp k-split, predicated |
-| `svlogb_f64_x` | `flogb` | exp | SVE2 only (-march=armv8-a+sve2), returns svint64_t: floor(log2\|x\|) per lane, frexp's e minus 1, predicated |
+| `svlogb_f64_x` | `flogb` | log | SVE2 only (-march=armv8-a+sve2), returns svint64_t: floor(log2\|x\|) per lane, frexp's e minus 1, predicated |
 | `svrecpe_f64` | `frecpe` | div | 8-bit reciprocal estimate; each Newton step is r = svmul(r, svrecps(d, r)), f64 needs 3 |
 | `svrsqrte_f64` | `frsqrte` | sqrt | rsqrt estimate; refine with the frsqrts step for a fast reciprocal square root |
 | `svrecps_f64` | `frecps` | div | returns only the factor 2 - d*r: the update is r = svmul_f64_x(pg, r, svrecps_f64(d, r)) |

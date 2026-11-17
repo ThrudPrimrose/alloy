@@ -31,8 +31,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = sin(v[j]) | no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `cos` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = cos(v[j]) | no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<52 to the exponent bits (vreinterpretq_u64_f64 + vaddq_u64); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `sqrt` | `vsqrtq_f64` | `fsqrt` | `(v) -> v` | — | v[j] = sqrt(x[j]) |  |
-| `min` | `vminq_f64` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | vminq/vmaxq propagate NaN; vminnmq/vmaxnmq are the IEEE minNum forms |
-| `max` | `vmaxq_f64` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) |  |
+| `min` | `vminq_f64` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form |
+| `max` | `vmaxq_f64` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) | vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form |
 | `abs` | `vabsq_f64` | `fabs` | `(v) -> v` | — | v[j] = \|x[j]\| | native on NEON, unlike x86 where abs is an AND-mask recipe |
 | `neg` | `vnegq_f64` | `fneg` | `(v) -> v` | — | v[j] = -x[j] | native on NEON, unlike x86 where neg is an XOR-mask recipe |
 | `select` | `vbslq_f64` | `bsl` | `(mask, t, f) -> v` | — | v[j] = mask[j] ? t[j] : f[j] | mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend |
@@ -40,6 +40,9 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `gather` | recipe: `float64x2_t g = vdupq_n_f64(0)`; `g = vld1q_lane_f64(base + idx[0], g, 0)`; `vld1q_lane_f64(base + idx[1], g, 1)` | `ld1` | `(base, idx) -> v` | — | v[j] = base[idx[j]], scale = 8 (bytes per lane) |  |
 | `scatter` | recipe: `vst1q_lane_f64(base + idx[0], v, 0)`; `vst1q_lane_f64(base + idx[1], v, 1)` | `str` | `(base, idx, v) -> void` | — | base[idx[j]] = v[j] |  |
 | `lt` | `vcltq_f64` | `fcmgt` | `(a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | all-ones lanes |
+| `reduce_min` | `vminvq_f64` | `fminp` | `(v) -> s` | — | s = the smallest of the 2 lanes of v | one instruction; a NaN lane gives NaN (vminnmvq_f64 returns the number instead) |
+| `reduce_max` | `vmaxvq_f64` | `fmaxp` | `(v) -> s` | — | s = the largest of the 2 lanes of v | one instruction; a NaN lane gives NaN (vmaxnmvq_f64 returns the number instead) |
+| `scan_add` | recipe: `vaddq_f64(v, vextq_f64(vdupq_n_f64(0), v, 1))` | `ext + fadd` | `(v) -> v` | — | inclusive prefix sum: v[j] = x[0] + ... + x[j] | no single intrinsic: ext shifts the lanes up by one with a zero entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before |
 
 ### f32
 
@@ -59,8 +62,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `sin` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = sin(v[j]) | no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<23 to the exponent bits (vreinterpretq_u32_f32 + vaddq_u32); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `cos` | 5 polynomial tiers (see transcendentals.md) | — | `(v) -> v` | — | v[j] = cos(v[j]) | no native transcendental: range-reduce (Cody-Waite / quadrant) then a tier from [approx], or call SLEEF/ArmPL; NEON has no exponent or scaling assist - build 2^k by integer-adding k<<23 to the exponent bits (vreinterpretq_u32_f32 + vaddq_u32); range reduction dominates accuracy: the tiers assume x already reduced; without hi/lo pi/2 constants the reduction error exceeds the polynomial error for \|x\| beyond a few pi |
 | `sqrt` | `vsqrtq_f32` | `fsqrt` | `(v) -> v` | — | v[j] = sqrt(x[j]) |  |
-| `min` | `vminq_f32` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | vminq/vmaxq propagate NaN; vminnmq/vmaxnmq are the IEEE minNum forms |
-| `max` | `vmaxq_f32` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) |  |
+| `min` | `vminq_f32` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form |
+| `max` | `vmaxq_f32` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) | vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form |
 | `abs` | `vabsq_f32` | `fabs` | `(v) -> v` | — | v[j] = \|x[j]\| | native on NEON, unlike x86 where abs is an AND-mask recipe |
 | `neg` | `vnegq_f32` | `fneg` | `(v) -> v` | — | v[j] = -x[j] | native on NEON, unlike x86 where neg is an XOR-mask recipe |
 | `select` | `vbslq_f32` | `bsl` | `(mask, t, f) -> v` | — | v[j] = mask[j] ? t[j] : f[j] | mask FIRST: all-ones lanes (from a compare) pick t; x86 puts the mask last and calls the op blend |
@@ -68,20 +71,23 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `gather` | recipe: `float32x4_t g = vdupq_n_f32(0)`; `g = vld1q_lane_f32(base + idx[0], g, 0)`; `g = vld1q_lane_f32(base + idx[1], g, 1)`; `g = vld1q_lane_f32(base + idx[2], g, 2)`; `vld1q_lane_f32(base + idx[3], g, 3)` | `ld1` | `(base, idx) -> v` | — | v[j] = base[idx[j]], scale = 4 (bytes per lane) |  |
 | `scatter` | recipe: `vst1q_lane_f32(base + idx[0], v, 0)`; `vst1q_lane_f32(base + idx[1], v, 1)`; `vst1q_lane_f32(base + idx[2], v, 2)`; `vst1q_lane_f32(base + idx[3], v, 3)` | `str` | `(base, idx, v) -> void` | — | base[idx[j]] = v[j] |  |
 | `lt` | `vcltq_f32` | `fcmgt` | `(a, b) -> mask` | — | lane j true iff a[j] < b[j]; false on NaN | all-ones lanes |
+| `reduce_min` | `vminvq_f32` | `fminv` | `(v) -> s` | — | s = the smallest of the 4 lanes of v | one instruction; a NaN lane gives NaN (vminnmvq_f32 returns the number instead) |
+| `reduce_max` | `vmaxvq_f32` | `fmaxv` | `(v) -> s` | — | s = the largest of the 4 lanes of v | one instruction; a NaN lane gives NaN (vmaxnmvq_f32 returns the number instead) |
+| `scan_add` | recipe: `float32x4_t t = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 3))`; `vaddq_f32(t, vextq_f32(vdupq_n_f32(0), t, 2))` | `ext + fadd` | `(v) -> v` | — | inclusive prefix sum: v[j] = x[0] + ... + x[j] | no single intrinsic: ext shifts the lanes up by 1, then 2, with zeros entering. log2(lanes) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before |
 
 ### f16
 
 | op | spelling | mnemonic | signature | masked | semantics | note |
 |---|---|---|---|---|---|---|
-| `add` | `vaddq_f16` | `fadd` | `(a, b) -> v` | — | v[j] = add(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `sub` | `vsubq_f16` | `fsub` | `(a, b) -> v` | — | v[j] = sub(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `mul` | `vmulq_f16` | `fmul` | `(a, b) -> v` | — | v[j] = mul(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `div` | `vdivq_f16` | `fdiv` | `(a, b) -> v` | — | v[j] = div(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `sqrt` | `vsqrtq_f16` | `fsqrt` | `(v) -> v` | — | v[j] = sqrt(x[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `min` | `vminq_f16` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `max` | `vmaxq_f16` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `abs` | `vabsq_f16` | `fabs` | `(v) -> v` | — | v[j] = abs(x[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
-| `neg` | `vnegq_f16` | `fneg` | `(v) -> v` | — | v[j] = neg(x[j]) | requires Armv8.2 FP16 vector arithmetic; fma keeps the NEON accumulator-first order |
+| `add` | `vaddq_f16` | `fadd` | `(a, b) -> v` | — | v[j] = add(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `sub` | `vsubq_f16` | `fsub` | `(a, b) -> v` | — | v[j] = sub(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `mul` | `vmulq_f16` | `fmul` | `(a, b) -> v` | — | v[j] = mul(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `div` | `vdivq_f16` | `fdiv` | `(a, b) -> v` | — | v[j] = div(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `sqrt` | `vsqrtq_f16` | `fsqrt` | `(v) -> v` | — | v[j] = sqrt(x[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `min` | `vminq_f16` | `fmin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form |
+| `max` | `vmaxq_f16` | `fmax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form |
+| `abs` | `vabsq_f16` | `fabs` | `(v) -> v` | — | v[j] = abs(x[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
+| `neg` | `vnegq_f16` | `fneg` | `(v) -> v` | — | v[j] = neg(x[j]) | requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16) |
 | `fma` | `vfmaq_f16` | `fmla` | `(a, b, c) -> v` | — | v[j] = a[j] + b[j]*c[j] | accumulator FIRST, like every NEON fma |
 | `load` | `vld1q_f16` | `ld1` | `(p) -> v` | — | v[j] = p[j], 8 lanes |  |
 | `store` | `vst1q_f16` | `st1` | `(p, v) -> void` | — | p[j] = v[j] |  |
@@ -104,8 +110,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `mul` | recipe: `uint64x2_t ua = vreinterpretq_u64_s64(a), ub = vreinterpretq_u64_s64(b)`; `uint32x2_t al = vmovn_u64(ua), bl = vmovn_u64(ub), ah = vshrn_n_u64(ua, 32), bh = vshrn_n_u64(ub, 32)`; `uint64x2_t cross = vaddq_u64(vmull_u32(al, bh), vmull_u32(ah, bl))`; `vreinterpretq_s64_u64(vmlal_u32(vshlq_n_u64(cross, 32), al, bl))` | `umull+umlal` | `(a, b) -> v` | — | v[j] = a[j] * b[j], low bits | no vmulq_s64: lo*lo + ((cross terms) << 32), or scalar per lane |
 | `min` | recipe: `vbslq_s64(vcgtq_s64(a, b), b, a)` | `cmgt+bsl` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]), signed |  |
 | `max` | recipe: `vbslq_s64(vcgtq_s64(a, b), a, b)` | `cmgt+bsl` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]), signed |  |
-| `load` | `vld1q_s64` | `ldr` | `(p) -> v` | — | v[j] = p[j] |  |
-| `store` | `vst1q_s64` | `str` | `(p, v)` | — | p[j] = v[j] |  |
+| `load` | `vld1q_s64` | `ld1` | `(p) -> v` | — | v[j] = p[j] |  |
+| `store` | `vst1q_s64` | `st1` | `(p, v)` | — | p[j] = v[j] |  |
 | `broadcast` | `vdupq_n_s64` | `dup` | `(s) -> v` | — | v[j] = s |  |
 | `lt` | `vcltq_s64` | `cmgt` | `(a, b) -> mask` | — | lane j true iff a[j] < b[j], signed |  |
 
@@ -125,8 +131,8 @@ AArch64 baseline (no -m flag). No predication: every tail is a remainder loop. N
 | `mul` | `vmulq_s32` | `mul` | `(a, b) -> v` | — | v[j] = a[j] * b[j], low bits |  |
 | `min` | `vminq_s32` | `smin` | `(a, b) -> v` | — | v[j] = min(a[j], b[j]), signed |  |
 | `max` | `vmaxq_s32` | `smax` | `(a, b) -> v` | — | v[j] = max(a[j], b[j]), signed |  |
-| `load` | `vld1q_s32` | `ldr` | `(p) -> v` | — | v[j] = p[j] |  |
-| `store` | `vst1q_s32` | `str` | `(p, v)` | — | p[j] = v[j] |  |
+| `load` | `vld1q_s32` | `ld1` | `(p) -> v` | — | v[j] = p[j] |  |
+| `store` | `vst1q_s32` | `st1` | `(p, v)` | — | p[j] = v[j] |  |
 | `broadcast` | `vdupq_n_s32` | `dup` | `(s) -> v` | — | v[j] = s |  |
 | `lt` | `vcltq_s32` | `cmgt` | `(a, b) -> mask` | — | lane j true iff a[j] < b[j], signed |  |
 

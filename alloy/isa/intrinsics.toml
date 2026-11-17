@@ -2060,6 +2060,13 @@ recipe = ["_mm512_xor_si512", "_mm512_castsi512_ph", "_mm512_castph_si512", "_mm
 code = ["_mm512_castsi512_ph(_mm512_xor_si512(_mm512_castph_si512(v), _mm512_set1_epi16((short)0x8000)))"]
 note = "no FP16 neg: XOR (as integers) with 0x8000"
 
+[isa.avx512.f16.gen_mask]
+intrinsic = "_mm512_cmplt_epu16_mask"
+mnemonic = "vpcmpltuw"
+signature = "(iota, n) -> k"
+semantics = "k bit j set iff iota[j] < n, with iota = _mm512_set_epi16(31..0), n = clamp(N - i, 0, 32)"
+note = "the standardized gen_mask on 32 f16 lanes (AVX512-BW compare, implied by AVX512-FP16); the masked load is _mm512_maskz_loadu_epi16 cast to __m512h"
+
 [isa.avx512.f16.select]
 intrinsic = "_mm512_mask_blend_ph"
 mnemonic = "vpblendmw"
@@ -2108,21 +2115,21 @@ intrinsic = "vminq_f16"
 mnemonic = "fmin"
 signature = "(a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form"
 
 [isa.neon.f16.max]
 intrinsic = "vmaxq_f16"
 mnemonic = "fmax"
 signature = "(a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
-note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vminq propagates NaN and orders -0 below +0; vminnmq is the IEEE minNum form"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form"
 
 [isa.neon.f16.abs]
 intrinsic = "vabsq_f16"
 mnemonic = "fabs"
 signature = "(v) -> v"
 semantics = "v[j] = abs(x[j])"
-note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16); vmaxq propagates NaN and orders -0 below +0; vmaxnmq is the IEEE maxNum form"
+note = "requires Armv8.2 FP16 vector arithmetic (-march=armv8.2-a+fp16)"
 
 [isa.neon.f16.neg]
 intrinsic = "vnegq_f16"
@@ -2217,21 +2224,21 @@ intrinsic = "svmin_f16_x"
 mnemonic = "fmin"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = min(a[j], b[j])"
+note = "svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form"
 
 [isa.sve.f16.max]
 intrinsic = "svmax_f16_x"
 mnemonic = "fmax"
 signature = "(pg, a, b) -> v"
 semantics = "v[j] = max(a[j], b[j])"
+note = "svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form"
 
-note = "svmin propagates NaN and orders -0 below +0; svminnm is the IEEE minNum form"
 [isa.sve.f16.abs]
 intrinsic = "svabs_f16_x"
 mnemonic = "fabs"
 signature = "(pg, v) -> v"
 semantics = "v[j] = |x[j]|"
 
-note = "svmax propagates NaN and orders -0 below +0; svmaxnm is the IEEE maxNum form"
 [isa.sve.f16.neg]
 intrinsic = "svneg_f16_x"
 mnemonic = "fneg"

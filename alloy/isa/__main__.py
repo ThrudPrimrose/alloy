@@ -40,7 +40,18 @@ from alloy.isa.mathkernels import kernel as find
 from alloy.isa.mathtime import ELEMENTS, time_function
 from alloy.isa.schedules import legal, skeleton
 from alloy.isa.schedules import verify as verify_skeleton
-from alloy.isa.table import ALL_DTYPES, FMA_FORM, NO_MATH, Hit, Table, masked_form, normalized, suggestion
+from alloy.isa.table import (
+    ALL_DTYPES,
+    FMA_FORM,
+    NO_MATH,
+    WIDTH_KNOBS,
+    Hit,
+    Table,
+    gate,
+    masked_form,
+    normalized,
+    suggestion,
+)
 from alloy.isa.validate import Verdict, emulated, host_can_run, validate, validate_all
 
 #: The Tenstorrent target: tile calls checked on ttsim, kept apart from the SIMD table (alloy/isa/tensix.py).
@@ -237,7 +248,7 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
 
 def refuse_width_knob(isa: str) -> None:
     """``avx512_256`` has no spellings: explicit ``_mm512_*`` intrinsics stay 512-bit under the width knob."""
-    if isa in ALIASES:
+    if isa in WIDTH_KNOBS:
         raise KeyError(f"{isa}: a compiler width knob with no intrinsics of its own; look up {ALIASES[isa]} or avx2")
 
 
@@ -325,6 +336,7 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     refuse_gpu_arch(args.isa)
     refuse_width_knob(args.isa)
     table.isa(args.isa)  # an unknown ISA is named before the op
+    gate(args.isa, args.dtype)
     op: str = args.op
     function = FUNCTION_ALIASES.get(op, op)
     if function not in OPS and function not in functions():

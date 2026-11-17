@@ -32,7 +32,8 @@ You do not need to know the intrinsics. Reason in the abstract math ISA; look up
 | `mod` | `a[j] - trunc(a[j]/b[j])*b[j]` on floats, fmod only for finite b and small `a/b`; truncated remainder on ints; no native vector form, recipes + libraries | elementwise |
 | `and` `or` `shl` `shr` `land` `lor` | integer lanes, looked up under **i64/i32** (`land`/`lor` give all-ones/0 lanes or, on AVX-512/SVE, mask/predicate ops) | bitwise/shift/logical |
 
-Dtypes are `f64`, `f32`, optional `f16` (AVX-512 FP16, NEON Armv8.2, SVE — **AVX2 emulates through
+Dtypes are `f64`, `f32`, optional `f16` (target `avx512_fp16`, NEON Armv8.2, SVE; plain `avx512` refuses f16, since Zen 4
+and Skylake-X lack AVX512-FP16 — **AVX2 emulates through
 f32** with `cvtph_ps`/`cvtps_ph` recipes; bitwise f16 ops work directly on the storage), and `i64`/`i32`
 for the integer ops. The integer dtypes hold only those ops: no integer add, mul, load or compare row exists,
 and float rows are not valid for integer lanes. A binary op also accepts a scalar operand: it is broadcast, free

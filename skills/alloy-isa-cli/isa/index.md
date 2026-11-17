@@ -29,6 +29,9 @@ The machine abstract math ISA and its per-target spellings. The abstract ops:
 | `lor` | (a[j] != 0) \|\| (b[j] != 0) as the ISA's lane truth: all-ones lanes, or a k/predicate bit | logical | vector |
 | `lt` | lane j true iff a[j] < b[j] (feeds select) | mask | mask |
 | `reduce_add` | s = sum of every active lane of v | reduction | scalar |
+| `reduce_min` | s = the smallest active lane of v; NaN lanes differ per ISA | reduction | scalar |
+| `reduce_max` | s = the largest active lane of v; NaN lanes differ per ISA | reduction | scalar |
+| `scan_add` | v[j] = x[0] + ... + x[j], the inclusive prefix sum of a register | scan | vector |
 | `exp` | v[j] = exp(x[j]) | transcendental | vector |
 | `sin` | v[j] = sin(x[j]) | transcendental | vector |
 | `cos` | v[j] = cos(x[j]) | transcendental | vector |

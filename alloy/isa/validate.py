@@ -253,7 +253,9 @@ def frame(isa: str, dtype: str, table: Table) -> Frame:
     load_row, store_row, set1 = (table.entry(isa, op, dtype) for op in ("load", "store", "broadcast"))
     names = {"a": "va", "b": "vb", "pg": "pg"}
     below = BELOW_F16[isa] if dtype == F16 else called(table.entry(isa, "lt", dtype), names)
-    masked = f"{load_row.masked.split('(', 1)[0]}(k, a)" if k.wide else called(load_row, {"pg": "k", "p": "a"})
+    masked = f"{load_row.masked.split('(', 1)[0].strip()}(k, a)" if k.wide else called(load_row, {"pg": "k", "p": "a"})
+    if k.wide and dtype == F16:  # the f16 masked load is the 16-bit integer one
+        masked = f"_mm512_castsi512_ph({masked})"
     loads = {name: called(load_row, {"pg": "pg", "p": f"{k.cast}{name}"}) for name in "abc"}
     predicate = f"svbool_t pg = svptrue_b{k.lane_bits}();\n  " if isa == "sve" else ""
     return dataclasses.replace(
@@ -393,9 +395,11 @@ def scatter_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
 
 
 def gen_mask_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
-    if k.wide:
-        iota = ", ".join(str(j) for j in range(k.lanes))
-        setup = f"__m512i iota = _mm512_setr_epi{k.lane_bits}({iota});\n  "
+    if k.wide:  # 16-bit lanes have only the high-to-low set
+        order = range(k.lanes - 1, -1, -1) if k.lane_bits == 16 else range(k.lanes)
+        iota = ", ".join(str(j) for j in order)
+        spelled = "set" if k.lane_bits == 16 else "setr"
+        setup = f"__m512i iota = _mm512_{spelled}_epi{k.lane_bits}({iota});\n  "
         names = {"iota": "iota", "n": f"_mm512_set1_epi{k.lane_bits}(n)"}
     else:
         setup, names = "", {"i": "0", "N": "n"}

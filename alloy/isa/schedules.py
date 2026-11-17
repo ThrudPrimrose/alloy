@@ -6,7 +6,7 @@ a skeleton always spells intrinsics exactly as the lookup would. This is the see
 schedule->vector-schedule translator (plan work item 3): emitting a different body means swapping the
 axpy expression, the loop shape comes from here."""
 
-from alloy.isa.table import ALIASES, DTYPES, Table, load
+from alloy.isa.table import ALIASES, DTYPES, WIDTH_KNOBS, Table, load
 from alloy.isa.validate import REPORT_ERROR, Verdict, c_flags, compile_run, emulated, host_can_run, track_error
 
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
@@ -102,7 +102,7 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
     combination is not offered."""
     if dtype not in DTYPES:
         raise KeyError(f"{isa}/{dtype}: skeletons exist for the float dtypes ({', '.join(DTYPES)})")
-    if isa in ALIASES:
+    if isa in WIDTH_KNOBS:
         raise KeyError(f"{isa}: a compiler width knob with no intrinsics of its own: use {ALIASES[isa]}")
     why = legal(isa, schedule, table)
     if why:

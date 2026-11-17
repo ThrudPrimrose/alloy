@@ -29,6 +29,9 @@ __all__ = [
     "INT_DTYPES",
     "INT_OPS",
     "DEFAULT_PATH",
+    "GATED",
+    "WIDTH_KNOBS",
+    "gate",
     "Approx",
     "Assist",
     "AssistHit",
@@ -58,8 +61,12 @@ INT_OPS = INT_ONLY_OPS | {"mod", "add", "sub", "mul", "min", "max", "load", "sto
 DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"
 
 #: ``avx512_256`` is AVX-512 under ``-mprefer-vector-width=256``, which steers only the autovectorizer.
-ALIASES = {"avx512_256": "avx512"}
-KNOWN_ISAS = "avx2, avx512, neon, sve (avx512_256 is a compiler width knob, not a target)"
+#: ``avx512_fp16`` is AVX-512 with AVX512-FP16 (Sapphire Rapids and later): the AVX-512 rows plus its f16 rows.
+ALIASES = {"avx512_256": "avx512", "avx512_fp16": "avx512"}
+WIDTH_KNOBS = frozenset({"avx512_256"})
+KNOWN_ISAS = "avx2, avx512, avx512_fp16, neon, sve (avx512_256 is a compiler width knob, not a target)"
+#: Lanes only a feature target has, by (target, dtype): plain AVX-512 (Zen 4, Skylake-X, Ice Lake) has no f16 math.
+GATED = {("avx512", "f16"): "avx512_fp16"}
 
 #: An fma family form as the assembler prints it: ``vfnmadd231pd`` -> mnemonic ``vfnmadd``, dtype f64.
 FMA_FORM = re.compile(r"^(vfn?m(?:add|sub))(?:132|213|231)?([ps])([dsh])$")
@@ -492,8 +499,18 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Table:
     return Table(isas_map, approx, schedules, by_intrinsic, by_mnemonic, by_part, assist_hits(isas_map))
 
 
+def gate(isa: str, dtype: str) -> None:
+    """``KeyError`` when ``dtype`` lanes need a feature target that ``isa`` does not name."""
+    if feature := GATED.get((isa, dtype)):
+        raise KeyError(
+            f"{isa}/{dtype}: {dtype} arithmetic needs AVX512-FP16, which plain AVX-512 (Zen 4, Skylake-X, Ice Lake) "
+            f"lacks: use target {feature} (Sapphire Rapids and later), or avx2 (F16C converts to f32)"
+        )
+
+
 def lookup(isa: str, op: str, dtype: str, table: Table | None = None) -> Entry:
-    """The ``(isa, op, dtype)`` entry."""
+    """The ``(isa, op, dtype)`` entry, refused where the lanes need a feature target the name does not carry."""
+    gate(isa, dtype)
     return (table or load()).entry(isa, op, dtype)
 
 
