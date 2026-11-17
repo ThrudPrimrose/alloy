@@ -113,8 +113,12 @@ def test_a_hip_build_names_its_host_unit_hip_so_amdclang_compiles_it_as_hip(tmp_
     compilers = gpu_build.load()
     (candidate,) = [c for c in gpu_build.candidates(compilers, "hip", False) if c.name == "amdclang"]
     ran: list[list[str]] = []
-    monkeypatch.setattr(gpu_build.subprocess, "run", lambda argv, **_: ran.append(argv) or SimpleNamespace(
-        returncode=1, stdout="", stderr="stopped after the first command"))  # fmt: skip
+
+    def run(argv: list[str], **_: object) -> SimpleNamespace:
+        ran.append(argv)
+        return SimpleNamespace(returncode=1, stdout="", stderr="stopped after the first command")
+
+    monkeypatch.setattr(gpu_build.subprocess, "run", run)
 
     gpu_build.build(compilers, candidate, "host code", "device code", tmp_path, "gfx90a")
 
