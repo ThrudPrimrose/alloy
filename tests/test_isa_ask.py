@@ -1269,3 +1269,19 @@ def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_blo
 
     assert isinstance(sut, Infeasible) and sut.block == (8,)
     assert sut.nearest == ("x global:f16:96", "x global:f16:104")
+
+
+@pytest.mark.parametrize("op", ["add", "fma", "load"])
+def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op):
+    """Zen 4 runs AVX-512 without AVX512-FP16: an f16 answer for plain avx512 would not run there."""
+    sut = ask(Request("avx512", op, {"x": Operand("vector", "f16", (32,))}), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.ELEMENT_TYPE
+    assert sut.nearest == ("target avx512_fp16",)
+
+
+def test_the_fp16_target_answers_f16_with_the_fp16_flag():
+    sut = ask(Request("avx512_fp16", "add", {"x": Operand("vector", "f16", (32,))}), verify=False)
+
+    assert isinstance(sut, Feasible)
+    assert "-mavx512fp16" in sut.setup["build"]

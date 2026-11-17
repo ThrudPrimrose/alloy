@@ -30,7 +30,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy.isa import OPS, load, simt, tensix, tile
 from alloy.isa.mathkernels import cheapest, functions, kernel, render, target_of
-from alloy.isa.table import Entry, Table
+from alloy.isa.table import ALIASES, GATED, Entry, Table, gate
 from alloy.isa.validate import HEADERS, c_flags
 
 __all__ = [
@@ -60,6 +60,7 @@ SPACES, LAYOUTS, SWIZZLES = get_args(Space), get_args(Layout), get_args(Swizzle)
 UNITS: dict[str, tuple[str, ...]] = {
     "avx2": ("vector", "scalar"),
     "avx512": ("vector", "scalar"),
+    "avx512_fp16": ("vector", "scalar"),
     "neon": ("vector", "scalar"),
     "sve": ("vector", "scalar"),
     "sme": ("streaming_vector", "za"),
@@ -69,7 +70,7 @@ UNITS: dict[str, tuple[str, ...]] = {
     "tensix": ("sfpu", "fpu", "noc"),
 }
 TARGETS = tuple(UNITS)
-CPU = ("avx2", "avx512", "neon", "sve")
+CPU = ("avx2", "avx512", "avx512_fp16", "neon", "sve")
 #: The dialect of a GPU target's per-thread rows (simt.toml).
 DIALECT = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: Per tile target, what its mma kernel reads, exactly: the space of the inputs (a, b), their swizzle, the space of the
@@ -315,6 +316,7 @@ IDENTITY = {"reduce_add": "0", "reduce_min": "INFINITY", "reduce_max": "-INFINIT
 def tail_fix(isa: str, op: str, dtype: str, table: Table) -> str:
     """How a caller finishes the elements past the last whole register for ``op``: a masked form where the row has
     one, else a masked load that fills the masked-off lanes so the whole-register op is right."""
+    isa = ALIASES.get(isa, isa)  # avx512_fp16 masks like avx512
     if isa == "sve":
         return "run every block under the svwhilelt predicate (ask gen_mask); ask with the whole extent for the loop"
     if isa != "avx512":
@@ -614,6 +616,10 @@ def vector_op(request: Request, verify: bool) -> Answer:
         )
     if why := mixed(request):
         return bad(request, Why.MIXED_TYPES, why, spell(x=register))
+    try:
+        gate(isa, dtype)
+    except KeyError as exc:
+        return no(request, Why.ELEMENT_TYPE, str(exc.args[0]), f"target {GATED[isa, dtype]}")
     # a broadcast's source is one scalar: register:<dtype> or register:<dtype>:1
     scalar = request.op == "broadcast" and all(o.shape in ((), (1,)) for o in request.operands.values())
     shapes = set() if scalar else {operand.shape for operand in request.operands.values() if operand.shape}

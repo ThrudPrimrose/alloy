@@ -70,6 +70,7 @@ CROSS_CC = "aarch64-linux-gnu-gcc"
 HEADERS = {
     "avx2": "immintrin.h",
     "avx512": "immintrin.h",
+    "avx512_fp16": "immintrin.h",
     "neon": "arm_neon.h",
     "sve": "arm_sve.h",
     "scalar": "stdint.h",

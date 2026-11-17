@@ -18,7 +18,7 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
 
 `command="ask", arguments=[<target>, <op>, --<operand> <space:dtype:shape[:layout[:swizzle]]>, ...]`
 
-- **Targets.** `avx2`, `avx512`, `neon`, `sve`, `sme`; `sm90` (GH200's H100); `gfx90a` (MI200, the MI250X);
+- **Targets.** `avx2`, `avx512`, `avx512_fp16` (AVX-512 with f16 arithmetic, Sapphire Rapids on; Zen 4 has none), `neon`, `sve`, `sme`; `sm90` (GH200's H100); `gfx90a` (MI200, the MI250X);
   `gfx942` (MI300A); `tensix`.
 - **Operations.** Six primitives on your data:
   - `load` and `store`;
