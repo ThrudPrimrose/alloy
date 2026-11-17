@@ -1,4 +1,6 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import pathlib
+import re
 import subprocess
 from collections.abc import Callable
 
@@ -27,15 +29,17 @@ def without_sources(monkeypatch, *names: str) -> None:
 def test_a_host_without_cpufreq_cpuinfo_or_lscpu_measures_its_clock_within_a_fifth(monkeypatch):
     """A3: an aarch64 kernel lists no cpu MHz and a container hides cpufreq; the measured clock still answers."""
     # only cpufreq's maximum bounds a running clock: cpuinfo lists the current or the nominal clock, which a boosting
-    # core exceeds (3.56 GHz measured against a listed 2.6 GHz on a CI VM)
+    # core exceeds (3.56 GHz measured against a listed 2.6 GHz on a CI VM); a guest's cpufreq lists the maximum its
+    # virtual ACPI tables advertise, which the boosting host core exceeds too (2.96 GHz against 2.3 GHz on a CI VM)
     maximum = machine.cpufreq_hz()
+    guest = re.search(r"^flags\s*:.*\bhypervisor\b", pathlib.Path("/proc/cpuinfo").read_text(), re.MULTILINE)
     without_sources(monkeypatch, "cpufreq", "cpuinfo", "lscpu")
 
     sut = machine.clock()
 
     assert sut.source == "measured"
     if maximum is not None:
-        assert 0.8 * maximum <= sut.hz <= 1.05 * maximum, (sut.hz, maximum)
+        assert 0.8 * maximum <= sut.hz <= (6.5e9 if guest else 1.05 * maximum), (sut.hz, maximum, bool(guest))
     else:
         assert 0.5e9 <= sut.hz <= 6.5e9, sut.hz
     machine.clock.cache_clear()
@@ -143,3 +147,7 @@ def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host():
     assert sut.source == "measured"
     assert 0.0 < sut.ns < 1e6  # an empty region on a warm team: well under a millisecond on any host
     assert predict.region_ns(matrix) == sut.ns
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))
