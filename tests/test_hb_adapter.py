@@ -5,6 +5,7 @@ a rendered library asks for the scratch its entry carves transients from."""
 
 import dataclasses
 import pathlib
+import tempfile
 
 import pytest
 
@@ -254,23 +255,25 @@ def test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anch
     assert adapter.running_sizes(spec, "L+fuzz") == {"N": 4096}
 
 
-def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(monkeypatch) -> None:
+def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(monkeypatch, tmp_path) -> None:
     from hpcagent_agent.tools import http_json
 
     from alloy.hb_plugin.tools.alloy import SWEEP_TIMEOUT_S
     from alloy.hb_plugin.tuners import AlloyToolStub
 
     timeouts: list[float] = []
+    (tmp_path / "Makefile").write_text("all:\n\ttouch lib.so\n")
 
     def call_json(url: str, data: bytes, timeout: float) -> dict[str, object]:
         timeouts.append(timeout)
-        return {"result": {"library": "lib.so", "workspace_bytes": "0"}}
+        return {"result": {"folder": str(tmp_path), "builds": "lib.so", "workspace_bytes": "0"}}
 
     monkeypatch.setattr(http_json, "call_json", call_json)
 
-    AlloyToolStub("alloy_stub").tune(Task("k", SourceMode.ANY, Language.C), "canon_cpu")
+    sut = AlloyToolStub("alloy_stub").tune(Task("k", SourceMode.ANY, Language.C), "canon_cpu")
 
     assert timeouts == [SWEEP_TIMEOUT_S]
+    assert sut.library == str(tmp_path / "lib.so"), "the stub makes the library from the answer, as an agent would"
 
 
 def test_a_grade_slower_than_one_judge_call_is_still_read(monkeypatch) -> None:
@@ -309,7 +312,8 @@ if __name__ == "__main__":
     test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
     test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
     with pytest.MonkeyPatch.context() as patch:
-        test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch)
+        with tempfile.TemporaryDirectory() as folder:
+            test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch, pathlib.Path(folder))
     with pytest.MonkeyPatch.context() as patch:
         test_a_grade_slower_than_one_judge_call_is_still_read(patch)
 
