@@ -18,7 +18,7 @@ import platform
 import re
 import signal
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tile
 from alloy.isa.costs import costs
