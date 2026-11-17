@@ -45,6 +45,31 @@ from alloy.isa.validate import Verdict, emulated, host_can_run, validate, valida
 
 #: The Tenstorrent target: tile calls checked on ttsim, kept apart from the SIMD table (alloy/isa/tensix.py).
 TENSIX = "tensix"
+#: GPU archs: ``tile`` and ``ask`` take them; ``lookup`` takes their SIMT dialect.
+GPU_ARCHS = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
+#: Words for a matrix instruction: those live under ``tile`` and ``ask ... mma``, not ``lookup``.
+MATRIX_WORDS = ("mma", "mfma", "wmma", "wgmma", "gemm", "matmul")
+#: Prefixes of AMD GPU (CDNA) assembly mnemonics, which the instruction table (CPU only) does not index.
+CDNA_MNEMONIC = re.compile(r"^(v_|s_|ds_|global_|buffer_|flat_|scratch_)")
+
+
+def matrix_note(op: str) -> str:
+    """Where a matrix instruction is answered, for an op that names one; else nothing."""
+    if op.lower() not in MATRIX_WORDS:
+        return ""
+    return (
+        f"; {op} is a matrix instruction: tile <arch> gemm M N K --in f16 --acc f32 gives a checked kernel, "
+        "and ask <target> mma takes your operands"
+    )
+
+
+def refuse_gpu_arch(isa: str) -> None:
+    """A GPU arch given to ``lookup``: name the dialect and the commands that take the arch."""
+    if isa in GPU_ARCHS:
+        raise KeyError(
+            f"{isa}: a GPU arch; lookup takes its dialect ({GPU_ARCHS[isa]}, e.g. lookup {GPU_ARCHS[isa]} reduce_add f32), "
+            f"and tile and ask take {isa}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -286,7 +311,9 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
         return tensix_lookup(args.op, args.dtype, args.json)
     if args.isa in simt.DIALECTS:
         return simt_lookup(args.isa, args.op, args.dtype, args.json)
+    refuse_gpu_arch(args.isa)
     refuse_width_knob(args.isa)
+    table.isa(args.isa)  # an unknown ISA is named before the op
     op: str = args.op
     function = FUNCTION_ALIASES.get(op, op)
     if function not in OPS and function not in functions():
@@ -294,7 +321,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
             held = ", ".join(name for name in OPS if name.startswith("reduce_"))
             raise KeyError(f"{args.op!r}: the table holds only {held}, so no other reduction here is verified")
         raise KeyError(
-            f"{args.op!r}: neither an abstract op nor a math function{suggestion(args.op, [*OPS, *functions()])}"
+            f"{args.op!r}: neither an abstract op nor a math function"
+            f"{matrix_note(args.op) or suggestion(args.op, [*OPS, *functions()])}"
         )
     if function in OPS:
         verdict = None if args.no_verify else validate(args.isa, function, args.dtype, table)
@@ -369,7 +397,8 @@ def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
     """The CUDA or HIP row of ``op`` with its recorded check; the rows are f32 (``add_half2`` packs f16)."""
     found = {r.op: r for r in simt.rows()}
     if op not in found:
-        raise KeyError(f"{dialect}/{op}: no SIMT row{suggestion(op, list(found))} (rows: {', '.join(found)})")
+        hint = matrix_note(op) or suggestion(op, list(found))
+        raise KeyError(f"{dialect}/{op}: no SIMT row{hint} (rows: {', '.join(found)})")
     if dtype != "f32":
         raise KeyError(f"{dialect}/{dtype}/{op}: the SIMT rows are f32 (add_half2 packs two f16)")
     row, verdict = found[op], simt.verdicts().get((op, dialect))
@@ -579,6 +608,12 @@ def print_hits(table: Table, name: str, as_json: bool = False) -> None:
     elif (found := library_function(token)) is not None:
         print(f"{token} = {found[0]} ({found[1]}) on {found[2]}: a vector math library call")
     else:
+        if CDNA_MNEMONIC.match(token):
+            matrix = "; tile gfx90a|gfx942 gemm ... gives a checked v_mfma kernel" if token.startswith("v_mfma") else ""
+            raise KeyError(
+                f"{name!r}: an AMD GPU (CDNA) instruction; the table indexes CPU instructions only{matrix}. "
+                "For GPU code: lookup hip <op> f32 (wavefront rows), tile, or ask"
+            )
         known = [*table.by_intrinsic, *table.by_mnemonic, *table.by_assist]
         raise KeyError(
             f"{name!r}: neither an intrinsic, mnemonic nor library call in the table{suggestion(token, known)}"

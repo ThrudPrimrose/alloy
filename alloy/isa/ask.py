@@ -19,6 +19,7 @@ fills are checked as the one tile program that runs both.
 """
 
 import dataclasses
+import difflib
 import enum
 import math
 from collections.abc import Sequence
@@ -512,7 +513,11 @@ def thread_op(request: Request) -> Answer:
     dialect = DIALECT[request.target]
     rows = {r.op: r for r in simt.rows()}
     if request.op not in rows:
-        return no(request, Why.NO_ROW, f"no {dialect} row for {request.op}", *(f"{request.target} {op}" for op in rows))
+        related = [op for op in rows if request.op in op] or difflib.get_close_matches(request.op, list(rows), n=3)
+        nearest = related or list(rows)  # the related rows, else every row
+        return no(
+            request, Why.NO_ROW, f"no {dialect} row for {request.op}", *(f"{request.target} {op}" for op in nearest)
+        )
     row, verdict = rows[request.op], simt.verdicts().get((request.op, dialect))
     scalar = Operand("register", row.dtype)
     for operand in request.operands.values():
@@ -527,8 +532,9 @@ def thread_op(request: Request) -> Answer:
             return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or copy operand",
                       spell(x=scalar), block=(1,))  # fmt: skip
         if operand.space != "register":
-            return no(request, Why.SPACE, f"the {request.op} row computes on one thread's registers, not on "
-                      f"{operand.space} memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
+            held = "one register per lane of a wavefront" if row.kind == "warp" else "one thread's registers"
+            return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} memory",
+                      spell(x=scalar), fix="load the value into a register first")  # fmt: skip
     if request.max_ulp is not None:
         return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
@@ -816,7 +822,8 @@ def copy(request: Request, verify: bool) -> Answer:
     return no(
         request,
         Why.NOT_COVERED,
-        f"{request.target} copy from {src.space} to {dst.space} comes with step 3 of the design",
+        f"no checked row covers a {request.target} copy from {src.space} to {dst.space}",
+        fix="write it as plain device code, each thread moving its own elements, and check it with score",
     )
 
 

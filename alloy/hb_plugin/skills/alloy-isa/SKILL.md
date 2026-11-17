@@ -30,6 +30,11 @@ Ask `alloy_isa` instead of recalling a spelling. `command="host"` says which ISA
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: an op's intrinsic, signature and traps. An op with no single
   intrinsic prints a recipe and its `code`: copy that, it holds the operand order. Its `cost:` line is the compiled
   instruction's latency and cycles per instruction on this kind of CPU (llvm-mca).
+- `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row for HIP or CUDA, in f32: `fma`, the fast
+  math functions (`exp_fast`, `sin_fast`, `div_fast`, `rsqrt`), the wavefront reductions and `scan_add`,
+  `broadcast`, `gen_mask`, `add_half2`, `load_wide`, and `atomic_add`. On MI200 (`gfx90a`, MI250X) and MI300A
+  (`gfx942`) a wavefront has 64 lanes. `lookup` takes the dialect (`hip`, `cuda`); `tile` and `ask` take the arch
+  (`gfx90a`, `gfx942`, `sm90`), and matrix instructions (`mfma`, `wgmma`) are answered there.
 - `command="reverse", arguments=["vfmadd231pd"]`: what a disassembled instruction or a vector library symbol
   (`_ZGVdN4v_sin`, `__svml_sin8`) computes.
 - `command="assist", arguments=["svexpa_f64"]`: what a hardware assist (`vscalefpd`, `svexpa`, `vrcpps`) helps

@@ -796,3 +796,52 @@ def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[s
 
     first = capsys.readouterr().out.splitlines()[0]
     assert "check: compiled for gfx90a, gfx942" in first and "compiled compiled" not in first
+
+
+# MI200 (gfx90a) answers an agent met in smoke S4: each refusal names where the answer is.
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["lookup", "gfx90a", "mfma", "f64"], "lookup takes its dialect (hip"),
+        (["lookup", "sm90", "add", "f32"], "lookup takes its dialect (cuda"),
+        (["lookup", "hip", "mfma", "f32"], "mfma is a matrix instruction: tile"),
+        (["lookup", "avx2", "wgmma", "f32"], "wgmma is a matrix instruction: tile"),
+        (["reverse", "global_load_dword"], "an AMD GPU (CDNA) instruction"),
+        (["reverse", "v_mfma_f32_32x32x8f16"], "gives a checked v_mfma kernel"),
+    ],
+)
+def test_a_gpu_name_in_a_cpu_command_is_refused_with_where_it_is_answered(argv, expected, capsys):
+    code = main(argv)
+
+    printed = capsys.readouterr()
+    assert code == 2
+    assert expected in printed.err
+    assert "did you mean fma" not in printed.err
+
+
+def test_a_missing_device_row_offers_the_related_rows_as_nearest():
+    sut = ask(Request("gfx90a", "exp", {"x": Operand("register", "f32")}))
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why == Why.NO_ROW
+    assert sut.nearest == ("gfx90a exp_fast",)
+
+
+def test_a_wavefront_row_on_memory_is_refused_as_a_wavefront_row():
+    sut = ask(Request("gfx90a", "reduce_add", {"x": Operand("global", "f32", (4096,))}))
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why == Why.SPACE
+    assert "one register per lane of a wavefront" in sut.reason
+    assert sut.fix == "load the value into a register first"
+
+
+def test_an_uncovered_gpu_copy_says_how_to_write_it_without_naming_the_design():
+    sut = ask(
+        Request("gfx90a", "copy", {"src": Operand("global", "f32", (256,)), "dst": Operand("register", "f32", (256,))})
+    )
+
+    assert isinstance(sut, Infeasible)
+    assert sut.why == Why.NOT_COVERED
+    assert "design" not in sut.reason
+    assert "plain device code" in sut.fix
