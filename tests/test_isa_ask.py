@@ -371,7 +371,7 @@ def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap():
 
     assert INVALID and infeasible and Why.MALFORMED in INVALID
     assert {Why.UNIT, Why.NO_ROW, Why.ELEMENT_TYPE, Why.SHAPE, Why.SPACE, Why.SWIZZLE, Why.LAYOUT, Why.NO_RUNG,
-            Why.NOT_COVERED, Why.CHECK_FAILED, Why.COMBINE} == infeasible  # fmt: skip
+            Why.NOT_COVERED, Why.CHECK_FAILED, Why.COMBINE, Why.ORDER} == infeasible  # fmt: skip
 
 
 def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za():
@@ -883,3 +883,99 @@ def test_gfx90a_refuses_an_fp8_copy_with_the_types_it_takes():
 
     assert isinstance(sut, Infeasible) and sut.why == Why.ELEMENT_TYPE
     assert "copies f16, bf16 tiles on gfx90a, not e4m3" in sut.reason
+
+
+# Design 2.9: wait and fence.
+TMA_COPY = "copy src=global:f16:64x256 dst=shared:f16:64x64:row_major:b128"
+WGMMA = "mma a=shared:f16:64x256:row_major:b128 b=shared:f16:256x64:col_major:b128 c=register:f32:64x64"
+
+
+def requests(target: str, *texts: str) -> list[Request]:
+    from alloy.isa.__main__ import parsed_request
+
+    return [parsed_request(target, text) for text in texts]
+
+
+@pytest.mark.parametrize(("target", "on", "spelled"), [
+    ("sm90", "mbarrier", "mbarrier.try_wait.parity"), ("sm90", "wgmma_group", "wgmma.wait_group.sync.aligned 0"),
+    ("sm90", "bulk_group", "cp.async.bulk.wait_group.read 0"), ("sm90", "cp_async_group", "cp.async.wait_group 0"),
+    ("gfx90a", "vmcnt", "s_waitcnt vmcnt(0)"), ("gfx942", "lgkmcnt", "s_waitcnt lgkmcnt(0)"),
+    ("tensix", "noc", "noc_async_read_barrier()"), ("tensix", "cb", "cb_wait_front"),
+])  # fmt: skip
+def test_a_wait_answers_the_instruction_that_completes_its_token(target, on, spelled):
+    sut = ask(Request(target, "wait", on=on))
+
+    assert isinstance(sut, Feasible) and spelled in sut.code
+
+
+def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has_none():
+    on_gpu = ask(Request("sm90", "wait", on="vmcnt"))
+    on_cpu = ask(Request("avx2", "wait", on="mbarrier"))
+
+    assert isinstance(on_gpu, Infeasible) and "wait on=mbarrier" in on_gpu.nearest
+    assert isinstance(on_cpu, Infeasible) and "no asynchronous work" in on_cpu.reason
+
+
+@pytest.mark.parametrize(("target", "kind", "feasible"), [
+    ("sm90", "proxy", True), ("sm90", "operand", True), ("gfx942", "proxy", False), ("gfx90a", "operand", False),
+])  # fmt: skip
+def test_only_sm90_has_a_proxy_and_an_operand_fence(target, kind, feasible):
+    sut = ask(Request(target, "fence", kind=kind))
+
+    assert isinstance(sut, Feasible) is feasible
+    if not feasible:
+        assert isinstance(sut, Infeasible) and sut.why == Why.NO_ROW
+
+
+@pytest.mark.parametrize(("target", "text", "token", "fences"), [
+    ("sm90", TMA_COPY, "mbarrier", ("fence kind=proxy",)), ("sm90", WGMMA, "wgmma_group", ("fence kind=operand",)),
+    ("gfx942", "copy src=global:f16:256x256 dst=shared:f16:64x64:row_major:xor:8", "lgkmcnt", ()),
+])  # fmt: skip
+def test_an_asynchronous_unit_answers_how_its_work_completes(target, text, token, fences):
+    (request,) = requests(target, text)
+
+    sut = ask(request, verify=False)
+
+    assert isinstance(sut, Feasible) and sut.completion is not None
+    assert (sut.completion.token, sut.completion.wait, sut.completion.fences) == (token, f"wait on={token}", fences)
+
+
+def test_a_synchronous_unit_has_no_completion():
+    (request,) = requests("gfx942", "mma a=shared:f16:64x64:row_major:xor:8 b=shared:f16:64x64:col_major:xor:8 "
+                                     "c=register:f32:64x64")  # fmt: skip
+
+    sut = ask(request, verify=False)
+
+    assert isinstance(sut, Feasible) and sut.completion is None
+
+
+def test_a_kernel_that_states_no_waits_gets_them_in_order():
+    sut = ask_all(requests("sm90", TMA_COPY, WGMMA), verify=False)
+
+    assert isinstance(sut, Combined)
+    assert sut.order == ("fence kind=proxy before request 0", "wait on=mbarrier after request 0, before request 1",
+                         "fence kind=operand before request 1", "wait on=wgmma_group after request 1")  # fmt: skip
+
+
+def test_a_kernel_that_states_its_waits_in_order_is_feasible():
+    sut = ask_all(requests("sm90", "fence kind=proxy", TMA_COPY, "wait on=mbarrier", "fence kind=operand", WGMMA,
+                           "wait on=wgmma_group"), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Combined) and sut.order == ()
+
+
+@pytest.mark.parametrize(("texts", "refused", "missing"), [
+    (("fence kind=proxy", TMA_COPY, "fence kind=operand", WGMMA, "wait on=wgmma_group"), 1, "wait on=mbarrier"),
+    (("fence kind=proxy", TMA_COPY, "fence kind=operand", WGMMA, "wait on=mbarrier", "wait on=wgmma_group"), 3,
+     "wait on=mbarrier"),
+    (("fence kind=proxy", TMA_COPY, "wait on=mbarrier", WGMMA, "wait on=wgmma_group"), 3, "fence kind=operand"),
+    ((TMA_COPY, "wait on=mbarrier", "fence kind=operand", WGMMA, "wait on=wgmma_group"), 0, "fence kind=proxy"),
+    ((WGMMA, TMA_COPY), 0, ""),
+])  # fmt: skip
+def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missing_request(texts, refused, missing):
+    sut = ask_all(requests("sm90", *texts), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why == Why.ORDER
+    assert sut.request == requests("sm90", texts[refused])[0]
+    if missing:
+        assert sut.nearest == (missing,)

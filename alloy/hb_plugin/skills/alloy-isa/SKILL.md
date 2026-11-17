@@ -51,6 +51,23 @@ The answer has one of three states:
 dst=shared:f16:64x64:row_major:xor:8"`, `"mma a=... b=... c=..."`), as one kernel. The answer says which copy fills
 which mma operand, or why they do not combine.
 
+## Asynchronous work: `wait` and `fence`
+
+A TMA copy, a `wgmma`, and the CDNA LDS copy run asynchronously: their answer has an `async` line with the token that
+completes the work, the `wait` request for it, and the fences that must come before the issue. Reading the result
+before the wait is a race, and issuing without the fence reads stale data.
+
+- `command="ask", arguments=["sm90", "wait", "--on", "mbarrier"]` gives the wait's instruction. Tokens: `mbarrier`
+  (TMA load), `bulk_group` (TMA store), `cp_async_group`, `wgmma_group` on `sm90`; `vmcnt` (global loads, LDS DMA)
+  and `lgkmcnt` (LDS) on `gfx90a` and `gfx942`; `noc` and `cb` on `tensix`.
+- `command="ask", arguments=["sm90", "fence", "--kind", "proxy"]`: `proxy` (thread writes to shared memory, or an
+  mbarrier's init, before TMA or `wgmma` reads them) and `operand` (before a `wgmma` after touching its accumulator
+  registers) exist on `sm90` only; the AMD GPUs order these in hardware or with `__syncthreads`.
+- In `ask-all`, list the waits and fences between the requests (`"fence kind=proxy"`, `"wait on=mbarrier"`). A list
+  that states none gets them back in order (`order:` lines); a list that states some must state all, and a request
+  that reads before its wait, or issues without its fence, is refused with the missing request and where it goes.
+  Double buffering is two copies into two tiles, each waited on just before the mma that reads it.
+
 ## What each target runs
 
 - **CPUs** (`avx2`, `avx512`, `neon`, `sve`). Data is one run of elements (`vector:f32:96`); a 2-D shape is refused,

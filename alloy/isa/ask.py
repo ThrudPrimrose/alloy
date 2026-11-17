@@ -116,6 +116,7 @@ class Why(enum.StrEnum):
     NOT_COVERED = "not_covered"
     CHECK_FAILED = "check_failed"
     COMBINE = "answers_do_not_combine"
+    ORDER = "order"
 
 
 #: The reasons of an invalid request; every other reason is an infeasible one.
@@ -178,6 +179,9 @@ class Request:
     operands: dict[str, Operand] = dataclasses.field(default_factory=dict)
     unit: str = ""
     max_ulp: float | None = None
+    #: ``wait``: the completion token waited on; ``fence``: the fence's kind (``proxy``, ``operand``).
+    on: str = ""
+    kind: str = ""
 
 
 @dataclass(config=STRICT)
@@ -198,6 +202,17 @@ class Check:
 
 
 @dataclass(config=STRICT)
+class Completion:
+    """How asynchronous work completes (design 2.9): the token its issue signals, the ``wait`` request that completes
+    it, and the ``fence`` requests that must come before its issue. Reading the work's result before the wait is a
+    race; issuing it without the fences reads stale data."""
+
+    token: str
+    wait: str
+    fences: tuple[str, ...] = ()
+
+
+@dataclass(config=STRICT)
 class Feasible:
     """An implementation of the request: the unit chosen, its steps in order, the host-side setup it needs, code to
     copy, its check, and notes."""
@@ -209,6 +224,8 @@ class Feasible:
     code: str
     check: Check
     notes: tuple[str, ...] = ()
+    #: Set when the unit is asynchronous: how its work completes.
+    completion: Completion | None = None
     feasible: Literal[True] = True
     status: Literal["feasible"] = "feasible"
 
@@ -258,6 +275,8 @@ class Combined:
     answers: tuple[Feasible, ...]
     feeds: tuple[str, ...]
     check: Check
+    #: The waits and fences the kernel needs, in order, when the list did not state them (design 2.9).
+    order: tuple[str, ...] = ()
     feasible: Literal[True] = True
     status: Literal["feasible"] = "feasible"
 
@@ -354,16 +373,96 @@ def ask(request: Request, verify: bool = True) -> Answer:
     return answer
 
 
+#: Per target and completion token: the wait's spelling and what it waits for (isa-research/tensor.md 1.5, 3.3, 3.4,
+#: 7.4; tensix-primitives.md). The tile programs that run on the hardware issue the sm90 and Tensix ones.
+WAITS: dict[str, dict[str, tuple[str, str]]] = {
+    "sm90": {
+        "mbarrier": ("alloy_mbar_wait(&bar, phase); phase ^= 1;  // mbarrier.try_wait.parity in a loop",
+                     "a TMA load's bytes have arrived; the barrier's phase flips with each use"),
+        "bulk_group": ('asm volatile("cp.async.bulk.commit_group;"); asm volatile("cp.async.bulk.wait_group.read 0;");',
+                       "a TMA store has read its shared tile, so the tile may be overwritten (without .read: the global "
+                       "write is done)"),
+        "cp_async_group": ('asm volatile("cp.async.commit_group;"); asm volatile("cp.async.wait_group 0;"); '
+                           "__syncthreads();", "the group's cp.async copies have landed in shared memory"),
+        "wgmma_group": ('asm volatile("wgmma.commit_group.sync.aligned;"); asm volatile("wgmma.wait_group.sync.aligned '
+                        '0;");', "the group's wgmma have written their accumulators; reading them earlier is undefined"),
+    },
+    "tensix": {
+        "noc": ("noc_async_read_barrier();", "the NoC reads issued so far have landed in L1"),
+        "cb": ("cb_wait_front(cb, n);", "the producer has pushed n tiles into the circular buffer"),
+    },
+} | dict.fromkeys(tile.CDNA, {
+    "vmcnt": ('asm volatile("s_waitcnt vmcnt(0)" ::: "memory");',
+              "the wave's global loads (and LDS DMA) have returned"),
+    "lgkmcnt": ('asm volatile("s_waitcnt lgkmcnt(0)" ::: "memory"); __syncthreads();',
+                "the wave's LDS writes have landed, and the barrier lets every wave of the block read them"),
+})  # fmt: skip
+#: Per target and fence kind: the fence's spelling and what it orders. Only sm90 splits the generic and the async
+#: proxy, and only wgmma reads registers asynchronously.
+FENCES: dict[str, dict[str, tuple[str, str]]] = {
+    "sm90": {
+        "proxy": ('asm volatile("fence.proxy.async.shared::cta;" ::: "memory");',
+                  "generic-proxy writes to shared memory (thread stores, an mbarrier's init) become visible to the "
+                  "async proxy (TMA, wgmma)"),
+        "operand": ('asm volatile("wgmma.fence.sync.aligned;" ::: "memory");',
+                    "register accesses to a wgmma's accumulators or A fragment come before the next wgmma; none is "
+                    "needed between back-to-back wgmma of one shape"),
+    },
+}  # fmt: skip
+#: Why a target needs no fence of a kind.
+NO_FENCE = {
+    "proxy": "has one memory proxy: a barrier (__syncthreads) orders shared-memory writes before other threads' reads",
+    "operand": "orders its matrix unit's operands in hardware: no fence comes before the next mma",
+}
+#: The completion of each asynchronous unit's work, per target.
+COMPLETIONS = {
+    ("sm90", "tma"): Completion("mbarrier", "wait on=mbarrier", ("fence kind=proxy",)),
+    ("sm90", "warpgroup"): Completion("wgmma_group", "wait on=wgmma_group", ("fence kind=operand",)),
+} | {(arch, "lds"): Completion("lgkmcnt", "wait on=lgkmcnt") for arch in tile.CDNA}
+
+
+def wait_answer(request: Request) -> Answer:
+    """``wait on=<token>``: the instruction that completes the work a token names."""
+    tokens = WAITS.get(request.target, {})
+    if not request.on:
+        return bad(request, Why.OPERANDS, "wait names the token it waits on", *(f"wait on={t}" for t in tokens))
+    if request.on not in tokens:
+        reason = (f"{request.target} has no {request.on!r} token" if tokens
+                  else f"{request.target} issues no asynchronous work to wait on")  # fmt: skip
+        return no(request, Why.NO_ROW, reason, *(f"wait on={t}" for t in tokens))
+    spelling, what = tokens[request.on]
+    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+                    Check("unverified", "from the ISA manuals; issued by the checked tile programs where they use it"),
+                    (what,))  # fmt: skip
+
+
+def fence_answer(request: Request) -> Answer:
+    """``fence kind=<proxy|operand>``: the fence that orders a kind of access before asynchronous work."""
+    if request.kind not in NO_FENCE:
+        return bad(request, Why.OPERANDS, "fence names its kind", *(f"fence kind={k}" for k in NO_FENCE))
+    fences = FENCES.get(request.target, {})
+    if request.kind not in fences:
+        return no(request, Why.NO_ROW, f"{request.target} {NO_FENCE[request.kind]}")
+    spelling, what = fences[request.kind]
+    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+                    Check("unverified", "from the ISA manuals; issued by the checked tile programs where they use it"),
+                    (what,))  # fmt: skip
+
+
 def answered(request: Request, verify: bool) -> Answer:
     if request.target not in UNITS:
         return bad(request, Why.TARGET, f"no target {request.target!r}", *(f"target {t}" for t in TARGETS))
     if request.unit and request.unit not in UNITS[request.target]:
         units = (f"unit {u}" for u in UNITS[request.target])
         return bad(request, Why.UNIT_NAME, f"{request.target} has no unit {request.unit!r}", *units)
+    if request.op == "wait":
+        return wait_answer(request)
+    if request.op == "fence":
+        return fence_answer(request)
     if request.op == "mma":
-        return mma(request, verify)
+        return with_completion(mma(request, verify))
     if request.op == "copy":
-        return copy(request, verify)
+        return with_completion(copy(request, verify))
     if request.op in ("load", "store") and {"src", "dst"} <= request.operands.keys():
         return moved(request, verify)
     if request.target in DIALECT:
@@ -383,6 +482,14 @@ def answered(request: Request, verify: bool) -> Answer:
         return tile_call(request)
     nearest = mma_nearest("sme", 32, 32, 32)
     return no(request, Why.NOT_COVERED, "sme answers mma only so far (step 3 of the design)", *nearest)
+
+
+def with_completion(answer: Answer) -> Answer:
+    """``answer`` with the completion of its unit's asynchronous work, where the unit has one."""
+    if not isinstance(answer, Feasible):
+        return answer
+    found = COMPLETIONS.get((answer.request.target, answer.unit))
+    return dataclasses.replace(answer, completion=found) if found else answer
 
 
 def moved(request: Request, verify: bool) -> Answer:
@@ -946,8 +1053,11 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
             f": {mma_check.basis}" if mma_check.basis else ""
         )
         answers[i] = dataclasses.replace(answers[i], check=Check(mma_check.status, basis))
+    order = ordering(requests, answers, fed, mmas)
+    if isinstance(order, Infeasible):
+        return order
     weakest = min((a.check for a in answers), key=lambda c: STRENGTH[c.status])
-    together = set(fed) | set(mmas[:1])
+    together = set(fed) | set(mmas[:1]) | {i for i, r in enumerate(requests) if r.op in ("wait", "fence")}
     if len(requests) == 1:
         basis = answers[0].check.basis
     elif len(together) == len(requests):
@@ -957,7 +1067,43 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
         alone = ", ".join(str(i) for i in range(len(requests)) if i not in together)
         basis = f"requests {alone} are checked alone, not in one program with the others"
     return Combined(tuple(answers), tuple(f"copy {i} fills {name} of mma {mmas[0]}" for i, name in fed.items()),
-                    Check(weakest.status, basis))  # fmt: skip
+                    Check(weakest.status, basis), order)  # fmt: skip
+
+
+def ordering(
+    requests: Sequence[Request], answers: Sequence[Feasible], fed: dict[int, str], mmas: Sequence[int]
+) -> tuple[str, ...] | Infeasible:
+    """The waits and fences a kernel needs between its asynchronous work and the requests that read it (design 2.9).
+    A list that states any ``wait`` or ``fence`` must state every one, in an order that reads nothing early: else it
+    is refused with the missing request and where it goes. A list that states none gets them, in order, as the
+    answer's ``order``."""
+    explicit = any(r.op in ("wait", "fence") for r in requests)
+    needed: list[str] = []
+    for i, answer in enumerate(answers):
+        readers = [mmas[0]] if i in fed else []
+        if readers and readers[0] < i:
+            return no(requests[readers[0]], Why.ORDER, f"request {readers[0]} (mma) comes before request {i} (copy), "
+                      "which fills its input", fix=f"move request {i} before request {readers[0]}")  # fmt: skip
+        done = answer.completion
+        if done is None:
+            continue
+        for fence in done.fences:
+            kind = fence.split("=", 1)[1]
+            if explicit and not any(r.op == "fence" and r.kind == kind for r in requests[:i]):
+                return no(requests[i], Why.ORDER, f"request {i} ({requests[i].op} on {answer.unit}) needs `{fence}` "
+                          "before it", fence, fix=f"put `{fence}` before request {i}")  # fmt: skip
+            needed.append(f"{fence} before request {i}")
+        waits = [j for j in range(i + 1, len(requests)) if requests[j].op == "wait" and requests[j].on == done.token]
+        if explicit and not waits:
+            return no(requests[i], Why.ORDER, f"request {i} ({requests[i].op} on {answer.unit}) is never completed: "
+                      f"`{done.wait}` must follow it", done.wait, fix=f"put `{done.wait}` after request {i}")  # fmt: skip
+        early = [j for j in readers if explicit and j < waits[0]]
+        if early:
+            return no(requests[early[0]], Why.ORDER, f"request {early[0]} reads what request {i} ({requests[i].op}) "
+                      f"writes before `{done.wait}`", done.wait,
+                      fix=f"put `{done.wait}` between requests {i} and {early[0]}")  # fmt: skip
+        needed.append(f"{done.wait} after request {i}" + (f", before request {readers[0]}" if readers else ""))
+    return () if explicit else tuple(needed)
 
 
 def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:

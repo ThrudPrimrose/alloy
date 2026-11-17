@@ -156,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("a", "b", "c", "x", "src", "dst"):
         ask_p.add_argument(f"--{name}", help="operand as space:dtype[:RxC or N][:layout][:swizzle]")
     ask_p.add_argument("--unit", default="", help="pin the implementation (tma, warpgroup, mfma, vector, ...)")
+    ask_p.add_argument("--on", default="", help="wait: the completion token (mbarrier, wgmma_group, lgkmcnt, ...)")
+    ask_p.add_argument("--kind", default="", help="fence: proxy or operand")
     ask_p.add_argument("--max-ulp", type=float, help="for a math function: the cheapest rung within this bound")
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
     ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
@@ -728,7 +730,7 @@ def ask_command(args: argparse.Namespace) -> int:
     except KeyError as exc:
         answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "space:dtype[:RxC or N][:layout][:swizzle]")
     else:
-        request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp)
+        request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp, args.on, args.kind)
         answer = ask.ask(request, verify=not args.no_verify)
     code = {"feasible": 0, "infeasible": 2, "invalid": USAGE}[answer.status]
     if args.json:
@@ -766,6 +768,10 @@ def print_feasible(title: str, answer: ask.Feasible) -> None:
         print(f"  setup {key}: {value}")
     for note in answer.notes:
         print(f"  note: {note}")
+    if answer.completion is not None:
+        done = answer.completion
+        fences = f"; before it: {', '.join(done.fences)}" if done.fences else ""
+        print(f"  async: completes on {done.token}: {done.wait}{fences}")
     print(answer.code)
 
 
@@ -776,13 +782,17 @@ def parsed_request(target: str, text: str) -> ask.Request:
         raise KeyError("an empty request: op name=operand ...")
     op, *fields = text.split()
     operands: dict[str, ask.Operand] = {}
-    unit, max_ulp = "", None
+    unit, max_ulp, on, kind = "", None, "", ""
     for field in fields:
         name, sep, value = field.partition("=")
         if not sep or not value:
-            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, or max_ulp=X")
+            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
         if name == "unit":
             unit = value.lower()
+        elif name == "on":
+            on = value.lower()
+        elif name == "kind":
+            kind = value.lower()
         elif name == "max_ulp":
             try:
                 max_ulp = float(value)
@@ -790,7 +800,7 @@ def parsed_request(target: str, text: str) -> ask.Request:
                 raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
         else:
             operands[name] = ask.Operand.parse(value)
-    return ask.Request(target, op.lower(), operands, unit, max_ulp)
+    return ask.Request(target, op.lower(), operands, unit, max_ulp, on, kind)
 
 
 def ask_all_command(args: argparse.Namespace) -> int:
@@ -812,6 +822,8 @@ def ask_all_command(args: argparse.Namespace) -> int:
     print(f"{args.target} kernel: feasible; check: {checked(answer.check)}")
     for line in answer.feeds:
         print(f"  {line}")
+    for line in answer.order:
+        print(f"  order: {line}")
     for i, one in enumerate(answer.answers):
         print_feasible(f"[{i}] {one.request.op}", one)
     return 0
