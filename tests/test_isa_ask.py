@@ -796,7 +796,9 @@ def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[s
     assert main(["ask", "gfx942", "scan_add", "--x", "register:f32"]) == 0
 
     first = capsys.readouterr().out.splitlines()[0]
-    assert "check: compiled for gfx90a, gfx942" in first and "compiled compiled" not in first
+    basis = simt.verdicts()[("scan_add", "hip")].basis
+    assert first.endswith(f"check: {basis}")  # a basis that starts with its status ("ran on ...") is printed once
+    assert "run ran" not in first and "compiled compiled" not in first
 
 
 # MI200 (gfx90a) answers an agent met in smoke S4: each refusal names where the answer is.

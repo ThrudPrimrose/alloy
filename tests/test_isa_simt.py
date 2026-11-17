@@ -86,7 +86,9 @@ def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.Ca
 
     printed = capsys.readouterr().out
     assert "__popcll(__ballot(v > 0.0f))" in printed
-    assert "compiled for gfx90a, gfx942" in printed
+    recorded = simt.verdicts()[("gen_mask", "hip")]
+    assert f"verified: {recorded.basis}" in printed  # the recorded check, word for word
+    assert "ran on gfx90a" in recorded.basis and "ran on gfx942" in recorded.basis
 
 
 @pytest.mark.nvidia
