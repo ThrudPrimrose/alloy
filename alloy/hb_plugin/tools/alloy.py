@@ -17,15 +17,18 @@ class NoArgs(pydantic.BaseModel):
 #: Mode -> what the tool tells the model.
 MODES = {
     "profile": "Alloy's C/C++ renderings of this kernel, every candidate verified and timed; each scope's fastest "
-    "whose timing clearly beats the default build, else the default, built into a library you can submit, with the "
-    "sources, a Makefile and the report of the top candidates.",
+    "whose timing clearly beats the default build, else the default. Answers with the folder of sources and a "
+    "Makefile (run `make` to build the library, then submit it), each scope's compiler and flags, and the paths of "
+    "the ranked report and of the advice for scopes Alloy left short.",
     "speculative": "Alloy's C/C++ renderings of this kernel, each scope's predicted best candidate (verified, not "
-    "timed) built into a library you can submit, with the sources, a Makefile and the report of the top candidates.",
+    "timed). Answers with the folder of sources and a Makefile (run `make` to build the library, then submit it), "
+    "each scope's compiler and flags, and the paths of the ranked report and of the advice for scopes Alloy left "
+    "short.",
 }
 #: Appended on a HIP task, where either mode answers with the GPU form.
 GPU_NOTE = (
     " On a HIP task: the kernel's HIP host and device sources with each device map at the threadblock its compiler "
-    "report ranks first, built into a library you can submit, and the ranked shapes per map."
+    "report ranks first, to submit as a source pair, and the path of the ranked shapes per map."
 )
 
 

@@ -27,8 +27,6 @@ from hpcagent_bench.harness.routes import ROUTES, RouteRequest
 from hpcagent_bench.harness.sandbox import AGENT_FOLDERS_LOG, AgentFolderLine
 from hpcagent_bench.harness.service import ServiceConfig, make_server
 
-from alloy.hb_plugin import episode
-
 KERNEL = "tsvc_2_vpv"
 
 
@@ -75,9 +73,16 @@ def judge_url(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> Iterat
     server.server_close()
 
 
+def made(result: dict[str, object]) -> pathlib.Path:
+    """What an agent does with the answer: ``make`` in the folder, then the library it wrote."""
+    folder = pathlib.Path(str(result["folder"]))
+    subprocess.run(["make", "-C", str(folder)], check=True, capture_output=True)
+    return folder / str(result["builds"])
+
+
 def graded(url: str, result: dict[str, object]) -> GradeAnswer:
     submission = Submission(
-        language=Language.C, library=str(result["library"]), workspace_bytes=str(result["workspace_bytes"])
+        language=Language.C, library=str(made(result)), workspace_bytes=str(result["workspace_bytes"])
     )
     with config.overridden("service.submit_feedback", SubmitFeedback.FULL):  # the measured grade, not the verdict
         grade = tools.JudgeClient(url).submit(submission, KERNEL)
@@ -85,7 +90,7 @@ def graded(url: str, result: dict[str, object]) -> GradeAnswer:
     return grade
 
 
-def test_the_speculative_tool_answers_c_sources_a_makefile_and_a_library_the_judge_grades_correct(
+def test_the_speculative_tool_answers_c_sources_and_a_makefile_whose_library_the_judge_grades_correct(
     judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sut = call("speculative", tmp_path, monkeypatch)
@@ -94,18 +99,19 @@ def test_the_speculative_tool_answers_c_sources_a_makefile_and_a_library_the_jud
     result = sut.answer["result"]
     assert isinstance(result, dict)
     folder = pathlib.Path(str(result["folder"]))
-    assert folder.is_relative_to(tmp_path) and pathlib.Path(str(result["library"])).is_file()
+    assert folder.is_relative_to(tmp_path)
+    assert not (folder / str(result["builds"])).exists(), "the agent builds the library, not the tool"
     entry = (folder / "program.c").read_text()
     assert "#include <dace" not in entry and '#include "dace' not in entry, "the entry needs no DaCe runtime"
     for scope in result["scopes"]:
         assert (folder / scope["source"]).is_file()
         assert scope["compiler"] in (folder / "Makefile").read_text()
-    assert "## " in str(result["report"]), "the report's sections come back"
+    assert "## " in pathlib.Path(str(result["report"])).read_text(), "the answer names the report's file"
     grade = graded(judge_url, result)
     assert grade.build_ok is True and grade.correct is True, grade.detail
 
 
-def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_its_tool_built(
+def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_it_makes_from_the_answer(
     judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An LLM run gives each episode a folder through the run's folder log: the judge refuses a path outside it."""
@@ -122,14 +128,14 @@ def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_its_tool_bui
     assert sut.code == HTTPStatus.OK, sut.answer
     result = sut.answer["result"]
     assert isinstance(result, dict)
-    assert pathlib.Path(str(result["library"])).is_relative_to(agent)
+    assert pathlib.Path(str(result["folder"])).is_relative_to(agent)
     (call_kept,) = recorded_calls(agent)  # A4: the episode's record names the call and what it returned
     assert (call_kept["tool"], call_kept["ok"], call_kept["arguments"]) == (
         "alloy_speculative",
         True,
         {"kernel": KERNEL},
     )
-    assert call_kept["library_sha256"] == episode.file_hash(pathlib.Path(str(result["library"])))
+    assert call_kept["library_sha256"] == result["checked_sha256"] != ""
     units = call_kept["unit_sha256"]
     assert isinstance(units, dict) and isinstance(scopes := result["scopes"], list)
     assert set(units) == {"program.c", *(scope["source"] for scope in scopes)}
@@ -143,7 +149,7 @@ def recorded_calls(folder: pathlib.Path) -> list[dict[str, object]]:
     return [c for c in data["tools"] if isinstance(c, dict)]
 
 
-def test_the_profile_tool_answers_a_library_the_judge_grades_correct(
+def test_the_profile_tool_answers_sources_whose_library_the_judge_grades_correct(
     judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sut = call("profile", tmp_path, monkeypatch)
@@ -155,18 +161,6 @@ def test_the_profile_tool_answers_a_library_the_judge_grades_correct(
     assert grade.build_ok is True and grade.correct is True, grade.detail
 
 
-def test_make_rebuilds_the_library_the_tool_built(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    result = call("speculative", tmp_path, monkeypatch).answer["result"]
-    assert isinstance(result, dict)
-    library = pathlib.Path(str(result["library"]))
-    library.unlink()
-
-    subprocess.run([*str(result["make"]).split(), "-B"], check=True, capture_output=True)
-
-    assert library.is_file()
-
-
-@pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative", "alloy"])
 def test_an_alloy_packet_lets_the_agent_submit_the_library_its_tool_built(packet: str) -> None:
     plugins.load()
 

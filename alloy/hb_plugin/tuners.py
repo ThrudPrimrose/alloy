@@ -1,6 +1,9 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Alloy's optimizer flavors: they tune a DaCe pipeline's SDFG and deliver the library the judge grades."""
 
+import pathlib
+import subprocess
+
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.optimizers import FlavorOptimizer
 from hpcagent_bench.harness.task import Task
@@ -77,6 +80,7 @@ class AlloyToolStub(FlavorOptimizer):
         if "error" in answer:
             raise RuntimeError(f"alloy_speculative: {answer['error']}")
         result = answer["result"]
-        return Submission(
-            language=task.language, library=str(result["library"]), workspace_bytes=str(result["workspace_bytes"])
-        )
+        folder = str(result["folder"])
+        subprocess.run(["make", "-C", folder], check=True, capture_output=True)  # as an agent would
+        library = str(pathlib.Path(folder) / str(result["builds"]))
+        return Submission(language=task.language, library=library, workspace_bytes=str(result["workspace_bytes"]))

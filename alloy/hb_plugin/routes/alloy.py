@@ -137,7 +137,7 @@ def tool_call(tool: str, body: Mapping[str, object], seconds: float, outcome: Ou
     arguments = {
         key: str(value)[:ARGUMENT_CHARS] for key, value in body.items() if isinstance(value, str | int | float | list)
     }
-    library = file_hash(pathlib.Path(answer.library)) if answer is not None else ""
+    library = answer.checked_sha256 if answer is not None else ""  # what make builds from the answered folder
     units = answered_units(answer) if answer is not None else {}
     return ToolCall(tool, arguments, seconds, status == HTTPStatus.OK, library, units)
 

@@ -292,7 +292,7 @@ def test_the_descent_tries_no_more_shapes_of_a_map_than_its_width():
 
 
 @pytest.mark.hip
-def test_the_gpu_tool_answers_a_library_the_bench_built_from_the_ranked_hip_form(tmp_path):
+def test_the_gpu_tool_answers_the_ranked_hip_form_the_bench_builds(tmp_path):
     from hpcagent_bench.precision import Precision
 
     from alloy.hb_plugin.workbench import CodegenRequest, codegen
@@ -305,6 +305,7 @@ def test_the_gpu_tool_answers_a_library_the_bench_built_from_the_ranked_hip_form
 
     sut = codegen(request)
 
-    assert pathlib.Path(sut.library).is_file()
+    assert sut.checked_sha256, "the judge built the pair once to check it"
     assert (tmp_path / "best" / "device.hip").read_text().count("__global__") >= 1
-    assert "| Map | Picked |" in sut.report and "| 0 |" in sut.report
+    report = pathlib.Path(sut.report).read_text()
+    assert "| Map | Picked |" in report and "| 0 |" in report

@@ -3,14 +3,17 @@
 bench's canonical (CPF) pipeline, as plain C/C++ an agent can read, edit and rebuild without DaCe.
 
 Under ``folder``: ``report.md``, and ``best/`` with one translation unit per scope, the program entry in the bench's C
-ABI (``program.c``), a ``Makefile`` compiling each scope with its own compiler and flags, and the library it built.
-On a GPU task (``language`` hip) ``best/`` holds the bench's HIP form with each device map at the threadblock its
-compiler report ranks first, and the library the bench's own sandbox builds from it (:func:`gpu_codegen`)."""
+ABI (``program.c``), a ``Makefile`` compiling each scope with its own compiler and flags, and ``advice/<symbol>.md``
+for each scope Alloy left short. The answer names these files and does not build the library in the agent's folder:
+the agent runs ``make`` and submits, or edits first (owner, 2026-11-17). The judge builds a scratch copy to check that
+the folder builds and records that library's hash. On a GPU task (``language`` hip) ``best/`` holds the bench's HIP
+form with each device map at the threadblock its compiler report ranks first (:func:`gpu_codegen`)."""
 
 import pathlib
 import shlex
 import shutil
 import subprocess
+import tempfile
 
 import pydantic
 from hpcagent_bench.categories import Language, SourceMode
@@ -34,6 +37,7 @@ from alloy.hb_plugin.adapter import (
     pipeline_sdfg,
     source_pair,
 )
+from alloy.hb_plugin.episode import file_hash
 from alloy.report import Mode
 
 __all__ = ["CodegenAnswer", "CodegenRequest", "codegen"]
@@ -43,8 +47,6 @@ PIPELINE = "canon_cpu"
 GPU_PIPELINE = "canon_gpu"
 #: Task languages whose submission is the bench's GPU form.
 GPU_LANGUAGES = frozenset({"hip", "cuda"})
-#: The most of ``report.md`` an answer carries; the file holds all of it.
-REPORT_CHARS = 20_000
 #: The file suffix of a dialect's two GPU units.
 DEVICE_SUFFIX = {"hip": "hip", "cuda": "cu"}
 
@@ -63,19 +65,51 @@ class CodegenRequest(pydantic.BaseModel):
 
 
 class CodegenAnswer(pydantic.BaseModel):
-    """The built library with the scratch it requests, where its sources are, how to rebuild it, and the report."""
+    """Where the sources are, how to build and submit them, each scope's build, and the paths of the report and the
+    advice; never the built library, which the agent makes itself."""
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 
     mode: Mode
-    library: str
-    workspace_bytes: str
     folder: str
+    #: How to build and submit: the command, and on a GPU task which files to submit as which field.
     make: str
+    #: The file ``make`` writes in ``folder`` (empty on a GPU source pair, which the judge builds).
+    builds: str
+    workspace_bytes: str
     scopes: tuple[BestScope, ...]
+    #: The path of ``report.md``: every scope's candidates, ranked.
     report: str
-    #: Scope symbol -> why Alloy left it short and how to finish it by hand, with the target's intrinsics.
+    #: Scope symbol -> the path of the note on why Alloy left it short and the target's intrinsics it needs.
     advice: dict[str, str] = {}
+    #: SHA-256 of the library the judge built from a scratch copy of ``folder`` (empty when nothing was built).
+    checked_sha256: str = ""
+
+
+def checked_build(best: pathlib.Path, library: str) -> str:
+    """Build a scratch copy of ``best`` with its Makefile and return the library's SHA-256, so the folder handed to
+    the agent is known to build and stays unbuilt."""
+    with tempfile.TemporaryDirectory(prefix="alloy-check") as scratch:
+        copy = pathlib.Path(scratch) / "best"
+        shutil.copytree(best, copy)
+        made = subprocess.run(["make", "-C", str(copy), "-B"], check=False, capture_output=True, text=True)
+        if made.returncode != 0:
+            raise RuntimeError(f"make in a copy of {best} failed:\n{made.stderr[-2000:]}")
+        return file_hash(copy / library)
+
+
+def advice_files(best: pathlib.Path, advice: dict[str, str]) -> dict[str, str]:
+    """Write each scope's advice to ``best/advice/<symbol>.md`` and return the paths."""
+    if not advice:
+        return {}
+    folder = best / "advice"
+    folder.mkdir(exist_ok=True)
+    paths: dict[str, str] = {}
+    for symbol, text in advice.items():
+        path = folder / f"{symbol}.md"
+        path.write_text(text)
+        paths[symbol] = str(path)
+    return paths
 
 
 def bench_entry(linker: Linker, plan: Best, winners: dict[str, Build], spec: BenchSpec, precision: Precision) -> str:
@@ -140,15 +174,15 @@ def gpu_codegen(request: CodegenRequest) -> CodegenAnswer:
     (best / f"device.{suffix}").write_text(submission.device_source or "")
     if form.libraries:  # the bench's sandbox links a pair's libraries only on a request the setup refuses
         library = pathlib.Path(built_library(request.language, form, spec, best).library or "")
+        builds, checked = library.name, file_hash(library)
     else:
         with Sandbox(binding_from_spec(spec), source_mode=SourceMode.ANY) as sandbox:
             built = sandbox.build(submission)
             if not built.ok or built.lib is None:
                 raise RuntimeError(f"the bench could not build the {request.language} form: {built.log[-1500:]}")
-            library = best / built.lib.name
-            shutil.copy(built.lib, library)
-    report = gpu_report(picks, dialect, arch, request.mode)
-    (pathlib.Path(request.folder) / "report.md").write_text(report)
+            builds, checked = "", file_hash(built.lib)  # the judge builds the pair: nothing to make here
+    report = pathlib.Path(request.folder) / "report.md"
+    report.write_text(gpu_report(picks, dialect, arch, request.mode))
     # the sandbox's own commands name its temporary folder, gone by now: the judge rebuilds from the pair
     rebuild = (
         f"submit the library: the form calls {', '.join(form.libraries)}, which the judge links into a source pair "
@@ -159,12 +193,13 @@ def gpu_codegen(request: CodegenRequest) -> CodegenAnswer:
     )
     return CodegenAnswer(
         mode=request.mode,
-        library=str(library),
-        workspace_bytes=submission.workspace_bytes or "0",
         folder=str(best),
         make=rebuild,
+        builds=builds,
+        workspace_bytes=submission.workspace_bytes or "0",
         scopes=(),
-        report=report,
+        report=str(report),
+        checked_sha256=checked,
     )
 
 
@@ -190,19 +225,17 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
         )
     linker, best = Linker(result.program, matrix, out), out / "best"
     workspace = bench_entry(linker, result.best, result.winners, spec, request.precision)
-    made = subprocess.run(["make", "-C", str(best), "-B"], check=False, capture_output=True, text=True)
-    if made.returncode != 0:
-        raise RuntimeError(f"make in {best} failed:\n{made.stderr[-2000:]}")
     commands = linker.commands(result.best)
-    report = result.report.read_text()
+    checked = checked_build(best, commands.library)
+    make = shlex.join(["make", "-C", str(best)])
     return CodegenAnswer(
         mode=request.mode,
-        library=str(best / commands.library),
-        workspace_bytes=workspace,
         folder=str(best),
-        make=shlex.join(["make", "-C", str(best)]),
+        make=f"{make} builds {best / commands.library}; submit it as the library with workspace_bytes={workspace}",
+        builds=commands.library,
+        workspace_bytes=workspace,
         scopes=result.best.scopes,
-        report=report[:REPORT_CHARS]
-        + (f"\n[cut: the rest is in {result.report}]" if len(report) > REPORT_CHARS else ""),
-        advice=result.advice or {},
+        report=str(result.report),
+        advice=advice_files(best, result.advice or {}),
+        checked_sha256=checked,
     )
