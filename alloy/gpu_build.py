@@ -198,7 +198,9 @@ def build(
     where = (folder / candidate.name).resolve()
     where.mkdir(parents=True, exist_ok=True)
     suffix = "cu" if compiler.dialect == "cuda" else "hip"
-    device, host = where / f"kernel.{suffix}", where / "kernel_host.cpp"
+    # A HIP host unit is named .hip: amdclang++ (clang called directly) compiles a .cpp as plain C++, where
+    # hip_runtime.h fails, and a -x hip from the bench's recipe lands after the input, too late; hipcc takes either.
+    device, host = where / f"kernel.{suffix}", where / ("kernel_host.hip" if suffix == "hip" else "kernel_host.cpp")
     device.write_text(device_code)
     host.write_text(host_code)
     library = where / f"lib{candidate.name}.so"

@@ -32,7 +32,8 @@ fp.fast = ["-ffast-math"]
 # rounding mode: offered only where the program accumulates, verified in the reassociation band.
 atomics = ["-munsafe-fp-atomics"]
 
-# ROCm's clang driver called directly: hipcc's defaults left out. It links the HIP runtime only with --hip-link.
+# ROCm's clang driver called directly: hipcc's defaults left out. It links the HIP runtime only with --hip-link, and
+# compiles the host unit as HIP because gpu_build names it .hip.
 [compilers.amdclang]
 dialect = "hip"
 bench = "hipcc"

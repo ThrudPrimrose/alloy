@@ -4,6 +4,7 @@ recipe, and speculative mode's ranking of them by the compilers' resource report
 
 import pathlib
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -102,3 +103,22 @@ def test_the_scalar_declaration_axis_reaches_the_device_code_of_a_kernel_with_sc
 
     assert {"nvcc", "nvcc_decl-late"} <= set(sut), sorted(sut)
     assert sut["nvcc"].device_hash != sut["nvcc_decl-late"].device_hash
+
+
+def test_a_hip_build_names_its_host_unit_hip_so_amdclang_compiles_it_as_hip(tmp_path, monkeypatch):
+    """amdclang++ is clang called directly: it compiles a .cpp host unit as C++, where every hip_runtime.h include
+    fails (S2 on MI200: 18 and 20 errors, the candidate dropped on every kernel); a .hip unit is HIP to clang and to
+    hipcc alike."""
+    monkeypatch.setenv("HPCAGENT_BENCH_GFX", "gfx90a")  # the bench's recipe names the arch; no AMD GPU here
+    compilers = gpu_build.load()
+    (candidate,) = [c for c in gpu_build.candidates(compilers, "hip", False) if c.name == "amdclang"]
+    ran: list[list[str]] = []
+    monkeypatch.setattr(gpu_build.subprocess, "run", lambda argv, **_: ran.append(argv) or SimpleNamespace(
+        returncode=1, stdout="", stderr="stopped after the first command"))  # fmt: skip
+
+    gpu_build.build(compilers, candidate, "host code", "device code", tmp_path, "gfx90a")
+
+    host = tmp_path / "amdclang" / "kernel_host.hip"
+    assert host.read_text() == "host code"
+    assert not (tmp_path / "amdclang" / "kernel_host.cpp").exists()
+    assert ran and ran[0][0].endswith("amdclang++")

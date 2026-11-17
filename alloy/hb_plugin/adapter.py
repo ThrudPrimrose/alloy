@@ -3,6 +3,7 @@
 ``/profile`` stub, and the chosen library is scored once with ``/score``."""
 
 import atexit
+import hashlib
 import numbers
 import os
 import pathlib
@@ -317,13 +318,16 @@ def scratch_folder(spec: BenchSpec) -> pathlib.Path:
     return out
 
 
-def optimize(task: Task, pipeline: str, deliver: Deliver, keep: Keep, *, reference_fp: bool = False) -> Submission:
+def optimize(
+    task: Task, pipeline: str, deliver: Deliver, keep: Keep, *, reference_fp: bool = False,
+    folder: pathlib.Path | None = None,
+) -> Submission:  # fmt: skip
     """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
     slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
     GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`). ``reference_fp`` searches
     only the reference's FP semantics (:func:`configuration_matrix.at_reference_fp`)."""
     if target_of(task) is Target.GPU:
-        return profile_gpu(task, pipeline, keep)
+        return profile_gpu(task, pipeline, keep, folder)
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -412,12 +416,14 @@ def plain(task: Task, spec: BenchSpec, pipeline: str, deliver: Deliver) -> Submi
     return rendered(task, spec, pipeline_sdfg(spec, pipeline, task.precision, target_of(task)), deliver)
 
 
-def speculative(task: Task, pipeline: str, deliver: Deliver, keep: Keep) -> Submission:
+def speculative(
+    task: Task, pipeline: str, deliver: Deliver, keep: Keep, folder: pathlib.Path | None = None
+) -> Submission:
     """Alloy's speculative mode on ``task``'s kernel after ``pipeline``: each scope's predicted pick, verified and
     never timed, if ``/score`` grades it correct and no slower than the plain program, else the plain program. A GPU
     task's device maps take their speculated threadblock shapes instead (:func:`speculative_gpu`)."""
     if target_of(task) is Target.GPU:
-        return speculative_gpu(task, pipeline, keep)
+        return speculative_gpu(task, pipeline, keep, folder)
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
@@ -490,24 +496,52 @@ def faster_correct(
 ANALYSIS_DIALECT = {"nvidia": "cuda", "amd": "hip"}
 
 
-def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str) -> Submission:
-    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``: a host and a device source
-    the judge builds. A form that calls a catalog library (hipBLAS for a BLAS node) is built here with the default
-    candidate and the library linked, and submitted as that library: the judge links a source pair's libraries only
-    on a ``startup.load`` request, which a setup may refuse."""
-    form = render_canonical(spec, spec.short_name, sdfg, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
-    if not form.libraries:
-        submission = Submission(language=Language.parse(dialect), source=form.code, device_source=form.device_code)
-        return with_scratch(submission, form.workspace_bytes)
+def gpu_form(task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str) -> RenderedForm:
+    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``."""
+    return render_canonical(spec, spec.short_name, sdfg, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
+
+
+def source_pair(dialect: str, form: RenderedForm) -> Submission:
+    """``form`` as the host and device sources the judge builds."""
+    submission = Submission(language=Language.parse(dialect), source=form.code, device_source=form.device_code)
+    return with_scratch(submission, form.workspace_bytes)
+
+
+def built_library(dialect: str, form: RenderedForm, spec: BenchSpec, folder: pathlib.Path) -> Submission:
+    """``form`` built in ``folder`` by the default candidate with the catalog libraries it calls linked, as a library
+    submission."""
     compilers = gpu_build.load()
     default = gpu_build.candidates(compilers, dialect, "atomic" in form.device_code)[0]
     result = gpu_build.build(
-        compilers, default, form.code, form.device_code, scratch_folder(spec), gpu_arch(dialect), tuple(form.libraries)
-    )
+        compilers, default, form.code, form.device_code, form_folder(folder, form), gpu_arch(dialect),
+        tuple(form.libraries),
+    )  # fmt: skip
     if result.library is None:
-        raise RuntimeError(f"{spec.short_name}: the {dialect} form calling {', '.join(form.libraries)} did not build: "
-                           f"{result.error.splitlines()[-1] if result.error else 'no library'}")  # fmt: skip
+        why = result.error.splitlines()[-1] if result.error else "no library"
+        raise RuntimeError(
+            f"{spec.short_name}: the {dialect} form calling {', '.join(form.libraries)} did not build: {why}"
+        )
     return with_scratch(Submission(language=Language.parse(dialect), library=str(result.library)), form.workspace_bytes)
+
+
+def form_folder(folder: pathlib.Path, form: RenderedForm) -> pathlib.Path:
+    """A folder of its own under ``folder`` for ``form``'s builds: two programs (two threadblock shapes) never share
+    a library path the judge might have loaded."""
+    digest = hashlib.sha256((form.code + "\0" + form.device_code).encode()).hexdigest()[:12]
+    return folder / f"alloy-gpu-{digest}"
+
+
+def device_submission(
+    task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str, folder: pathlib.Path | None = None
+) -> Submission:
+    """``sdfg``'s GPU form as the submission the judge grades: the host and device sources, which it builds. A form
+    that calls a catalog library (hipBLAS for a BLAS node) is built in ``folder`` with the library linked and
+    submitted as that library, since the judge links a source pair's libraries only on a ``startup.load`` request,
+    which Alloy's setups refuse; ``folder`` is the episode's, the only place a submitted path may live."""
+    form = gpu_form(task, spec, sdfg, dialect)
+    if form.libraries and folder is not None:
+        return built_library(dialect, form, spec, folder)
+    return source_pair(dialect, form)
 
 
 def form_dialect(task: Task) -> str:
@@ -551,7 +585,9 @@ def gpu_arch(dialect: str) -> str:
     return f"sm_{arch.replace('.', '')}" if dialect == "cuda" else arch
 
 
-def gpu_libraries(task: Task, spec: BenchSpec, program: dace.SDFG) -> list[tuple[gpu_build.GpuBuild, Submission]]:
+def gpu_libraries(
+    task: Task, spec: BenchSpec, program: dace.SDFG, folder: pathlib.Path | None = None
+) -> list[tuple[gpu_build.GpuBuild, Submission]]:
     """The device candidates of ``program`` (A10: compiler, floating-point level, and where scalars are declared,
     :mod:`alloy.gpu_build`), each built into a library, the default first; a build this machine refuses or a
     duplicate device object drops out."""
@@ -564,7 +600,9 @@ def gpu_libraries(task: Task, spec: BenchSpec, program: dace.SDFG) -> list[tuple
             )
 
     forms = {"": rendered_form("")}
-    compilers, folder, arch = gpu_build.load(), scratch_folder(spec), gpu_arch(dialect)
+    # the episode's folder when there is one: the judge takes a submitted library only from there
+    compilers, folder, arch = gpu_build.load(), folder or scratch_folder(spec), gpu_arch(dialect)
+    folder = form_folder(folder, forms[""])
     seen: set[str] = set()
     built: list[tuple[gpu_build.GpuBuild, Submission]] = []
     for candidate in gpu_build.candidates(compilers, dialect, "atomic" in forms[""].device_code):
@@ -584,7 +622,7 @@ def gpu_libraries(task: Task, spec: BenchSpec, program: dace.SDFG) -> list[tuple
     return built
 
 
-def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
+def profile_gpu(task: Task, pipeline: str, keep: Keep, folder: pathlib.Path | None = None) -> Submission:
     """Every device map of ``task``'s kernel after ``pipeline`` at its profiled threadblock shape: the speculated
     shapes (:func:`alloy.gpu.speculate`), then each map's next ranked ones timed by the judge (:func:`alloy.gpu.descend`)
     while the kernel's time allows; delivered if ``/score`` grades it correct and no slower than the pipeline's own
@@ -594,7 +632,7 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     deadline = started + resolve_kernel_timeout(spec)
     dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
     judge, size = judge_client(), fast_size(config.current().service.preset)
-    default = device_submission(task, spec, run({}), form_dialect(task))
+    default = device_submission(task, spec, run({}), form_dialect(task), folder)
     try:
         _, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
     except (OSError, RuntimeError, ValueError) as exc:
@@ -606,7 +644,7 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     def timed(program: dace.SDFG) -> float | None:
         start = time.monotonic()
         try:
-            shaped = device_submission(task, spec, program, form_dialect(task))
+            shaped = device_submission(task, spec, program, form_dialect(task), folder)
             return stub_time(judge.profile(shaped, task.kernel, reps=PROFILE_REPS, size=size))
         except (OSError, RuntimeError, ValueError) as exc:
             # a shape the device cannot launch, a refused profile, or no time in the report: not a candidate
@@ -622,9 +660,9 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     shapes = gpu.descend(run, picks, timed, affordable)
     print(f"alloy: {spec.short_name}: threadblocks {shapes} after {len(costs)} profiles", file=sys.stderr, flush=True)
     program = run(shapes)
-    chosen, build_name = device_submission(task, spec, program, form_dialect(task)), "default"
+    chosen, build_name = device_submission(task, spec, program, form_dialect(task), folder), "default"
     best: float | None = None
-    for result, library in gpu_libraries(task, spec, program)[1:]:  # the default build is the source's own
+    for result, library in gpu_libraries(task, spec, program, folder)[1:]:  # the default build is the source's own
         if not affordable():
             break
         start = time.monotonic()
@@ -644,18 +682,20 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
     return chosen if kept else default
 
 
-def speculated_library(task: Task, spec: BenchSpec, program: dace.SDFG) -> tuple[Submission, str]:
+def speculated_library(
+    task: Task, spec: BenchSpec, program: dace.SDFG, folder: pathlib.Path | None = None
+) -> tuple[Submission, str]:
     """The device build the compilers' resource reports rank first (:func:`alloy.gpu_build.resource_key`), or the
     source when no candidate ranks strictly ahead of the default build."""
     dialect = form_dialect(task)
-    builds = gpu_libraries(task, spec, program)
+    builds = gpu_libraries(task, spec, program, folder)
     keys = [gpu_build.resource_key(gpu_build.usage(result, dialect)) for result, _ in builds]
     if len(builds) > 1 and (best := min(range(len(builds)), key=keys.__getitem__)) > 0 and keys[best] < keys[0]:
         return builds[best][1], builds[best][0].candidate.name
-    return device_submission(task, spec, program, dialect), "default"
+    return device_submission(task, spec, program, dialect, folder), "default"
 
 
-def speculative_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
+def speculative_gpu(task: Task, pipeline: str, keep: Keep, folder: pathlib.Path | None = None) -> Submission:
     """Every device map of ``task``'s kernel after ``pipeline`` at its speculated threadblock shape
     (:func:`alloy.gpu.speculate`, for this machine's device), if ``/score`` grades it correct, else the pipeline's
     own blocks."""
@@ -667,7 +707,7 @@ def speculative_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
         program, picks = gpu.speculate(run, dialect, gpu.native_arch(dialect))
         blocks = {ordinal: pick.shape for ordinal, pick in picks.items()}
         print(f"alloy: {spec.short_name}: threadblocks {blocks}", file=sys.stderr, flush=True)
-        chosen, build_name = speculated_library(task, spec, program)
+        chosen, build_name = speculated_library(task, spec, program, folder)
         if judge_client().score(chosen, task.kernel).correct:
             note = f"speculated, device build {build_name}"
             record_episode(keep, "gpu-speculative", task, started, scopes=gpu_scopes(blocks, True, note))
@@ -677,4 +717,4 @@ def speculative_gpu(task: Task, pipeline: str, keep: Keep) -> Submission:
         print(f"alloy: {spec.short_name}: speculated threadblocks dropped: {exc}", file=sys.stderr, flush=True)
         reason = f"dropped: {exc}"
     record_episode(keep, "gpu-speculative", task, started, scopes=gpu_scopes(blocks, False, reason))
-    return device_submission(task, spec, run({}), form_dialect(task))
+    return device_submission(task, spec, run({}), form_dialect(task), folder)

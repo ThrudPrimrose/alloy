@@ -25,7 +25,15 @@ from hpcagent_bench.support.bindings.contract import binding_from_spec
 from alloy import api, configuration_matrix, gpu
 from alloy.backend.build import Build
 from alloy.evaluate.link import Best, BestScope, Linker
-from alloy.hb_plugin.adapter import device_submission, gpu_pipeline, manifest_of, nothing_to_generate, pipeline_sdfg
+from alloy.hb_plugin.adapter import (
+    built_library,
+    gpu_form,
+    gpu_pipeline,
+    manifest_of,
+    nothing_to_generate,
+    pipeline_sdfg,
+    source_pair,
+)
 from alloy.report import Mode
 
 __all__ = ["CodegenAnswer", "CodegenRequest", "codegen"]
@@ -123,22 +131,32 @@ def gpu_codegen(request: CodegenRequest) -> CodegenAnswer:
     program, picks = gpu.speculate(run, dialect, arch)
     if not picks:
         raise api.NothingToGenerate(f"{spec.short_name}: no device map to give a threadblock")
-    submission = device_submission(task, spec, program, request.language)
+    form = gpu_form(task, spec, program, request.language)
+    submission = source_pair(request.language, form)
     best = pathlib.Path(request.folder) / "best"
     best.mkdir(parents=True, exist_ok=True)
     suffix = DEVICE_SUFFIX[request.language]
     (best / f"program.{suffix}").write_text(submission.source or "")
     (best / f"device.{suffix}").write_text(submission.device_source or "")
-    with Sandbox(binding_from_spec(spec), source_mode=SourceMode.ANY) as sandbox:
-        built = sandbox.build(submission)
-        if not built.ok or built.lib is None:
-            raise RuntimeError(f"the bench could not build the {request.language} form: {built.log[-1500:]}")
-        library = best / built.lib.name
-        shutil.copy(built.lib, library)
+    if form.libraries:  # the bench's sandbox links a pair's libraries only on a request the setup refuses
+        library = pathlib.Path(built_library(request.language, form, spec, best).library or "")
+    else:
+        with Sandbox(binding_from_spec(spec), source_mode=SourceMode.ANY) as sandbox:
+            built = sandbox.build(submission)
+            if not built.ok or built.lib is None:
+                raise RuntimeError(f"the bench could not build the {request.language} form: {built.log[-1500:]}")
+            library = best / built.lib.name
+            shutil.copy(built.lib, library)
     report = gpu_report(picks, dialect, arch, request.mode)
     (pathlib.Path(request.folder) / "report.md").write_text(report)
     # the sandbox's own commands name its temporary folder, gone by now: the judge rebuilds from the pair
-    rebuild = f"submit program.{suffix} as source and device.{suffix} as device_source; the judge builds them"
+    rebuild = (
+        f"submit the library: the form calls {', '.join(form.libraries)}, which the judge links into a source pair "
+        f"only on a library request; after editing program.{suffix} or device.{suffix}, rebuild with the "
+        f"{', '.join(form.libraries)} link flags (-l{' -l'.join(form.libraries)})"
+        if form.libraries
+        else f"submit program.{suffix} as source and device.{suffix} as device_source; the judge builds them"
+    )
     return CodegenAnswer(
         mode=request.mode,
         library=str(library),

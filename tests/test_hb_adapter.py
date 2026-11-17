@@ -369,29 +369,33 @@ def test_a_speculative_gpu_episode_whose_shapes_fail_records_the_fallback(monkey
     ]  # fmt: skip
 
 
-def test_a_gpu_form_calling_a_catalog_library_is_submitted_as_the_library_built_with_it(tmp_path, monkeypatch):
-    """The judge links a source pair's libraries only on a ``startup.load`` request, which Alloy's setups refuse; so a
-    form calling hipBLAS ships as the library built here with ``-lhipblas`` (S2 on MI200: atax's hipblasDgemv)."""
+def test_a_gpu_form_calling_a_catalog_library_is_submitted_as_the_library_built_in_the_episode_folder(
+    tmp_path, monkeypatch
+):
+    """The judge links a source pair's libraries only on a ``startup.load`` request, which Alloy's setups refuse, and
+    takes a submitted library only from the episode's folder; so a form calling hipBLAS ships as the library built
+    there with ``-lhipblas`` (S2 on MI200: atax's hipblasDgemv)."""
     form = SimpleNamespace(code="host", device_code="device", libraries=("hipblas",), workspace_bytes="0")
     monkeypatch.setattr(adapter, "render_canonical", lambda *args: form)
     monkeypatch.setattr(adapter, "gpu_arch", lambda dialect: "gfx90a")
-    built: list[tuple[str, tuple[str, ...]]] = []
+    built: list[tuple[str, pathlib.Path, tuple[str, ...]]] = []
 
     def build(compilers, candidate, host, device, folder, arch, libraries):
-        built.append((candidate.name, libraries))
-        return SimpleNamespace(library=tmp_path / "libatax.so", error="")
+        built.append((candidate.name, folder, libraries))
+        return SimpleNamespace(library=folder / "libhipcc.so", error="")
 
     monkeypatch.setattr(adapter.gpu_build, "build", build)
     task = Task("atax", SourceMode.ANY, Language.HIP, image="amd")
+    spec = cast(BenchSpec, SimpleNamespace(short_name="atax"))
 
-    sut = adapter.device_submission(
-        task, cast(BenchSpec, SimpleNamespace(short_name="atax")), cast(object, None), "hip"
-    )  # type: ignore[arg-type]
+    sut = adapter.device_submission(task, spec, cast(object, None), "hip", tmp_path)  # type: ignore[arg-type]
 
-    assert sut.library == str(tmp_path / "libatax.so")
-    assert sut.source is None or sut.source == ""
-    assert built == [("hipcc", ("hipblas",))]  # the default candidate, with the form's library
-    assert sut.requests.startup.load == ()
+    ((name, folder, libraries),) = built
+    assert (name, libraries) == ("hipcc", ("hipblas",))  # the default candidate, with the form's library
+    assert folder.parent == tmp_path and folder.name.startswith("alloy-gpu-")  # inside the episode's folder
+    assert sut.library == str(folder / "libhipcc.so") and not sut.source
+    without_folder = adapter.device_submission(task, spec, cast(object, None), "hip")  # type: ignore[arg-type]
+    assert (without_folder.source, without_folder.library) == ("host", None)
 
 
 def test_a_gpu_form_without_libraries_is_submitted_as_its_sources(monkeypatch):
