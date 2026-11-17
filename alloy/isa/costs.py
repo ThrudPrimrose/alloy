@@ -22,13 +22,15 @@ CPUS = {"avx2": "znver4", "avx512": "znver4", "neon": "neoverse-v2", "sve": "neo
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
 class Cost:
-    """One instruction of a row as compiled for ``cpu``; ``rthroughput`` is cycles per instruction in a stream."""
+    """One instruction of a row as compiled for ``cpu``; ``rthroughput`` is cycles per instruction in a stream. A
+    ``note`` says why the numbers are no model (they are then 0)."""
 
     cpu: str
     instruction: str
     uops: int
     latency: int
     rthroughput: float
+    note: str = ""
 
 
 @functools.lru_cache(maxsize=None, typed=True)

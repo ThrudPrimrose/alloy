@@ -53,12 +53,45 @@ def assembly(source: str, flags: list[str]) -> list[str]:
     return [line.strip() for line in built.stdout.splitlines() if ASM_LINE.match(line)]
 
 
+#: Forms clang prints for a row's mnemonic: the float-domain twin of an integer bitwise op or move, a compare with
+#: its operands swapped, Arm's bit insert for a bit select, SVE's mov alias of sel. Longest key first.
+TWINS = {
+    "vpbroadcastq": ("vbroadcastsd",),
+    "vpbroadcastd": ("vbroadcastss",),
+    "vpcmpltu": ("vpcmpnleu",),
+    "vpcmplt": ("vpcmpgt",),
+    "vmovdqu": ("vmovup",),
+    "vpandn": ("vandnp",),
+    "vpand": ("vandp",),
+    "vpxor": ("vxorp",),
+    "vpor": ("vorp",),
+    "kand": ("vptestm",),
+    "kor": ("vpor", "vptestm"),
+    "bsl": ("bit", "bif"),
+    "sel": ("mov",),
+}
+#: What the gate's frame puts around a row: memory moves, the mask-to-ones conversion, the predicate, the return.
+FRAME = ("vmovup", "vmovdq", "vmovs", "vpmovm2", "vpsrl", "vzeroupper", "ret", "ldr", "str", "ld1", "st1", "whilelt",
+         "ptrue", "mov")  # fmt: skip
+
+
+def twins(word: str) -> tuple[str, ...]:
+    return next((forms for key, forms in TWINS.items() if word.startswith(key)), ())
+
+
+def starting(lines: list[str], forms: list[str]) -> list[str]:
+    return [line for line in lines if forms and line.split()[0].startswith(tuple(forms))]
+
+
 def matching(lines: list[str], entry: Entry) -> list[str]:
-    """The distinct instructions whose mnemonic starts with a word of ``entry``'s mnemonic or an observed form."""
+    """Every instruction, repeats included, that spells ``entry``: its mnemonic's words or observed forms, else their
+    twins, else whatever the row compiled to past the frame. A composite ending in ``...`` keeps every instruction of
+    the row, so a reduction counts each add and keeps its shuffles."""
     words = [w.split(" ")[0] for w in re.split(r"\s*\+\s*", entry.mnemonic) if w and w not in NOT_MNEMONICS]
-    forms = [*words, *entry.observed]
-    hits = [line for line in lines if any(line.split()[0].startswith(f) for f in forms)]
-    return list({line.split()[0]: line for line in reversed(hits)}.values())[::-1]  # one per mnemonic, first kept
+    own = [line for line in lines if not line.split()[0].startswith(FRAME)]
+    if entry.mnemonic.endswith("..."):
+        return own
+    return starting(lines, [*words, *entry.observed]) or starting(lines, [t for w in words for t in twins(w)]) or own
 
 
 def register_form(instruction: str, op: str) -> str:
@@ -100,8 +133,8 @@ def directional(lines: list[str], op: str) -> list[str]:
         return memory is not None and register is not None and memory.start() < register.start()
 
     x86 = [line for line in lines if VECTOR_REGISTER.search(line)]
-    if not x86:
-        return lines  # aarch64: ld*/st* already tell the direction
+    if not x86:  # aarch64: the mnemonic tells the direction
+        return [line for line in lines if line.split()[0].startswith("ld" if op == "load" else "st")]
     return [line for line in x86 if reads(line) == (op == "load")]
 
 
@@ -111,9 +144,13 @@ def row_costs(lines: list[str], isa: str, op: str) -> list[Cost]:
     if not lines:
         return []
     try:
-        return mca(list(dict.fromkeys(register_form(line, op) for line in lines)), isa)
+        return mca([register_form(line, op) for line in lines], isa)
     except RuntimeError:
         return mca(lines, isa)
+
+
+#: Why llvm-mca's x86 numbers of a row are not a model: znver4 has no entry for gathers and scatters.
+NOT_MODELLED = "not modelled: llvm-mca's znver4 model has no gather or scatter entry"
 
 
 def measured(table: Table) -> Iterator[tuple[str, list[Cost]]]:
@@ -121,6 +158,9 @@ def measured(table: Table) -> Iterator[tuple[str, list[Cost]]]:
         for dtype in ALL_DTYPES:
             for op, entry in target.entries(dtype).items():
                 if not entry.mnemonic or entry.approximations:
+                    continue
+                if op in ("gather", "scatter") and isa not in CROSS:
+                    yield f"{isa}/{dtype}/{op}", [Cost(CPUS[isa], entry.mnemonic, 0, 0, 0.0, NOT_MODELLED)]
                     continue
                 try:
                     compiled = assembly(row_unit(isa, dtype, op, table), target_flags(isa, dtype))
@@ -153,6 +193,7 @@ def toml_text(rows: dict[str, list[Cost]]) -> str:
                 f"uops = {c.uops}",
                 f"latency = {c.latency}",
                 f"rthroughput = {c.rthroughput}",
+                *([f"note = {json.dumps(c.note)}"] if c.note else []),
                 "",
             ]
     return "\n".join(head + body)

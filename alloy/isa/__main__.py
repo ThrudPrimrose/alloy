@@ -273,9 +273,8 @@ def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:
         print(f"  mnemonic:  {entry.mnemonic}")
     for cost in costs(isa, op, dtype):
         each = f"{cost.rthroughput:g} cycles each in a stream"
-        print(
-            f"  cost:      {cost.cpu} (llvm-mca): {cost.instruction}: latency {cost.latency}, {each}, {cost.uops} uop(s)"
-        )
+        numbers = cost.note or f"latency {cost.latency}, {each}, {cost.uops} uop(s)"
+        print(f"  cost:      {cost.cpu} (llvm-mca): {cost.instruction}: {numbers}")
     for key in entry.approximations:
         tier = table.approx[key]
         print(f"  tier {key}: abs error {tier.error_abs:.3g} ({tier.error_ulp:.4g} f64 units of 2^-52); {tier.domain}")

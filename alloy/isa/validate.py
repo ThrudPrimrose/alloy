@@ -247,17 +247,23 @@ def arm_frame(isa: str, dtype: str) -> Frame:
     return Frame(isa, dtype, scalar, f"{element}x{lanes}_t", f"uint{width}x{lanes}_t", suffix, lanes)
 
 
-def frame(isa: str, dtype: str, table: Table) -> Frame:
-    """The frame of ``(isa, dtype)``, spelled with the table's own load, store, compare and broadcast."""
+def frame(isa: str, dtype: str, table: Table, opaque: bool = False) -> Frame:
+    """The frame of ``(isa, dtype)``, spelled with the table's own load, store, compare and broadcast. ``opaque``: a
+    row unit's frame, whose mask compares c with a, so no compiler folds a select on ``a < b`` into a max, and whose
+    SVE predicate is a run-time one, so no compiler turns a predicated load into an unpredicated one."""
     k = arm_frame(isa, dtype) if isa in CROSS else x86_frame(isa, dtype)
     load_row, store_row, set1 = (table.entry(isa, op, dtype) for op in ("load", "store", "broadcast"))
-    names = {"a": "va", "b": "vb", "pg": "pg"}
-    below = BELOW_F16[isa] if dtype == F16 else called(table.entry(isa, "lt", dtype), names)
+    names = {"a": "vc", "b": "va", "pg": "pg"} if opaque else {"a": "va", "b": "vb", "pg": "pg"}
+    if dtype == F16:
+        below = BELOW_F16[isa].format(a=names["a"], b=names["b"])
+    else:
+        below = called(table.entry(isa, "lt", dtype), names)
     masked = f"{load_row.masked.split('(', 1)[0].strip()}(k, a)" if k.wide else called(load_row, {"pg": "k", "p": "a"})
     if k.wide and dtype == F16:  # the f16 masked load is the 16-bit integer one
         masked = f"_mm512_castsi512_ph({masked})"
     loads = {name: called(load_row, {"pg": "pg", "p": f"{k.cast}{name}"}) for name in "abc"}
-    predicate = f"svbool_t pg = svptrue_b{k.lane_bits}();\n  " if isa == "sve" else ""
+    everywhere = f"svwhilelt_b{k.lane_bits}(0, (int)idx[0])" if opaque else f"svptrue_b{k.lane_bits}()"
+    predicate = f"svbool_t pg = {everywhere};\n  " if isa == "sve" else ""
     return dataclasses.replace(
         k,
         loads=predicate + "\n  ".join(f"{k.vector} v{name} = {load};" for name, load in loads.items()),
@@ -272,9 +278,9 @@ def frame(isa: str, dtype: str, table: Table) -> Frame:
 #: ``a < b`` on f16 lanes, which have no ``lt`` row. AVX2 has no f16 compare: ``mk`` holds the answer, as a mask.
 BELOW_F16 = {
     "avx2": "_mm256_loadu_si256((const __m256i*)mk)",
-    "avx512": "_mm512_cmp_ph_mask(va, vb, _CMP_LT_OQ)",
-    "neon": "vcltq_f16(va, vb)",
-    "sve": "svcmplt_f16(pg, va, vb)",
+    "avx512": "_mm512_cmp_ph_mask({a}, {b}, _CMP_LT_OQ)",
+    "neon": "vcltq_f16({a}, {b})",
+    "sve": "svcmplt_f16(pg, {a}, {b})",
 }
 
 
@@ -662,8 +668,11 @@ def masked_c(isa: str, dtype: str, op: str, table: Table) -> str:
 
 def row_unit(isa: str, dtype: str, op: str, table: Table) -> str:
     """The row alone in a function of opaque operands: an optimizer folds a kernel's constants, and leaves this."""
-    k = frame(isa, dtype, table)
-    compute = BODIES.get(op, call_body)(k, op, table.entry(isa, op, dtype))[0]
+    k, entry = frame(isa, dtype, table, opaque=True), table.entry(isa, op, dtype)
+    if op in REDUCED:  # one reduction, not the kernel's run per lane
+        compute = f"{k.loads}\n  {assigned(f'{k.scalar} r = ', entry, operands(k))}\n  out[0] = r;"
+    else:  # a tail count read at run time: a constant one folds the mask
+        compute = BODIES.get(op, call_body)(k, op, entry)[0].replace("int n = VL - 1;", "int n = (int)idx[0];")
     s = k.scalar
     return f"""#include <{HEADERS[isa]}>
 #include <stdint.h>
