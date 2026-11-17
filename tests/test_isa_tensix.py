@@ -57,6 +57,21 @@ def test_the_lookup_offers_both_units_of_an_op_with_their_recorded_errors(capsys
     assert printed.count("verified on ttsim") == 2
 
 
+@pytest.mark.parametrize(
+    ("ok", "code", "said"), [(None, 0, "unverified: no recorded run"), (False, 2, "FAILED on ttsim")]
+)
+def test_the_lookup_exits_2_only_for_a_failed_run_not_for_a_missing_one(
+    ok: bool | None, code: int, said: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    row = next(r for r in tensix.rows() if r.op == "exp")
+    found = {} if ok is None else {("exp", "f32", row.unit): tensix.Verdict("exp", "f32", row.unit, ok, 0.5, "off")}
+    monkeypatch.setattr(tensix, "verdicts", lambda: found)
+
+    assert main(["lookup", "tensix", "exp", "f32"]) == code
+
+    assert said in capsys.readouterr().out
+
+
 def test_the_lookup_refuses_f64_because_tensix_has_none(capsys: pytest.CaptureFixture[str]):
     assert main(["lookup", "tensix", "exp", "f64"]) != 0
 

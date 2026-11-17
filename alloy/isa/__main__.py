@@ -366,8 +366,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
 
 
 def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
-    """Every Tensix row of ``op`` at ``dtype`` with its recorded ttsim verdict; a row with no passing verdict is
-    refused, as a failed SIMD row is."""
+    """Every Tensix row of ``op`` at ``dtype`` with its recorded ttsim verdict; exit 2 when a row failed its run, as a
+    failed SIMD row does. A row without a current record is unverified, not failed."""
     found = [r for r in tensix.rows() if r.op == op]
     if not found:
         known = sorted({r.op for r in tensix.rows()})
@@ -401,7 +401,7 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         if row.note:
             print(f"    note: {row.note}")
     print(f"  note: {tensix.table()['target']['note']}")
-    return 0 if all(v is not None and v.ok for _, v in picked) else 2
+    return 2 if any(v is not None and not v.ok for _, v in picked) else 0
 
 
 def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
