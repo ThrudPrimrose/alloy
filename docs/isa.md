@@ -163,21 +163,29 @@ each step of the answer carries how often the request runs it:
 
 ```text
 $ python -m alloy.isa ask avx512 add --a vector:f32:96 --b vector:f32:96
-avx512 add: feasible on vector
+avx512 add: feasible on vector; check: run compiled kernel
   6 x vector: _mm512_add_ps
+  setup header: #include <immintrin.h>
+  setup flags: -mavx512f -mavx512dq
+  setup masked: _mm512_mask_add_ps(src, k, a, b): the last block, under the mask k
+  setup mask: k = _mm512_cmplt_epu32_mask(iota, n): k bit j set iff iota[j] < n, with iota = _mm512_setr_epi32(0..15), n = clamp(N - i, 0, 16)
+  note: 6 registers: a loop of 6 iterations, one register each
+v = _mm512_add_ps(a, b);
 $ python -m alloy.isa ask avx512 add --a vector:f32:100 --b vector:f32:100
 avx512 add: infeasible (shape): 100 f32 elements are not a whole multiple of the 16 f32 lanes of an avx512 register: 6 registers hold 96, 4 remain
   nearest: x vector:f32:96
   nearest: x vector:f32:112
   block: 16 (a shape the target takes is a whole multiple)
-  fix: run the last block under a mask: ask gen_mask, then use the row's masked form
+  fix: ask gen_mask for the last block's mask k, load with _mm512_maskz_loadu_ps(k, p), compute with _mm512_mask_add_ps(src, k, a, b), store with _mm512_mask_storeu_ps(p, k, v)
 ```
 
 A refusal for a shape always states the block, the multiples below and above as requests that are feasible, and how
 to finish the remainder (a mask on AVX-512 and SVE, a scalar remainder loop on AVX2 and NEON, padding to whole tiles
 on Tensix). A reduction over several registers lists the lane-wise combination (`count` minus one times) and the one
-horizontal step; a scan lists the in-register scan and the carry (the broadcast last lane of the register before,
-added to the next). `reduce_add` and `scan_add` associate differently from a scalar left fold, so they need
+horizontal step; a scan lists the in-register scan and the carry (the last lane of the register before, broadcast to
+every lane, added to the next). On SVE the lane count is known at run time only, so a request for N elements is
+answered as one loop over blocks under the `svwhilelt` predicate; a reduction combines the blocks with the `_m` form and
+reduces once. `reduce_add` and `scan_add` associate differently from a scalar left fold, so they need
 permission to reassociate; `reduce_min` and `reduce_max` are exact on finite lanes, and each row states its NaN rule.
 
 On CUDA and HIP, `reduce_min` and `reduce_max` are `__shfl_down` trees into lane 0 and `scan_add` is a `__shfl_up`

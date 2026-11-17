@@ -33,15 +33,18 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
   - Spaces: `register`, `vector`, `tile_register`, `shared`, `global`, `constant`.
   - Layouts: `row_major`, `col_major`.
   - Swizzles: `none`, `b32`, `b64`, `b128` (the TMA swizzles of `sm90`), `xor:8` (the LDS swizzle of CDNA).
-  - The shape is the extent of your data, not of one register.
+  - The shape is the extent of your data, not of one register. A `broadcast` takes its scalar source as
+    `--x register:f64` (or `register:f64:1`).
 - **Options.** `--unit <name>` pins an implementation, for example `--unit tma`. `--max-ulp` bounds a math
   function's error.
 
 The answer has one of three states:
 
 - **feasible**: the unit that runs it, the `steps` with how often each runs (`6 x vector: _mm512_add_ps`), the
-  `setup` (tensor map, shared-memory size and alignment, build line, the FP8 encoding), the `code` to copy, and the
-  `check` (above).
+  `setup` (on a CPU the `header` and the compiler `flags`; on AVX-512 the row's `masked` form for the last block and
+  the `mask` k it takes; on a GPU the tensor map, shared-memory size and alignment, launch, build line, and the FP8
+  encoding), the `code` to copy (on a CPU a C statement on the operand names of the row's signature, `v =
+  _mm512_add_pd(a, b);`), and the `check` (above).
 - **infeasible**: the `reason`; the `nearest` requests the target takes, so ask one of them; the `block` the shape
   must be a whole multiple of; and the `fix` for the rest (a mask, a scalar remainder loop, padding, another swizzle).
 - **invalid**: the request itself is malformed (operands missing, shapes that do not chain, mixed types). The answer
@@ -73,9 +76,12 @@ before the wait is a race, and issuing without the fence reads stale data.
 - **CPUs** (`avx2`, `avx512`, `neon`, `sve`). Data is one run of elements (`vector:f32:96`); a 2-D shape is refused,
   and the flattened run is offered as nearest. A length that is not a whole multiple of the lanes is refused with the
   multiples below and above, and with how to finish: a mask on AVX-512 and SVE, a scalar remainder loop on AVX2 and
-  NEON. A reduction over many registers combines lane-wise, then once across lanes. `reduce_add` and `scan_add`
-  reassociate, so they need permission to; min and max are exact. A CPU has no matrix unit: `mma` is an FMA loop
-  the compiler vectorizes.
+  NEON. `ask avx512 load` (or `store`, `gen_mask`) shows the masked spelling and how to build the mask. A reduction
+  over many registers combines lane-wise, then once across lanes; a scan carries the last lane of each register into
+  the next. On `sve` the lane count is known at run time only: a request for N elements (`vector:f64:64`) is
+  answered as one `svwhilelt` loop. `reduce_add` and `scan_add` reassociate, so they need permission to; min and max
+  are exact. A CPU has no matrix unit: `mma` is an FMA loop the compiler vectorizes, on row-major arrays in global
+  memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C).
 - **`sme`.** FMOPA outer products into ZA, f32. No evaluated CPU has SME, so the answer is checked by compiling and
   under an emulator.
 - **`sm90`** (GH200). `copy` from global to shared is a TMA load: a tensor map, a 128B swizzle (`b128`), an

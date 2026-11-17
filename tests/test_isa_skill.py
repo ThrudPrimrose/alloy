@@ -32,3 +32,15 @@ def test_every_command_the_page_shows_exists(capsys):
             main([command, "--help"])
         assert exited.value.code == 0, command
     capsys.readouterr()
+
+
+def test_the_cpu_mma_and_the_broadcast_source_the_page_shows_are_feasible():
+    mma = re.search(r"`--a (\S+) --b (\S+) --c (\S+)`", PAGE)
+    scalar = re.search(r"scalar source as\s+`--x (\S+)`", PAGE)
+    assert mma is not None and scalar is not None
+    a, b, c = (ask.Operand.parse(text) for text in mma.groups())
+
+    product = ask.ask(ask.Request("avx512", "mma", {"a": a, "b": b, "c": c}), verify=False)
+    broadcast = ask.ask(ask.Request("avx512", "broadcast", {"x": ask.Operand.parse(scalar.group(1))}), verify=False)
+
+    assert isinstance(product, ask.Feasible) and isinstance(broadcast, ask.Feasible)
