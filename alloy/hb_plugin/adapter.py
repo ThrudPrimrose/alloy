@@ -35,7 +35,6 @@ from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.pipeline import judge_endpoints
 from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
-from hpcagent_bench.harness.requests_api import Requests
 from hpcagent_bench.harness.scoring import resolve_kernel_timeout
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.harness.tools import JudgeClient
@@ -492,17 +491,23 @@ ANALYSIS_DIALECT = {"nvidia": "cuda", "amd": "hip"}
 
 
 def device_submission(task: Task, spec: BenchSpec, sdfg: dace.SDFG, dialect: str) -> Submission:
-    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``: a host and a device
-    source, requesting the catalog libraries the form calls (hipBLAS for a BLAS node), since the judge builds the
-    pair itself."""
+    """``sdfg`` rendered by CPF in the bench C ABI as the bench's GPU form in ``dialect``: a host and a device source
+    the judge builds. A form that calls a catalog library (hipBLAS for a BLAS node) is built here with the default
+    candidate and the library linked, and submitted as that library: the judge links a source pair's libraries only
+    on a ``startup.load`` request, which a setup may refuse."""
     form = render_canonical(spec, spec.short_name, sdfg, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS)
-    submission = Submission(
-        language=Language.parse(dialect),
-        source=form.code,
-        device_source=form.device_code,
-        requests=Requests.of(libraries=form.libraries),
+    if not form.libraries:
+        submission = Submission(language=Language.parse(dialect), source=form.code, device_source=form.device_code)
+        return with_scratch(submission, form.workspace_bytes)
+    compilers = gpu_build.load()
+    default = gpu_build.candidates(compilers, dialect, "atomic" in form.device_code)[0]
+    result = gpu_build.build(
+        compilers, default, form.code, form.device_code, scratch_folder(spec), gpu_arch(dialect), tuple(form.libraries)
     )
-    return with_scratch(submission, form.workspace_bytes)
+    if result.library is None:
+        raise RuntimeError(f"{spec.short_name}: the {dialect} form calling {', '.join(form.libraries)} did not build: "
+                           f"{result.error.splitlines()[-1] if result.error else 'no library'}")  # fmt: skip
+    return with_scratch(Submission(language=Language.parse(dialect), library=str(result.library)), form.workspace_bytes)
 
 
 def form_dialect(task: Task) -> str:
