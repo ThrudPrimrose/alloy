@@ -95,6 +95,15 @@ def verdicts() -> dict[tuple[str, str], Verdict]:
     return {(v["op"], v["dialect"]): Verdict(**v) for v in recorded().get("verdicts", [])}
 
 
+def bindings(dialect: str) -> str:
+    """The names a row's code uses and what to bind them to in a kernel of any block size."""
+    return (
+        f"bind: lanes = warpSize ({LANES[dialect]} on {dialect}); lane = threadIdx.x % warpSize (the lane in its "
+        "warp, not threadIdx.x once a block holds several warps); v = this lane's input, a, b, c = its operands; "
+        "out = the result"
+    )
+
+
 def program(row: Row, dialect: str) -> str:
     """A program that runs ``row`` on one warp of ``dialect`` and prints the worst relative error over the threads
     it checks (only lane 0 for a row whose result lands there)."""

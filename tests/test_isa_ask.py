@@ -979,3 +979,53 @@ def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missin
     assert sut.request == requests("sm90", texts[refused])[0]
     if missing:
         assert sut.nearest == (missing,)
+
+
+# Review of 2026-11-17 (reviewers A and C): each fix with its case.
+def test_a_device_row_answer_binds_the_names_its_code_uses():
+    sut = ask(Request("gfx90a", "scan_add", {"x": Operand("register", "f32")}))
+
+    assert isinstance(sut, Feasible)
+    assert any("lane = threadIdx.x % warpSize" in note and "64 on hip" in note for note in sut.notes)
+
+
+@pytest.mark.parametrize("request_", [
+    Request("sm90", "copy", {"src": Operand("global", "f16", (64, 100)),
+                             "dst": Operand("shared", "f16", (64, 64), "row_major", "b128")}),
+    Request("sm90", "copy", {"src": Operand("global", "f16", (32, 32)),
+                             "dst": Operand("shared", "f16", (64, 64), "row_major", "b128")}),
+    Request("gfx942", "copy", {"src": Operand("global", "f16", (8, 8)),
+                               "dst": Operand("shared", "f16", (7, 64), "row_major", "xor:8")}),
+    Request("gfx942", "copy", {"src": Operand("global", "f16", (8, 8)),
+                               "dst": Operand("shared", "f16", (64, 64), "row_major", "xor:8")}),
+])  # fmt: skip
+def test_a_gpu_copy_from_a_source_too_small_or_misaligned_is_refused_with_a_feasible_nearest(request_):
+    sut = ask(request_, verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why == Why.SHAPE
+    (nearest,) = sut.nearest
+    src, dst = (Operand.parse(part.split(" ", 1)[1]) for part in nearest.split(", "))
+    assert isinstance(ask(Request(request_.target, "copy", {"src": src, "dst": dst}), verify=False), Feasible)
+
+
+def test_a_copy_on_a_target_without_copy_rows_is_refused_not_crashed():
+    sut = ask(Request("sme", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f32", (8,))}))
+
+    assert isinstance(sut, Infeasible) and sut.why == Why.NOT_COVERED
+
+
+@pytest.mark.parametrize(("target", "on", "issued"), [("sm90", "mbarrier", True), ("sm90", "bulk_group", False),
+                                                       ("gfx942", "vmcnt", False), ("tensix", "cb", True)])  # fmt: skip
+def test_a_wait_says_whether_a_checked_program_issues_it(target, on, issued):
+    sut = ask(Request(target, "wait", on=on))
+
+    assert isinstance(sut, Feasible) and sut.check.status == "unverified"
+    assert ("tile programs that ran issue it" in sut.check.basis) is issued
+
+
+def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys):
+    with pytest.raises(SystemExit) as exited:
+        main(["ask", "tensix", "exp", "--y", "bad"])
+
+    assert exited.value.code == 64
+    capsys.readouterr()

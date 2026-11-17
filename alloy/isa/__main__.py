@@ -72,12 +72,21 @@ def refuse_gpu_arch(isa: str) -> None:
         )
 
 
+class Parser(argparse.ArgumentParser):
+    """argparse with a malformed command line exiting 64 (usage), like an invalid request: argparse's own 2 is the
+    code of an infeasible answer, which the agent route returns as an answer."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(USAGE, f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = Parser(
         prog="alloy.isa",
         description="The machine abstract math ISA and its per-target intrinsic spellings.",
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
     lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, cuda, hip")
@@ -412,6 +421,7 @@ def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
     lanes = simt.LANES[dialect]
     print(f"{dialect}/{op}: one {'thread' if row.kind == 'lane' else f'warp of {lanes}'}")
     print(f"  code:  {row.spelled(dialect)}")
+    print(f"  {simt.bindings(dialect)}")
     if row.note:
         print(f"  note:  {row.note}")
     print(f"  {dialect}: {simt.table()['target'][dialect]['note']}")
@@ -730,7 +740,9 @@ def ask_command(args: argparse.Namespace) -> int:
     except KeyError as exc:
         answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "space:dtype[:RxC or N][:layout][:swizzle]")
     else:
-        request = ask.Request(args.target, args.op, operands, args.unit, args.max_ulp, args.on, args.kind)
+        request = ask.Request(
+            args.target, args.op, operands, args.unit, args.max_ulp, args.on.lower(), args.kind.lower()
+        )
         answer = ask.ask(request, verify=not args.no_verify)
     code = {"feasible": 0, "infeasible": 2, "invalid": USAGE}[answer.status]
     if args.json:

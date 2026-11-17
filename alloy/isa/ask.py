@@ -421,6 +421,19 @@ COMPLETIONS = {
 } | {(arch, "lds"): Completion("lgkmcnt", "wait on=lgkmcnt") for arch in tile.CDNA}
 
 
+#: The waits and fences a tile program that ran on its hardware issues (alloy_tile_sm90.cuh, tensix_harness.py); every
+#: other one is from the ISA manuals alone.
+ISSUED = {("sm90", "mbarrier"), ("sm90", "wgmma_group"), ("sm90", "proxy"), ("sm90", "operand"), ("tensix", "noc"),
+          ("tensix", "cb")}  # fmt: skip
+
+
+def manual_check(target: str, name: str) -> Check:
+    """The check of a wait or fence: unverified on its own, with whether a checked tile program issues it."""
+    if (target, name) in ISSUED:
+        return Check("unverified", f"from the ISA manuals; the {target} tile programs that ran issue it")
+    return Check("unverified", "from the ISA manuals; no checked program issues it")
+
+
 def wait_answer(request: Request) -> Answer:
     """``wait on=<token>``: the instruction that completes the work a token names."""
     tokens = WAITS.get(request.target, {})
@@ -432,8 +445,7 @@ def wait_answer(request: Request) -> Answer:
         return no(request, Why.NO_ROW, reason, *(f"wait on={t}" for t in tokens))
     spelling, what = tokens[request.on]
     return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
-                    Check("unverified", "from the ISA manuals; issued by the checked tile programs where they use it"),
-                    (what,))  # fmt: skip
+                    manual_check(request.target, request.on), (what,))  # fmt: skip
 
 
 def fence_answer(request: Request) -> Answer:
@@ -445,8 +457,7 @@ def fence_answer(request: Request) -> Answer:
         return no(request, Why.NO_ROW, f"{request.target} {NO_FENCE[request.kind]}")
     spelling, what = fences[request.kind]
     return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
-                    Check("unverified", "from the ISA manuals; issued by the checked tile programs where they use it"),
-                    (what,))  # fmt: skip
+                    manual_check(request.target, request.kind), (what,))  # fmt: skip
 
 
 def answered(request: Request, verify: bool) -> Answer:
@@ -639,7 +650,8 @@ def thread_op(request: Request) -> Answer:
             return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or copy operand",
                       spell(x=scalar), block=(1,))  # fmt: skip
         if operand.space != "register":
-            held = "one register per lane of a wavefront" if row.kind == "warp" else "one thread's registers"
+            group = "wavefront" if dialect == "hip" else "warp"
+            held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
             return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} memory",
                       spell(x=scalar), fix="load the value into a register first")  # fmt: skip
     if request.max_ulp is not None:
@@ -650,7 +662,8 @@ def thread_op(request: Request) -> Answer:
     spelling = row.spelled(dialect)
     check = Check("unverified") if verdict is None else Check("run" if verdict.ok else "compiled", verdict.basis)
     unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
-    return Feasible(request, unit, (Step(unit, spelling),), {}, spelling, check, (row.note,) if row.note else ())
+    notes = (*((row.note,) if row.note else ()), simt.bindings(dialect))
+    return Feasible(request, unit, (Step(unit, spelling),), {}, spelling, check, notes)
 
 
 def tile_call(request: Request) -> Answer:
@@ -893,6 +906,13 @@ def copy_check(target: str, verify: bool, dtype: str = "f16") -> Check | None:
     return Check(found.verified, f"the {target} 64x64x{k} {dtype} tile program that runs this copy: {found.detail}")  # type: ignore[arg-type]
 
 
+def covering(src: Operand, box: tuple[int, ...], width: int, dtype: str) -> tuple[int, int]:
+    """The global tile a nearest request names: ``src``'s extents grown to hold one box (rows) and one K block
+    (columns, whole K blocks), so the request it names is itself feasible."""
+    rows, cols = src.shape if len(src.shape) == 2 and src.dtype == dtype else (256, 256)
+    return max(rows, box[0]), -(-max(cols, width) // width) * width
+
+
 def copy(request: Request, verify: bool) -> Answer:
     """A copy between two spaces: a CPU's vector load or store, sm_90's TMA into a 128B-swizzled shared tile, or
     CDNA's XOR-swizzled LDS stores. A copy converts nothing, so both sides share one element type."""
@@ -902,11 +922,14 @@ def copy(request: Request, verify: bool) -> Answer:
     src, dst = ops["src"], ops["dst"]
     if request.target in CPU:
         return cpu_copy(request, src, dst)
-    taken = [i for i, _ in tile.TYPES.get(request.target, ())]
+    if request.target not in tile.GPU_TILES:  # sme, tensix: no copy row yet
+        return no(request, Why.NOT_COVERED, f"no checked row covers a {request.target} copy from {src.space} to "
+                  f"{dst.space}")  # fmt: skip
+    taken = [i for i, _ in tile.TYPES[request.target]]
     dtype = dst.dtype if dst.dtype in taken else "f16"  # the type of the nearest requests
     width = tile.k_block(dtype)
-    box = dst.shape if len(dst.shape) == 2 else (64, width)
-    source = Operand("global", dtype, src.shape if len(src.shape) == 2 and src.dtype == dtype else (256, 256))
+    box = dst.shape if len(dst.shape) == 2 and dst.shape[0] in (64, 128) else (64, width)
+    source = Operand("global", dtype, covering(src, box, width, dtype))
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
     if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
@@ -918,9 +941,13 @@ def copy(request: Request, verify: bool) -> Answer:
         if dst.dtype not in taken:
             return no(request, Why.ELEMENT_TYPE, f"the checked LDS load copies {', '.join(taken)} tiles on "
                       f"{request.target}, not {dst.dtype}", nearest)  # fmt: skip
-        if len(dst.shape) != 2 or dst.shape[1] != width:
-            return no(request, Why.SHAPE, f"the checked LDS load fills rows of 128 bytes ({width} {dtype}, 8 chunks "
-                      "of 16 bytes)", nearest)  # fmt: skip
+        if len(dst.shape) != 2 or dst.shape != (64, width):
+            return no(request, Why.SHAPE, f"the checked LDS load fills a tile of 64 rows of 128 bytes ({width} "
+                      f"{dtype}, 8 chunks of 16 bytes)", nearest)  # fmt: skip
+        row_bytes = src.shape[1] * tile.GPU_BYTES[dtype] if len(src.shape) == 2 else 0
+        if len(src.shape) != 2 or src.shape[0] < 64 or src.shape[1] < width or row_bytes % 16:
+            return no(request, Why.SHAPE, f"the LDS load reads one 64 x {width} box of a row-major global tile whose "
+                      "rows are whole 16-byte chunks: the source must hold the box", nearest)  # fmt: skip
         if dst.swizzle != "xor:8" or src.swizzle != "none":
             return no(request, Why.SWIZZLE, "the checked LDS load stores each chunk at slot chunk ^ (row % 8) (dst "
                       "swizzle xor:8) from an unswizzled global tile", nearest)  # fmt: skip
@@ -986,11 +1013,19 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
                   nearest)  # fmt: skip
     if src.dtype != dst.dtype:
         return bad(request, Why.MIXED_TYPES, f"TMA converts nothing: src is {src.dtype}, dst is {dst.dtype}", nearest)
-    if len(src.shape) != 2 or src.shape[0] < dst.shape[0] or src.shape[1] < dst.shape[1]:
+    if (
+        len(src.shape) != 2
+        or src.shape[0] < dst.shape[0]
+        or src.shape[1] < dst.shape[1]
+        or (
+            src.shape[1] * tile.GPU_BYTES[dtype] % 16  # the tensor map's row stride is a multiple of 16 bytes
+        )
+    ):
         return no(
             request,
             Why.SHAPE,
-            f"the tensor map describes a two-dimensional global tile at least the box {dst.shape}",
+            f"the tensor map describes a two-dimensional global tile at least the box {dst.shape}, whose rows are a "
+            "whole multiple of 16 bytes",
             nearest,
         )
     if src.swizzle != "none":

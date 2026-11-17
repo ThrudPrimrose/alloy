@@ -10,8 +10,9 @@ The compiler vectorizes most loops on its own. Write intrinsics or a matrix-core
 slow, and check the result with `score`. Ask `alloy_isa` instead of recalling a spelling: its answers are checked
 (compiled, and run where this machine has the hardware), and a refusal says what would run instead.
 
-Start with `command="host"`: the ISAs and GPUs this machine runs. An answer for anything else says `compiled` or
-`unverified`, never `run`.
+Start with `command="host"`: the CPU ISAs this machine runs. Every answer's `check` says where it was checked: `run`
+names the hardware or simulator it ran on (this machine, a recorded run on an MI250X, MI300A, or GH200, or ttsim),
+`compiled` means built for the target and not run, and `unverified` means neither.
 
 ## One request form: `ask`
 
@@ -40,8 +41,7 @@ The answer has one of three states:
 
 - **feasible**: the unit that runs it, the `steps` with how often each runs (`6 x vector: _mm512_add_ps`), the
   `setup` (tensor map, shared-memory size and alignment, build line, the FP8 encoding), the `code` to copy, and the
-  `check`. The check is `run` (matched a reference on this machine), `compiled` (built for the target, no such
-  hardware here), or `unverified`.
+  `check` (above).
 - **infeasible**: the `reason`; the `nearest` requests the target takes, so ask one of them; the `block` the shape
   must be a whole multiple of; and the `fix` for the rest (a mask, a scalar remainder loop, padding, another swizzle).
 - **invalid**: the request itself is malformed (operands missing, shapes that do not chain, mixed types). The answer
@@ -93,7 +93,8 @@ before the wait is a race, and issuing without the fence reads stale data.
     negative zero, bias 8 or 16), sm90 reads OCP (bias 7 or 15). Convert with the type the answer names
     (`__hip_fp8_e4m3_fnuz`, `__nv_fp8_e4m3`), never by reinterpreting bytes from the other GPU.
 - **`tensix`.** 32x32 tiles in DST: SFPU rows keep f32, FPU rows (`add_tiles`, `matmul_tiles`, `reduce_tile`) read
-  TF32 sources. The answer gives the tile calls and the error measured on the simulator.
+  TF32 sources. The answer gives the tile calls; `command="lookup", arguments=["tensix", "<op>", "f32"]` prints the
+  error each row measured on the simulator.
 
 ## Short forms
 
@@ -103,7 +104,9 @@ before the wait is a race, and issuing without the fence reads stale data.
 - `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA, in f32.
   - Rows: `fma`, `exp_fast`, `sin_fast`, `div_fast`, `rsqrt`, the reductions and `scan_add`, `broadcast`,
     `gen_mask`, `add_half2`, `load_wide`, `atomic_add`.
-  - A wavefront has 64 lanes on MI200 and MI300A, so a reduction loops from `warpSize / 2`.
+  - A wavefront has 64 lanes on MI200 and MI300A. The row's code names `lanes` (= `warpSize`), `lane` (=
+    `threadIdx.x % warpSize`, the lane in its warp), `v` (the lane's input), and `out`; the answer's `bind:` line
+    says so, and a reduction loops from `lanes / 2`.
   - `lookup` takes the dialect (`hip`, `cuda`). `tile` and `ask` take the arch (`gfx90a`, `gfx942`, `sm90`), and
     matrix instructions (`mfma`, `wgmma`) are answered there.
 - `command="kernel", arguments=["avx512", "sin", "f64"]`: a math function as C to paste in place of the library

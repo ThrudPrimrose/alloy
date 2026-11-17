@@ -64,7 +64,8 @@ ISA = (
     'operation on logical data for any target (CPU, sm90, gfx942, gfx90a, tensix), e.g. ["avx512", "reduce_add", '
     '"--x", "vector:f32:96"]: feasible with its steps, or refused with the block the target takes, the nearest '
     "requests, and a fix; `ask-all` combines requests into one kernel. `lookup`, `kernel` and "
-    "`skeleton` answers carry the verdict of a compiled check where this machine can run them, else say unverified."
+    "`skeleton` answers carry their check: `run` names where it ran (this machine, a recorded GPU run, or ttsim), "
+    "`compiled` means built and not run, and `unverified` neither."
 )
 
 
