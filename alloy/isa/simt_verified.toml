@@ -5,7 +5,7 @@ run = "2026-11-17"
 op = "fma"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "06b72e31f7dcfc30"
 
@@ -21,7 +21,7 @@ digest = "06b72e31f7dcfc30"
 op = "exp_fast"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 1.13259e-07
 digest = "7fd98978be589cb9"
 
@@ -37,7 +37,7 @@ digest = "7fd98978be589cb9"
 op = "sin_fast"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 2.08616e-07
 digest = "13a12744b755c04f"
 
@@ -53,7 +53,7 @@ digest = "13a12744b755c04f"
 op = "div_fast"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 1.1296e-07
 digest = "5f567b524ae6d1d3"
 
@@ -69,7 +69,7 @@ digest = "5f567b524ae6d1d3"
 op = "rsqrt"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 1.04839e-07
 digest = "00090db55ba4ccec"
 
@@ -85,7 +85,7 @@ digest = "00090db55ba4ccec"
 op = "reduce_add"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "daeb55f36d633cda"
 
@@ -101,23 +101,21 @@ digest = "2b22bd2f3c443d2a"
 op = "reduce_min"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
-digest = "77c85be5f68816c9"
+digest = "181c00fabe09db14"
 
 [[verdicts]]
 op = "reduce_min"
 dialect = "hip"
-ok = true
-basis = "ran on gfx942; ran on gfx90a"
-rel = 0.0
-digest = "6b7c864b20c6b8ce"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "cca510af5b2cbd9a"
 
 [[verdicts]]
 op = "reduce_max"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "e25760ebac8886ca"
 
@@ -133,7 +131,7 @@ digest = "95b696b6e6fb4393"
 op = "scan_add"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "8766f4005caefd33"
 
@@ -149,7 +147,7 @@ digest = "120dd319b99e0ed7"
 op = "broadcast"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "4a31917e50ba95e4"
 
@@ -165,7 +163,7 @@ digest = "fe4991ea5b22654c"
 op = "ballot_count"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "580b1ada07694bb1"
 
@@ -181,23 +179,21 @@ digest = "48e24c5954e19814"
 op = "add_half2"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
-digest = "db6aeaafad45e9eb"
+digest = "842f8750d897491a"
 
 [[verdicts]]
 op = "add_half2"
 dialect = "hip"
-ok = true
-basis = "ran on gfx942; ran on gfx90a"
-rel = 0.0
-digest = "db6aeaafad45e9eb"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "842f8750d897491a"
 
 [[verdicts]]
 op = "load_wide"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "dc106d46c2a1010b"
 
@@ -213,7 +209,7 @@ digest = "dc106d46c2a1010b"
 op = "atomic_add"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GH200 120GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU; ran on NVIDIA GH200 120GB"
 rel = 0.0
 digest = "41f7eafaa81d7c6f"
 
@@ -224,3 +220,171 @@ ok = true
 basis = "ran on gfx942; ran on gfx90a"
 rel = 0.0
 digest = "a90a40eb7fdf1bf0"
+
+[[verdicts]]
+op = "load_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "b5b1e8a1772e59b2"
+
+[[verdicts]]
+op = "load_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "b5b1e8a1772e59b2"
+
+[[verdicts]]
+op = "store_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "03dd3a8532bb6d0f"
+
+[[verdicts]]
+op = "store_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "03dd3a8532bb6d0f"
+
+[[verdicts]]
+op = "load_x2_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "45bbe36e5c625fc6"
+
+[[verdicts]]
+op = "load_x2_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "45bbe36e5c625fc6"
+
+[[verdicts]]
+op = "store_x2_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "ae90ea660e6b565a"
+
+[[verdicts]]
+op = "store_x2_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "ae90ea660e6b565a"
+
+[[verdicts]]
+op = "load_wide_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "3929a2e703166211"
+
+[[verdicts]]
+op = "load_wide_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "3929a2e703166211"
+
+[[verdicts]]
+op = "store_wide_f16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "883dfd8342dd488d"
+
+[[verdicts]]
+op = "store_wide_f16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "883dfd8342dd488d"
+
+[[verdicts]]
+op = "load_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "0773be07ff9eeb68"
+
+[[verdicts]]
+op = "load_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "0773be07ff9eeb68"
+
+[[verdicts]]
+op = "store_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "a9ca1d5238265419"
+
+[[verdicts]]
+op = "store_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "4b032f1374e93520"
+
+[[verdicts]]
+op = "load_x2_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "2d01673bb2bcf831"
+
+[[verdicts]]
+op = "load_x2_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "76153456e3f63b5f"
+
+[[verdicts]]
+op = "store_x2_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "e58ce8efb764b3d8"
+
+[[verdicts]]
+op = "store_x2_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "3900ed1b52dd69d9"
+
+[[verdicts]]
+op = "load_wide_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "583a6a3cdb9ce14e"
+
+[[verdicts]]
+op = "load_wide_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "583a6a3cdb9ce14e"
+
+[[verdicts]]
+op = "store_wide_bf16"
+dialect = "cuda"
+ok = true
+basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+rel = 0.0
+digest = "18a9bf38638bc55a"
+
+[[verdicts]]
+op = "store_wide_bf16"
+dialect = "hip"
+basis = "compiled for gfx90a, gfx942, not run (no such GPU here)"
+digest = "6e3a02185114b333"

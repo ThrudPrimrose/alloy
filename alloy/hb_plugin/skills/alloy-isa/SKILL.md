@@ -107,9 +107,14 @@ before the wait is a race, and issuing without the fence reads stale data.
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: one op's intrinsic, signature, traps, and cost (llvm-mca
   latency and throughput). An op with no single intrinsic prints a recipe and its `code`: copy that, since it holds
   the operand order.
-- `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA, in f32.
+- `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA at its element type.
   - Rows: `fma`, `exp_fast`, `sin_fast`, `div_fast`, `rsqrt`, the reductions and `scan_add`, `broadcast`,
-    `ballot_count` (lanes whose predicate holds), `add_half2`, `load_wide`, `atomic_add`.
+    `ballot_count` (lanes whose predicate holds), `add_half2`, `load_wide`, `atomic_add` in f32; in `f16` and
+    `bf16`: `load`, `store` (one element, with `__half2float`, `__float2half_rn` or the bf16 forms), `load_x2`,
+    `store_x2` (a pair, `__half22float2`, `__floats2half2_rn`), and `load_wide`, `store_wide` (8 elements in one
+    16-byte access).
+  - `command="ask", arguments=["sm90", "load", "--x", "global:f16:4096"]` moves global data: the widest of those
+    rows whose elements per thread divide the extent, with how many threads run it.
   - A wavefront has 64 lanes on MI200 and MI300A. The row's code names `lanes` (= `warpSize`), `lane` (=
     `threadIdx.x % warpSize`, the lane in its warp), `v` (the lane's input), and `out`; the answer's `bind:` line
     says so, and a reduction loops from `lanes / 2`.

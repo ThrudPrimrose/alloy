@@ -486,7 +486,7 @@ def test_a_per_thread_row_computes_in_its_table_element_type():
     half2 = next(row for row in simt.rows() if row.op == "add_half2")
 
     assert half2.dtype == "f16"
-    assert {row.dtype for row in simt.rows() if row.op != "add_half2"} == {"f32"}
+    assert {row.dtype for row in simt.rows() if row.op != "add_half2" and not ask_module.moves(row)} == {"f32"}
     assert isinstance(answered(Request("sm90", "add_half2", {"x": Operand("register", "f16")})), Feasible)
     assert answered(Request("sm90", "add_half2", {"x": Operand("register", "f32")})).status == "infeasible"
 
@@ -1240,3 +1240,31 @@ def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_
     kernel, loop = sut.code.split("for (int64_t i = 0; i < 64; i += svcntd()) {")
     assert "static inline svfloat64_t alloy_exp_f64_strict(svfloat64_t x)" in kernel
     assert "static inline" not in loop and "v = alloy_exp_f64_strict(v);" in loop
+
+
+@pytest.mark.parametrize(("target", "request_", "spelled", "count"), [
+    ("sm90", Operand("global", "f16", (4096,)), "uint4 q = reinterpret_cast<const uint4*>(x)[i / 8];", 512),
+    ("gfx942", Operand("global", "bf16", (6,)), "__float22bfloat162_rn(make_float2(a, b))", 3),
+    ("gfx90a", Operand("global", "f16", (3,)), "__half2float(x[i])", 3),
+])  # fmt: skip
+def test_a_gpu_load_or_store_of_global_data_takes_the_widest_row_that_divides_it(target, request_, spelled, count):
+    op = "store" if "make_float2" in spelled else "load"
+
+    sut = answered(Request(target, op, {"x": request_}))
+
+    assert isinstance(sut, Feasible), sut
+    assert spelled in sut.steps[0].spelling and sut.steps[0].count == count
+
+
+def test_a_gpu_load_from_registers_names_the_global_form():
+    sut = answered(Request("sm90", "load", {"x": Operand("register", "f16")}))
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SPACE
+    assert sut.nearest == ("x global:f16:1024",)
+
+
+def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_block():
+    sut = answered(Request("sm90", "load_wide", {"x": Operand("global", "f16", (100,))}))
+
+    assert isinstance(sut, Infeasible) and sut.block == (8,)
+    assert sut.nearest == ("x global:f16:96", "x global:f16:104")

@@ -37,6 +37,12 @@ LANES = {"cuda": 32, "hip": 64}
 #: The archs a HIP row compiles for when this machine has no AMD GPU to run it on.
 HIP_ARCHS = ("gfx90a", "gfx942")
 DOMAIN = (-2.0, 2.0)
+#: Per dialect and element type: the C type of the arrays x and y a row moves, and the host's conversion from float.
+ELEMENTS = {
+    ("cuda", "f32"): ("float", "(float)"), ("hip", "f32"): ("float", "(float)"),
+    ("cuda", "f16"): ("__half", "__float2half_rn"), ("hip", "f16"): ("__half", "__float2half_rn"),
+    ("cuda", "bf16"): ("__nv_bfloat16", "__float2bfloat16_rn"), ("hip", "bf16"): ("__hip_bfloat16", "__float2bfloat16"),
+}  # fmt: skip
 TIMEOUT = 300
 
 API = {
@@ -59,12 +65,19 @@ class Row:
     tol: float
     domain: tuple[float, float] = DOMAIN
     check: str = "all"
-    #: The element type the row computes in (its arguments and result are f32 scalars either way).
+    #: The element type the row computes in or moves (its arguments a, b, c and its checked result are f32).
     dtype: str = "f32"
     note: str = ""
+    #: The request op the row answers when its key differs (the key load_f16 answers load at f16).
+    spells: str = ""
+    #: Statements the check runs after a "thread" row to set ``out`` from what the row wrote; not part of the row.
+    read: str = ""
 
     def spelled(self, dialect: str) -> str:
         return self.cuda if dialect == "cuda" else self.hip
+
+    def answers(self) -> str:
+        return self.spells or self.op
 
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
@@ -98,6 +111,7 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
 def digest(row: Row, dialect: str) -> str:
     """What a check of ``row`` on ``dialect`` ran: the spelling, the inputs, the reference, and what it compared."""
     checked = [row.kind, row.spelled(dialect), row.ref, list(row.domain), row.check, row.tol, row.dtype]
+    checked += [row.read] if row.read else []  # rows without a read keep the digest of their recorded runs
     return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
 
 
@@ -114,7 +128,7 @@ def bindings(dialect: str) -> str:
     return (
         f"bind: lanes = warpSize ({LANES[dialect]} on {dialect}); lane = threadIdx.x % warpSize (the lane in its "
         "warp, not threadIdx.x once a block holds several warps); v = this lane's input, a, b, c = its operands; "
-        "out = the result"
+        "out = the result; x, y = the arrays a load reads and a store writes, i = this thread's element"
     )
 
 
@@ -126,12 +140,13 @@ def program(row: Row, dialect: str) -> str:
     includes = "\n".join(f"#include <{h}>" for h in ["cstdio", "cmath", *table()["target"][dialect]["headers"]])
     if dialect == "hip":
         includes = "#include <hip/hip_runtime.h>\n" + includes
-    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else row.spelled(dialect)
+    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)} {row.read}".rstrip()
     reference = (
-        f"for (int k = 0; k < lanes; k++) {{ float a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
-        if row.kind == "lane"
-        else row.ref
+        row.ref
+        if row.kind == "warp"
+        else f"for (int k = 0; k < lanes; k++) {{ float a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
     )
+    elem, convert = ELEMENTS[dialect, row.dtype]
     checked = "1" if row.check == "first" else "lanes"
     return f"""{includes}
 #define LANES {lanes}
@@ -140,10 +155,12 @@ __host__ __device__ static inline float B(int k) {{ return 0.5f + 1.5f * ((k * 7
 #define C 0.25f
 static inline float wide_ref(int lane) {{ return (float)((lane / 4) * 4) * 0.5f; }}
 
-__global__ void row(const float* in, float* outv, const float* wide, float* total) {{
-    const int lane = threadIdx.x, lanes = LANES;
+typedef {elem} elem;
+
+__global__ void row(const float* in, float* outv, const float* wide, float* total, const elem* x, elem* y) {{
+    const int lane = threadIdx.x, lanes = LANES, i = lane;
     const float a = A(lane), b = B(lane), c = C, v = in[lane];
-    (void)a; (void)b; (void)c; (void)v; (void)wide; (void)total;
+    (void)a; (void)b; (void)c; (void)v; (void)wide; (void)total; (void)x; (void)y; (void)i; (void)lanes;
     float out = 0.0f;
     {body}
     outv[lane] = out;
@@ -153,13 +170,19 @@ int main() {{
     const int lanes = LANES;
     float in[LANES], got[LANES], want[LANES], wide[LANES];
     for (int k = 0; k < lanes; k++) {{ in[k] = A(k); wide[k] = k * 0.5f; want[k] = 0.0f; }}
+    elem xs[LANES];
+    for (int k = 0; k < lanes; k++) xs[k] = {convert}(A(k));
     float *d_in, *d_out, *d_wide, *d_total;
+    elem *d_x, *d_y;
+    {api["malloc"]}((void**)&d_x, sizeof xs); {api["malloc"]}((void**)&d_y, 8 * sizeof xs);
+    {api["memcpy"]}(d_x, xs, sizeof xs, {api["h2d"]});
+    {api["memset"]}(d_y, 0, 8 * sizeof xs);
     {api["malloc"]}((void**)&d_in, sizeof in); {api["malloc"]}((void**)&d_out, sizeof got);
     {api["malloc"]}((void**)&d_wide, sizeof wide); {api["malloc"]}((void**)&d_total, sizeof(float));
     {api["memcpy"]}(d_in, in, sizeof in, {api["h2d"]});
     {api["memcpy"]}(d_wide, wide, sizeof wide, {api["h2d"]});
     {api["memset"]}(d_total, 0, sizeof(float));
-    row<<<1, LANES>>>(d_in, d_out, d_wide, d_total);
+    row<<<1, LANES>>>(d_in, d_out, d_wide, d_total, d_x, d_y);
     {api["sync"]}();
     if ({api["error"]}() != {api["ok"]}) {{ printf("ALLOY-SIMT error=launch\\n"); return 2; }}
     {api["memcpy"]}(got, d_out, sizeof got, {api["d2h"]});

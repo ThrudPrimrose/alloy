@@ -9,17 +9,11 @@ import pytest
 from alloy.isa import simt
 from alloy.isa.__main__ import main
 
-#: Rows changed since their recorded runs: their records are stale until the GPUs rerun them.
-RERUN = {"reduce_min", "add_half2"}
-
 
 def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip():
     verdicts = simt.verdicts()
 
     for row in simt.rows():
-        if row.op in RERUN:
-            assert (row.op, "cuda") not in verdicts and (row.op, "hip") not in verdicts
-            continue
         assert verdicts[(row.op, "cuda")].ok is True, verdicts[(row.op, "cuda")]
         assert verdicts[(row.op, "hip")].ok is not False, verdicts[(row.op, "hip")]
 
@@ -174,3 +168,48 @@ def test_a_rows_digest_changes_with_its_spelling_and_its_check_but_not_its_note(
 
     assert sut != simt.digest(respelled, "cuda") and sut != simt.digest(rechecked, "cuda")
     assert sut == simt.digest(renoted, "cuda")
+
+
+@pytest.mark.parametrize("dtype", ["f16", "bf16"])
+def test_each_half_type_has_a_scalar_a_pair_and_a_16_byte_load_and_store(dtype: str):
+    sut = {row.answers() for row in simt.rows() if row.dtype == dtype}
+
+    assert {"load", "store", "load_x2", "store_x2", "load_wide", "store_wide"} <= sut
+
+
+@pytest.mark.parametrize(("op", "cuda", "hip"), [
+    ("store_x2_bf16", "__floats2bfloat162_rn(a, b)", "__float22bfloat162_rn(make_float2(a, b))"),
+    ("load_bf16", "__bfloat162float(x[i])", "__bfloat162float(x[i])"),
+    ("store_f16", "__float2half_rn(a)", "__float2half_rn(a)"),
+    ("load_x2_f16", "__half22float2(", "__half22float2("),
+])  # fmt: skip
+def test_a_half_row_spells_each_dialects_conversion(op: str, cuda: str, hip: str):
+    row = next(r for r in simt.rows() if r.op == op)
+
+    assert cuda in row.cuda and hip in row.hip
+
+
+def test_a_half_rows_check_moves_the_rows_element_type_through_its_arrays():
+    row = next(r for r in simt.rows() if r.op == "load_wide_bf16")
+
+    sut = simt.program(row, "hip")
+
+    assert "typedef __hip_bfloat16 elem;" in sut and "xs[k] = __float2bfloat16(A(k));" in sut
+    assert "uint4 q = reinterpret_cast<const uint4*>(x)[i / 8]; out = __bfloat162float(" in sut
+
+
+@pytest.mark.parametrize(("argv", "spelled"), [
+    (["lookup", "cuda", "load_wide", "f16"], "uint4 q = reinterpret_cast<const uint4*>(x)[i / 8];"),
+    (["lookup", "cuda", "add_half2", "f16"], "__hadd2("),
+    (["lookup", "hip", "store", "bf16"], "y[i] = __float2bfloat16(a);"),
+])  # fmt: skip
+def test_the_lookup_answers_a_row_at_its_own_element_type(argv: list[str], spelled: str, capsys):
+    assert main(argv) == 0
+
+    assert spelled in capsys.readouterr().out
+
+
+def test_the_lookup_names_the_element_types_a_row_has(capsys: pytest.CaptureFixture[str]):
+    assert main(["lookup", "cuda", "fma", "f16"]) == 2
+
+    assert "the fma rows are f32" in capsys.readouterr().err

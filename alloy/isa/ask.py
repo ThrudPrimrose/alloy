@@ -745,45 +745,103 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
     return Feasible(request, "vector", (Step("vector", k.name),), setup, spelled.source, check, notes)
 
 
+#: Bytes per element of the SIMT rows' element types.
+SIMT_BYTES = {"f32": 4, "f16": 2, "bf16": 2}
+
+
+def per_thread(row: simt.Row) -> int:
+    """Elements one thread moves with a load or store row: 16 bytes for a wide row, two for a pair, else one."""
+    if row.kind == "thread" and row.answers().endswith("_wide"):  # the f32 load_wide row reads one float
+        return 16 // SIMT_BYTES[row.dtype]
+    return 2 if row.answers().endswith("_x2") else 1
+
+
+def moves(row: simt.Row) -> bool:
+    return row.answers().split("_")[0] in ("load", "store")
+
+
 def thread_op(request: Request) -> Answer:
-    """A GPU operation of one thread or one warp: its SIMT row on scalars, with the recorded check."""
+    """A GPU operation of one thread or one warp: its SIMT row at the request's element type, with the recorded check.
+    A load or store of N elements in global memory takes the widest row whose elements per thread divide N."""
     dialect = DIALECT[request.target]
-    rows = {r.op: r for r in simt.rows()}
-    if request.op not in rows:
-        related = [op for op in rows if request.op in op] or difflib.get_close_matches(request.op, list(rows), n=3)
-        nearest = related or list(rows)  # the related rows, else every row
+    rows = simt.rows()
+    named = [r for r in rows if request.op in (r.op, r.answers())]
+    if request.op in ("load", "store"):  # the family: scalar, pair, and 16-byte rows
+        named = [r for r in rows if moves(r) and r.answers().startswith(request.op)]
+    if not named:
+        names = list(dict.fromkeys(r.answers() for r in rows))
+        related = [op for op in names if request.op in op] or difflib.get_close_matches(request.op, names, n=3)
+        nearest = related or names  # the related rows, else every row
         tail = "a GPU loop tail is a per-thread bounds check (if (i < n)); ballot_count counts the lanes of a predicate"
         fix = tail if request.op == "gen_mask" else ""
         return no(request, Why.NO_ROW, f"no {dialect} row for {request.op}",
                   *(f"{request.target} {op}" for op in nearest), fix=fix)  # fmt: skip
-    row, verdict = rows[request.op], simt.verdicts().get((request.op, dialect))
-    scalar = Operand("register", row.dtype)
-    for operand in request.operands.values():
-        if operand.dtype != scalar.dtype:
-            return no(
-                request,
-                Why.ELEMENT_TYPE,
-                f"the {request.op} row computes in {scalar.dtype}, not {operand.dtype}",
-                spell(x=scalar),
-            )
-        if len(operand.shape) >= 2 or operand.swizzle != "none":
-            return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or copy operand",
-                      spell(x=scalar), block=(1,))  # fmt: skip
-        if operand.space != "register":
-            group = "wavefront" if dialect == "hip" else "warp"
-            held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
-            return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} memory",
-                      spell(x=scalar), fix="load the value into a register first")  # fmt: skip
+    dtype = dtype_of(request) if request.operands else named[0].dtype
+    typed = [r for r in named if r.dtype == dtype]
+    space: Space = "global" if moves(named[0]) else "register"
+    if not typed:
+        dtypes = sorted({r.dtype for r in named})
+        return no(request, Why.ELEMENT_TYPE, f"the {request.op} row computes in {', '.join(dtypes)}, not {dtype}",
+                  *(spell(x=Operand(space, d)) for d in dtypes))  # fmt: skip
+    if why := mixed(request):
+        return bad(request, Why.MIXED_TYPES, why, spell(x=Operand(space, dtype)))
+    row, count = typed[0], 1
+    if moves(row):
+        found = memory_row(request, typed, dtype)
+        if not isinstance(found, tuple):
+            return found
+        row, count = found
+    else:
+        scalar = Operand("register", row.dtype)
+        for operand in request.operands.values():
+            if len(operand.shape) >= 2 or operand.swizzle != "none":
+                return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
+                          "copy operand", spell(x=scalar), block=(1,))  # fmt: skip
+            if operand.space != "register":
+                group = "wavefront" if dialect == "hip" else "warp"
+                held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
+                return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} "
+                          "memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
     if request.max_ulp is not None:
         return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
+    verdict = simt.verdicts().get((row.op, dialect))
     if verdict is not None and verdict.ok is False:
         return no(request, Why.CHECK_FAILED, f"the row failed its check: {verdict.error or verdict.basis}")
     spelling = row.spelled(dialect)
     check = Check("unverified") if verdict is None else Check("run" if verdict.ok else "compiled", verdict.basis)
     unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
-    notes = (*((row.note,) if row.note else ()), simt.bindings(dialect))
-    return Feasible(request, unit, (Step(unit, spelling),), {}, spelling, check, notes)
+    spread = (f"{count * per_thread(row)} elements: {count} threads, {per_thread(row)} each",) if count > 1 else ()
+    notes = (*((row.note,) if row.note else ()), *spread, simt.bindings(dialect))
+    return Feasible(request, unit, (Step(unit, spelling, count),), {}, spelling, check, notes)
+
+
+def memory_row(request: Request, typed: list[simt.Row], dtype: str) -> tuple[simt.Row, int] | Answer:
+    """The load or store row for the request's global data and how many threads run it: the widest row whose
+    elements per thread divide the extent."""
+    if not request.operands:  # the row itself: one thread's move
+        return typed[0], 1
+    shapes = {o.shape for o in request.operands.values()}
+    for operand in request.operands.values():
+        if operand.space != "global":
+            return no(request, Why.SPACE, f"a {request.op} row moves {dtype} between global memory and registers; "
+                      f"name the data in memory, not {operand.space}", spell(x=Operand("global", dtype, (1024,))))  # fmt: skip
+        if len(operand.shape) >= 2 or operand.swizzle != "none":
+            return no(request, Why.SHAPE, f"{request.op} moves a run of elements; a tile is a copy operand",
+                      spell(x=Operand("global", dtype, (math.prod(operand.shape),))), block=(1,))  # fmt: skip
+    if len(shapes) > 1:
+        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+        return bad(request, Why.CHAIN, reason, spell(x=Operand("global", dtype, (1024,))))
+    n = math.prod(next(iter(shapes), ()))
+    widest = sorted(typed, key=per_thread, reverse=True)
+    for row in widest:
+        if n % per_thread(row) == 0:
+            return row, n // per_thread(row)
+    width = per_thread(widest[-1])
+    sizes = [size for size in (n - n % width, n - n % width + width) if size]
+    return no(request, Why.SHAPE, f"the {request.op} row moves {width} {dtype} per thread; {n} is no whole multiple",
+              *(spell(x=Operand("global", dtype, (size,))) for size in sizes), block=(width,),
+              fix="guard the last thread's elements with a bounds check (if (i < n)), or pad the data")  # fmt: skip
 
 
 def ttsim_check(row: tensix.Row, dtype: str) -> Check | str:
