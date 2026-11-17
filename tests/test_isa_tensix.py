@@ -219,16 +219,40 @@ def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the
     assert "fp32_dest_acc_en = true" in answer.setup["compute config"] and "scaler" in answer.setup
 
 
-@pytest.mark.parametrize("op", ["reduce_add", "reduce_max", "scan_add"])
-def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_call_per_tile(op: str):
+@pytest.mark.parametrize(("op", "shape", "tiles"), [("reduce_add", (64, 64), 4), ("reduce_max", (64, 64), 4),
+                                                     ("scan_add", (64, 32), 2)])  # fmt: skip
+def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_init_and_one_call_per_tile(op, shape, tiles):
     from alloy.isa.ask import Check, Feasible, Operand, Request, ask
 
-    answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (64, 64))}), verify=False)
+    answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", shape)}), verify=False)
 
     assert isinstance(answer, Feasible), answer
     assert answer.check == Check("run", "ttsim")
-    assert answer.steps[1].count == 4
+    assert (answer.steps[0].count, answer.steps[1].count) == (1, tiles)
     assert [s.spelling for s in answer.steps].count("pack_tile(0, c16)") == (op != "scan_add")
+
+
+def test_a_scan_over_more_than_one_column_of_tiles_is_refused_with_one_column_as_nearest():
+    """cumsum_tile's first flag restarts the total at the top of one column; the check ran one column (reviewer C)."""
+    from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
+
+    answer = ask(Request("tensix", "scan_add", {"x": Operand("tile_register", "f32", (64, 64))}), verify=False)
+
+    assert isinstance(answer, Infeasible) and answer.why == Why.SHAPE
+    assert answer.nearest == ("x tile_register:f32:64x32",)
+
+
+def test_an_f32_tile_answer_carries_the_compute_config_its_check_ran_with_and_prefers_the_sfpu():
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    sfpu = ask(Request("tensix", "add", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
+    fpu = ask(Request("tensix", "add", {"x": Operand("tile_register", "f32", (32, 32))}, unit="fpu"), verify=False)
+
+    assert isinstance(sfpu, Feasible) and sfpu.unit == "sfpu"
+    assert (
+        "fp32_dest_acc_en = true" in sfpu.setup["compute config"] and "UnpackToDestFp32" in sfpu.setup["compute config"]
+    )
+    assert isinstance(fpu, Feasible) and any("TF32" in note for note in fpu.notes)
 
 
 def test_a_pending_row_is_offered_unverified_until_its_ttsim_run_is_recorded(monkeypatch: pytest.MonkeyPatch):
@@ -253,4 +277,4 @@ def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
     answer = ask(Request("tensix", "reduce_min", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
 
     assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
-    assert answer.nearest == ("tensix neg", "tensix reduce_max") and "neg_tile" in answer.fix
+    assert answer.nearest == ("tensix neg", "tensix reduce_max") and "negative_tile" in answer.fix

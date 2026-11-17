@@ -673,12 +673,14 @@ def tile_call(request: Request) -> Answer:
     rows = [r for r in tensix.rows() if r.op == request.op]
     if not rows and request.op == "reduce_min":
         return no(request, Why.NO_ROW, "Tensix reduce_tile pools SUM, AVG, and MAX; it has no MIN", "tensix neg",
-                  "tensix reduce_max", fix="negate the tiles (neg_tile), reduce_max, and negate the result")  # fmt: skip
+                  "tensix reduce_max", fix="negate the tiles (negative_tile), reduce_max, and negate the result")  # fmt: skip
     if not rows:
         return no(
             request, Why.NO_ROW, f"no Tensix row for {request.op}", *sorted({f"tensix {r.op}" for r in tensix.rows()})
         )
     found = [r for r in rows if not request.unit or r.unit.lower() == request.unit]
+    if dtype == "f32":  # the SFPU keeps f32 in DST; the FPU reads its sources at TF32 (19 bits)
+        found.sort(key=lambda r: r.unit.lower() != "sfpu")
     if not found:
         units = sorted({r.unit.lower() for r in rows})
         return no(
@@ -709,6 +711,11 @@ def tile_call(request: Request) -> Answer:
         return no(request, Why.SHAPE, reason, *near, fix="pad the data to whole 32x32 tiles", block=(32, 32))
     tiles = (shape[0] // 32) * (shape[1] // 32)
     row = found[0]
+    if row.kind == "scan" and shape[1] > 32:  # first = (i == 0) restarts the total only at the top of one column
+        return no(request, Why.SHAPE, "the checked scan runs down one column of tiles (cumsum_tile with first set "
+                  "on its top tile); a wider shape needs first set at the top of every column, which is not checked",
+                  spell(x=Operand("tile_register", dtype, (shape[0], 32))), fix="ask one 32-wide column at a time",
+                  block=(32, 32))  # fmt: skip
     verdict = tensix.verdicts().get((request.op, dtype, row.unit))
     if verdict is not None and not verdict.ok:
         return no(
@@ -722,12 +729,20 @@ def tile_call(request: Request) -> Answer:
     else:
         check = Check("unverified") if verdict is None else Check("run", "ttsim")
     unit = row.unit.lower()
+    once = row.kind in ("scan", "reduction")  # one init: the state stays in the unit from tile to tile
+    each = "one init, then one call per tile" if once else "the init before each tile's call, as the checked program"
     notes = (
         *((row.note,) if row.note else ()),
-        *((f"{tiles} tiles: one call each, after one init",) if tiles > 1 else ()),
-    )
-    steps: tuple[Step, ...] = (Step(unit, init), Step(unit, call, tiles))
+        *((f"{tiles} tiles: {each}",) if tiles > 1 else ()),
+        *(("the FPU reads its sources at TF32 (19 bits): about 1e-3 relative error in f32; unit sfpu keeps f32",)
+          if unit == "fpu" and dtype == "f32" else ()),
+    )  # fmt: skip
+    steps: tuple[Step, ...] = (Step(unit, init, 1 if once else tiles), Step(unit, call, tiles))
     setup = {"header": row.header}
+    if dtype == "f32":  # without these, f32 data passes DST at bf16 precision (tensix.toml's target note)
+        setup["compute config"] = "fp32_dest_acc_en = true, math_fidelity = HiFi4" + (
+            "; unpack_to_dest_mode UnpackToDestFp32 for the CBs copied into DST" if unit == "sfpu" else ""
+        )
     if row.kind == "reduction":  # every tile into one DST tile, packed once; the harness runs it so
         steps += (Step(unit, "pack_tile(0, c16)"),)
         setup |= {"compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",

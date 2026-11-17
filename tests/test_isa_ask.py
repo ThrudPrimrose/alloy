@@ -735,7 +735,10 @@ def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile(
     whole = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (64, 96))}))
     partial = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (48, 32))}))
 
-    assert isinstance(whole, Feasible) and [s.count for s in whole.steps] == [1, 6]
+    assert isinstance(whole, Feasible) and [s.count for s in whole.steps] == [
+        6,
+        6,
+    ]  # an init before each call, as checked
     assert isinstance(partial, Infeasible) and partial.why is Why.SHAPE
     assert partial.block == (32, 32) and "pad" in partial.fix
     assert partial.nearest == ("x tile_register:f32:32x32", "x tile_register:f32:64x32")
