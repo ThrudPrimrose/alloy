@@ -9,8 +9,10 @@ machine has is run; otherwise its program is compiled for the target archs and r
 """
 
 import argparse
+import dataclasses
 import datetime
 import functools
+import hashlib
 import json
 import pathlib
 import shutil
@@ -24,7 +26,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy import gpu
 
-__all__ = ["DIALECTS", "Row", "Verdict", "merged", "program", "rows", "verdicts", "verify"]
+__all__ = ["DIALECTS", "Row", "Verdict", "digest", "merged", "program", "rows", "verdicts", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "simt.toml"
@@ -35,6 +37,12 @@ LANES = {"cuda": 32, "hip": 64}
 #: The archs a HIP row compiles for when this machine has no AMD GPU to run it on.
 HIP_ARCHS = ("gfx90a", "gfx942")
 DOMAIN = (-2.0, 2.0)
+#: Per dialect and element type: the C type of the arrays x and y a row moves, and the host's conversion from float.
+ELEMENTS = {
+    ("cuda", "f32"): ("float", "(float)"), ("hip", "f32"): ("float", "(float)"),
+    ("cuda", "f16"): ("__half", "__float2half_rn"), ("hip", "f16"): ("__half", "__float2half_rn"),
+    ("cuda", "bf16"): ("__nv_bfloat16", "__float2bfloat16_rn"), ("hip", "bf16"): ("__hip_bfloat16", "__float2bfloat16"),
+}  # fmt: skip
 TIMEOUT = 300
 
 API = {
@@ -57,17 +65,25 @@ class Row:
     tol: float
     domain: tuple[float, float] = DOMAIN
     check: str = "all"
-    #: The element type the row computes in (its arguments and result are f32 scalars either way).
+    #: The element type the row computes in or moves (its arguments a, b, c and its checked result are f32).
     dtype: str = "f32"
     note: str = ""
+    #: The request op the row answers when its key differs (the key load_f16 answers load at f16).
+    spells: str = ""
+    #: Statements the check runs after a "thread" row to set ``out`` from what the row wrote; not part of the row.
+    read: str = ""
 
     def spelled(self, dialect: str) -> str:
         return self.cuda if dialect == "cuda" else self.hip
 
+    def answers(self) -> str:
+        return self.spells or self.op
+
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
 class Verdict:
-    """One row's check: ``ok`` None means compiled but not run (no such GPU here)."""
+    """One row's check: ``ok`` None means compiled but not run (no such GPU here). ``digest`` is :func:`digest` of
+    the row as it was checked."""
 
     op: str
     dialect: str
@@ -75,6 +91,7 @@ class Verdict:
     ok: bool | None = None
     rel: float | None = None
     error: str = ""
+    digest: str = ""
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -91,8 +108,19 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
-def verdicts() -> dict[tuple[str, str], Verdict]:
-    return {(v["op"], v["dialect"]): Verdict(**v) for v in recorded().get("verdicts", [])}
+def digest(row: Row, dialect: str) -> str:
+    """What a check of ``row`` on ``dialect`` ran: the spelling, the inputs, the reference, and what it compared."""
+    checked = [row.kind, row.spelled(dialect), row.ref, list(row.domain), row.check, row.tol, row.dtype]
+    checked += [row.read] if row.read else []  # rows without a read keep the digest of their recorded runs
+    return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
+
+
+def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str], Verdict]:
+    """The recorded verdict of each row as it is now: a record of a row changed since its check is stale and left
+    out, so the row is unverified until it runs again."""
+    current = {(row.op, dialect): digest(row, dialect) for row in rows() for dialect in DIALECTS}
+    found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
+    return {(v.op, v.dialect): v for v in found if current.get((v.op, v.dialect)) == v.digest}
 
 
 def bindings(dialect: str) -> str:
@@ -100,7 +128,7 @@ def bindings(dialect: str) -> str:
     return (
         f"bind: lanes = warpSize ({LANES[dialect]} on {dialect}); lane = threadIdx.x % warpSize (the lane in its "
         "warp, not threadIdx.x once a block holds several warps); v = this lane's input, a, b, c = its operands; "
-        "out = the result"
+        "out = the result; x, y = the arrays a load reads and a store writes, i = this thread's element"
     )
 
 
@@ -112,12 +140,13 @@ def program(row: Row, dialect: str) -> str:
     includes = "\n".join(f"#include <{h}>" for h in ["cstdio", "cmath", *table()["target"][dialect]["headers"]])
     if dialect == "hip":
         includes = "#include <hip/hip_runtime.h>\n" + includes
-    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else row.spelled(dialect)
+    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)} {row.read}".rstrip()
     reference = (
-        f"for (int k = 0; k < lanes; k++) {{ float a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
-        if row.kind == "lane"
-        else row.ref
+        row.ref
+        if row.kind == "warp"
+        else f"for (int k = 0; k < lanes; k++) {{ float a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
     )
+    elem, convert = ELEMENTS[dialect, row.dtype]
     checked = "1" if row.check == "first" else "lanes"
     return f"""{includes}
 #define LANES {lanes}
@@ -126,10 +155,12 @@ __host__ __device__ static inline float B(int k) {{ return 0.5f + 1.5f * ((k * 7
 #define C 0.25f
 static inline float wide_ref(int lane) {{ return (float)((lane / 4) * 4) * 0.5f; }}
 
-__global__ void row(const float* in, float* outv, const float* wide, float* total) {{
-    const int lane = threadIdx.x, lanes = LANES;
+typedef {elem} elem;
+
+__global__ void row(const float* in, float* outv, const float* wide, float* total, const elem* x, elem* y) {{
+    const int lane = threadIdx.x, lanes = LANES, i = lane;
     const float a = A(lane), b = B(lane), c = C, v = in[lane];
-    (void)a; (void)b; (void)c; (void)v; (void)wide; (void)total;
+    (void)a; (void)b; (void)c; (void)v; (void)wide; (void)total; (void)x; (void)y; (void)i; (void)lanes;
     float out = 0.0f;
     {body}
     outv[lane] = out;
@@ -139,13 +170,19 @@ int main() {{
     const int lanes = LANES;
     float in[LANES], got[LANES], want[LANES], wide[LANES];
     for (int k = 0; k < lanes; k++) {{ in[k] = A(k); wide[k] = k * 0.5f; want[k] = 0.0f; }}
+    elem xs[LANES];
+    for (int k = 0; k < lanes; k++) xs[k] = {convert}(A(k));
     float *d_in, *d_out, *d_wide, *d_total;
+    elem *d_x, *d_y;
+    {api["malloc"]}((void**)&d_x, sizeof xs); {api["malloc"]}((void**)&d_y, 8 * sizeof xs);
+    {api["memcpy"]}(d_x, xs, sizeof xs, {api["h2d"]});
+    {api["memset"]}(d_y, 0, 8 * sizeof xs);
     {api["malloc"]}((void**)&d_in, sizeof in); {api["malloc"]}((void**)&d_out, sizeof got);
     {api["malloc"]}((void**)&d_wide, sizeof wide); {api["malloc"]}((void**)&d_total, sizeof(float));
     {api["memcpy"]}(d_in, in, sizeof in, {api["h2d"]});
     {api["memcpy"]}(d_wide, wide, sizeof wide, {api["h2d"]});
     {api["memset"]}(d_total, 0, sizeof(float));
-    row<<<1, LANES>>>(d_in, d_out, d_wide, d_total);
+    row<<<1, LANES>>>(d_in, d_out, d_wide, d_total, d_x, d_y);
     {api["sync"]}();
     if ({api["error"]}() != {api["ok"]}) {{ printf("ALLOY-SIMT error=launch\\n"); return 2; }}
     {api["memcpy"]}(got, d_out, sizeof got, {api["d2h"]});
@@ -230,6 +267,7 @@ def verdicts_text(found: list[Verdict]) -> str:
             "basis": v.basis,
             "rel": v.rel,
             "error": v.error or None,
+            "digest": v.digest or None,
         }
         body += ["[[verdicts]]", *(f"{k} = {json.dumps(x)}" for k, x in fields.items() if x is not None), ""]
     return "\n".join(head + body)
@@ -245,13 +283,19 @@ def merged(new: Verdict, old: Verdict | None) -> Verdict:
     if not others:
         return new
     rel = max((r for r in (new.rel, old.rel) if r is not None), default=None)
-    return Verdict(new.op, new.dialect, "; ".join([*runs, *others]), new.ok and old.ok, rel, new.error or old.error)
+    return Verdict(
+        new.op, new.dialect, "; ".join([*runs, *others]), new.ok and old.ok, rel, new.error or old.error, new.digest
+    )
 
 
 def verify() -> list[Verdict]:
     here = runnable()
     kept = verdicts()
-    found = [check(row, dialect, dialect in here) for row in rows() for dialect in DIALECTS]
+    found = [
+        dataclasses.replace(check(row, dialect, dialect in here), digest=digest(row, dialect))
+        for row in rows()
+        for dialect in DIALECTS
+    ]
     # a row this machine can only compile keeps the verdict of the machine that ran it
     found = [
         kept[v.op, v.dialect] if v.ok is None and (v.op, v.dialect) in kept and kept[v.op, v.dialect].ok else v

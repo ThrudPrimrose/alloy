@@ -30,7 +30,8 @@ from pydantic.dataclasses import dataclass
 
 from alloy.isa import OPS, load, simt, tensix, tile
 from alloy.isa.mathkernels import cheapest, functions, kernel, render, target_of
-from alloy.isa.table import Table
+from alloy.isa.table import Entry, Table
+from alloy.isa.validate import HEADERS, c_flags
 
 __all__ = [
     "TARGETS",
@@ -292,18 +293,52 @@ def no(
 #: blocks, and the scans with the row that carries a block's last element into the next.
 REDUCTIONS = {"reduce_add": "add", "reduce_min": "min", "reduce_max": "max"}
 SCANS = {"scan_add": "add"}
+#: The last lane of a scanned register ``t``, broadcast to every lane: the carry of a scan into the next register.
+LAST_LANE = {
+    ("avx512", "f64"): "_mm512_permutexvar_pd(_mm512_set1_epi64(7), t)",
+    ("avx512", "f32"): "_mm512_permutexvar_ps(_mm512_set1_epi32(15), t)",
+    ("avx2", "f64"): "_mm256_permute4x64_pd(t, 0xFF)",
+    ("avx2", "f32"): "_mm256_permutevar8x32_ps(t, _mm256_set1_epi32(7))",
+    ("neon", "f64"): "vdupq_laneq_f64(t, 1)",
+    ("neon", "f32"): "vdupq_laneq_f32(t, 3)",
+    ("sve", "f64"): "svdup_n_f64(svlastb_f64(pg, t))",
+    ("sve", "f32"): "svdup_n_f32(svlastb_f32(pg, t))",
+}
 #: Where a load ends and a store starts; every other space is memory.
 REGISTERS = ("register", "vector", "tile_register")
-#: How a caller finishes the elements past the last whole register, by CPU target.
-TAIL = {
-    "avx512": "run the last block under a mask: ask gen_mask, then use the row's masked form",
-    "sve": "run the last block under the svwhilelt predicate: ask gen_mask",
-    "avx2": "finish them in a scalar remainder loop, or pad the data to the multiple above",
-    "neon": "finish them in a scalar remainder loop, or pad the data to the multiple above",
-}
+#: How a caller finishes the elements past the last whole register on a CPU without masks.
+REMAINDER = "finish them in a scalar remainder loop, or pad the data to the multiple above"
+#: What a masked-off lane must hold so a reduction's lane-wise combine ignores it.
+IDENTITY = {"reduce_add": "0", "reduce_min": "INFINITY", "reduce_max": "-INFINITY"}
 
 
-def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: str) -> Infeasible:
+def tail_fix(isa: str, op: str, dtype: str, table: Table) -> str:
+    """How a caller finishes the elements past the last whole register for ``op``: a masked form where the row has
+    one, else a masked load that fills the masked-off lanes so the whole-register op is right."""
+    if isa == "sve":
+        return "run every block under the svwhilelt predicate (ask gen_mask); ask with the whole extent for the loop"
+    if isa != "avx512":
+        return REMAINDER
+    rows = table.isa(isa).entries(dtype)
+    entry, load, store = (rows.get(name, Entry()).masked for name in (op, "load", "store"))
+    if op in REDUCTIONS:
+        fill = rows.get("broadcast", Entry()).intrinsic
+        filled = (
+            load
+            if op == "reduce_add"
+            else load.replace("maskz_", "mask_").replace("(k, p)", f"({fill}({IDENTITY[op]}), k, p)")
+        )
+        return (
+            f"ask gen_mask for the last block's mask k, load the block with {filled} so its masked-off lanes hold "
+            f"{IDENTITY[op]}, combine it lane-wise like a whole register, and reduce once"
+        )
+    if op in ("load", "store"):
+        return f"ask gen_mask for the last block's mask k, then {op} it with {entry}"
+    compute = f"compute with {entry}" if entry else "compute as a whole register"
+    return f"ask gen_mask for the last block's mask k, load with {load}, {compute}, store with {store}"
+
+
+def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: str, op: str = "") -> Infeasible:
     """The refusal of ``n`` elements that are no whole multiple of a register's ``lanes``: the block, the multiples
     below and above as nearest requests (``names`` are the operands a nearest request spells), and the tail's fix."""
     below = n - n % lanes
@@ -315,6 +350,8 @@ def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: s
     )
     article = "a" if isa == "neon" else "an"
     reason = f"{n} {dtype} elements are not a whole multiple of the {lanes} {dtype} lanes of {article} {isa} register: {held}"
+    if request.op == "broadcast":
+        reason += f"; a broadcast's scalar source is --x register:{dtype} (or register:{dtype}:1)"
     sizes = [size for size in (below, below + lanes) if size]
     if names == ("src", "dst"):
         memory = "src" if request.operands["dst"].space in REGISTERS else "dst"
@@ -324,7 +361,8 @@ def uneven(request: Request, isa: str, dtype: str, n: int, lanes: int, *names: s
         ]
     else:
         nearest = [spell(x=Operand("vector", dtype, (size,))) for size in sizes]
-    return no(request, Why.SHAPE, reason, *nearest, fix=TAIL[isa], block=(lanes,))
+    fix = tail_fix(isa, op or request.op, dtype, load())
+    return no(request, Why.SHAPE, reason, *nearest, fix=fix, block=(lanes,))
 
 
 def repeated(answer: Answer, request: Request, count: int, table: Table, isa: str, dtype: str) -> Answer:
@@ -340,12 +378,13 @@ def repeated(answer: Answer, request: Request, count: int, table: Table, isa: st
             "it once; the lanes combine in another order than a scalar left fold"
         )
     elif request.op in SCANS:
-        carry = (table.entry(isa, "broadcast", dtype).intrinsic, table.entry(isa, SCANS[request.op], dtype).intrinsic)
+        carry = (LAST_LANE[isa, dtype], table.entry(isa, SCANS[request.op], dtype).intrinsic)
         steps = (*(dataclasses.replace(s, count=count) for s in answer.steps),
                  *(Step("vector", c, count - 1) for c in carry))  # fmt: skip
         note = (
-            f"{count} registers: scan each, then add the broadcast last lane of the scanned register before it "
-            f"({carry[0]}, {carry[1]})"
+            f"{count} registers: scan each, then from the second on add the carry c, the last lane of the scanned "
+            f"register before broadcast to every lane: c = {carry[0]} with t the register before, then "
+            f"{carry[1]}(this register, c)"
         )
     else:
         steps = tuple(dataclasses.replace(s, count=s.count * count) for s in answer.steps)
@@ -434,6 +473,27 @@ def manual_check(target: str, name: str) -> Check:
     return Check("unverified", "from the ISA manuals; no checked program issues it")
 
 
+def gpu_build(target: str) -> str:
+    """The line that compiles a GPU answer's code, saved as alloy.cu (sm90) or alloy.hip (CDNA), with no include path:
+    the code carries every helper it calls."""
+    if target == "sm90":
+        return "nvcc -gencode arch=compute_90a,code=sm_90a -std=c++17 -O2 -c alloy.cu -o alloy.o"
+    return f"hipcc --offload-arch={target} -O2 -c alloy.hip -o alloy.o"
+
+
+def device_code(helpers: str, signature: str, body: str) -> str:
+    """One self-contained block: the helpers ``body`` calls, then ``body`` as the device function ``signature``."""
+    lines = "".join(f"  {line}\n" for line in body.splitlines())
+    return f"{helpers}\n\n__device__ {signature} {{\n{lines}}}\n".lstrip("\n")
+
+
+def gpu_helpers(target: str) -> str:
+    """Alloy's tile helpers of ``target`` without the mma: the barriers, the TMA, the tensor map, the LDS chunk type."""
+    if target in DIALECT:
+        return tile.inlined(tile.GPU_HEADER[target], frozenset())
+    return ""
+
+
 def wait_answer(request: Request) -> Answer:
     """``wait on=<token>``: the instruction that completes the work a token names."""
     tokens = WAITS.get(request.target, {})
@@ -444,7 +504,12 @@ def wait_answer(request: Request) -> Answer:
                   else f"{request.target} issues no asynchronous work to wait on")  # fmt: skip
         return no(request, Why.NO_ROW, reason, *(f"wait on={t}" for t in tokens))
     spelling, what = tokens[request.on]
-    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+    code, setup = spelling, {}
+    if request.target in DIALECT:
+        mbarrier = "uint64_t& bar, uint32_t& phase" if "&bar" in spelling else ""
+        code = device_code(gpu_helpers(request.target), f"void alloy_wait_{request.on}({mbarrier})", spelling)
+        setup = {"build": gpu_build(request.target)}
+    return Feasible(request, "thread", (Step("thread", spelling),), setup, code,
                     manual_check(request.target, request.on), (what,))  # fmt: skip
 
 
@@ -456,7 +521,8 @@ def fence_answer(request: Request) -> Answer:
     if request.kind not in fences:
         return no(request, Why.NO_ROW, f"{request.target} {NO_FENCE[request.kind]}")
     spelling, what = fences[request.kind]
-    return Feasible(request, "thread", (Step("thread", spelling),), {}, spelling,
+    code = device_code(gpu_helpers(request.target), f"void alloy_fence_{request.kind}()", spelling)
+    return Feasible(request, "thread", (Step("thread", spelling),), {"build": gpu_build(request.target)}, code,
                     manual_check(request.target, request.kind), (what,))  # fmt: skip
 
 
@@ -548,7 +614,9 @@ def vector_op(request: Request, verify: bool) -> Answer:
         )
     if why := mixed(request):
         return bad(request, Why.MIXED_TYPES, why, spell(x=register))
-    shapes = {operand.shape for operand in request.operands.values() if operand.shape}
+    # a broadcast's source is one scalar: register:<dtype> or register:<dtype>:1
+    scalar = request.op == "broadcast" and all(o.shape in ((), (1,)) for o in request.operands.values())
+    shapes = set() if scalar else {operand.shape for operand in request.operands.values() if operand.shape}
     if len(shapes) > 1:
         reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
         return bad(request, Why.CHAIN, reason, spell(x=register))
@@ -568,10 +636,64 @@ def vector_op(request: Request, verify: bool) -> Answer:
             return no(request, Why.SHAPE, f"{isa} {request.op} takes one-dimensional data, not {shape}; a tile is an "
                       "mma or copy operand", spell(x=near), fix="flatten the data into one run of elements",
                       block=(lanes,))  # fmt: skip
-        if lanes and operand.shape and operand.shape[0] % lanes:
+        if lanes and operand.shape and operand.shape[0] % lanes and not scalar:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
+    answer = one_register(request, isa, dtype, table, verify)
+    if not lanes and shapes:  # SVE: the lane count is known at run time only
+        return scalable(answer, request, math.prod(next(iter(shapes))), table, dtype)
     count = next(iter(shapes))[0] // lanes if shapes and lanes else 1
-    return repeated(one_register(request, isa, dtype, table, verify), request, count, table, isa, dtype)
+    return repeated(answer, request, count, table, isa, dtype)
+
+
+#: Per SVE element type: the lanes of one register at run time, the vector and scalar C types, the predicate width.
+SVE_TYPES = {
+    "f64": ("svcntd()", "svfloat64_t", "double", "b64"),
+    "f32": ("svcntw()", "svfloat32_t", "float", "b32"),
+    "f16": ("svcnth()", "svfloat16_t", "float16_t", "b16"),
+    "i64": ("svcntd()", "svint64_t", "int64_t", "b64"),
+    "i32": ("svcntw()", "svint32_t", "int32_t", "b32"),
+}
+
+
+def scalable(answer: Answer, request: Request, n: int, table: Table, dtype: str) -> Answer:
+    """``answer`` for one SVE register, as the loop over ``n`` elements: blocks of the run-time lane count under the
+    svwhilelt predicate, no remainder. A reduction combines the blocks lane-wise into an accumulator (the _m form keeps
+    its masked-off lanes) and reduces once; a scan adds the carry of the block before."""
+    if not isinstance(answer, Feasible):
+        return answer
+    lanes, vector, scalar, bits = SVE_TYPES[dtype]
+    mask = table.entry("sve", "gen_mask", dtype).intrinsic
+    head = f"for (int64_t i = 0; i < {n}; i += {lanes}) {{\n  svbool_t pg = {mask}(i, {n});\n"
+    each = f"each block of {lanes} lanes: "
+    loop = (f"{n} elements: a loop over blocks of {lanes} lanes (the run-time vector length) under pg = {mask}(i, N); "
+            "no remainder loop")  # fmt: skip
+    if request.op in REDUCTIONS:
+        load_, fill = (table.entry("sve", name, dtype).intrinsic for name in ("load", "broadcast"))
+        combine = table.entry("sve", REDUCTIONS[request.op], dtype).intrinsic.replace("_x", "_m")
+        reduce_ = table.entry("sve", request.op, dtype).intrinsic
+        reduced = (Step("vector", f"{each}{mask}(i, N)"), Step("vector", f"{each}{load_}"),
+                 Step("vector", f"{each}{combine} into the accumulator (_m: its masked-off lanes stay)"),
+                 Step("vector", reduce_))  # fmt: skip
+        code = (f"{vector} acc = {fill}({IDENTITY[request.op]});\n{head}  acc = {combine}(pg, acc, {load_}(pg, x + i));"
+                f"\n}}\n{scalar} s = {reduce_}(svptrue_{bits}(), acc);")  # fmt: skip
+        note = f"{loop}; the lanes combine in another order than a scalar left fold"
+        return dataclasses.replace(answer, steps=reduced, code=code, notes=(*answer.notes, note))
+    steps: tuple[Step, ...] = (
+        Step("vector", f"{each}{mask}(i, N)"),
+        *(Step("vector", each + s.spelling) for s in answer.steps),
+    )
+    body = "".join(f"  {line}\n" for line in answer.code.splitlines())
+    before, after = "", ""
+    if answer.notes and answer.notes[0].startswith("rung "):  # a math kernel: its function, then a call per block
+        before, body = f"{answer.code}\n", f"  v = {answer.steps[0].spelling}(v);\n"
+    if request.op in SCANS:
+        carry = LAST_LANE["sve", dtype].replace(", t)", ", v)")
+        add = table.entry("sve", SCANS[request.op], dtype).intrinsic
+        steps += (Step("vector", f"{each}{add}(pg, v, c)"), Step("vector", f"{each}{carry}"))
+        before = f"{vector} c = {table.entry('sve', 'broadcast', dtype).intrinsic}(0);\n"
+        after = f"  v = {add}(pg, v, c);  // the carry of the blocks before\n  c = {carry};\n"
+    code = f"{before}{head}  // the operands of block i, loaded under pg; then\n{body}{after}}}"
+    return dataclasses.replace(answer, steps=steps, code=code, notes=(*answer.notes, loop))
 
 
 def one_register(request: Request, isa: str, dtype: str, table: Table, verify: bool) -> Answer:
@@ -596,8 +718,35 @@ def one_register(request: Request, isa: str, dtype: str, table: Table, verify: b
         if verdict.ok is False:
             return no(request, Why.CHECK_FAILED, f"the row failed its check: {verdict.detail}")
         check = Check("run" if verdict.ok else "unverified", verdict.basis)
-    code = "\n".join(entry.code) or f"{entry.intrinsic}  /* {entry.signature} */"
-    return Feasible(request, "vector", steps, {}, code, check, (entry.note,) if entry.note else ())
+    notes = (entry.note,) if entry.note else ()
+    return Feasible(request, "vector", steps, cpu_setup(isa, dtype, table, entry), statement(entry), check, notes)
+
+
+def statement(entry: Entry) -> str:
+    """The row as C on the operand names of its signature, ending in its result: ``v = _mm512_add_pd(a, b);``."""
+    operands, _, result = entry.signature.partition("->")
+    if not entry.code and not entry.intrinsic:
+        return f"/* {' then '.join(entry.recipe)} on {entry.signature} */"
+    *lines, last = entry.code or (f"{entry.intrinsic}{operands.strip()}",)
+    done = last if result.strip() in ("", "void") else f"{result.strip()} = {last}"
+    return "".join(f"{line};\n" for line in lines) + f"{done};"
+
+
+def cpu_setup(isa: str, dtype: str, table: Table, entry: Entry | None = None) -> dict[str, str]:
+    """What a CPU answer needs around its code: the header and the compiler flags, and on AVX-512 the row's masked
+    form for the last block with the mask it takes."""
+    flags = " ".join(c_flags(isa, dtype)) or f"none: {isa} is in the target's baseline"
+    compiler = "aarch64-linux-gnu-gcc" if isa in ("neon", "sve") else "gcc"
+    setup = {"header": f"#include <{HEADERS[isa]}>", "flags": flags,
+             "build": " ".join([compiler, "-O2", *c_flags(isa, dtype), "-c", "alloy.c", "-o", "alloy.o"])}  # fmt: skip
+    if isa in ("neon", "sve"):
+        setup["tune"] = "-mcpu=neoverse-v2 for Grace (GH200), on a native compiler"
+    mask = table.isa(isa).entries(dtype).get("gen_mask")
+    if entry is not None and mask is not None and (entry.masked or entry is mask):
+        if entry.masked:
+            setup["masked"] = f"{entry.masked}: the last block, under the mask k"
+        setup["mask"] = f"k = {mask.intrinsic}{mask.signature.partition('->')[0].strip()}: {mask.semantics}"
+    return setup
 
 
 def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
@@ -623,47 +772,133 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
             "run" if verdict.ok else "compiled" if verdict.detail == "builds" else "unverified"
         )
         check = Check(status, f"{verdict.basis}: {verdict.detail}" if verdict.detail else verdict.basis)
-    return Feasible(request, "vector", (Step("vector", k.name),), {}, spelled.source, check, notes)
+    setup = cpu_setup(isa, dtype, load()) | {"header": f"#include <{HEADERS[isa]}> and <math.h>"}
+    code = f"#include <{HEADERS[isa]}>\n#include <math.h>\n{spelled.source}"  # standalone with its build line
+    return Feasible(request, "vector", (Step("vector", k.name),), setup, code, check, notes)
+
+
+#: Bytes per element of the SIMT rows' element types.
+SIMT_BYTES = {"f32": 4, "f16": 2, "bf16": 2}
+
+
+def per_thread(row: simt.Row) -> int:
+    """Elements one thread moves with a load or store row: 16 bytes for a wide row, two for a pair, else one."""
+    if row.kind == "thread" and row.answers().endswith("_wide"):  # the f32 load_wide row reads one float
+        return 16 // SIMT_BYTES[row.dtype]
+    return 2 if row.answers().endswith("_x2") else 1
+
+
+def moves(row: simt.Row) -> bool:
+    return row.answers().split("_")[0] in ("load", "store")
 
 
 def thread_op(request: Request) -> Answer:
-    """A GPU operation of one thread or one warp: its SIMT row on scalars, with the recorded check."""
+    """A GPU operation of one thread or one warp: its SIMT row at the request's element type, with the recorded check.
+    A load or store of N elements in global memory takes the widest row whose elements per thread divide N."""
     dialect = DIALECT[request.target]
-    rows = {r.op: r for r in simt.rows()}
-    if request.op not in rows:
-        related = [op for op in rows if request.op in op] or difflib.get_close_matches(request.op, list(rows), n=3)
-        nearest = related or list(rows)  # the related rows, else every row
-        return no(
-            request, Why.NO_ROW, f"no {dialect} row for {request.op}", *(f"{request.target} {op}" for op in nearest)
-        )
-    row, verdict = rows[request.op], simt.verdicts().get((request.op, dialect))
-    scalar = Operand("register", row.dtype)
-    for operand in request.operands.values():
-        if operand.dtype != scalar.dtype:
-            return no(
-                request,
-                Why.ELEMENT_TYPE,
-                f"the {request.op} row computes in {scalar.dtype}, not {operand.dtype}",
-                spell(x=scalar),
-            )
-        if len(operand.shape) >= 2 or operand.swizzle != "none":
-            return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or copy operand",
-                      spell(x=scalar), block=(1,))  # fmt: skip
-        if operand.space != "register":
-            group = "wavefront" if dialect == "hip" else "warp"
-            held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
-            return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} memory",
-                      spell(x=scalar), fix="load the value into a register first")  # fmt: skip
+    rows = simt.rows()
+    named = [r for r in rows if request.op in (r.op, r.answers())]
+    if request.op in ("load", "store"):  # the family: scalar, pair, and 16-byte rows
+        named = [r for r in rows if moves(r) and r.answers().startswith(request.op)]
+    if not named:
+        names = list(dict.fromkeys(r.answers() for r in rows))
+        related = [op for op in names if request.op in op] or difflib.get_close_matches(request.op, names, n=3)
+        nearest = related or names  # the related rows, else every row
+        tail = "a GPU loop tail is a per-thread bounds check (if (i < n)); ballot_count counts the lanes of a predicate"
+        fix = tail if request.op == "gen_mask" else ""
+        return no(request, Why.NO_ROW, f"no {dialect} row for {request.op}",
+                  *(f"{request.target} {op}" for op in nearest), fix=fix)  # fmt: skip
+    dtype = dtype_of(request) if request.operands else named[0].dtype
+    typed = [r for r in named if r.dtype == dtype]
+    space: Space = "global" if moves(named[0]) else "register"
+    if not typed:
+        dtypes = sorted({r.dtype for r in named})
+        return no(request, Why.ELEMENT_TYPE, f"the {request.op} row computes in {', '.join(dtypes)}, not {dtype}",
+                  *(spell(x=Operand(space, d)) for d in dtypes))  # fmt: skip
+    if why := mixed(request):
+        return bad(request, Why.MIXED_TYPES, why, spell(x=Operand(space, dtype)))
+    row, count = typed[0], 1
+    if moves(row):
+        found = memory_row(request, typed, dtype)
+        if not isinstance(found, tuple):
+            return found
+        row, count = found
+    else:
+        scalar = Operand("register", row.dtype)
+        for operand in request.operands.values():
+            if len(operand.shape) >= 2 or operand.swizzle != "none":
+                return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
+                          "copy operand", spell(x=scalar), block=(1,))  # fmt: skip
+            if operand.space != "register":
+                group = "wavefront" if dialect == "hip" else "warp"
+                held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
+                return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} "
+                          "memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
     if request.max_ulp is not None:
         return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
+    verdict = simt.verdicts().get((row.op, dialect))
     if verdict is not None and verdict.ok is False:
         return no(request, Why.CHECK_FAILED, f"the row failed its check: {verdict.error or verdict.basis}")
     spelling = row.spelled(dialect)
     check = Check("unverified") if verdict is None else Check("run" if verdict.ok else "compiled", verdict.basis)
     unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
-    notes = (*((row.note,) if row.note else ()), simt.bindings(dialect))
-    return Feasible(request, unit, (Step(unit, spelling),), {}, spelling, check, notes)
+    spread = (f"{count * per_thread(row)} elements: {count} threads, {per_thread(row)} each",) if count > 1 else ()
+    notes = (*((row.note,) if row.note else ()), *spread, simt.bindings(dialect))
+    setup = {"build": gpu_build(request.target)}
+    return Feasible(request, unit, (Step(unit, spelling, count),), setup, row_code(row, dialect), check, notes)
+
+
+def row_code(row: simt.Row, dialect: str) -> str:
+    """A SIMT row as one device function that compiles on its own: the names its code uses are the parameters and the
+    locals ``bindings`` describes, and it returns ``out``."""
+    headers = [*(["hip/hip_runtime.h"] if dialect == "hip" else []), *simt.table()["target"][dialect]["headers"]]
+    preamble = "\n".join(f"#include <{h}>" for h in headers) + f"\ntypedef {simt.ELEMENTS[dialect, row.dtype][0]} elem;"
+    body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)}\n{row.read}".rstrip()
+    signature = (f"float alloy_{row.op}(float v, float a, float b, float c, const elem* x, elem* y, const float* wide, "
+                 "float* total)")  # fmt: skip
+    locals_ = ("const int lanes = warpSize, lane = threadIdx.x % warpSize, i = blockIdx.x * blockDim.x + threadIdx.x;"
+               "\nfloat out = 0.0f;")  # fmt: skip
+    return device_code(preamble, signature, f"{locals_}\n{body}\nreturn out;")
+
+
+def memory_row(request: Request, typed: list[simt.Row], dtype: str) -> tuple[simt.Row, int] | Answer:
+    """The load or store row for the request's global data and how many threads run it: the widest row whose
+    elements per thread divide the extent."""
+    if not request.operands:  # the row itself: one thread's move
+        return typed[0], 1
+    shapes = {o.shape for o in request.operands.values()}
+    for operand in request.operands.values():
+        if operand.space != "global":
+            return no(request, Why.SPACE, f"a {request.op} row moves {dtype} between global memory and registers; "
+                      f"name the data in memory, not {operand.space}", spell(x=Operand("global", dtype, (1024,))))  # fmt: skip
+        if len(operand.shape) >= 2 or operand.swizzle != "none":
+            return no(request, Why.SHAPE, f"{request.op} moves a run of elements; a tile is a copy operand",
+                      spell(x=Operand("global", dtype, (math.prod(operand.shape),))), block=(1,))  # fmt: skip
+    if len(shapes) > 1:
+        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+        return bad(request, Why.CHAIN, reason, spell(x=Operand("global", dtype, (1024,))))
+    n = math.prod(next(iter(shapes), ()))
+    widest = sorted(typed, key=per_thread, reverse=True)
+    for row in widest:
+        if n % per_thread(row) == 0:
+            return row, n // per_thread(row)
+    width = per_thread(widest[-1])
+    sizes = [size for size in (n - n % width, n - n % width + width) if size]
+    return no(request, Why.SHAPE, f"the {request.op} row moves {width} {dtype} per thread; {n} is no whole multiple",
+              *(spell(x=Operand("global", dtype, (size,))) for size in sizes), block=(width,),
+              fix="guard the last thread's elements with a bounds check (if (i < n)), or pad the data")  # fmt: skip
+
+
+def ttsim_check(row: tensix.Row, dtype: str) -> Check | str:
+    """A Tensix row's check from its current ttsim record, or why it is refused: a pending row, or one without a
+    current record, is unverified (a stale failure never refuses it); a failed run refuses it."""
+    verdict = None if row.pending else tensix.verdicts().get((row.op, dtype, row.unit))
+    if verdict is None:
+        return Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
+    if not verdict.ok:
+        return f"the row failed its check on ttsim: {verdict.error or 'outside its error bound'}"
+    return Check("run", "ttsim")
 
 
 def tile_call(request: Request) -> Answer:
@@ -716,18 +951,10 @@ def tile_call(request: Request) -> Answer:
                   "on its top tile); a wider shape needs first set at the top of every column, which is not checked",
                   spell(x=Operand("tile_register", dtype, (shape[0], 32))), fix="ask one 32-wide column at a time",
                   block=(32, 32))  # fmt: skip
-    verdict = tensix.verdicts().get((request.op, dtype, row.unit))
-    if verdict is not None and not verdict.ok:
-        return no(
-            request,
-            Why.CHECK_FAILED,
-            f"the row failed its check on ttsim: {verdict.error or 'outside its error bound'}",
-        )
+    check = ttsim_check(row, dtype)
+    if isinstance(check, str):
+        return no(request, Why.CHECK_FAILED, check)
     init, call = tensix.spelled(row.init, "v08"), tensix.spelled(row.call, "v08")
-    if row.pending:
-        check = Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
-    else:
-        check = Check("unverified") if verdict is None else Check("run", "ttsim")
     unit = row.unit.lower()
     once = row.kind in ("scan", "reduction")  # one init: the state stays in the unit from tile to tile
     each = "one init, then one call per tile" if once else "the init before each tile's call, as the checked program"
@@ -836,12 +1063,15 @@ def mma(request: Request, verify: bool) -> Answer:
     Tensix's matmul_tiles. The inputs share one element type and sit where the target's instruction reads them."""
     ops = request.operands
     if not {"a", "b", "c"} <= ops.keys():
-        return bad(request, Why.OPERANDS, "mma takes operands a (M x K), b (K x N), and c (M x N)")
+        target = "cpu" if request.target in CPU else request.target
+        return bad(request, Why.OPERANDS, "mma takes operands a (M x K), b (K x N), and c (M x N)",
+                   *mma_nearest(target, 64, 64, 64, next(iter(ops.values())).dtype if ops else "f16"))  # fmt: skip
     a, b, c = ops["a"], ops["b"], ops["c"]
-    if len(a.shape) != 2 or len(b.shape) != 2 or a.shape[1] != b.shape[0] or c.shape != (a.shape[0], b.shape[1]):
-        return bad(request, Why.CHAIN, f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}")
-    m, k, n = a.shape[0], a.shape[1], b.shape[1]
     target = "cpu" if request.target in CPU else request.target
+    if len(a.shape) != 2 or len(b.shape) != 2 or a.shape[1] != b.shape[0] or c.shape != (a.shape[0], b.shape[1]):
+        reason = f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}; a is M x K, b K x N, c M x N"
+        return bad(request, Why.CHAIN, reason, *mma_nearest(target, 64, 64, 64, a.dtype))
+    m, k, n = a.shape[0], a.shape[1], b.shape[1]
     nearest = mma_nearest(target, m, n, k, a.dtype)
     if a.dtype != b.dtype:
         return bad(
@@ -887,17 +1117,9 @@ def tensix_mma(request: Request, m: int, n: int, k: int, nearest: tuple[str, ...
     if misplaced_ := misplaced("tensix", a, b, c):
         return no(request, *misplaced_[:2], *nearest, fix=misplaced_[2])
     row = next(r for r in tensix.rows() if r.op == "mma")
-    verdict = tensix.verdicts().get(("mma", a.dtype, row.unit))
-    if verdict is not None and not verdict.ok and not row.pending:
-        return no(
-            request,
-            Why.CHECK_FAILED,
-            f"the row failed its check on ttsim: {verdict.error or 'outside its error bound'}",
-        )
-    if row.pending or verdict is None:
-        check = Check("unverified", "pending a ttsim run (the tensix CI job runs it)")
-    else:
-        check = Check("run", "ttsim")
+    check = ttsim_check(row, a.dtype)
+    if isinstance(check, str):
+        return no(request, Why.CHECK_FAILED, check)
     tiles = (m // 32) * (n // 32)
     steps = (Step("fpu", tensix.spelled(row.init, "v08")), Step("fpu", tensix.spelled(row.call, "v08"), tiles * (k // 32)),
              Step("fpu", "pack_tile(0, c16)", tiles))  # fmt: skip
@@ -969,12 +1191,18 @@ def copy(request: Request, verify: bool) -> Answer:
         if src.layout != "row_major" or dst.layout != "row_major":
             return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
         steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
-        code = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+        spelled = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+        loop = ("for (int it = 0; it < 2; ++it) {  // 512 chunks of 16 bytes per 64-row tile, 256 threads\n"
+                "  const int idx = threadIdx.x + 256 * it, r = idx / 8, c = idx % 8;\n"
+                f"  {spelled}\n}}")  # fmt: skip
+        signature = "void alloy_copy_lds(alloy_long2* sA, const char* a, long row_bytes)"
+        code = device_code(gpu_helpers(request.target), signature, loop)
         if (check := copy_check(request.target, verify, dtype)) is None:
             return no(
                 request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check"
             )
-        return Feasible(request, "lds", steps, {}, code, check, ("16 bytes per lane",))
+        notes = ("16 bytes per lane; a points at the block's first element (row 0, column k0)",)
+        return Feasible(request, "lds", steps, {"build": gpu_build(request.target)}, code, check, notes)
     return no(
         request,
         Why.NOT_COVERED,
@@ -1000,12 +1228,18 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
         return bad(
             request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}", *nearest
         )
-    # TODO(design): src and dst of different shapes (a block of a larger array) answer from the register's shape
-    if lanes and register.shape and register.shape[-1] % lanes:  # rows of a tile are whole registers
-        return uneven(request, request.target, register.dtype, register.shape[-1], lanes, "src", "dst")
     op = "load" if dst is register else "store"
-    whole = Operand("vector", register.dtype, (math.prod(register.shape),) if register.shape else one.shape)
+    moved_, held = math.prod(register.shape), math.prod(memory.shape)
+    if register.shape and memory.shape and held < moved_:
+        side = "src" if memory is src else "dst"
+        return no(request, Why.SHAPE, f"{side} holds {held} elements, fewer than the {moved_} the {op} moves", *nearest)
+    if lanes and register.shape and register.shape[-1] % lanes:  # rows of a tile are whole registers
+        return uneven(request, request.target, register.dtype, register.shape[-1], lanes, "src", "dst", op=op)
+    whole = Operand("vector", register.dtype, (moved_,) if register.shape else one.shape)
     answer = vector_op(Request(request.target, op, {"x": whole}), verify=False)
+    if isinstance(answer, Feasible) and register.shape and memory.shape and held > moved_:
+        block = f"a block of {moved_} of the {held} elements: offset the pointer by the block's start"
+        answer = dataclasses.replace(answer, notes=(*answer.notes, block))
     return dataclasses.replace(answer, request=request)
 
 
@@ -1055,9 +1289,18 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
              "fence.proxy.async.shared::cta"}  # fmt: skip
     if dtype in tile.FP8_NAMES["sm90"]:
         setup["type"] = tile.type_note("sm90", dtype)
-    steps = (Step("tma", "mbarrier.arrive.expect_tx"), Step("tma", "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"),
-             Step("thread", "mbarrier.try_wait.parity"))  # fmt: skip
-    code = "alloy_mbar_arrive_expect_tx(&bar, bytes); alloy_tma_load_2d(tile, &map, &bar, k0, row0); alloy_mbar_wait(&bar, phase);"
+    setup["launch"] = (
+        f"as the tile program: grid dim3(N / BN, M / BM), {tile.GPU_THREADS['sm90', rows]} threads per block (one "
+        f"warpgroup per 64 rows); one elected thread (threadIdx.x == 0) issues the TMA, and every thread then waits"
+    )
+    # the wait is the completion's own request (wait on=mbarrier): the copy only issues
+    steps = (Step("tma", f"mbarrier.arrive.expect_tx with {rows * 128} bytes"),
+             Step("tma", "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"))  # fmt: skip
+    issue = (f"if (threadIdx.x == 0) {{ alloy_mbar_arrive_expect_tx(bar, {rows * 128}); "
+             "alloy_tma_load_2d(tile, map, bar, k0, row0); }")  # fmt: skip
+    signature = "void alloy_copy_tma(void* tile, const CUtensorMap* map, uint64_t* bar, int k0, int row0)"
+    code = device_code(gpu_helpers("sm90"), signature, issue)
+    setup["build"] = gpu_build("sm90")
     if (check := copy_check("sm90", verify, dtype)) is None:
         return no(request, Why.CHECK_FAILED, "the sm90 tile program that runs this copy failed its check")
     return Feasible(request, "tma", steps, setup, code, check)

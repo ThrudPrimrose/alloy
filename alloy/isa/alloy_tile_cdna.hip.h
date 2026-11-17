@@ -1,10 +1,14 @@
-// Alloy's tile functions on CDNA (gfx90a: MI250X, gfx942: MI300A), alloy/isa/tile.py: row-major tiles loaded into
-// LDS with an XOR swizzle (16-byte chunk c of row r at slot c ^ (r % 8), no padding), read with ds_read_b128, and
+// Alloy's tile functions on CDNA (gfx90a: MI250X, gfx942: MI300A), alloy/isa/tile.py: row-major tiles loaded into LDS
+// with an XOR swizzle (16-byte chunk c of row r at slot c ^ (r % 8), no padding), read with ds_read_b128, and
 // multiplied with a 32x32 MFMA into f32 accumulators. A is M x K row-major; B is given as N x K row-major (B
-// transposed, K contiguous); C is M x N row-major f32. A K block is 128 bytes of a row for every input type: 64
-// halves (f16, bf16) or 128 bytes (e4m3, e5m2: the FNUZ formats of gfx942, which gfx90a lacks). Facts and sources:
-// alloy-workspace notes/isa-research/tensor.md, sections 6 to 8.
+// transposed, K contiguous); C is M x N row-major f32, read and written: C = A x B + C. A K block is 128 bytes of a row
+// for every input type: 64 halves (f16, bf16) or 128 bytes (e4m3, e5m2: the FNUZ formats of gfx942, which gfx90a
+// lacks). Facts and sources: alloy-workspace notes/isa-research/tensor.md, sections 6 to 8.
 #pragma once
+// alloy-only: file
+// Blocks between "// alloy-only: <tokens>" and "// alloy-end" belong to the named types only; tile.py inlines this
+// file trimmed to what one answer uses.
+// alloy-end
 #include <hip/hip_runtime.h>
 
 typedef _Float16 alloy_half4 __attribute__((ext_vector_type(4)));
@@ -17,28 +21,32 @@ typedef float alloy_floatx16 __attribute__((ext_vector_type(16)));
 enum alloy_elem { ALLOY_F16, ALLOY_BF16, ALLOY_E4M3, ALLOY_E5M2 };
 
 // One 32x32 MFMA on 8 bytes of A and of B per lane: K = 8 for the 2-byte types, K = 16 for the 1-byte types.
+// alloy-only: mma
 template <int E>
 __device__ __forceinline__ alloy_floatx16 alloy_mfma(long a, long b, alloy_floatx16 acc) {
-  if constexpr (E == ALLOY_F16) {
+// alloy-only: f16
+  if constexpr (E == ALLOY_F16)
     return __builtin_amdgcn_mfma_f32_32x32x8f16(__builtin_bit_cast(alloy_half4, a), __builtin_bit_cast(alloy_half4, b),
                                                 acc, 0, 0, 0);
-  } else if constexpr (E == ALLOY_BF16) {
+// alloy-end
+// alloy-only: bf16
+  if constexpr (E == ALLOY_BF16)
     return __builtin_amdgcn_mfma_f32_32x32x8bf16_1k(__builtin_bit_cast(alloy_short4, a),
                                                     __builtin_bit_cast(alloy_short4, b), acc, 0, 0, 0);
-  } else {
-#if defined(__gfx90a__)
-    __builtin_trap();  // gfx90a has no FP8 MFMA; tile.py never builds an FP8 kernel for it
-    return acc;
-#else
-    if constexpr (E == ALLOY_E4M3) {
-      return __builtin_amdgcn_mfma_f32_32x32x16_fp8_fp8(a, b, acc, 0, 0, 0);
-    } else {
-      return __builtin_amdgcn_mfma_f32_32x32x16_bf8_bf8(a, b, acc, 0, 0, 0);
-    }
+// alloy-end
+#if !defined(__gfx90a__)  // gfx90a has no FP8 MFMA; tile.py never builds an FP8 kernel for it
+// alloy-only: e4m3
+  if constexpr (E == ALLOY_E4M3) return __builtin_amdgcn_mfma_f32_32x32x16_fp8_fp8(a, b, acc, 0, 0, 0);
+// alloy-end
+// alloy-only: e5m2
+  if constexpr (E == ALLOY_E5M2) return __builtin_amdgcn_mfma_f32_32x32x16_bf8_bf8(a, b, acc, 0, 0, 0);
+// alloy-end
 #endif
-  }
+  return acc;
 }
+// alloy-end
 
+// alloy-only: mma
 // One 64 x 64 block of C per 256 threads (four wave64, each a 32 x 32 sub-tile); K in elements, a multiple of the
 // K block (128 bytes of a row).
 template <int E>
@@ -54,7 +62,10 @@ __global__ __launch_bounds__(256) void alloy_gemm_64x64(const void* __restrict__
   const long row_bytes = static_cast<long>(K) * bytes;
   const int tid = threadIdx.x, wave = tid / 64, lane = tid % 64;
   const int wm = wave / 2, wn = wave % 2, m0 = blockIdx.y * 64, n0 = blockIdx.x * 64;
-  alloy_floatx16 acc = {};
+  alloy_floatx16 acc;
+#pragma unroll
+  for (int g = 0; g < 16; ++g)  // the accumulators start as C: D = A x B + C
+    acc[g] = C[(m0 + 32 * wm + 8 * (g / 4) + 4 * (lane / 32) + g % 4) * N + n0 + 32 * wn + lane % 32];
   for (int k0 = 0; k0 < K; k0 += block) {
 #pragma unroll
     for (int it = 0; it < 2; ++it) {  // 512 chunks per operand / 256 threads
@@ -84,3 +95,4 @@ __global__ __launch_bounds__(256) void alloy_gemm_64x64(const void* __restrict__
     C[row * N + col] = acc[g];
   }
 }
+// alloy-end

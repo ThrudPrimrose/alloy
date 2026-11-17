@@ -30,8 +30,8 @@
       }                                                                                                     \
   }
 
-ALLOY_MMA(alloy_mma_f32_f32, float, float)
-ALLOY_MMA(alloy_mma_f64_f64, double, double)
-ALLOY_MMA(alloy_mma_f32_f64, float, double)
+ALLOY_MMA(alloy_mma_f32_f32, float, float)  // alloy-only: f32_f32
+ALLOY_MMA(alloy_mma_f64_f64, double, double)  // alloy-only: f64_f64
+ALLOY_MMA(alloy_mma_f32_f64, float, double)  // alloy-only: f32_f64
 
 #endif

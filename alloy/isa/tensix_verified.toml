@@ -10,6 +10,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 6.47666375003591e-08
+digest = "208b01e9b8edecee"
 
 [[verdicts]]
 op = "exp"
@@ -17,6 +18,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0056326249164824005
+digest = "bd72941606a33bb0"
 
 [[verdicts]]
 op = "log"
@@ -24,6 +26,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 7.137559981528748e-08
+digest = "1cb28c39342d45d6"
 
 [[verdicts]]
 op = "log"
@@ -31,6 +34,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0039779405841412615
+digest = "e0afa7ddf7515828"
 
 [[verdicts]]
 op = "sqrt"
@@ -38,6 +42,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 8.529241756556039e-08
+digest = "6c83506ab53f678c"
 
 [[verdicts]]
 op = "sqrt"
@@ -45,6 +50,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0038835098164954423
+digest = "2bf7f3774f3eaf56"
 
 [[verdicts]]
 op = "rsqrt"
@@ -52,6 +58,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 7.266438827037315e-08
+digest = "9179754eb123f771"
 
 [[verdicts]]
 op = "rsqrt"
@@ -59,6 +66,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0038680132400830997
+digest = "436e2155ec6b1705"
 
 [[verdicts]]
 op = "recip"
@@ -66,6 +74,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 7.137063554088327e-08
+digest = "6da81a34525861c5"
 
 [[verdicts]]
 op = "recip"
@@ -73,6 +82,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.003875732421875014
+digest = "d2cc582b85933649"
 
 [[verdicts]]
 op = "abs"
@@ -80,6 +90,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 0.0
+digest = "a0c0ecd7e69bde80"
 
 [[verdicts]]
 op = "abs"
@@ -87,6 +98,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0
+digest = "d23eef0553f149a6"
 
 [[verdicts]]
 op = "neg"
@@ -94,6 +106,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 0.0
+digest = "c5019c342f0ee210"
 
 [[verdicts]]
 op = "neg"
@@ -101,6 +114,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0
+digest = "5b6ed56d4238bdcc"
 
 [[verdicts]]
 op = "tanh"
@@ -108,6 +122,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 1.2483241708321569e-07
+digest = "5b26c8b2455d7601"
 
 [[verdicts]]
 op = "tanh"
@@ -115,6 +130,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.004604659907557002
+digest = "97d61661e387a84e"
 
 [[verdicts]]
 op = "sin"
@@ -122,6 +138,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 1.1062957158761669e-07
+digest = "9e9310b21a693c5b"
 
 [[verdicts]]
 op = "sin"
@@ -129,6 +146,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.003731507555903772
+digest = "af6079d067552f84"
 
 [[verdicts]]
 op = "cos"
@@ -136,6 +154,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 1.1079086363391769e-07
+digest = "989c6703568e0a82"
 
 [[verdicts]]
 op = "cos"
@@ -143,6 +162,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.003655848793678489
+digest = "8e394deaec94df41"
 
 [[verdicts]]
 op = "add"
@@ -150,6 +170,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0004884663892335738
+digest = "9667925072ebde3f"
 
 [[verdicts]]
 op = "add"
@@ -157,6 +178,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 0.0035587188612099642
+digest = "799387eb38a083a0"
 
 [[verdicts]]
 op = "add"
@@ -164,6 +186,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 5.957553740262453e-08
+digest = "acf5ee007116f553"
 
 [[verdicts]]
 op = "add"
@@ -171,6 +194,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.005825242718446602
+digest = "aa272c78dac1bbe8"
 
 [[verdicts]]
 op = "sub"
@@ -178,6 +202,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0004886715617678967
+digest = "e5b8a9cc858bdff9"
 
 [[verdicts]]
 op = "sub"
@@ -185,6 +210,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 0.002053388090349076
+digest = "557fbd6f1a6c9e99"
 
 [[verdicts]]
 op = "sub"
@@ -192,6 +218,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 3.930757505319592e-08
+digest = "a899cc8bdae8f224"
 
 [[verdicts]]
 op = "sub"
@@ -199,6 +226,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.002053388090349076
+digest = "597a076c3a8380c0"
 
 [[verdicts]]
 op = "mul"
@@ -206,6 +234,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0019509628308243005
+digest = "e01ded2dc00a6d50"
 
 [[verdicts]]
 op = "mul"
@@ -213,6 +242,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 0.009019934813916471
+digest = "6c248f1acb7d9550"
 
 [[verdicts]]
 op = "mul"
@@ -220,6 +250,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 5.68192130277645e-08
+digest = "3aeb3b06b051a9f6"
 
 [[verdicts]]
 op = "mul"
@@ -227,6 +258,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.003800904977375566
+digest = "bceb5b601df7afbe"
 
 [[verdicts]]
 op = "div"
@@ -234,6 +266,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 6.691050647404684e-08
+digest = "911f02007f71b4c8"
 
 [[verdicts]]
 op = "div"
@@ -241,6 +274,7 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0036542338709676593
+digest = "76bdd9141097c8d3"
 
 [[verdicts]]
 op = "mma"
@@ -248,6 +282,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0010107476559308532
+digest = "fdca33563bc11d02"
 
 [[verdicts]]
 op = "mma"
@@ -255,6 +290,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 0.0028633085951892206
+digest = "54a629fe8ded9146"
 
 [[verdicts]]
 op = "reduce_add"
@@ -262,6 +298,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0008300781482637376
+digest = "f8238e813432b5d7"
 
 [[verdicts]]
 op = "reduce_add"
@@ -269,6 +306,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 1.5258765779471162e-06
+digest = "94c2edb38327786d"
 
 [[verdicts]]
 op = "reduce_max"
@@ -276,6 +314,7 @@ dtype = "f32"
 unit = "FPU"
 ok = true
 rel = 0.0
+digest = "8a2074f106f98b48"
 
 [[verdicts]]
 op = "reduce_max"
@@ -283,6 +322,7 @@ dtype = "bf16"
 unit = "FPU"
 ok = true
 rel = 0.0
+digest = "ec351ca9711eba9b"
 
 [[verdicts]]
 op = "scan_add"
@@ -290,6 +330,7 @@ dtype = "f32"
 unit = "SFPU"
 ok = true
 rel = 5.653105974431299e-07
+digest = "3c6ee4b865483ea7"
 
 [[verdicts]]
 op = "scan_add"
@@ -297,3 +338,4 @@ dtype = "bf16"
 unit = "SFPU"
 ok = true
 rel = 0.0074582692080028415
+digest = "9dcc0d5113591e42"

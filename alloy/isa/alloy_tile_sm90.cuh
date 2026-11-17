@@ -2,10 +2,14 @@
 // through an mbarrier, and wgmma on f16, bf16, e4m3, or e5m2 tiles (OCP FP8) with an f32 accumulator. Build for sm_90a
 // (-gencode arch=compute_90a,code=sm_90a): plain sm_90 rejects wgmma. A is M x K row-major; B is given as N x K
 // row-major (each column of B contiguous, K-major, the layout wgmma reads without a transpose); C is M x N row-major
-// f32. A K block is 128 bytes of a row for every input type (64 halves or 128 FP8 values), so the swizzle, the
-// descriptor, and the 32-byte step per wgmma are the same for all four. Facts and sources: alloy-workspace
-// notes/isa-research/tensor.md, sections 1, 3, and 5.
+// f32, read and written: C = A x B + C. A K block is 128 bytes of a row for every input type (64 halves or 128 FP8
+// values), so the swizzle, the descriptor, and the 32-byte step per wgmma are the same for all four. Facts and sources:
+// alloy-workspace notes/isa-research/tensor.md, sections 1, 3, and 5.
 #pragma once
+// alloy-only: file
+// Blocks between "// alloy-only: <tokens>" and "// alloy-end", and lines ending in that tag, belong to the named
+// types and shapes only; tile.py inlines this file trimmed to what one answer uses.
+// alloy-end
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <cstdint>
@@ -20,6 +24,7 @@ __device__ __forceinline__ uint32_t alloy_smem_u32(const void* p) {
   return static_cast<uint32_t>(__cvta_generic_to_shared(p));
 }
 
+// alloy-only: mma
 // K-major, 128B-swizzled operand tile whose rows are 128 bytes, 1024B-aligned.
 __device__ __forceinline__ uint64_t alloy_desc_kmajor_sw128(uint32_t saddr) {
   uint64_t d = 0;
@@ -29,6 +34,7 @@ __device__ __forceinline__ uint64_t alloy_desc_kmajor_sw128(uint32_t saddr) {
   d |= uint64_t(1) << 62;                    // [63:62] 1 = 128B swizzle
   return d;
 }
+// alloy-end
 
 __device__ __forceinline__ void alloy_mbar_init(uint64_t* bar, uint32_t count) {
   asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(alloy_smem_u32(bar)), "r"(count) : "memory");
@@ -49,6 +55,7 @@ __device__ __forceinline__ void alloy_tma_load_2d(void* dst, const CUtensorMap* 
       :: "r"(alloy_smem_u32(dst)), "l"(reinterpret_cast<uint64_t>(tm)), "r"(alloy_smem_u32(bar)), "r"(c0), "r"(c1) : "memory");
 }
 
+// alloy-only: mma
 #define D8(i) "+f"(d[i]), "+f"(d[i+1]), "+f"(d[i+2]), "+f"(d[i+3]), "+f"(d[i+4]), "+f"(d[i+5]), "+f"(d[i+6]), "+f"(d[i+7])
 #define R32 "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,%16,%17,%18,%19,%20,%21,%22,%23,%24,%25,%26,%27,%28,%29,%30,%31}"
 #define R64 "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,%16,%17,%18,%19,%20,%21,%22,%23,%24,%25,%26,%27,%28,%29,%30,%31," \
@@ -68,29 +75,35 @@ __device__ __forceinline__ void alloy_tma_load_2d(void* dst, const CUtensorMap* 
                  : D8(0), D8(8), D8(16), D8(24), D8(32), D8(40), D8(48), D8(56)                       \
                  : "l"(da), "l"(db), "r"(1));                                                         \
   }
-ALLOY_WGMMA64(alloy_wgmma_n64_f16, "m64n64k16.f32.f16.f16", ", 0, 0")
-ALLOY_WGMMA64(alloy_wgmma_n64_bf16, "m64n64k16.f32.bf16.bf16", ", 0, 0")
-ALLOY_WGMMA64(alloy_wgmma_n64_e4m3, "m64n64k32.f32.e4m3.e4m3", "")
-ALLOY_WGMMA64(alloy_wgmma_n64_e5m2, "m64n64k32.f32.e5m2.e5m2", "")
-ALLOY_WGMMA128(alloy_wgmma_n128_f16, "m64n128k16.f32.f16.f16", ", 0, 0")
-ALLOY_WGMMA128(alloy_wgmma_n128_bf16, "m64n128k16.f32.bf16.bf16", ", 0, 0")
-ALLOY_WGMMA128(alloy_wgmma_n128_e4m3, "m64n128k32.f32.e4m3.e4m3", "")
-ALLOY_WGMMA128(alloy_wgmma_n128_e5m2, "m64n128k32.f32.e5m2.e5m2", "")
+ALLOY_WGMMA64(alloy_wgmma_n64_f16, "m64n64k16.f32.f16.f16", ", 0, 0")  // alloy-only: n64 f16
+ALLOY_WGMMA64(alloy_wgmma_n64_bf16, "m64n64k16.f32.bf16.bf16", ", 0, 0")  // alloy-only: n64 bf16
+ALLOY_WGMMA64(alloy_wgmma_n64_e4m3, "m64n64k32.f32.e4m3.e4m3", "")  // alloy-only: n64 e4m3
+ALLOY_WGMMA64(alloy_wgmma_n64_e5m2, "m64n64k32.f32.e5m2.e5m2", "")  // alloy-only: n64 e5m2
+ALLOY_WGMMA128(alloy_wgmma_n128_f16, "m64n128k16.f32.f16.f16", ", 0, 0")  // alloy-only: n128 f16
+ALLOY_WGMMA128(alloy_wgmma_n128_bf16, "m64n128k16.f32.bf16.bf16", ", 0, 0")  // alloy-only: n128 bf16
+ALLOY_WGMMA128(alloy_wgmma_n128_e4m3, "m64n128k32.f32.e4m3.e4m3", "")  // alloy-only: n128 e4m3
+ALLOY_WGMMA128(alloy_wgmma_n128_e5m2, "m64n128k32.f32.e5m2.e5m2", "")  // alloy-only: n128 e5m2
+// alloy-end
 
 // One wgmma of K = 32 bytes per row (16 halves or 32 FP8 values) for the element type E.
+// alloy-only: mma n64
 template <int E> __device__ __forceinline__ void alloy_wgmma(float (&d)[32], uint64_t da, uint64_t db) {
-  if constexpr (E == ALLOY_F16) alloy_wgmma_n64_f16(d, da, db);
-  else if constexpr (E == ALLOY_BF16) alloy_wgmma_n64_bf16(d, da, db);
-  else if constexpr (E == ALLOY_E4M3) alloy_wgmma_n64_e4m3(d, da, db);
-  else alloy_wgmma_n64_e5m2(d, da, db);
+  if constexpr (E == ALLOY_F16) alloy_wgmma_n64_f16(d, da, db);  // alloy-only: f16
+  if constexpr (E == ALLOY_BF16) alloy_wgmma_n64_bf16(d, da, db);  // alloy-only: bf16
+  if constexpr (E == ALLOY_E4M3) alloy_wgmma_n64_e4m3(d, da, db);  // alloy-only: e4m3
+  if constexpr (E == ALLOY_E5M2) alloy_wgmma_n64_e5m2(d, da, db);  // alloy-only: e5m2
 }
+// alloy-end
+// alloy-only: mma n128
 template <int E> __device__ __forceinline__ void alloy_wgmma(float (&d)[64], uint64_t da, uint64_t db) {
-  if constexpr (E == ALLOY_F16) alloy_wgmma_n128_f16(d, da, db);
-  else if constexpr (E == ALLOY_BF16) alloy_wgmma_n128_bf16(d, da, db);
-  else if constexpr (E == ALLOY_E4M3) alloy_wgmma_n128_e4m3(d, da, db);
-  else alloy_wgmma_n128_e5m2(d, da, db);
+  if constexpr (E == ALLOY_F16) alloy_wgmma_n128_f16(d, da, db);  // alloy-only: f16
+  if constexpr (E == ALLOY_BF16) alloy_wgmma_n128_bf16(d, da, db);  // alloy-only: bf16
+  if constexpr (E == ALLOY_E4M3) alloy_wgmma_n128_e4m3(d, da, db);  // alloy-only: e4m3
+  if constexpr (E == ALLOY_E5M2) alloy_wgmma_n128_e5m2(d, da, db);  // alloy-only: e5m2
 }
+// alloy-end
 
+// alloy-only: mma n64 64x64
 template <int E>
 __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ CUtensorMap tmA,
                                                      const __grid_constant__ CUtensorMap tmB,
@@ -99,9 +112,15 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
   __shared__ alignas(1024) uint8_t sB[ALLOY_BN * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
   const int tid = threadIdx.x, m0 = blockIdx.y * ALLOY_BM, n0 = blockIdx.x * ALLOY_BN;
+  const int warp = tid / 32, lane = tid % 32;
+  const int r = m0 + 16 * warp + lane / 4;
   float d[32];
 #pragma unroll
-  for (int i = 0; i < 32; ++i) d[i] = 0.f;
+  for (int i = 0; i < ALLOY_BN / 8; ++i) {  // the accumulators start as C: D = A x B + C
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
+    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+  }
   if (tid == 0) {
     alloy_mbar_init(&bar, 1);
     asm volatile("fence.proxy.async.shared::cta;" ::: "memory");  // make init visible to the async proxy
@@ -126,8 +145,6 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
     asm volatile("wgmma.wait_group.sync.aligned 0;" ::: "memory");
     __syncthreads();  // single stage: all reads of sA/sB done before the next TMA overwrites them
   }
-  const int warp = tid / 32, lane = tid % 32;
-  const int r = m0 + 16 * warp + lane / 4;
 #pragma unroll
   for (int i = 0; i < ALLOY_BN / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);
@@ -136,7 +153,9 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
   }
 }
 
+// alloy-end
 
+// alloy-only: mma n128 128x128
 // 128x128 tile, rows of 128 bytes, two consumer warpgroups (256 threads); warpgroup g computes rows [64g, 64g+64).
 template <int E>
 __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant__ CUtensorMap tmA,
@@ -146,9 +165,15 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
   __shared__ alignas(1024) uint8_t sB[128 * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
   const int tid = threadIdx.x, wg = tid / 128, m0 = blockIdx.y * 128, n0 = blockIdx.x * 128;
+  const int warp = (tid % 128) / 32, lane = tid % 32;
+  const int r = m0 + 64 * wg + 16 * warp + lane / 4;
   float d[64];
 #pragma unroll
-  for (int i = 0; i < 64; ++i) d[i] = 0.f;
+  for (int i = 0; i < 128 / 8; ++i) {  // the accumulators start as C: D = A x B + C
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
+    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+  }
   if (tid == 0) { alloy_mbar_init(&bar, 1); asm volatile("fence.proxy.async.shared::cta;" ::: "memory"); }
   __syncthreads();
   uint32_t phase = 0;
@@ -170,8 +195,6 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
     asm volatile("wgmma.wait_group.sync.aligned 0;" ::: "memory");
     __syncthreads();
   }
-  const int warp = (tid % 128) / 32, lane = tid % 32;
-  const int r = m0 + 64 * wg + 16 * warp + lane / 4;
 #pragma unroll
   for (int i = 0; i < 128 / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);
@@ -179,6 +202,7 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
     *reinterpret_cast<float2*>(&C[(r + 8) * N + c]) = make_float2(d[4 * i + 2], d[4 * i + 3]);
   }
 }
+// alloy-end
 
 // Host: tensor map for a row-major R x K matrix of element type E, box = one K block (128 bytes) x box_rows, 128B
 // swizzle. FP8 has no tensor-map type of its own on CUDA 12: it moves as bytes (UINT8).

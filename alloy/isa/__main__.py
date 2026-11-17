@@ -377,8 +377,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
 
 
 def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
-    """Every Tensix row of ``op`` at ``dtype`` with its recorded ttsim verdict; a row with no passing verdict is
-    refused, as a failed SIMD row is."""
+    """Every Tensix row of ``op`` at ``dtype`` with its recorded ttsim verdict; exit 2 when a row failed its run, as a
+    failed SIMD row does. A row without a current record is unverified, not failed."""
     found = [r for r in tensix.rows() if r.op == op]
     if not found:
         known = sorted({r.op for r in tensix.rows()})
@@ -412,25 +412,29 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         if row.note:
             print(f"    note: {row.note}")
     print(f"  note: {tensix.table()['target']['note']}")
-    return 0 if all(v is not None and v.ok for _, v in picked) else 2
+    return 2 if any(v is not None and not v.ok for _, v in picked) else 0
 
 
 def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
-    """The CUDA or HIP row of ``op`` with its recorded check; the rows are f32 (``add_half2`` packs f16)."""
-    found = {r.op: r for r in simt.rows()}
-    if op not in found:
-        hint = matrix_note(op) or suggestion(op, list(found))
-        raise KeyError(f"{dialect}/{op}: no SIMT row{hint} (rows: {', '.join(found)})")
-    if dtype != "f32":
-        raise KeyError(f"{dialect}/{dtype}/{op}: the SIMT rows are f32 (add_half2 packs two f16)")
-    row, verdict = found[op], simt.verdicts().get((op, dialect))
+    """The CUDA or HIP row of ``op`` at ``dtype`` with its recorded check."""
+    found = [r for r in simt.rows() if op in (r.op, r.answers())]
+    if not found:
+        known = list(dict.fromkeys(r.answers() for r in simt.rows()))
+        hint = matrix_note(op) or suggestion(op, known)
+        raise KeyError(f"{dialect}/{op}: no SIMT row{hint} (rows: {', '.join(known)})")
+    typed = [r for r in found if r.dtype == dtype]
+    if not typed:
+        dtypes = ", ".join(sorted({r.dtype for r in found}))
+        raise KeyError(f"{dialect}/{dtype}/{op}: the {op} rows are {dtypes}; ask with one of those")
+    row = typed[0]
+    verdict = simt.verdicts().get((row.op, dialect))
     if as_json:
         print(
             json.dumps({**dataclasses.asdict(row), "verdict": None if verdict is None else dataclasses.asdict(verdict)})
         )
         return 0
     lanes = simt.LANES[dialect]
-    print(f"{dialect}/{op}: one {'thread' if row.kind == 'lane' else f'warp of {lanes}'}")
+    print(f"{dialect}/{dtype}/{op}: one {f'warp of {lanes}' if row.kind == 'warp' else 'thread'}")
     print(f"  code:  {row.spelled(dialect)}")
     print(f"  {simt.bindings(dialect)}")
     if row.note:

@@ -9,6 +9,7 @@ ttsim, or on a Blackhole; ``python -m alloy.isa.tensix verify`` does the first a
 """
 
 import argparse
+import dataclasses
 import datetime
 import functools
 import hashlib
@@ -24,7 +25,7 @@ import tomllib
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-__all__ = ["IMAGE", "ROWS_PATH", "Row", "Verdict", "rows", "verdicts", "verify"]
+__all__ = ["IMAGE", "ROWS_PATH", "Row", "Verdict", "digest", "rows", "verdicts", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "tensix.toml"
@@ -61,12 +62,15 @@ class Row:
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
 class Verdict:
+    """One row's run at one dtype; ``digest`` is :func:`digest` of the row as it ran."""
+
     op: str
     dtype: str
     unit: str
     ok: bool
     rel: float | None
     error: str = ""
+    digest: str = ""
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -87,9 +91,18 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
-def verdicts() -> dict[tuple[str, str, str], Verdict]:
-    """``(op, dtype, unit)`` -> the recorded verdict of that row."""
-    return {(v["op"], v["dtype"], v["unit"]): Verdict(**v) for v in recorded().get("verdicts", [])}
+def digest(row: Row, dtype: str) -> str:
+    """What a run of ``row`` at ``dtype`` checked: the kernel kind, unit, header, calls, inputs, and bound."""
+    checked = [row.kind, row.unit, row.header, row.init, row.call, list(row.domain), dtype, TOLERANCE[dtype]]
+    return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
+
+
+def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str, str], Verdict]:
+    """``(op, dtype, unit)`` -> the recorded verdict of that row as it is now: a record of a row changed since its
+    run is stale and left out, so the row is unverified until it runs again."""
+    current = {(r.op, d, r.unit): digest(r, d) for r in rows() for d in dtypes()}
+    found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
+    return {(v.op, v.dtype, v.unit): v for v in found if current.get((v.op, v.dtype, v.unit)) == v.digest}
 
 
 def spelled(value: str | dict[str, str], version: str) -> str:
@@ -141,11 +154,13 @@ def run_harness(library: pathlib.Path, image: str) -> list[Verdict]:
              "-e", "TT_METAL_DISABLE_SFPLOADMACRO=1", image, "bash", "-c", script],
             capture_output=True, text=True, check=False, timeout=RUN_TIMEOUT,
         )  # fmt: skip
+    by_key = {(r.op, r.unit): r for r in rows()}
     found = [
         Verdict(**json.loads(line.split(" ", 1)[1]))
         for line in done.stdout.splitlines()
         if line.startswith("TENSIX-VERDICT ")
     ]
+    found = [dataclasses.replace(v, digest=digest(by_key[v.op, v.unit], v.dtype)) for v in found]
     if done.returncode != 0 or len(found) != len(harness_rows()):
         raise RuntimeError(
             f"the harness gave {len(found)} of {len(harness_rows())} verdicts (exit {done.returncode}): "
@@ -166,7 +181,8 @@ def verdicts_text(found: list[Verdict], library: pathlib.Path, image: str) -> st
     ]
     body = []
     for v in found:
-        fields = {"op": v.op, "dtype": v.dtype, "unit": v.unit, "ok": v.ok, "rel": v.rel, "error": v.error or None}
+        fields = {"op": v.op, "dtype": v.dtype, "unit": v.unit, "ok": v.ok, "rel": v.rel, "error": v.error or None,
+                  "digest": v.digest or None}  # fmt: skip
         body += ["[[verdicts]]", *(f"{k} = {json.dumps(x)}" for k, x in fields.items() if x is not None), ""]
     return "\n".join(head + body)
 

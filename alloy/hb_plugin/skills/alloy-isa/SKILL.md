@@ -33,15 +33,22 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
   - Spaces: `register`, `vector`, `tile_register`, `shared`, `global`, `constant`.
   - Layouts: `row_major`, `col_major`.
   - Swizzles: `none`, `b32`, `b64`, `b128` (the TMA swizzles of `sm90`), `xor:8` (the LDS swizzle of CDNA).
-  - The shape is the extent of your data, not of one register.
+  - The shape is the extent of your data, not of one register. A `broadcast` takes its scalar source as
+    `--x register:f64` (or `register:f64:1`).
 - **Options.** `--unit <name>` pins an implementation, for example `--unit tma`. `--max-ulp` bounds a math
   function's error.
 
 The answer has one of three states:
 
 - **feasible**: the unit that runs it, the `steps` with how often each runs (`6 x vector: _mm512_add_ps`), the
-  `setup` (tensor map, shared-memory size and alignment, build line, the FP8 encoding), the `code` to copy, and the
-  `check` (above).
+  `setup` (the exact `build` line; on a CPU the `header` and the compiler `flags`; on AVX-512 the row's `masked`
+  form for the last block and the `mask` k it takes; on a GPU the tensor map, shared-memory size and alignment,
+  launch, and the FP8 encoding), the `code` to copy, and the `check` (above).
+  - The `code` is self-contained: a GPU, SME, or tile answer carries the helper functions it calls inline, trimmed
+    to the requested type and shape, followed by the kernel or device function. There is no Alloy header to
+    include: save the code under the file name the `build` line names and run that line.
+  - On a CPU the `code` is one C statement on the operand names of the row's signature (`v = _mm512_add_pd(a,
+    b);`); a math function's `code` is its kernel with its includes.
 - **infeasible**: the `reason`; the `nearest` requests the target takes, so ask one of them; the `block` the shape
   must be a whole multiple of; and the `fix` for the rest (a mask, a scalar remainder loop, padding, another swizzle).
 - **invalid**: the request itself is malformed (operands missing, shapes that do not chain, mixed types). The answer
@@ -73,9 +80,12 @@ before the wait is a race, and issuing without the fence reads stale data.
 - **CPUs** (`avx2`, `avx512`, `neon`, `sve`). Data is one run of elements (`vector:f32:96`); a 2-D shape is refused,
   and the flattened run is offered as nearest. A length that is not a whole multiple of the lanes is refused with the
   multiples below and above, and with how to finish: a mask on AVX-512 and SVE, a scalar remainder loop on AVX2 and
-  NEON. A reduction over many registers combines lane-wise, then once across lanes. `reduce_add` and `scan_add`
-  reassociate, so they need permission to; min and max are exact. A CPU has no matrix unit: `mma` is an FMA loop
-  the compiler vectorizes.
+  NEON. `ask avx512 load` (or `store`, `gen_mask`) shows the masked spelling and how to build the mask. A reduction
+  over many registers combines lane-wise, then once across lanes; a scan carries the last lane of each register into
+  the next. On `sve` the lane count is known at run time only: a request for N elements (`vector:f64:64`) is
+  answered as one `svwhilelt` loop. `reduce_add` and `scan_add` reassociate, so they need permission to; min and max
+  are exact. A CPU has no matrix unit: `mma` is an FMA loop the compiler vectorizes, on row-major arrays in global
+  memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C).
 - **`sme`.** FMOPA outer products into ZA, f32. No evaluated CPU has SME, so the answer is checked by compiling and
   under an emulator.
 - **`sm90`** (GH200). `copy` from global to shared is a TMA load: a tensor map, a 128B swizzle (`b128`), an
@@ -101,9 +111,14 @@ before the wait is a race, and issuing without the fence reads stale data.
 - `command="lookup", arguments=["avx2", "fma", "f64"]`: one op's intrinsic, signature, traps, and cost (llvm-mca
   latency and throughput). An op with no single intrinsic prints a recipe and its `code`: copy that, since it holds
   the operand order.
-- `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA, in f32.
+- `command="lookup", arguments=["hip", "reduce_add", "f32"]`: a device row of HIP or CUDA at its element type.
   - Rows: `fma`, `exp_fast`, `sin_fast`, `div_fast`, `rsqrt`, the reductions and `scan_add`, `broadcast`,
-    `gen_mask`, `add_half2`, `load_wide`, `atomic_add`.
+    `ballot_count` (lanes whose predicate holds), `add_half2`, `load_wide`, `atomic_add` in f32; in `f16` and
+    `bf16`: `load`, `store` (one element, with `__half2float`, `__float2half_rn` or the bf16 forms), `load_x2`,
+    `store_x2` (a pair, `__half22float2`, `__floats2half2_rn`), and `load_wide`, `store_wide` (8 elements in one
+    16-byte access).
+  - `command="ask", arguments=["sm90", "load", "--x", "global:f16:4096"]` moves global data: the widest of those
+    rows whose elements per thread divide the extent, with how many threads run it.
   - A wavefront has 64 lanes on MI200 and MI300A. The row's code names `lanes` (= `warpSize`), `lane` (=
     `threadIdx.x % warpSize`, the lane in its warp), `v` (the lane's input), and `out`; the answer's `bind:` line
     says so, and a reduction loops from `lanes / 2`.
