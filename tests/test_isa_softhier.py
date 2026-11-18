@@ -55,6 +55,19 @@ def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path:
     assert sut == {("add", "f32"): current}
 
 
+def test_every_download_of_the_stack_is_pinned_by_commit_or_digest():
+    """Nothing the build fetches floats: every source has a commit, every archive and uv a sha256."""
+    import tomllib
+
+    pins = tomllib.loads(softhier.PINS_PATH.read_text())
+    sources = [pins[name] for name in ("gvsoc", "sdk", "toolchain", "systemc", "dramsys")] + pins["dramsys"]["fetch"]
+
+    assert all(len(s.get("commit", "")) == 40 or len(s.get("sha256", "")) == 64 for s in sources), sources
+    assert len(pins["python"]["uv_sha256"]) == 64 and pins["python"]["version"].count(".") == 2
+    assert "@sha256:" in pins["base"]["image"]
+    assert softhier.pins()["pins"].startswith("sha256:")
+
+
 def test_a_record_made_on_other_pins_is_stale(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
     add = next(r for r in softhier.rows() if r.op == "add")
     current = softhier.Verdict("add", "f32", ok=True, rel=0.0, digest=softhier.digest(add, "f32"))

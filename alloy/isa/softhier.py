@@ -189,6 +189,7 @@ def pins() -> dict[str, str]:
         "toolchain": f"{found['toolchain']['url']} sha256:{found['toolchain']['sha256']}",
         "systemc": f"{found['systemc']['url']} {found['systemc']['commit']}",
         "dramsys": f"{found['dramsys']['url']} {found['dramsys']['commit']}",
+        "pins": "sha256:" + hashlib.sha256(PINS_PATH.read_bytes()).hexdigest(),  # what DRAMSys fetches, Python, uv
     }
 
 

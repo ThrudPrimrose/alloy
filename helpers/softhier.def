@@ -10,6 +10,7 @@ From: gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea808
     alloy/isa/softhier.toml /opt/alloy/alloy/isa/softhier.toml
     alloy/isa/softhier_harness.py /opt/alloy/alloy/isa/softhier_harness.py
     pyproject.toml /opt/alloy/pyproject.toml
+    uv.lock /opt/alloy/uv.lock
     helpers/build_softhier.sh /opt/alloy/helpers/build_softhier.sh
 
 %post

@@ -24,18 +24,23 @@ fetch() {  # fetch <dir> <url> <commit>: a clone at exactly that commit
     git -C "$1" checkout -q --detach "$3"
 }
 
-# Python: uv, the build tools, and the launcher's packages (the `softhier` extra of Alloy's pyproject.toml)
-curl -fsSL "https://github.com/astral-sh/uv/releases/download/$(pin python uv)/uv-x86_64-unknown-linux-gnu.tar.gz" | \
-    tar -xz -C "$BUILD"
+# Python: uv (checked against its digest), the build tools, and the launcher's packages (the `softhier` extra of
+# Alloy's pyproject.toml, every package it pulls in held to uv.lock's version)
+curl -fsSL -o "$BUILD/uv.tar.gz" \
+    "https://github.com/astral-sh/uv/releases/download/$(pin python uv)/uv-x86_64-unknown-linux-gnu.tar.gz"
+echo "$(pin python uv_sha256)  $BUILD/uv.tar.gz" | sha256sum -c -
+tar -xzf "$BUILD/uv.tar.gz" -C "$BUILD"
 UV=$BUILD/uv-x86_64-unknown-linux-gnu/uv
-[ -x venv/bin/python ] || "$UV" venv -q --python /usr/bin/python3 venv
-python3 - "$PINS" "$ALLOY/pyproject.toml" > "$BUILD/requirements.txt" <<'EOF'
-import sys, tomllib
+export UV_PYTHON_INSTALL_DIR=$PREFIX/python
+[ -x venv/bin/python ] || "$UV" venv -q --python "$(pin python version)" venv
+(cd "$ALLOY" && "$UV" export -q --frozen --extra softhier --no-emit-project --no-hashes) | grep -v '^dace @' \
+    > "$BUILD/constraints.txt"
+python3 -c 'import sys, tomllib
 pins = tomllib.load(open(sys.argv[1], "rb"))
 project = tomllib.load(open(sys.argv[2], "rb"))
-print("\n".join(pins["python"]["build"] + project["project"]["optional-dependencies"]["softhier"]))
-EOF
-"$UV" pip install -q --python venv/bin/python -r "$BUILD/requirements.txt"
+print("\n".join(pins["python"]["build"] + project["project"]["optional-dependencies"]["softhier"]))' \
+    "$PINS" "$ALLOY/pyproject.toml" > "$BUILD/requirements.txt"
+"$UV" pip install -q --python venv/bin/python -r "$BUILD/requirements.txt" -c "$BUILD/constraints.txt"
 export PATH=$PREFIX/venv/bin:$PATH CMAKE=cmake
 
 # Sources
@@ -74,9 +79,17 @@ mkdir -p gvsoc/third_party/DRAMSys
 if [ ! -e gvsoc/third_party/DRAMSys/libDRAMSys_Simulator.so ]; then
     fetch "$BUILD/DRAMSys" "$(pin dramsys url)" "$(pin dramsys commit)"
     git -C "$BUILD/DRAMSys" apply "$PREFIX/gvsoc/add_dramsyslib_patches/build_dynlib_from_github_dramsys5/patch"
+    fetched=()
+    while read -r name url sha256; do  # each archive DRAMSys's CMake would fetch, checked, as its source folder
+        curl -fsSL -o "$BUILD/$name.archive" "$url"
+        echo "$sha256  $BUILD/$name.archive" | sha256sum -c -
+        mkdir -p "$BUILD/deps/$name" && tar -xf "$BUILD/$name.archive" --strip-components=1 -C "$BUILD/deps/$name"
+        fetched+=("-DFETCHCONTENT_SOURCE_DIR_$name=$BUILD/deps/$name")
+    done < <(python3 -c 'import sys, tomllib
+for f in tomllib.load(open(sys.argv[1], "rb"))["dramsys"]["fetch"]: print(f["name"], f["url"], f["sha256"])' "$PINS")
     cmake -S "$BUILD/DRAMSys" -B "$BUILD/DRAMSys-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-fPIC \
-        -DCMAKE_C_FLAGS=-fPIC -DDRAMSYS_USE_FETCH_CONTENT_SYSTEMC=OFF \
-        -DSystemCLanguage_DIR="$SYSTEMC_HOME/lib64/cmake/SystemCLanguage" > /dev/null
+        -DCMAKE_C_FLAGS=-fPIC -DDRAMSYS_USE_FETCH_CONTENT_SYSTEMC=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+        "${fetched[@]}" -DSystemCLanguage_DIR="$SYSTEMC_HOME/lib64/cmake/SystemCLanguage" > /dev/null
     cmake --build "$BUILD/DRAMSys-build" -j "$JOBS" > /dev/null
     cp "$BUILD/DRAMSys-build/lib/libDRAMSys_Simulator.so" gvsoc/third_party/DRAMSys/
 fi

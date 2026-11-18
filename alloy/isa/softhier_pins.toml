@@ -42,8 +42,30 @@ commit = "11ad094d282fd5330b27ab57f90f9d231a763da1"  # tag 3.0.1, the version gv
 url = "https://github.com/tukl-msd/DRAMSys.git"
 commit = "8565f18b869c26eab712e3bb6494c4d6ae5dd73f"  # v5.4.0
 
+# What DRAMSys's CMake fetches by tag (no hash of its own): the build checks each archive and hands it over as
+# FETCHCONTENT_SOURCE_DIR_<NAME>, with FETCHCONTENT_FULLY_DISCONNECTED so nothing else is fetched. DRAMPower's own
+# declarations (DRAMUtils v1.7.0, nlohmann_json) lose to these, since the first declaration of a name wins; its tests,
+# benches, cli11 and spdlog are not built.
+[[dramsys.fetch]]
+name = "NLOHMANN_JSON"
+url = "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz"
+sha256 = "d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d"
+
+[[dramsys.fetch]]
+name = "DRAMUTILS"
+url = "https://github.com/tukl-msd/DRAMUtils/archive/refs/tags/v1.13.1.tar.gz"
+sha256 = "71aa0db20ec2b99a6eba1bf743789ac2d9175cc09c8bc9277d78b03c94104f79"
+
+[[dramsys.fetch]]
+name = "DRAMPOWER"
+url = "https://github.com/tukl-msd/DRAMPower/archive/refs/tags/v5.4.1.tar.gz"
+sha256 = "1bdf2fba0da186f204047acdbe142d536aebfc9753095b7974e7a8493191a51e"
+
 # The Python packages GVSoC's launcher (gapy) imports are the `softhier` extra of pyproject.toml; the build installs
-# that extra, and these build tools, with this uv.
+# that extra, every package it pulls in held to uv.lock's version, and these build tools, with this uv, into a venv of
+# this Python (uv's build of it: the base image's 3.11 is older than the lock's 3.12).
 [python]
 uv = "0.11.32"
+uv_sha256 = "aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967"  # uv-x86_64-unknown-linux-gnu.tar.gz
+version = "3.12.13"
 build = ["cmake==4.4.5", "ninja==1.13.2", "setuptools==84.2.1"]
