@@ -938,6 +938,17 @@ def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has
     assert isinstance(on_cpu, Infeasible) and "no asynchronous work" in on_cpu.reason
 
 
+@pytest.mark.parametrize(("request_",), [
+    (Request("gfx942", "mma", kind="16x16x16"),), (Request("sme", "mma", kind="f16"),),
+    (Request("sm90", "copy", on="mbarrier"),),
+])  # fmt: skip
+def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_):
+    sut = ask(request_)
+
+    assert isinstance(sut, Invalid)
+    assert "applies to" in sut.reason
+
+
 @pytest.mark.parametrize(("target", "kind", "feasible"), [
     ("sm90", "proxy", True), ("sm90", "operand", True), ("gfx942", "proxy", False), ("gfx90a", "operand", False),
 ])  # fmt: skip

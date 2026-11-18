@@ -406,7 +406,17 @@ def spell(**operands: Operand) -> str:
 
 def ask(request: Request, verify: bool = True) -> Answer:
     """The answer to ``request``; ``verify`` runs the check the surface has (on the host, ttsim's record, a compile).
-    A pinned unit that does not run the operation is infeasible, with the unit that does."""
+    A pinned unit that does not run the operation is infeasible, with the unit that does; ``on`` and ``kind`` on an
+    operation other than ``wait`` and ``fence`` are invalid, so a flag is never silently dropped."""
+    for flag, value, owner in (("on", request.on, "wait"), ("kind", request.kind, "fence")):
+        if value and request.op != owner:
+            return bad(
+                request,
+                Why.OPERANDS,
+                f"--{flag} applies to {owner} only; {request.op} has no {flag}",
+                f"ask {request.target} {owner} --{flag} ...",
+                f"ask {request.target} {request.op} without --{flag}",
+            )
     answer = answered(request, verify)
     if isinstance(answer, Feasible) and request.unit and answer.unit != request.unit:
         reason = f"{request.target} {request.op} runs on {answer.unit}, not {request.unit}"
