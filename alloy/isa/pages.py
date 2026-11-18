@@ -7,9 +7,9 @@ lookup prints (tests/test_isa_pages.py) and no fact has a second copy."""
 
 from collections.abc import Sequence
 
-from alloy.isa import OPS, softhier, tensix, tensix_harness
+from alloy.isa import OPS, ask, softhier, tensix, tensix_harness
 
-__all__ = ["TARGETS", "page", "softhier_page", "softhier_row_lines", "tensix_page", "tensix_row_lines",
+__all__ = ["ASKED", "TARGETS", "asked_lines", "checked", "feasible_lines", "page", "refusal_lines", "softhier_page", "softhier_row_lines", "tensix_page", "tensix_row_lines",
            "tensix_rung_lines", "tensix_title"]  # fmt: skip
 
 
@@ -95,6 +95,67 @@ def fenced(lines: list[str]) -> list[str]:
     return ["```text", *lines, "```", ""]
 
 
+def refusal_lines(title: str, answer: ask.Infeasible | ask.Invalid) -> list[str]:
+    near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
+    word = "nearest" if isinstance(answer, ask.Infeasible) else "expected"
+    lines = [f"{title}: {answer.status} ({answer.why.value}): {answer.reason}", *(f"  {word}: {n}" for n in near)]
+    if isinstance(answer, ask.Infeasible) and answer.block:
+        lines.append(f"  block: {'x'.join(map(str, answer.block))} (a shape the target takes is a whole multiple)")
+    if isinstance(answer, ask.Infeasible) and answer.fix:
+        lines.append(f"  fix: {answer.fix}")
+    return lines
+
+
+def checked(check: ask.Check) -> str:
+    """The check as one phrase; a basis that starts with its status ("compiled for gfx942") is not repeated."""
+    said = check.basis.split(" ", 1)[0] in (check.status, "ran")  # "compiled for ...", "ran on ..."
+    return check.basis if said else f"{check.status} {check.basis}".rstrip()
+
+
+def feasible_lines(title: str, answer: ask.Feasible) -> list[str]:
+    lines = [f"{title}: feasible on {answer.unit}; check: {checked(answer.check)}"]
+    lines += [
+        f"  {s.count} x {s.unit}: {s.spelling}" if s.count > 1 else f"  {s.unit}: {s.spelling}" for s in answer.steps
+    ]
+    lines += [f"  setup {key}: {value}" for key, value in answer.setup.items()]
+    lines += [f"  note: {note}" for note in answer.notes]
+    if answer.completion is not None:
+        done = answer.completion
+        fences = f"; before it: {', '.join(done.fences)}" if done.fences else ""
+        lines.append(f"  async: completes on {done.token}: {done.wait}{fences}")
+    return [*lines, answer.code]
+
+
+#: The ``ask`` answers a page carries beyond the rows: the waits, barriers, and a gemm tile plan per dtype.
+ASKED = {
+    "tensix": (
+        "wait on=noc",
+        "wait on=cb",
+        "mma a=tile_register:bf16:64x64 b=tile_register:bf16:64x64 c=tile_register:f32:64x64",
+    ),
+    "softhier": (
+        "wait on=idma",
+        "wait on=redmule",
+        "barrier kind=cluster",
+        "barrier kind=global",
+        "copy src=global:f16:64x64 dst=shared:f16:64x64",
+        "mma a=shared:f16:32x64 b=shared:f16:64x32 c=shared:f16:32x32",
+    ),
+}
+
+
+def asked_lines(target: str) -> list[str]:
+    """``ask <target> <request>`` for every request of :data:`ASKED`, as the CLI prints it (recorded checks only)."""
+    lines: list[str] = []
+    for text in ASKED[target]:
+        answer = ask.ask(ask.parsed_request(target, text), verify=False)
+        title = f"ask {target} {text}"
+        told = feasible_lines(title, answer) if isinstance(answer, ask.Feasible) else refusal_lines(title, answer)
+        lines += [line for line in told if not (line.startswith("  setup ") and line in lines)]  # a setup once
+        lines.append("")
+    return lines[:-1]
+
+
 def tensix_page() -> str:
     """Every Tensix row with its runs at every dtype, and every SFPI rung, one section per op."""
     target = tensix.table()["target"]
@@ -122,7 +183,7 @@ def tensix_page() -> str:
             for rung in tensix.rungs(op, dtype):
                 lines += tensix_rung_lines(rung)
         out += [f"## {op}", "", *fenced(lines)]
-    return "\n".join(out)
+    return "\n".join([*out, *asked_section("tensix")])
 
 
 def softhier_page() -> str:
@@ -147,7 +208,12 @@ def softhier_page() -> str:
                 lines += softhier_row_lines(row, f"softhier/{dtype}/{op}", spelled_as,
                                             softhier.verdict_of(row, spelled_as))  # fmt: skip
         out += [f"## {op}", "", *fenced(lines)]
-    return "\n".join(out)
+    return "\n".join([*out, *asked_section("softhier")])
+
+
+def asked_section(target: str) -> list[str]:
+    intro = "What `ask` answers beyond the rows: the waits, the barriers, and a gemm tile plan."
+    return ["## Asked", "", intro, "", *fenced(asked_lines(target))]
 
 
 #: The targets with a page.

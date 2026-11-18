@@ -77,3 +77,17 @@ def test_the_plugins_facts_page_is_the_generators_page_now(target: str):
 )  # fmt: skip
 def test_a_docs_page_is_left_out_only_when_the_headers_hold_all_its_text(text: str, left_out: bool):
     assert skill_pages.doxygen_only(text) is left_out
+
+
+@pytest.mark.parametrize("target", sorted(pages.ASKED))
+def test_the_page_holds_every_line_ask_prints_for_its_waits_barriers_and_gemm_plan(
+    target: str, capsys: pytest.CaptureFixture[str]
+):
+    asked = sections(pages.page(target))["Asked"]
+    for text in pages.ASKED[target]:
+        op, *fields = text.split()
+        flags = [word for field in fields for word in (f"--{field.split('=')[0]}", field.split("=", 1)[1])]
+        main(["ask", target, op, *flags, "--no-verify"])
+        first, *rest = capsys.readouterr().out.splitlines()
+        assert f"ask {target} {text}: {first.split(': ', 1)[1]}" in asked, text
+        assert [line for line in rest if line and line not in asked] == [], text

@@ -815,6 +815,10 @@ def tile_command(args: argparse.Namespace) -> int:
 USAGE = 64
 
 
+def print_lines(lines: list[str]) -> None:
+    print("\n".join(lines))
+
+
 def ask_command(args: argparse.Namespace) -> int:
     """One request of the unified ISA (:mod:`alloy.isa.ask`); exit 0 when feasible, 2 when infeasible (the target
     cannot), and 64 when invalid (the request is wrong on every target, or an operand does not parse)."""
@@ -837,77 +841,17 @@ def ask_command(args: argparse.Namespace) -> int:
         print(json.dumps(dataclasses.asdict(answer)))
         return code
     if not isinstance(answer, ask.Feasible):
-        print_refusal(f"{args.target} {args.op}", answer)
+        print_lines(pages.refusal_lines(f"{args.target} {args.op}", answer))
         return code
-    print_feasible(f"{args.target} {args.op}", answer)
+    print_lines(pages.feasible_lines(f"{args.target} {args.op}", answer))
     return 0
-
-
-def print_refusal(title: str, answer: ask.Infeasible | ask.Invalid) -> None:
-    print(f"{title}: {answer.status} ({answer.why.value}): {answer.reason}")
-    near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
-    for line in near:
-        print(f"  {'nearest' if isinstance(answer, ask.Infeasible) else 'expected'}: {line}")
-    if isinstance(answer, ask.Infeasible) and answer.block:
-        print(f"  block: {'x'.join(map(str, answer.block))} (a shape the target takes is a whole multiple)")
-    if isinstance(answer, ask.Infeasible) and answer.fix:
-        print(f"  fix: {answer.fix}")
-
-
-def checked(check: ask.Check) -> str:
-    """The check as one phrase; a basis that starts with its status ("compiled for gfx942") is not repeated."""
-    said = check.basis.split(" ", 1)[0] in (check.status, "ran")  # "compiled for ...", "ran on ..."
-    return check.basis if said else f"{check.status} {check.basis}".rstrip()
-
-
-def print_feasible(title: str, answer: ask.Feasible) -> None:
-    print(f"{title}: feasible on {answer.unit}; check: {checked(answer.check)}")
-    for step in answer.steps:
-        print(f"  {step.count} x {step.unit}: {step.spelling}" if step.count > 1 else f"  {step.unit}: {step.spelling}")
-    for key, value in answer.setup.items():
-        print(f"  setup {key}: {value}")
-    for note in answer.notes:
-        print(f"  note: {note}")
-    if answer.completion is not None:
-        done = answer.completion
-        fences = f"; before it: {', '.join(done.fences)}" if done.fences else ""
-        print(f"  async: completes on {done.token}: {done.wait}{fences}")
-    print(answer.code)
-
-
-def parsed_request(target: str, text: str) -> ask.Request:
-    """One request of ``ask-all``: ``op name=operand ... [unit=U] [max_ulp=X]``; a malformed one raises
-    :class:`KeyError` with what is wrong."""
-    if not text.split():
-        raise KeyError("an empty request: op name=operand ...")
-    op, *fields = text.split()
-    operands: dict[str, ask.Operand] = {}
-    unit, max_ulp, on, kind = "", None, "", ""
-    for field in fields:
-        name, sep, value = field.partition("=")
-        if not sep or not value:
-            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
-        if name == "unit":
-            unit = value.lower()
-        elif name == "on":
-            on = value.lower()
-        elif name == "kind":
-            kind = value.lower()
-        elif name == "max_ulp":
-            try:
-                max_ulp = float(value)
-            except ValueError:
-                raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
-        else:
-            operands[name] = ask.Operand.parse(value)
-    return ask.Request(target, op.lower(), operands, unit, max_ulp, on, kind)
 
 
 def ask_all_command(args: argparse.Namespace) -> int:
     """Requests that run as one kernel (:func:`alloy.isa.ask.ask_all`); exit 0, 2, or 64 as ``ask``."""
     answer: ask.Combined | ask.Infeasible | ask.Invalid
     try:
-        requests = [parsed_request(args.target, text) for text in args.requests]
+        requests = [ask.parsed_request(args.target, text) for text in args.requests]
     except KeyError as exc:
         answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "op name=space:dtype[:RxC or N][:layout][:swizzle]")
     else:
@@ -917,15 +861,15 @@ def ask_all_command(args: argparse.Namespace) -> int:
         print(json.dumps(dataclasses.asdict(answer)))
         return code
     if not isinstance(answer, ask.Combined):
-        print_refusal(f"{args.target} kernel", answer)
+        print_lines(pages.refusal_lines(f"{args.target} kernel", answer))
         return code
-    print(f"{args.target} kernel: feasible; check: {checked(answer.check)}")
+    print(f"{args.target} kernel: feasible; check: {pages.checked(answer.check)}")
     for line in answer.feeds:
         print(f"  {line}")
     for line in answer.order:
         print(f"  order: {line}")
     for i, one in enumerate(answer.answers):
-        print_feasible(f"[{i}] {one.request.op}", one)
+        print_lines(pages.feasible_lines(f"[{i}] {one.request.op}", one))
     return 0
 
 

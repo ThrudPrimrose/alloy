@@ -358,3 +358,99 @@ void alloy_barrier_global(void) {
 }
 
 ```
+
+## Asked
+
+What `ask` answers beyond the rows: the waits, the barriers, and a gemm tile plan.
+
+```text
+ask softhier wait on=idma: feasible on idma; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1 inside the copy_1d program
+  idma: flex_dma_async_wait_all()
+  cluster: flex_intra_cluster_sync()
+  setup arch: python -m alloy.isa.softhier arch > alloy_v1.py; python $SOFTHIER_SDK/utilities/config.py alloy_v1.py --output-dir $SOFTHIER_SDK/runtime/runtime/include  (the SDK headers include flex_cluster_arch.h from their own folder, so the v1 header replaces the SDK's there)
+  setup headers: riscv_vector.h from the GCC 14 toolchain; flex_*.h from $SOFTHIER_SDK/runtime/runtime/include (https://github.com/pulp-platform/softhier-sdk.git c32f3eba212e5f44e9a65610836991729c0c58ce)
+  setup build: riscv32-unknown-elf-gcc -mabi=ilp32d -mcmodel=medlow -march=rv32imafdv_zfh_zvfh -O3 -ffast-math -fno-builtin -fno-tree-vectorize -fno-common -ffunction-sections -I $SOFTHIER_SDK/runtime/runtime/include -c alloy.c -o alloy.o
+  setup program: the SDK headers define their functions (not static): put the code in the file with main (the SDK frame: flex_barrier_xy_init(); flex_global_barrier_xy(); ...; flex_eoc(0)), then riscv32-unknown-elf-gcc -I $SOFTHIER_SDK/runtime/runtime/include -T $SOFTHIER_SDK/runtime/runtime/flex_memory.ld -nostartfiles -mabi=ilp32d -mcmodel=medlow -march=rv32imafdv_zfh_zvfh -O3 -ffast-math -fno-builtin -fno-tree-vectorize -fno-common -ffunction-sections -Wl,--gc-sections -o softhier.elf $SOFTHIER_SDK/runtime/runtime/flex_start.s program.c
+  setup run: SOFTHIER_ARCH_FILE=alloy_v1.py gvsoc --target=pulp.chips.soft_hier_old.flex_cluster --binary softhier.elf run
+  note: the iDMA transfers the cluster's DMA core issued have landed
+#include "flex_dma_pattern.h"
+// wait on=idma: every core calls it; the DMA core waits for its transfers, then the cluster's cores meet
+void alloy_wait_idma(void) {
+    if (flex_is_dm_core()) flex_dma_async_wait_all();
+    flex_intra_cluster_sync();
+}
+
+
+ask softhier wait on=redmule: feasible on redmule; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1 inside the mma program, max rel error 0.00022
+  redmule: flex_redmule_wait()
+  cluster: flex_intra_cluster_sync()
+  note: RedMulE has written the product into c
+#include "flex_runtime.h"
+#include "flex_redmule.h"
+// wait on=redmule: every core calls it; core 0 waits for the product, then the cluster's cores meet
+void alloy_wait_redmule(void) {
+    if (flex_is_first_core()) flex_redmule_wait();
+    flex_intra_cluster_sync();
+}
+
+
+ask softhier barrier kind=cluster: feasible on cluster; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1
+  cluster: flex_intra_cluster_sync()
+#include "flex_runtime.h"
+// the cores of one cluster meet: TCDM writes before it are seen by every core of the cluster after it
+void alloy_barrier_cluster(void) {
+    flex_intra_cluster_sync();
+}
+
+
+ask softhier barrier kind=global: feasible on cluster; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1
+  cluster: flex_global_barrier_xy()
+  note: flex_barrier_xy_init() runs once at the start of main, before the first global barrier (the SDK's program frame)
+#include "flex_runtime.h"
+// every core of every cluster meets: TCDM writes before it, in any cluster, are seen after it (other clusters'
+// TCDM through iDMA from remote_cid(cid, offset))
+void alloy_barrier_global(void) {
+    flex_global_barrier_xy();
+}
+
+
+ask softhier copy src=global:f16:64x64 dst=shared:f16:64x64: feasible on idma; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1
+  idma: alloy_copy_1d(local(offset), hbm_west(node, offset), 8192)
+  note: 8192 bytes in one transfer
+  note: HBM of v1: hbm_west(node, offset) or hbm_south(node, offset), node 0 or 1; every core calls the function, the DMA core (flex_is_dm_core(), the last) issues
+  async: completes on idma: wait on=idma
+#include "flex_dma_pattern.h"
+// issue a copy of `bytes` contiguous bytes from src to dst; every core of the cluster calls it, the DMA core issues
+void alloy_copy_1d(uint64_t dst, uint64_t src, size_t bytes) {
+    if (flex_is_dm_core()) flex_dma_async_1d(dst, src, bytes);
+}
+// wait on=idma: every core calls it; the DMA core waits for its transfers, then the cluster's cores meet
+void alloy_wait_idma(void) {
+    if (flex_is_dm_core()) flex_dma_async_wait_all();
+    flex_intra_cluster_sync();
+}
+
+
+ask softhier mma a=shared:f16:32x64 b=shared:f16:64x32 c=shared:f16:32x32: feasible on redmule; check: run GVSoC pulp.chips.soft_hier_old.flex_cluster, SoftHier v1, max rel error 0.00022
+  redmule: flex_redmule_config(32, 64, 32)
+  redmule: flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16)
+  note: call alloy_mma_f16(a_off, b_off, c_off, 32, 32, 64) on every core of the cluster; RedMulE names the extents M, N (inner), K, so its config is (32, 64, 32); offsets are bytes into the TCDM
+  note: c is the accumulator and the result: load it (zero it for c = a b) before the call
+  async: completes on redmule: wait on=redmule
+#include "flex_runtime.h"
+#include "flex_redmule.h"
+// issue c (m x n) += a (m x k) * b (k x n), f16, row-major, at TCDM offsets a_off, b_off, c_off; every core of the
+// cluster calls it, core 0 (the first core) drives RedMulE
+void alloy_mma_f16(uint32_t a_off, uint32_t b_off, uint32_t c_off, uint16_t m, uint16_t n, uint16_t k) {
+    if (flex_is_first_core()) {
+        flex_redmule_config(m, k, n);
+        flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16);
+    }
+}
+// wait on=redmule: every core calls it; core 0 waits for the product, then the cluster's cores meet
+void alloy_wait_redmule(void) {
+    if (flex_is_first_core()) flex_redmule_wait();
+    flex_intra_cluster_sync();
+}
+
+```

@@ -1735,3 +1735,31 @@ def softhier_mma(request: Request) -> Answer:
              f"extents M, N (inner), K, so its config is ({m}, {k}, {n}); offsets are bytes into the TCDM",
              "c is the accumulator and the result: load it (zero it for c = a b) before the call")  # fmt: skip
     return softhier_feasible(request, row, "f16", steps, notes, Completion("redmule", "wait on=redmule"))
+
+
+def parsed_request(target: str, text: str) -> Request:
+    """One request of ``ask-all``: ``op name=operand ... [unit=U] [max_ulp=X]``; a malformed one raises
+    :class:`KeyError` with what is wrong."""
+    if not text.split():
+        raise KeyError("an empty request: op name=operand ...")
+    op, *fields = text.split()
+    operands: dict[str, Operand] = {}
+    unit, max_ulp, on, kind = "", None, "", ""
+    for field in fields:
+        name, sep, value = field.partition("=")
+        if not sep or not value:
+            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
+        if name == "unit":
+            unit = value.lower()
+        elif name == "on":
+            on = value.lower()
+        elif name == "kind":
+            kind = value.lower()
+        elif name == "max_ulp":
+            try:
+                max_ulp = float(value)
+            except ValueError:
+                raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
+        else:
+            operands[name] = Operand.parse(value)
+    return Request(target, op.lower(), operands, unit, max_ulp, on, kind)

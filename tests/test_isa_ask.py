@@ -913,7 +913,7 @@ WGMMA = "mma a=shared:f16:64x256:row_major:b128 b=shared:f16:256x64:col_major:b1
 
 
 def requests(target: str, *texts: str) -> list[Request]:
-    from alloy.isa.__main__ import parsed_request
+    from alloy.isa.ask import parsed_request
 
     return [parsed_request(target, text) for text in texts]
 

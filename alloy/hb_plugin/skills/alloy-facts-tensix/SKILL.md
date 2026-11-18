@@ -371,3 +371,30 @@ tensix/f32,bf16/scan_add: v[j] = x[0] + ... + x[j], the inclusive prefix sum of 
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0.0075
     note: the inclusive prefix sum down each column; tiles of one column arrive top to bottom, first = true only for the top one (i == 0 here), and no other SFPU call runs between them; along rows: transpose_tile before and transpose_dest after
 ```
+
+## Asked
+
+What `ask` answers beyond the rows: the waits, the barriers, and a gemm tile plan.
+
+```text
+ask tensix wait on=noc: feasible on thread; check: unverified from the ISA manuals; the tensix tile programs that ran issue it
+  thread: noc_async_read_barrier();
+  note: the NoC reads issued so far have landed in L1
+noc_async_read_barrier();
+
+ask tensix wait on=cb: feasible on thread; check: unverified from the ISA manuals; the tensix tile programs that ran issue it
+  thread: cb_wait_front(cb, n);
+  note: the producer has pushed n tiles into the circular buffer
+cb_wait_front(cb, n);
+
+ask tensix mma a=tile_register:bf16:64x64 b=tile_register:bf16:64x64 c=tile_register:f32:64x64: feasible on fpu; check: run ttsim
+  fpu: compute_kernel_hw_startup<SrcOrder::Reverse>(c0, c1, c16); matmul_init(c0, c1)
+  8 x fpu: matmul_tiles(c0, c1, 0, 0, 0)
+  4 x fpu: pack_tile(0, c16)
+  setup header: matmul.h
+  setup compute config: fp32_dest_acc_en = true, math_fidelity = HiFi4
+  setup reader: per output tile (mt, nt), for kt: A tile mt*Kt+kt into CB 0, B tile kt*Nt+nt into CB 1
+  note: f32 operands reach the FPU as TF32 (A 10 mantissa bits, B 9 at HiFi4); 0.6x spells mm_init(c0, c1, c16) and matmul_tiles(c0, c1, 0, 0, 0, false)
+compute_kernel_hw_startup<SrcOrder::Reverse>(c0, c1, c16); matmul_init(c0, c1);
+// per output tile: tile_regs_acquire(); for kt: matmul_tiles(c0, c1, 0, 0, 0); ...
+```
