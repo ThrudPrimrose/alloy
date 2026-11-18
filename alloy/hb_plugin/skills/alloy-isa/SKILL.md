@@ -19,7 +19,7 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
 `command="ask", arguments=[<target>, <op>, --<operand> <space:dtype:shape[:layout[:swizzle]]>, ...]`
 
 - **Targets.** `avx2`, `avx512`, `avx512_fp16` (AVX-512 with f16 arithmetic, Sapphire Rapids on; Zen 4 has none), `neon`, `sve`, `sme`; `sm90` (GH200's H100); `gfx90a` (MI200, the MI250X);
-  `gfx942` (MI300A); `tensix`.
+  `gfx942` (MI300A); `tensix`; `softhier` (SoftHier v1 on the GVSoC simulator).
 - **Operations.** Six primitives on your data:
   - `load` and `store`;
   - an elementwise operation or a math function (`add`, `fma`, `exp`, `sin`, ...);
@@ -66,7 +66,7 @@ before the wait is a race, and issuing without the fence reads stale data.
 
 - `command="ask", arguments=["sm90", "wait", "--on", "mbarrier"]` gives the wait's instruction. Tokens: `mbarrier`
   (TMA load), `bulk_group` (TMA store), `cp_async_group`, `wgmma_group` on `sm90`; `vmcnt` (global loads, LDS DMA)
-  and `lgkmcnt` (LDS) on `gfx90a` and `gfx942`; `noc` and `cb` on `tensix`.
+  and `lgkmcnt` (LDS) on `gfx90a` and `gfx942`; `noc` and `cb` on `tensix`; `idma` and `redmule` on `softhier`.
 - `command="ask", arguments=["sm90", "fence", "--kind", "proxy"]`: `proxy` (thread writes to shared memory, or an
   mbarrier's init, before TMA or `wgmma` reads them) and `operand` (before a `wgmma` after touching its accumulator
   registers) exist on `sm90` only; the AMD GPUs order these in hardware or with `__syncthreads`.
@@ -105,6 +105,13 @@ before the wait is a race, and issuing without the fence reads stale data.
 - **`tensix`.** 32x32 tiles in DST: SFPU rows keep f32, FPU rows (`add_tiles`, `matmul_tiles`, `reduce_tile`) read
   TF32 sources. The answer gives the tile calls; `command="lookup", arguments=["tensix", "<op>", "f32"]` prints the
   error each row measured on the simulator.
+- **`softhier`.** SoftHier v1, a 2 x 2 mesh of clusters on the GVSoC simulator (not hardware). Data a kernel computes
+  on sits in the cluster's TCDM (`shared`); HBM (`global`) and other clusters' TCDM are reached only by iDMA. Vector
+  operations (`load`, `store`, `add`, `mul`, `fma`, `reduce_add`, `reduce_max`, f32 and f16) are RVV loops on the
+  Spatz unit whose last `vsetvl` strip is the tail; `copy` between `global` and `shared` is an iDMA transfer (`wait
+  --on idma`); `mma` is an f16 RedMulE product (`wait --on redmule`); `barrier --kind cluster` or `global`. The
+  answer's code compiles alone with its `build` line; the SDK headers define functions, so the kernel and `main` share
+  one file (`program`), and `arch` writes the configuration's header into the SDK first.
 
 ## Short forms
 

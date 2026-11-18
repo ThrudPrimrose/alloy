@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any, NoReturn
 
-from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tensix_harness, tile
+from alloy.isa import ALIASES, OPS, ask, load, simt, softhier, tensix, tensix_harness, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -56,6 +56,8 @@ from alloy.isa.validate import Verdict, emulated, host_can_run, validate, valida
 
 #: The Tenstorrent target: tile calls checked on ttsim, kept apart from the SIMD table (alloy/isa/tensix.py).
 TENSIX = "tensix"
+#: The SoftHier v1 target: rows checked on GVSoC (alloy/isa/softhier.py).
+SOFTHIER = "softhier"
 #: GPU archs: ``tile`` and ``ask`` take them; ``lookup`` takes their SIMT dialect.
 GPU_ARCHS = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: Words for a matrix instruction: those live under ``tile`` and ``ask ... mma``, not ``lookup``.
@@ -144,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
-    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, cuda, hip")
+    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, softhier, cuda, hip")
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
@@ -374,6 +376,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     gate runs first, so a failed row is never printed as the answer."""
     if args.isa == TENSIX:
         return tensix_lookup(args.op, args.dtype, args.json)
+    if args.isa == SOFTHIER:
+        return softhier_lookup(args.op, args.dtype, args.json)
     if args.isa in simt.DIALECTS:
         return simt_lookup(args.isa, args.op, args.dtype, args.json)
     refuse_gpu_arch(args.isa)
@@ -474,6 +478,42 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         print("".join(f"      {line}\n" for line in rung.code.splitlines()), end="")
     print(f"  note: {tensix.table()['target']['note']}")
     return 2 if any(v is not None and not v.ok for _, v in picked) else 0
+
+
+def softhier_lookup(op: str, dtype: str, as_json: bool) -> int:
+    """Every SoftHier row of ``op`` at ``dtype`` with its code and recorded GVSoC verdict; exit 2 when a row failed its
+    run. A row of untyped data (bytes, none: a copy, its wait, a barrier) answers at any element type."""
+    found = [r for r in softhier.rows() if r.op == op]
+    if not found:
+        known = sorted({r.op for r in softhier.rows()})
+        raise KeyError(f"softhier/{dtype}/{op}: no SoftHier row{suggestion(op, known)} (rows: {', '.join(known)})")
+    typed = [r for r in found if dtype in r.dtypes or softhier.untyped(r)]
+    if not typed:
+        dtypes = ", ".join(sorted({d for r in found for d in r.dtypes}))
+        raise KeyError(f"softhier/{dtype}/{op}: the {op} rows are {dtypes}; ask with one of those")
+    picked = [(r, r.dtypes[0] if softhier.untyped(r) else dtype) for r in typed]
+    verdicts = [softhier.verdict_of(r, d) for r, d in picked]
+    if as_json:
+        print(json.dumps([{**dataclasses.asdict(r), "code": softhier.code(r, d),
+                           "verdict": None if v is None else dataclasses.asdict(v)}
+                          for (r, d), v in zip(picked, verdicts, strict=True)]))  # fmt: skip
+        return 0
+    for (row, spelled_as), verdict in zip(picked, verdicts, strict=True):
+        print(f"softhier/{dtype}/{op}: {row.key()} on {row.unit}: {softhier.spelled(row.call, spelled_as)}")
+        if verdict is None:
+            print("  unverified: no current GVSoC run")
+        elif verdict.ok:
+            inside = f" (inside the {row.checked_by} program)" if row.checked_by else ""
+            error = f": max rel error {verdict.rel:.2g}" if verdict.rel else ""
+            print(f"  verified on GVSoC {softhier.TARGET}{inside}{error}")
+        else:
+            print(f"  FAILED on GVSoC: {verdict.error[:200]}")
+        if row.note:
+            print(f"  note: {row.note}")
+        print(softhier.code(row, spelled_as))
+    print(f"build: {softhier.build_line()}")
+    print(f"note: {softhier.table()['target']['note']}")
+    return 2 if any(v is not None and not v.ok for v in verdicts) else 0
 
 
 def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
@@ -742,6 +782,9 @@ def print_isas(table: Table) -> None:
         print(f"  {isa.note}")
     target = tensix.table()["target"]
     print(f"{TENSIX:8} {target['title']}  [tile calls, not intrinsics; {', '.join(tensix.dtypes())}]")
+    print(f"  {target['note']}")
+    target = softhier.table()["target"]
+    print(f"{SOFTHIER:8} {target['title']}  [C rows: RVV on Spatz, iDMA, RedMulE; f32, f16]")
     print(f"  {target['note']}")
     for dialect in simt.DIALECTS:
         target = simt.table()["target"][dialect]
