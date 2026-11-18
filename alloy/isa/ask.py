@@ -1601,32 +1601,36 @@ def softhier_copy(request: Request) -> Answer:
     if math.prod(tcdm.shape or (1,)) * size > softhier.config()["cluster_tcdm_size"]:
         return no(request, Why.SHAPE, f"{tcdm.spelled()} does not fit the cluster's TCDM "
                   f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", near)  # fmt: skip
-    small, large = sorted((src, dst), key=lambda o: math.prod(o.shape or (1,)))
-    contiguous = small.shape == large.shape or len(small.shape) < 2 or small.shape[1] == large.shape[1]
     hbm = "hbm_west(node, offset)"
     where = {"global": hbm, "shared": "local(offset)"}
-    if contiguous:
-        if math.prod(small.shape or (1,)) != math.prod(large.shape or (1,)) and len(small.shape) < 2:
-            return no(request, Why.SHAPE, "a 1D copy moves one run: src and dst hold the same number of elements",
-                      near)  # fmt: skip
-        nbytes = math.prod(small.shape or (1,)) * size
+    if src.shape == dst.shape:  # the whole operand: one run
+        nbytes = math.prod(src.shape or (1,)) * size
         row = softhier_row("copy_1d")
         call = f"alloy_copy_1d({where[dst.space]}, {where[src.space]}, {nbytes})"
         notes: tuple[str, ...] = (f"{nbytes} bytes in one transfer",)
     else:
+        small, large = sorted((src, dst), key=lambda o: math.prod(o.shape or (1,)))
         block, matrix = tuple(small.shape), tuple(large.shape)
         if len(block) != 2 or len(matrix) != 2 or block[0] > matrix[0] or block[1] > matrix[1]:
-            return no(request, Why.SHAPE, f"a 2D copy moves a block of rows of a row-major matrix: "
-                      f"{small.spelled()} is no block of {large.spelled()}", near)  # fmt: skip
+            return no(request, Why.SHAPE, f"a copy of a part moves a block of rows of a row-major matrix, both named "
+                      f"rows x cols: {small.spelled()} is no block of {large.spelled()}", near)  # fmt: skip
         rows_, row_bytes, strided = block[0], block[1] * size, matrix[1] * size
-        dst_stride, src_stride = (row_bytes, strided) if dst is small else (strided, row_bytes)
-        row = softhier_row("copy_2d")
-        corner = f" + (row0 * {matrix[1]} + col0) * {size}"
-        src_at = where[src.space] + (corner if src is large else "")
-        dst_at = where[dst.space] + (corner if dst is large else "")
-        call = f"alloy_copy_2d({dst_at}, {src_at}, {row_bytes}, {dst_stride}, {src_stride}, {rows_})"
-        notes = (f"{rows_} rows of {row_bytes} bytes; the block's corner (row0, col0) in the {matrix[0]} x "
-                 f"{matrix[1]} matrix",)  # fmt: skip
+        if block[1] == matrix[1]:  # whole rows: one run that starts at row row0
+            row = softhier_row("copy_1d")
+            start = f" + row0 * {strided}"
+            src_at = where[src.space] + (start if src is large else "")
+            dst_at = where[dst.space] + (start if dst is large else "")
+            call = f"alloy_copy_1d({dst_at}, {src_at}, {rows_ * row_bytes})"
+            notes = (f"{rows_} whole rows from row row0 of the {matrix[0]} x {matrix[1]} matrix: one run",)
+        else:
+            dst_stride, src_stride = (row_bytes, strided) if dst is small else (strided, row_bytes)
+            row = softhier_row("copy_2d")
+            corner = f" + (row0 * {matrix[1]} + col0) * {size}"
+            src_at = where[src.space] + (corner if src is large else "")
+            dst_at = where[dst.space] + (corner if dst is large else "")
+            call = f"alloy_copy_2d({dst_at}, {src_at}, {row_bytes}, {dst_stride}, {src_stride}, {rows_})"
+            notes = (f"{rows_} rows of {row_bytes} bytes; the block's corner (row0, col0) in the {matrix[0]} x "
+                     f"{matrix[1]} matrix",)  # fmt: skip
     notes += (f"HBM of v1: {hbm} or hbm_south(node, offset), node 0 or 1; every core calls the function, the DMA core "
               "(flex_is_dm_core(), the last) issues",)  # fmt: skip
     steps = (Step("idma", call),)
