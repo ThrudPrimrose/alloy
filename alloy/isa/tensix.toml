@@ -19,6 +19,7 @@ header = "eltwise_unary/exp.h"
 init = "exp_tile_init()"
 call = "exp_tile(0)"
 domain = [-4.0, 4.0]
+note = "On the Blackhole with tt-metal 0.63, exp_tile is accurate to bf16 only: max relative error 1.73e-3 over [-7, 7] in every sub-range, with fp32_dest_acc_en, UnpackToDestFp32 and HiFi4 (card probe of 2026-11-18). A log refined by Newton or Halley steps through it stops at an absolute error of 1.7e-3."
 
 [[ops.log]]
 kind = "unary"
@@ -28,7 +29,7 @@ header = "compute_kernel_api.h"
 init = { v06 = "log_tile_init<false>()", v08 = "log_tile_init()" }
 call = { v06 = "log_tile<false>(0)", v08 = "log_tile(0)" }
 domain = [0.01, 100.0]
-note = "tt-metal 0.6x log is a low-order approximation: relative error above 0.3 near log's zero (x close to 1) on a Blackhole, with either template argument (runs of 2026-11-16, tt-metal 0.63). 0.8x holds the table's bound."
+note = "tt-metal 0.6x log is a low-order approximation: on a Blackhole with tt-metal 0.63 its absolute error is 0.012 to 0.0165 over [1e-3, 1e3], so its relative error passes 1 near x = 1; both template arguments give the same output (card probes of 2026-11-16 and 2026-11-18). On 0.63 a log accurate to f32 must be built from the f32-accurate SFPU binary rows (div_binary_tile: max relative error 2.4e-7 on the card) with its own range reduction. 0.8x holds the table's bound on ttsim."
 
 [[ops.sqrt]]
 kind = "unary"
