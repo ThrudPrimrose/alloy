@@ -2,6 +2,7 @@
 """The Alloy tools on the agent side: each a thin ``POST /alloy/<mode>`` (Alloy and DaCe live in the judge)."""
 
 import json
+import os
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -102,7 +103,28 @@ for mode, description in MODES.items():
     tool(spec=spec, core=False, name=name)(poster(mode))
 
 
+#: The targets a task's ``alloy_isa`` answers for, comma-separated (a packet's env); unset: every target.
+TARGETS_ENV = "ALLOY_ISA_TARGETS"
+#: Commands whose first argument is the target; under a restriction the others answer only ``ops``.
+TARGETED = frozenset({"lookup", "kernel", "time", "schedule", "skeleton", "tile", "ask", "ask-all"})
+
+
+def outside_targets(payload: dict[str, Any], allowed: frozenset[str]) -> str:
+    """Why the query leaves the task's targets, or ``""``."""
+    command, arguments = payload.get("command"), payload.get("arguments") or []
+    if command == "ops":
+        return ""
+    if command not in TARGETED:
+        return f"alloy_isa: {command!r} is not offered on this task; ask about {', '.join(sorted(allowed))}"
+    if not arguments or str(arguments[0]) not in allowed:
+        return f"alloy_isa: this task's targets are {', '.join(sorted(allowed))}; the first argument names one"
+    return ""
+
+
 def isa_query(payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = frozenset(t for t in os.environ.get(TARGETS_ENV, "").split(",") if t)
+    if allowed and (why := outside_targets(payload, allowed)):
+        return {"ok": False, "error": why}
     return http_json.post_judge("/alloy/isa", payload)
 
 

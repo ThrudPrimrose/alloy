@@ -91,6 +91,17 @@ overlays = ["alloy:prompt/overlay-guidance.yaml"]
 name = "tt-metal v0.63.0 docs and kernel API headers"
 skills = ["tt-metal-compute-api", "tt-metal-dataflow-api", "tt-metal-docs"]
 
+# `tool` per target: alloy_isa answers only for the task's target (tools/alloy.py TARGETS_ENV).
+[packets.alloy-isa-tensix]
+extends = "alloy-isa"
+name = "Alloy (ISA lookup, Tensix)"
+env = { ALLOY_ISA_TARGETS = "tensix" }
+
+[packets.alloy-isa-softhier]
+extends = "alloy-isa"
+name = "Alloy (ISA lookup, SoftHier)"
+env = { ALLOY_ISA_TARGETS = "softhier" }
+
 [packets.alloy-facts-tensix]
 name = "Alloy facts page (Tensix)"
 skills = ["alloy-facts-tensix"]
