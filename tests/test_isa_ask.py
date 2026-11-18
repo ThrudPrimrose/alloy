@@ -1299,3 +1299,11 @@ def test_the_fp16_target_answers_f16_with_the_fp16_flag():
 
     assert isinstance(sut, Feasible)
     assert "-mavx512fp16" in sut.setup["build"]
+
+
+def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one():
+    sut = ask(Request("avx2", "log", {"x": Operand("register", "f32", (8,))}, max_ulp=4), verify=False)
+
+    assert isinstance(sut, Feasible)
+    assert sut.notes[0].startswith("rung fast")
+    assert "other rungs" in sut.notes[1] and "relaxed 0.9108 ulp" in sut.notes[1] and "--max-ulp" in sut.notes[1]

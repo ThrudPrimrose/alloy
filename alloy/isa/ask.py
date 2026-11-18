@@ -29,7 +29,7 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
 from alloy.isa import OPS, load, simt, tensix, tile
-from alloy.isa.mathkernels import cheapest, functions, kernel, render, target_of
+from alloy.isa.mathkernels import cheapest, functions, kernel, ladder, render, target_of
 from alloy.isa.table import ALIASES, GATED, Entry, Table, gate
 from alloy.isa.validate import HEADERS, c_flags
 
@@ -776,7 +776,13 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
     except KeyError as exc:
         return no(request, Why.NO_RUNG, str(exc.args[0]))
     k = spelled.kernel
-    notes = (f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",)
+    others = [f"{r.level} {r.error_ulp:.4g} ulp" for r in ladder(k.fn, dtype) if r.level != k.level]
+    notes = (
+        f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",
+        # an agent whose own bound is tighter or looser sees the other rungs and asks again with --max-ulp
+        f"other rungs (a more accurate rung costs more instructions): {', '.join(others) or 'none'}; "
+        "ask again with --max-ulp to get one",
+    )
     check = Check("unverified", "not checked (verify off)")
     if verify:
         from alloy.isa.mathcheck import validate_kernel
