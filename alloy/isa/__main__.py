@@ -720,14 +720,15 @@ def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bo
 
 
 def tile_command(args: argparse.Namespace) -> int:
-    """A tile's plan: its steps, layout, descriptors, and program, checked here unless ``--no-verify``; exit 3 when
-    the check could not run or failed, as an unverified lookup does."""
+    """A tile's plan: its steps, layout, descriptors, and program, checked here unless ``--no-verify``; exit 0 when
+    the program ran against the reference or compiled for a target this host has no device for (the check line says
+    which), 3 when it failed or no compiler here could check it."""
     found = tile.plan(args.target, args.m, args.n, args.k, args.in_type, args.acc_type)
     if not args.no_verify:
         found = tile.verify(found)
     if args.json:
         print(json.dumps(dataclasses.asdict(found)))
-        return 0 if found.verified == "run" else 3
+        return 0 if found.verified in ("run", "compiled") else 3
     print(f"{found.target}: gemm {found.m}x{found.n}x{found.k}, {found.in_type} in, {found.acc_type} accumulate")
     print(f"  check: {found.verified}" + (f" ({found.detail})" if found.detail else ""))
     print(f"  layout: {found.layout}")
@@ -738,7 +739,7 @@ def tile_command(args: argparse.Namespace) -> int:
         print(f"    {step}")
     print("  program:")
     print(found.program)
-    return 0 if found.verified == "run" else 3
+    return 0 if found.verified in ("run", "compiled") else 3
 
 
 #: The exit code of an invalid request (sysexits' EX_USAGE), apart from 2, an infeasible one.
