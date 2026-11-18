@@ -404,8 +404,11 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         if verdict is None:
             print("    unverified: no recorded run")
         elif verdict.ok:
+            # The ttsim run uses tt-metal 0.8x, so a row with per-version spellings is verified in its [v08] one only.
+            which = "" if isinstance(row.init, str) and isinstance(row.call, str) else ", the [v08] spelling only"
             print(
-                f"    verified on ttsim {run.get('ttsim', '').split(' ')[0]} (simulated Blackhole): max rel error {verdict.rel:.2g}"
+                f"    verified on ttsim {run.get('ttsim', '').split(' ')[0]} (simulated Blackhole) with tt-metal 0.8x"
+                f"{which}: max rel error {verdict.rel:.2g}"
             )
         else:
             print(f"    FAILED on ttsim: {verdict.error[:200]}")
