@@ -9,6 +9,7 @@ scalars; :data:`TOOL_OPS` names the operations, so the host evaluates one progra
 and in ttnn (the stock-op baseline). ``python -m alloy.hb_plugin.eval_set`` prints the admitted tasks as JSON."""
 
 import ast
+import contextlib
 import dataclasses
 import json
 import math
@@ -338,7 +339,8 @@ def alloy_takes(name: str, target: str) -> bool:
 
     pipeline, where = TARGETS[target]
     try:
-        sdfg = pipeline_sdfg(BenchSpec.load(name), pipeline, Precision.FP64, where)
+        with contextlib.redirect_stdout(sys.stderr):  # DaCe's parser reports on stdout, where the draw is printed
+            sdfg = pipeline_sdfg(BenchSpec.load(name), pipeline, Precision.FP64, where)
     except Exception:  # a kernel the bench's pipeline cannot build for this target is not drawn
         return False
     return target == "gpu" or not nothing_to_generate(sdfg, configuration_matrix.load())
