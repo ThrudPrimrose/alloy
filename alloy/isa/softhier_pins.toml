@@ -61,6 +61,11 @@ name = "DRAMPOWER"
 url = "https://github.com/tukl-msd/DRAMPower/archive/refs/tags/v5.4.1.tar.gz"
 sha256 = "1bdf2fba0da186f204047acdbe142d536aebfc9753095b7974e7a8493191a51e"
 
+[[dramsys.fetch]]
+name = "SQLITE3"
+url = "https://www.sqlite.org/2024/sqlite-amalgamation-3470000.zip"
+sha256 = "2842fddbb1cc33f66c7da998a57535f14a6bfee159676a07bb4bf3e59375d93e"
+
 # The Python packages GVSoC's launcher (gapy) imports are the `softhier` extra of pyproject.toml; the build installs
 # that extra, every package it pulls in held to uv.lock's version, and these build tools, with this uv, into a venv of
 # this Python (uv's build of it: the base image's 3.11 is older than the lock's 3.12).
@@ -68,4 +73,4 @@ sha256 = "1bdf2fba0da186f204047acdbe142d536aebfc9753095b7974e7a8493191a51e"
 uv = "0.11.32"
 uv_sha256 = "aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967"  # uv-x86_64-unknown-linux-gnu.tar.gz
 version = "3.12.13"
-build = ["cmake==4.4.5", "ninja==1.13.2", "setuptools==84.0.0"]
+build = ["cmake==4.4.4", "ninja==1.13.2", "setuptools==84.0.0"]

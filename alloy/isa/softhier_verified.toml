@@ -7,8 +7,9 @@ sdk = "https://github.com/pulp-platform/softhier-sdk.git c32f3eba212e5f44e9a6561
 toolchain = "https://github.com/husterZC/gun_toolchain/releases/download/v2.0.0/toolchain.tar.xz sha256:f08793bf081a23da369f1c054cdff790f09d0286ba4447799c5b753cfba28717"
 systemc = "https://github.com/accellera-official/systemc.git 11ad094d282fd5330b27ab57f90f9d231a763da1"
 dramsys = "https://github.com/tukl-msd/DRAMSys.git 8565f18b869c26eab712e3bb6494c4d6ae5dd73f"
-pins = "sha256:8e0cd7bd723c7241a8af64afded50056b5235e4ab3c8b1faf02d5e885e6d590c"
+pins = "sha256:55acae608c1b7aa4f3ab4a59054ec1a133ee08e453e4348ed3bf159b6f557df3"
 target = "pulp.chips.soft_hier_old.flex_cluster"
+image = "sha256:5447ffe9e5ea3bd5ca94c6d31eb8707b7398af2cc8aedebdf76e7b7583f5c37e"
 
 [[verdicts]]
 name = "load"
