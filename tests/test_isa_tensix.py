@@ -315,7 +315,8 @@ def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(
     printed = capsys.readouterr().out
     assert "log_tile<false>(0) [v06]" in printed and "0.012 to 0.0165" in printed
     assert "SFPU math kernel alloy_log_f32_sfpi" in printed and "tt-metal 0.63, Blackhole p150" in printed
-    assert "sfpi_inline sfpi::vFloat alloy_log_f32(sfpi::vFloat x)" in printed and "#include" not in printed
+    kernel = printed.split("SFPU math kernel alloy_log_f32_sfpi", 1)[1]  # the rung's text pastes in: no includes
+    assert "sfpi_inline sfpi::vFloat alloy_log_f32(sfpi::vFloat x)" in kernel and "#include" not in kernel
 
 
 @pytest.mark.parametrize("op", ["log", "exp"])
@@ -350,3 +351,16 @@ def test_the_plain_log_tile_answer_points_at_the_sfpi_rung():
     answer = ask(Request("tensix", "log", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
 
     assert isinstance(answer, Feasible) and any("alloy_log_f32_sfpi" in note for note in answer.notes)
+
+
+def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_per_version(capsys):
+    assert main(["lookup", "tensix", "sin", "f32"]) == 0
+
+    printed = capsys.readouterr().out
+    assert (
+        'includes [v06] compute: #include "compute_kernel_api/common.h"' in printed
+        and '#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"' in printed  # init_sfpu
+        and 'reader/writer: #include "dataflow_api.h"' in printed
+    )  # TensorAccessor at 0.6x, no tensor_accessor.h
+    assert 'includes [v08] compute: #include "api/compute/common.h"' in printed
+    assert '#include "compute_kernel_api/eltwise_unary/trigonometry.h"' in printed  # the row's own header
