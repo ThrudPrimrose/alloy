@@ -373,7 +373,7 @@ def test_each_planted_row_without_its_tail_strip_loops_only_over_whole_strips():
         assert "i + __riscv_vsetvlmax_e32m8() <= n;" in softhier.code(sut, "f32")
 
 
-@pytest.mark.parametrize(("src", "dst"), [((256,), (16, 16)), ((300,), (200,)), ((16, 16), (64,))])
+@pytest.mark.parametrize(("src", "dst"), [((300,), (16, 16)), ((300,), (200,)), ((16, 16), (64,))])
 def test_a_copy_between_a_vector_and_a_matrix_or_runs_of_unequal_length_is_refused(src, dst):
     """No block of rows to take: the copy is refused for its shape, never an IndexError."""
     request = Request("softhier", "copy", {"src": Operand("global", "f32", src), "dst": shared("f32", *dst)})
@@ -381,6 +381,14 @@ def test_a_copy_between_a_vector_and_a_matrix_or_runs_of_unequal_length_is_refus
     answer = ask(request, verify=False)
 
     assert isinstance(answer, Infeasible) and answer.why is Why.SHAPE
+
+
+def test_a_packed_tile_of_as_many_elements_as_a_run_is_one_run():
+    request = Request("softhier", "copy", {"src": Operand("global", "f32", (256,)), "dst": shared("f32", 16, 16)})
+
+    answer = ask(request, verify=False)
+
+    assert isinstance(answer, Feasible) and answer.steps[0].spelling.endswith(", 1024)")
 
 
 def test_whole_rows_of_a_matrix_are_one_run_that_starts_at_their_first_row():

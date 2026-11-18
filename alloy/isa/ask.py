@@ -1603,7 +1603,7 @@ def softhier_copy(request: Request) -> Answer:
                   f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", near)  # fmt: skip
     hbm = "hbm_west(node, offset)"
     where = {"global": hbm, "shared": "local(offset)"}
-    if src.shape == dst.shape:  # the whole operand: one run
+    if math.prod(src.shape or (1,)) == math.prod(dst.shape or (1,)):  # the whole operand, packed on both sides: one run
         nbytes = math.prod(src.shape or (1,)) * size
         row = softhier_row("copy_1d")
         call = f"alloy_copy_1d({where[dst.space]}, {where[src.space]}, {nbytes})"
