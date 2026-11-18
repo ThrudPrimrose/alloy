@@ -9,7 +9,7 @@ WORK=$(mkdir -p "${2:?a work folder}" && cd "$2" && pwd)
 JOBS=${3:-16}
 BASE=$(sed -n 's/^image = "\(.*\)"/\1/p' "$ALLOY/alloy/isa/softhier_pins.toml")  # [base] image
 export SINGULARITY_CACHEDIR=$WORK/cache SINGULARITY_TMPDIR=${TMPDIR:-/tmp}
-[ -f "$WORK/base.sif" ] || singularity pull -q "$WORK/base.sif" "$BASE"
+[ -f "$WORK/base.sif" ] || singularity pull "$WORK/base.sif" "$BASE"
 mkdir -p "$WORK/stack"
 singularity exec -B "$WORK/stack:/opt/softhier" -B "$ALLOY:/opt/alloy" "$WORK/base.sif" \
     /opt/alloy/helpers/build_softhier.sh /opt/alloy /opt/softhier "$JOBS"
