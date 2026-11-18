@@ -92,7 +92,7 @@ if [ ! -e gvsoc/third_party/DRAMSys/libDRAMSys_Simulator.so ]; then
 for f in tomllib.load(open(sys.argv[1], "rb"))["dramsys"]["fetch"]: print(f["name"], f["url"], f["sha256"])' "$PINS")
     cmake -S "$BUILD/DRAMSys" -B "$BUILD/DRAMSys-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-fPIC \
         -DCMAKE_C_FLAGS=-fPIC -DDRAMSYS_USE_FETCH_CONTENT_SYSTEMC=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
-        "${fetched[@]}" -DSystemCLanguage_DIR="$SYSTEMC_HOME/lib64/cmake/SystemCLanguage" > /dev/null
+        "${fetched[@]}" -DSystemCLanguage_DIR="$(dirname "$(find "$SYSTEMC_HOME" -name SystemCLanguageConfig.cmake -print -quit)")" > /dev/null
     cmake --build "$BUILD/DRAMSys-build" -j "$JOBS" > /dev/null
     cp "$BUILD/DRAMSys-build/lib/libDRAMSys_Simulator.so" gvsoc/third_party/DRAMSys/
 fi
