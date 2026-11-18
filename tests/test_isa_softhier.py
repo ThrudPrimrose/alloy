@@ -35,8 +35,11 @@ def test_every_planted_wrong_row_was_run_and_failed_its_check():
     """The checks can fail: a vfsub spelled as add, and a 2D copy with its strides swapped, both ran and were caught."""
     planted = softhier.recorded()["planted"]
 
-    assert {p["name"] for p in planted} == set(softhier.PLANTED)
-    assert len(planted) == sum(len(r.dtypes) for r in softhier.planted())
+    current = {(r.key(), d): softhier.digest(r, d) for r in softhier.planted() for d in r.dtypes}
+
+    assert {
+        (p["name"], p["dtype"]): p["digest"] for p in planted
+    } == current  # the record ran the planted code as it is
     assert all(p["ok"] is False and p["error"] for p in planted), planted
 
 
@@ -274,6 +277,7 @@ def test_the_lookup_prints_a_rows_code_and_build_line_and_refuses_an_element_typ
 ):
     assert main(["lookup", "softhier", "reduce_max", "f16"]) == 0
     printed = capsys.readouterr().out
+    assert f"verified on GVSoC {softhier.TARGET}" in printed
     assert "_Float16 alloy_reduce_max_f16(const _Float16* x, size_t n)" in printed
     assert f"build: {softhier.build_line()}" in printed
 
@@ -341,7 +345,7 @@ def test_every_row_runs_correct_on_gvsoc_and_every_planted_row_fails():
     """In the SoftHier v1 image (SOFTHIER_IMAGE, helpers/build_softhier_image.sh), or on a GVSoC installed here."""
     image = os.environ.get("SOFTHIER_IMAGE")
     if image and shutil.which("singularity") is None:
-        pytest.skip("SOFTHIER_IMAGE is set but singularity is not on PATH")
+        pytest.fail("SOFTHIER_IMAGE is set but singularity is not on PATH")
     if not image and not (os.environ.get("SOFTHIER_GVSOC") and os.environ.get("SOFTHIER_SDK")):
         pytest.skip("GVSoC is absent: set SOFTHIER_IMAGE, or SOFTHIER_GVSOC and SOFTHIER_SDK (alloy/isa/softhier.py)")
 
