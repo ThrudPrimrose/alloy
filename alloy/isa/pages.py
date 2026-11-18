@@ -33,8 +33,9 @@ def tensix_verdict_line(row: tensix.Row, verdict: tensix.Verdict | None, label: 
     )
 
 
-def tensix_row_lines(row: tensix.Row, runs: Sequence[tuple[str, tensix.Verdict | None]]) -> list[str]:
-    """A row's unit, includes per tt-metal version, init and call, its runs (label, verdict) and its note."""
+def tensix_row_lines(row: tensix.Row, runs: Sequence[tuple[str, tensix.Verdict | None]], dtype: str = "") -> list[str]:
+    """A row's unit, includes per tt-metal version, init and call, its runs (label, verdict) and its note; a run's
+    label is its dtype on a page, and empty in a lookup, which names the ``dtype``."""
     lines = [f"  {row.unit} ({row.kind}): header {row.header}"]
     fields = {"kind": row.kind, "header": row.header}
     for version, new in (("v06", False), ("v08", True)):
@@ -46,6 +47,9 @@ def tensix_row_lines(row: tensix.Row, runs: Sequence[tuple[str, tensix.Verdict |
         spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
         lines.append(f"    {name}: {spelled}")
     lines += [tensix_verdict_line(row, verdict, label) for label, verdict in runs]
+    for label, _ in runs:  # the card-0.63 measurement beside the ttsim run, where a probe measured the row
+        if card := tensix.card_line(row, label or dtype):
+            lines.append(card.replace("    measured", f"    {label}: measured", 1) if label else card)
     if row.note:
         lines.append(f"    note: {row.note}")
     return lines

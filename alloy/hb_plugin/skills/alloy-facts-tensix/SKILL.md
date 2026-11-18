@@ -27,6 +27,7 @@ tensix/f32,bf16/exp: v[j] = exp(x[j]), applied to a 32x32 tile
     call: exp_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 6.5e-08
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0.0056
+    f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [-7, 7]: max rel error 0.00173, max abs error 1.77 (within the row's bound 0.01 rel; probe_exp-card, agents 8ec7b7d)
     note: On the Blackhole with tt-metal 0.63, exp_tile is accurate to bf16 only: max relative error 1.73e-3 over [-7, 7] in every sub-range, with fp32_dest_acc_en, UnpackToDestFp32 and HiFi4 (card probe of 2026-11-18). A log refined by Newton or Halley steps through it stops at an absolute error of 1.7e-3. The SFPI rung alloy_exp_f32_sfpi (rungs.exp below) holds f32 on the card. exp2_tile does not help on 0.63: mul_unary_tile(0, 0x3FB8AA3B) (x log2 e) then exp2_tile gave output identical to exp_tile on the card, rel 1.73e-3 (commit dd226b3), although the v0.63.0 tag's Blackhole ckernel_sfpu_exp2.h holds Moroz exp_21f: the container's exp2 goes through exp.
   SFPU math kernel alloy_exp_f32_sfpi: 1.66 ulp, measured on the card (tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 5cc4565: max rel error 9.87e-08, max abs error 7.10e-05 over x uniform in [-7, 7], worst x -6.99997)
     init: MATH((llk_math_eltwise_unary_sfpu_init<SfpuType::unused, APPROX>()))
@@ -79,6 +80,7 @@ tensix/f32,bf16/log: log, applied to a 32x32 tile
     call: log_tile<false>(0) [v06], log_tile(0) [v08]
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 7.1e-08
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.004
+    f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [0.001, 1000]: max rel error 3.35e+04, max abs error 0.0165 (OUTSIDE the row's bound 0.01 rel; probe_log-false, agents 8ec7b7d)
     note: tt-metal 0.6x log is a low-order approximation: on a Blackhole with tt-metal 0.63 its absolute error is 0.012 to 0.0165 over [1e-3, 1e3], so its relative error passes 1 near x = 1; both template arguments give the same output (card probes of 2026-11-16 and 2026-11-18). On 0.63 a log accurate to f32 must be built from the f32-accurate SFPU binary rows (div_binary_tile: max relative error 2.4e-7 on the card) with its own range reduction; the SFPI rung alloy_log_f32_sfpi (rungs.log below) does so on SFPU lanes and holds f32 on the card. 0.8x holds the table's bound on ttsim.
   SFPU math kernel alloy_log_f32_sfpi: 3.79 ulp, measured on the card (tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 7d69842: max abs error 3.05e-07, max rel error 2.26e-07 over x log-uniform in [1e-3, 1e3], worst x 0.99999958)
     init: MATH((llk_math_eltwise_unary_sfpu_init<SfpuType::unused, APPROX>()))
@@ -145,6 +147,7 @@ tensix/f32,bf16/sqrt: v[j] = sqrt(x[j]), applied to a 32x32 tile
     call: sqrt_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 8.5e-08
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0.0039
+    f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [0.001, 1000]: max rel error 5.54e-06, max abs error 0.000171 (within the row's bound 0.01 rel; probe_sqrt-stock, agents 8ec7b7d)
     note: On a Blackhole with tt-metal 0.63, sqrt_tile() (legacy_compat = true, the default) has max relative error 5.5e-6 over x log-uniform in [1e-3, 1e3]; sqrt_tile_init<false>() and sqrt_tile<false>(0) give 9.3e-8, f32 accuracy, and run faster (0.77 ms against 0.98 ms on the probe; card run of 2026-11-18, alloy-tenstorrent agents commit dd226b3). 0.8x on ttsim: the table's bound.
 ```
 
@@ -311,6 +314,7 @@ tensix/f32,bf16/div: v[j] = a[j] / b[j], applied to a 32x32 tile
     call: div_binary_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 6.7e-08
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0.0037
+    f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [0.001, 1000]: max rel error 2.43e-07, max abs error 0.132 (within the row's bound 0.01 rel; probe_div-binary, agents 8ec7b7d)
 ```
 
 ## mma

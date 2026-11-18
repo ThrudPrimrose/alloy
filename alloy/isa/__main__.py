@@ -453,7 +453,7 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         return 0
     print(pages.tensix_title(dtype, op))
     for row, verdict in picked:
-        print("\n".join(pages.tensix_row_lines(row, [("", verdict)])))
+        print("\n".join(pages.tensix_row_lines(row, [("", verdict)], dtype)))
     for rung in tensix.rungs(op, dtype):
         print("\n".join(pages.tensix_rung_lines(rung)))
     print(pages.tensix_target_note())

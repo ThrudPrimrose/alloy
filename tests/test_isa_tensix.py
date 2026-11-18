@@ -39,6 +39,26 @@ def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path:
     assert sut == {("exp", "f32", exp.unit): current}
 
 
+def test_every_card_record_is_of_a_current_row_and_its_verdict_follows_the_rows_bound():
+    recorded = tensix.recorded(tensix.CARD_PATH)["verdicts"]
+
+    sut = tensix.card_verdicts()
+
+    assert len(sut) == len(recorded)
+    for verdict in sut.values():
+        assert verdict.ok == (verdict.rel is not None and verdict.rel < tensix.TOLERANCE[verdict.dtype]), verdict
+
+
+def test_the_lookup_prints_the_card_measurement_beside_the_ttsim_run(capsys: pytest.CaptureFixture[str]):
+    code = main(["lookup", "tensix", "log", "f32"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "verified on ttsim" in out
+    assert "measured on a Blackhole card with tt-metal 0.63, the [v06] spelling" in out
+    assert "max abs error 0.0165 (OUTSIDE the row's bound" in out
+
+
 def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32():
     verdicts = tensix.verdicts()
 

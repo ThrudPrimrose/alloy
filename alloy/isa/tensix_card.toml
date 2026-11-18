@@ -1,0 +1,53 @@
+# Tensix rows measured on a Blackhole card with tt-metal 0.63 (variant card-0.63), beside the ttsim verdicts of
+# tensix_verified.toml (variant ttsim-0.8x). Each record is a probe kernel of the alloy-tenstorrent `agents` job that
+# calls the row's [v06] spelling alone: one core, fp32_dest_acc_en, UnpackToDestFp32, 64 tiles of seeded inputs over
+# `domain`, compared with a float64 reference of the f32 input the card saw. The job printed the same numbers on
+# five commits (5ae8d5a, 5cc4565, dd226b3, 5a445c0, 8ec7b7d); read with tools/daisy_log.py.
+variant = "card-0.63"
+platform = "Tenstorrent Blackhole through Daisytuner, container daisytuner/x64-tenstorrent:0.63.0-latest (ttnn 0.63.0)"
+run = "2026-11-18"
+
+[[verdicts]]
+op = "exp"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0017304173667399942
+abs = 1.7704882919642841
+domain = [-7.0, 7.0]
+source = "probe_exp-card, agents 8ec7b7d"
+digest = "208b01e9b8edecee"
+
+[[verdicts]]
+op = "log"
+dtype = "f32"
+unit = "SFPU"
+ok = false
+rel = 33483.99301448416
+abs = 0.016456586738211598
+domain = [0.001, 1000.0]
+source = "probe_log-false, agents 8ec7b7d"
+error = "absolute error 0.012 to 0.0165 over the whole domain, so the relative error is unbounded near x = 1"
+digest = "1cb28c39342d45d6"
+
+[[verdicts]]
+op = "sqrt"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 5.540058983363959e-06
+abs = 0.00017056169449958247
+domain = [0.001, 1000.0]
+source = "probe_sqrt-stock, agents 8ec7b7d"
+digest = "6c83506ab53f678c"
+
+[[verdicts]]
+op = "div"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 2.432270790245131e-07
+abs = 0.1323509542271495
+domain = [0.001, 1000.0]
+source = "probe_div-binary, agents 8ec7b7d"
+digest = "911f02007f71b4c8"
