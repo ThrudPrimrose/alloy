@@ -1475,7 +1475,7 @@ def softhier_setup() -> dict[str, str]:
         "arch": f"{softhier.ARCH_HEADER}  (the SDK headers include flex_cluster_arch.h from their own folder, so the "
         "v1 header replaces the SDK's there)",
         "headers": "riscv_vector.h from the GCC 14 toolchain; flex_*.h from $SOFTHIER_SDK/runtime/runtime/include ("
-        f"{softhier.PINS['sdk']})",
+        f"{softhier.pins()['sdk']})",
         "build": softhier.build_line(),
         "program": "the SDK headers define their functions (not static): put the code in the file with main (the SDK "
         f"frame: flex_barrier_xy_init(); flex_global_barrier_xy(); ...; flex_eoc(0)), then {softhier.link_line()}",

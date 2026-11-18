@@ -39,13 +39,8 @@ HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "softhier.toml"
 VERDICTS_PATH = HERE / "softhier_verified.toml"
 HARNESS = HERE / "softhier_harness.py"
-#: The sources every verdict ran on (alloy-workspace notes/isa-tensix-softhier.md, SoftHier section).
-PINS = {
-    "gvsoc": "gvsoc/gvsoc a453fa09 (branch chi/power_interface): core 4be5293a, engine 16dadd30 (husterZC/gvsoc-engine), "
-    "pulp 6a00247d (chi/update_soft_hier); SystemC 3.0.1; DRAMSys 8565f18 rebuilt against it",
-    "sdk": "pulp-platform/softhier-sdk c32f3eba212e (chi/soft_hier_dram3d)",
-    "toolchain": "husterZC/gun_toolchain v2.0.0 toolchain.tar.xz (sha256 f08793bf081a), riscv32-unknown-elf-gcc 14.2.0",
-}
+#: The pinned sources (softhier_pins.toml): the verdict file records them, and a record of other pins is stale.
+PINS_PATH = HERE / "softhier_pins.toml"
 TARGET = "pulp.chips.soft_hier_old.flex_cluster"
 #: Writes the v1 flex_cluster_arch.h over the SDK's own: its headers include it by quotes, so the compiler takes the
 #: copy beside them before any -I folder (a header of another configuration breaks the barriers without an error).
@@ -182,9 +177,27 @@ def run_line() -> str:
     return f"SOFTHIER_ARCH_FILE=alloy_v1.py gvsoc --target={TARGET} --binary softhier.elf run"
 
 
+def pins() -> dict[str, str]:
+    """softhier_pins.toml as the verdict file records it: one line per source."""
+    found = tomllib.loads(PINS_PATH.read_text())
+    gvsoc = found["gvsoc"]
+    submodules = ", ".join(f"{name} {commit}" for name, commit in gvsoc["submodules"].items())
+    return {
+        "base": found["base"]["image"],
+        "gvsoc": f"{gvsoc['url']} {gvsoc['commit']} ({submodules})",
+        "sdk": f"{found['sdk']['url']} {found['sdk']['commit']}",
+        "toolchain": f"{found['toolchain']['url']} sha256:{found['toolchain']['sha256']}",
+        "systemc": f"{found['systemc']['url']} {found['systemc']['commit']}",
+        "dramsys": f"{found['dramsys']['url']} {found['dramsys']['commit']}",
+    }
+
+
 def digest(row: Row, dtype: str) -> str:
-    """What a run of ``row`` at ``dtype`` checked: its code, kind, unit, the configuration, the flags, the bound."""
-    checked = [code(row, dtype), row.kind, row.unit, dtype, config(), FLAGS, tolerance(row, dtype)]
+    """What a run of ``row`` at ``dtype`` checked: its code and the code of the waits its program runs, kind, unit,
+    the configuration, the flags, the bound, and the harness that drew the inputs and compared the results."""
+    waits = [code(w, dtype) for w in rows() if w.checked_by == row.key()]
+    harness = hashlib.sha256(HARNESS.read_bytes()).hexdigest()
+    checked = [code(row, dtype), waits, row.kind, row.unit, dtype, config(), FLAGS, tolerance(row, dtype), harness]
     return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
 
 
@@ -194,10 +207,13 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
 
 
 def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str], Verdict]:
-    """``(name, dtype)`` -> the recorded verdict of that row as it is now: a record of a row changed since its run is
-    stale and left out, so the row is unverified until it runs again."""
+    """``(name, dtype)`` -> the recorded verdict of that row as it is now: a record of a row changed since its run, or
+    a record made on other pins, is stale and left out, so the row is unverified until it runs again."""
+    record = recorded(path)
+    if any(record.get(key) != value for key, value in pins().items()):
+        return {}
     current = {(r.key(), d): digest(r, d) for r in rows() for d in r.dtypes}
-    found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
+    found = (Verdict(**v) for v in record.get("verdicts", []))
     return {(v.name, v.dtype): v for v in found if current.get((v.name, v.dtype)) == v.digest}
 
 
@@ -258,7 +274,7 @@ def verdicts_text(found: list[Verdict], wrong: list[Verdict], run: str, image: s
         "# Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated",
         "# SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.",
         f'run = "{run}"',
-        *(f'{key} = "{value}"' for key, value in PINS.items()),
+        *(f"{key} = {json.dumps(value)}" for key, value in pins().items()),
         f'target = "{TARGET}"',
         *([f'image = "{image}"'] if image else []),
         "",

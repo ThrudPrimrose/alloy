@@ -28,7 +28,7 @@ def test_every_row_at_every_dtype_has_a_passing_gvsoc_run_of_its_current_code():
             assert verdict is not None, (row.key(), dtype)
             assert verdict.ok, (row.key(), dtype, verdict.error)
     assert len(verdicts) == len(softhier.harness_rows(with_planted=False))
-    assert softhier.recorded()["sdk"] == softhier.PINS["sdk"] and softhier.recorded()["gvsoc"] == softhier.PINS["gvsoc"]
+    assert {key: softhier.recorded()[key] for key in softhier.pins()} == softhier.pins()
 
 
 def test_every_planted_wrong_row_was_run_and_failed_its_check():
@@ -50,6 +50,31 @@ def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path:
     sut = softhier.verdicts(path)
 
     assert sut == {("add", "f32"): current}
+
+
+def test_a_record_made_on_other_pins_is_stale(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    add = next(r for r in softhier.rows() if r.op == "add")
+    current = softhier.Verdict("add", "f32", ok=True, rel=0.0, digest=softhier.digest(add, "f32"))
+    path = tmp_path / "verified.toml"
+    path.write_text(softhier.verdicts_text([current], [], "2026-11-18"))
+    moved = softhier.pins() | {"sdk": "https://github.com/pulp-platform/softhier-sdk.git 0000000"}
+
+    assert softhier.verdicts(path) == {("add", "f32"): current}
+    monkeypatch.setattr(softhier, "pins", lambda: moved)
+    assert softhier.verdicts(path) == {}
+
+
+def test_a_changed_wait_or_harness_changes_the_digest_of_the_row_whose_program_runs_it(monkeypatch: pytest.MonkeyPatch):
+    rows = softhier.rows()
+    copy_1d = next(r for r in rows if r.key() == "copy_1d")
+    before = softhier.digest(copy_1d, "bytes")
+    changed = tuple(dataclasses.replace(r, code=r.code + "// changed\n") if r.key() == "wait_idma" else r for r in rows)
+    monkeypatch.setattr(softhier, "rows", lambda: changed)
+    after_wait = softhier.digest(copy_1d, "bytes")
+    monkeypatch.setattr(softhier, "rows", lambda: rows)
+    monkeypatch.setattr(softhier, "HARNESS", pathlib.Path(__file__))
+
+    assert len({before, after_wait, softhier.digest(copy_1d, "bytes")}) == 3
 
 
 def test_a_wait_row_is_checked_by_the_program_of_the_row_that_issues_its_work():
