@@ -209,6 +209,8 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     """Alloy on ``request.kernel`` in ``request.mode``: profile verifies and times every candidate here, speculative
     links the predicted pick of each scope (verified, never timed). A GPU task takes :func:`gpu_codegen`."""
     if request.language in GPU_LANGUAGES:
+        if request.sources or request.mode is Mode.REFERENCE:
+            raise api.NothingToGenerate("alloy_sweep and alloy_reference take CPU tasks; this task is GPU code")
         return gpu_codegen(request)
     spec = BenchSpec.load(request.kernel)
     matrix = configuration_matrix.load()

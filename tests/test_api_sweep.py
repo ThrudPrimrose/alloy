@@ -62,3 +62,15 @@ def test_a_unit_named_after_no_scope_is_refused(tmp_path):
 
     with pytest.raises(api.NotAScope, match="nope"):
         api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=gcc_only(tmp_path), sources={"nope": stray})
+
+
+def test_reference_mode_links_each_scopes_default_build_unswept(tmp_path):
+    manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+
+    sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=gcc_only(tmp_path), mode=Mode.REFERENCE)
+
+    (report,) = sut.scopes
+    assert len(report.builds) == 1 and not report.pruned
+    assert sut.best is not None and sut.timings is None
+    assert {s.symbol: s.candidate for s in sut.best.scopes} == {report.scope.symbol: report.builds[0].name}

@@ -41,6 +41,7 @@ def run(
     finite_inputs: bool = False,
     ranges: Mapping[str, Interval] | None = None,
     sources: Mapping[str, pathlib.Path] | None = None,
+    reference_only: bool = False,
 ) -> list[ScopeReport]:
     """Build every candidate of every scope under ``out/scopes/<symbol>`` in three stages: each compiler's default,
     then every cell that sets no vector width or tail, then the vector cells; each stage minus what :func:`prune.prune`
@@ -50,7 +51,8 @@ def run(
 
     ``sources`` maps a scope symbol to a translation unit that replaces its rendering (an agent's edit of
     ``best/scopes/<symbol>.c``): the scope's reference stays its rendered default, the one build every other is
-    verified against, and every candidate of the unit's language compiles the unit as ``agent_<candidate>``."""
+    verified against, and every candidate of the unit's language compiles the unit as ``agent_<candidate>``.
+    ``reference_only`` builds each compiler's default and keeps the reference alone."""
     reports = []
     host_isas = matrix.host_isas(machine.cpu_flags())
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
@@ -66,6 +68,9 @@ def run(
             facts = prune.facts(scope, ranges)
             natives = [c for c in candidates if prune.is_native(c)]
             first = dict(zip(natives, built(natives), strict=True))
+            if reference_only:
+                reports.append(ScopeReport(scope, (reference_first(list(first.values()))[0],)))
+                continue
             if sources and scope.symbol in sources:
                 reference = reference_first(list(first.values()))[0]
                 unit = sources[scope.symbol]

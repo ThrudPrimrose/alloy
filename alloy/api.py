@@ -148,13 +148,23 @@ def generate(
         raise NotAScope(f"{', '.join(unknown)}: no scope of {sdfg.name} has that symbol; its scopes: {symbols}")
     out.mkdir(parents=True, exist_ok=True)
     declared = ranges.declared(manifest.spec.init.domains) if manifest is not None and manifest.spec.init else {}
-    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, ranges=declared, sources=sources)
+    reports = sweep.run(
+        program,
+        matrix,
+        out,
+        finite_inputs=finite_inputs,
+        ranges=declared,
+        sources=sources,
+        reference_only=mode == Mode.REFERENCE,
+    )
     timings, best, commands, predicted, picked = None, None, None, None, None
     cases = test_cases(program, manifest)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
     linker = Linker(program, matrix, out)
     winners: dict[str, Build] = {}
-    if mode == Mode.SPECULATIVE:
+    if mode == Mode.REFERENCE:  # the reference is what every other build is verified against
+        winners = {r.scope.symbol: r.builds[0] for r in reports}
+    elif mode == Mode.SPECULATIVE:
         known = known_sizes(program, running)
         sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
         predicted = predict.predictions(reports, matrix, sizes, known is not None)

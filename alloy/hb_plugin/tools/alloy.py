@@ -25,6 +25,9 @@ MODES = {
     "timed). Answers with the folder of sources and a Makefile (run `make` to build the library, then submit it), "
     "each scope's compiler and flags, and the paths of the ranked report and of the advice for scopes Alloy left "
     "short.",
+    "reference": "The kernel's default C/C++ from DaCe, split into one translation unit per scope at the compiler's "
+    "defaults, nothing swept: the starting point to edit. Answers with the folder of sources and a Makefile (run "
+    "`make` to build the library, then submit it) and each scope's compiler and flags.",
 }
 #: Appended on a HIP task, where either mode answers with the GPU form.
 GPU_NOTE = (

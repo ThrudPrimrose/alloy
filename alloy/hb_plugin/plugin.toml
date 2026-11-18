@@ -47,6 +47,12 @@ tools = ["alloy_profile", "alloy_sweep", "alloy_isa"]
 overlays = ["alloy:prompt/overlay.yaml"]
 env = { JUDGE_INPUT_MODE = "any" }
 
+# The full system from DaCe's default C instead of Alloy's tuned C (the agent-study's second starting point).
+[packets.alloy-full-reference]
+extends = "alloy-full"
+name = "Alloy (default start, sweep, ISA lookup)"
+tools = ["alloy_reference", "alloy_sweep", "alloy_isa"]
+
 # The intrinsics reference alone: the agent writes its own source, so the input mode stays the benchmark's.
 [packets.alloy-isa]
 name = "Alloy (ISA lookup)"

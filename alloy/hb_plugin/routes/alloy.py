@@ -55,7 +55,7 @@ ISA_COMMANDS = frozenset(
 #: Exit codes that are answers, by command: ``ask`` exits 2 when the target cannot (the refusal with its block,
 #: nearest requests, and fix is the answer); the other queries exit 3 for an answer that is no row.
 ANSWER_CODES = {"ask": (0, 2), "ask-all": (0, 2)}
-MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value)
+MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value, Mode.REFERENCE.value)
 #: ``alloy_sweep``: profile mode over the agent's edited ``best/``, each ``scopes/<symbol>.<c|cpp>`` in place of the
 #: scope's rendering.
 SWEEP = "sweep"
