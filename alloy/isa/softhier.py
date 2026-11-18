@@ -302,7 +302,8 @@ def record(output: str, image: str = "") -> tuple[list[Verdict], list[Verdict]]:
 
 def image_digest(image: pathlib.Path) -> str:
     """``sha256:<hex>`` of an image file, as the verdict file records it."""
-    return "sha256:" + hashlib.sha256(image.read_bytes()).hexdigest()
+    with image.open("rb") as stream:  # in chunks: an image holds gigabytes
+        return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def run_harness(jobs: int = 8, image: pathlib.Path | None = None) -> str:

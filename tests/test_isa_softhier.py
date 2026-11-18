@@ -80,6 +80,21 @@ def test_a_changed_wait_or_harness_changes_the_digest_of_the_row_whose_program_r
     assert len({before, after_wait, softhier.digest(copy_1d, "bytes")}) == 3
 
 
+def test_an_image_is_hashed_in_chunks_not_read_whole(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    import hashlib
+
+    image = tmp_path / "softhier-v1.sif"
+    image.write_bytes(b"sif" * 100_000)
+    expected = "sha256:" + hashlib.sha256(image.read_bytes()).hexdigest()
+
+    def whole(path: pathlib.Path) -> bytes:
+        raise AssertionError(f"read whole: {path}")
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", whole)
+
+    assert softhier.image_digest(image) == expected
+
+
 def test_a_wait_row_is_checked_by_the_program_of_the_row_that_issues_its_work():
     waits = [r for r in softhier.rows() if r.op == "wait"]
 
