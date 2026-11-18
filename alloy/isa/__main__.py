@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any, NoReturn
 
-from alloy.isa import ALIASES, OPS, ask, load, simt, softhier, tensix, tensix_harness, tile
+from alloy.isa import ALIASES, OPS, ask, load, pages, simt, softhier, tensix, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -228,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
     ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
 
+    page_p = commands.add_parser(
+        "page", help="every checked fact of a target as one Markdown page, the lookup's text: page tensix | softhier"
+    )
+    page_p.add_argument("target", help=", ".join(pages.TARGETS))
+
     all_p = commands.add_parser(
         "ask-all",
         help="requests that run as one kernel: ask-all sm90 'copy src=global:f16:64x64 "
@@ -260,6 +265,9 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return ask_command(args)
     if args.command == "ask-all":
         return ask_all_command(args)
+    if args.command == "page":
+        print(pages.page(args.target))
+        return 0
     if args.command == "kernel":
         level = args.level
         table.isa(args.isa)
@@ -443,40 +451,12 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
             )
         )
         return 0
-    print(f"tensix/{dtype}/{op}: {OPS[op].semantics if op in OPS else op}, applied to a 32x32 tile")
-    run = tensix.recorded()
+    print(pages.tensix_title(dtype, op))
     for row, verdict in picked:
-        print(f"  {row.unit} ({row.kind}): header {row.header}")
-        fields = {"kind": row.kind, "header": row.header}
-        for version, new in (("v06", False), ("v08", True)):
-            lines = " ".join(f'#include "{h}"' for h in tensix_harness.compute_headers(fields, new))
-            print(
-                f'    includes [{version}] compute: {lines}; reader/writer: #include "{tensix_harness.dataflow_include(new)}"'
-            )
-        for name, value in (("init", row.init), ("call", row.call)):
-            spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
-            print(f"    {name}: {spelled}")
-        if verdict is None:
-            print("    unverified: no recorded run")
-        elif verdict.ok:
-            # The ttsim run uses tt-metal 0.8x, so a row with per-version spellings is verified in its [v08] one only.
-            which = "" if isinstance(row.init, str) and isinstance(row.call, str) else ", the [v08] spelling only"
-            print(
-                f"    verified on ttsim {run.get('ttsim', '').split(' ')[0]} (simulated Blackhole) with tt-metal 0.8x"
-                f"{which}: max rel error {verdict.rel:.2g}"
-            )
-        else:
-            print(f"    FAILED on ttsim: {verdict.error[:200]}")
-        if row.note:
-            print(f"    note: {row.note}")
+        print("\n".join(pages.tensix_row_lines(row, [("", verdict)])))
     for rung in tensix.rungs(op, dtype):
-        print(f"  SFPU math kernel {rung.name}: {rung.error_ulp:.3g} ulp, measured on the card ({rung.card})")
-        print(f"    init: {rung.init}")
-        print(f"    call: {rung.call}")
-        print(f"    note: {rung.note}")
-        print("    code:")
-        print("".join(f"      {line}\n" for line in rung.code.splitlines()), end="")
-    print(f"  note: {tensix.table()['target']['note']}")
+        print("\n".join(pages.tensix_rung_lines(rung)))
+    print(pages.tensix_target_note())
     return 2 if any(v is not None and not v.ok for _, v in picked) else 0
 
 
@@ -499,20 +479,8 @@ def softhier_lookup(op: str, dtype: str, as_json: bool) -> int:
                           for (r, d), v in zip(picked, verdicts, strict=True)]))  # fmt: skip
         return 0
     for (row, spelled_as), verdict in zip(picked, verdicts, strict=True):
-        print(f"softhier/{dtype}/{op}: {row.key()} on {row.unit}: {softhier.spelled(row.call, spelled_as)}")
-        if verdict is None:
-            print("  unverified: no current GVSoC run")
-        elif verdict.ok:
-            inside = f" (inside the {row.checked_by} program)" if row.checked_by else ""
-            error = f": max rel error {verdict.rel:.2g}" if verdict.rel else ""
-            print(f"  verified on GVSoC {softhier.TARGET}{inside}{error}")
-        else:
-            print(f"  FAILED on GVSoC: {verdict.error[:200]}")
-        if row.note:
-            print(f"  note: {row.note}")
-        print(softhier.code(row, spelled_as))
-    print(f"build: {softhier.build_line()}")
-    print(f"note: {softhier.table()['target']['note']}")
+        print("\n".join(pages.softhier_row_lines(row, f"softhier/{dtype}/{op}", spelled_as, verdict)))
+    print("\n".join(pages.softhier_tail()))
     return 2 if any(v is not None and not v.ok for v in verdicts) else 0
 
 
