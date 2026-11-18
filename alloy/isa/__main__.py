@@ -64,8 +64,52 @@ MATRIX_WORDS = ("mma", "mfma", "wmma", "wgmma", "gemm", "matmul")
 CDNA_MNEMONIC = re.compile(r"^(v_|s_|ds_|global_|buffer_|flat_|scratch_)")
 
 
+#: GPU instructions that are not SIMT rows, and the command that answers what they do.
+INSTRUCTION_HOME = {
+    **dict.fromkeys(
+        ("tma", "tma_load", "cp_async_bulk"),
+        "a global-to-shared tile copy: ask sm90 copy --src global:f16:RxC --dst shared:f16:RxC",
+    ),
+    **dict.fromkeys(
+        ("ldmatrix", "stmatrix"),
+        "a shared-to-register fragment move for mma.sync; the sm90 tile's wgmma reads A and B from shared "
+        "memory through descriptors instead: tile sm90 gemm M N K --in f16 --acc f32",
+    ),
+    **dict.fromkeys(
+        ("tma_store",),
+        "a shared-to-global tile copy, which no checked row covers yet: write it as plain per-thread stores",
+    ),
+    **dict.fromkeys(
+        (
+            "ds_read_b128",
+            "ds_write_b128",
+            "global_load_dwordx4",
+            "buffer_load_dwordx4",
+            "global_store_dwordx4",
+            "ld_global_v4",
+            "ld.global.v4",
+        ),
+        "a 16-byte load or store per lane: lookup <dialect> load_wide (or store_wide) <dtype>",
+    ),
+    **dict.fromkeys(
+        ("buffer_load", "buffer_load_dword", "global_load", "global_store", "ds_read", "ds_write"),
+        "a load or store per lane: lookup <dialect> load (or store) <dtype>",
+    ),
+    **dict.fromkeys(
+        ("s_waitcnt", "cp_async_wait", "wgmma_wait", "mbarrier", "mbarrier_wait"),
+        "a wait on an asynchronous unit: ask <target> wait --on <token>",
+    ),
+    **dict.fromkeys(
+        ("sched_barrier", "s_barrier", "bar_sync", "syncthreads", "__syncthreads", "fence_proxy"),
+        "an ordering point: ask <target> fence --kind proxy|operand",
+    ),
+}
+
+
 def matrix_note(op: str) -> str:
-    """Where a matrix instruction is answered, for an op that names one; else nothing."""
+    """Where a matrix instruction or another GPU instruction without a SIMT row is answered; else nothing."""
+    if op.lower() in INSTRUCTION_HOME:
+        return f"; {op} is {INSTRUCTION_HOME[op.lower()]}"
     if op.lower() not in MATRIX_WORDS:
         return ""
     return (
