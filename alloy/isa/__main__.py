@@ -467,6 +467,8 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
             )
         else:
             print(f"    FAILED on ttsim: {verdict.error[:200]}")
+        if card := tensix.card_line(row, dtype):
+            print(card)
         if row.note:
             print(f"    note: {row.note}")
     for rung in tensix.rungs(op, dtype):

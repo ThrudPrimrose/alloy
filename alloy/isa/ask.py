@@ -989,6 +989,7 @@ def tile_call(request: Request) -> Answer:
     each = "one init, then one call per tile" if once else "the init before each tile's call, as the checked program"
     notes = (
         *((row.note,) if row.note else ()),
+        *((card.strip(),) if (card := tensix.card_line(row, dtype)) else ()),
         *((f"{tiles} tiles: {each}",) if tiles > 1 else ()),
         *(("the FPU reads its sources at TF32 (19 bits): about 1e-3 relative error in f32; unit sfpu keeps f32",)
           if unit == "fpu" and dtype == "f32" else ()),

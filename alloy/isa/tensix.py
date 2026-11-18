@@ -25,11 +25,27 @@ import tomllib
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-__all__ = ["IMAGE", "ROWS_PATH", "Row", "Rung", "Verdict", "digest", "rows", "rungs", "verdicts", "verify"]
+__all__ = [
+    "CARD_PATH",
+    "IMAGE",
+    "ROWS_PATH",
+    "Row",
+    "Rung",
+    "Verdict",
+    "card_line",
+    "card_verdicts",
+    "digest",
+    "rows",
+    "rungs",
+    "verdicts",
+    "verify",
+]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "tensix.toml"
 VERDICTS_PATH = HERE / "tensix_verified.toml"
+#: The rows measured on a Blackhole card with tt-metal 0.63 (variant card-0.63), beside ttsim's (variant ttsim-0.8x).
+CARD_PATH = HERE / "tensix_card.toml"
 HARNESS = HERE / "tensix_harness.py"
 #: The tt-metal release image the simulator runs (tt-metal 0.8x, ttnn wheel), pinned: ``latest-rc`` moves.
 IMAGE = (
@@ -71,6 +87,10 @@ class Verdict:
     rel: float | None
     error: str = ""
     digest: str = ""
+    #: A card record's max absolute error, input range, and the probe that measured it (ttsim records leave them out).
+    abs: float | None = None
+    domain: tuple[float, float] | None = None
+    source: str = ""
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -122,12 +142,36 @@ def digest(row: Row, dtype: str) -> str:
     return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
 
 
-def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str, str], Verdict]:
-    """``(op, dtype, unit)`` -> the recorded verdict of that row as it is now: a record of a row changed since its
-    run is stale and left out, so the row is unverified until it runs again."""
-    current = {(r.op, d, r.unit): digest(r, d) for r in rows() for d in dtypes()}
+def current(path: pathlib.Path) -> dict[tuple[str, str, str], Verdict]:
+    """``(op, dtype, unit)`` -> the verdict recorded in ``path`` of that row as it is now: a record of a row changed
+    since its run is stale and left out, so the row is unverified until it runs again."""
+    now = {(r.op, d, r.unit): digest(r, d) for r in rows() for d in dtypes()}
     found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
-    return {(v.op, v.dtype, v.unit): v for v in found if current.get((v.op, v.dtype, v.unit)) == v.digest}
+    return {(v.op, v.dtype, v.unit): v for v in found if now.get((v.op, v.dtype, v.unit)) == v.digest}
+
+
+def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str, str], Verdict]:
+    """The ttsim verdicts (variant ttsim-0.8x) of the rows as they are now."""
+    return current(path)
+
+
+def card_verdicts() -> dict[tuple[str, str, str], Verdict]:
+    """The card measurements (variant card-0.63) of the rows as they are now."""
+    return current(CARD_PATH)
+
+
+def card_line(row: Row, dtype: str) -> str:
+    """The card-0.63 record of ``row`` at ``dtype`` as one line, or "" when the card has no current record of it."""
+    verdict = card_verdicts().get((row.op, dtype, row.unit))
+    if verdict is None or verdict.domain is None:
+        return ""
+    lo, hi = verdict.domain
+    state = "within" if verdict.ok else "OUTSIDE"
+    return (
+        f"    measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [{lo:g}, {hi:g}]: "
+        f"max rel error {verdict.rel:.3g}, max abs error {verdict.abs:.3g} ({state} the row's bound "
+        f"{TOLERANCE[dtype]:g} rel; {verdict.source})"
+    )
 
 
 def spelled(value: str | dict[str, str], version: str) -> str:
