@@ -86,7 +86,13 @@ if [ ! -e gvsoc/third_party/DRAMSys/libDRAMSys_Simulator.so ]; then
     while read -r name url sha256; do  # each archive DRAMSys's CMake would fetch, checked, as its source folder
         curl -fsSL -o "$BUILD/$name.archive" "$url"
         echo "$sha256  $BUILD/$name.archive" | sha256sum -c -
-        mkdir -p "$BUILD/deps/$name" && tar -xf "$BUILD/$name.archive" --strip-components=1 -C "$BUILD/deps/$name"
+        mkdir -p "$BUILD/deps/$name"
+        if [[ $url == *.zip ]]; then  # one top folder, stripped as tar's --strip-components=1 does
+            python3 -m zipfile -e "$BUILD/$name.archive" "$BUILD/deps/$name.unzip"
+            mv "$BUILD/deps/$name.unzip"/*/* "$BUILD/deps/$name" && rm -r "$BUILD/deps/$name.unzip"
+        else
+            tar -xf "$BUILD/$name.archive" --strip-components=1 -C "$BUILD/deps/$name"
+        fi
         fetched+=("-DFETCHCONTENT_SOURCE_DIR_$name=$BUILD/deps/$name")
     done < <(python3 -c 'import sys, tomllib
 for f in tomllib.load(open(sys.argv[1], "rb"))["dramsys"]["fetch"]: print(f["name"], f["url"], f["sha256"])' "$PINS")
