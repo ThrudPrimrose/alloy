@@ -79,5 +79,6 @@ markers = [
     "cuda: needs nvcc (compiles device units for sm_89; no device needed)",
     "hip: needs hipcc with hipcub (compiles device units for gfx90a; no device needed)",
     "tensix: needs docker; runs every Tensix row on ttsim inside the pinned tt-metal image",
+    "softhier: needs GVSoC with the SoftHier v1 target and the GCC 14 RISC-V toolchain (SOFTHIER_GVSOC, SOFTHIER_SDK); skipped without them",
     "nvidia: needs an NVIDIA GPU to run on (and nvcc)",
 ]

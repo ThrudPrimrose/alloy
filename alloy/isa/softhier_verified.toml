@@ -1,0 +1,172 @@
+# Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated
+# SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.
+run = "2026-11-18"
+gvsoc = "gvsoc/gvsoc a453fa09 (branch chi/power_interface): core 4be5293a, engine 16dadd30 (husterZC/gvsoc-engine), pulp 6a00247d (chi/update_soft_hier); SystemC 3.0.1; DRAMSys 8565f18 rebuilt against it"
+sdk = "pulp-platform/softhier-sdk c32f3eba212e (chi/soft_hier_dram3d)"
+toolchain = "husterZC/gun_toolchain v2.0.0 toolchain.tar.xz (sha256 f08793bf081a), riscv32-unknown-elf-gcc 14.2.0"
+target = "pulp.chips.soft_hier_old.flex_cluster"
+
+[[verdicts]]
+name = "load"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "8a0ae999ea75f1c9"
+
+[[verdicts]]
+name = "load"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "3ad6fb1271b8dafa"
+
+[[verdicts]]
+name = "store"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "e5f80a9d4aa34173"
+
+[[verdicts]]
+name = "store"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "922751a16261609a"
+
+[[verdicts]]
+name = "add"
+dtype = "f32"
+ok = true
+rel = 3.090025163928925e-08
+digest = "ab4a60f929e3735f"
+
+[[verdicts]]
+name = "add"
+dtype = "f16"
+ok = true
+rel = 0.00025316455696202533
+digest = "686283fce3227282"
+
+[[verdicts]]
+name = "mul"
+dtype = "f32"
+ok = true
+rel = 2.896295179145227e-08
+digest = "a1571b2f884431d6"
+
+[[verdicts]]
+name = "mul"
+dtype = "f16"
+ok = true
+rel = 0.00024849959873624364
+digest = "be527a31ab2b01bc"
+
+[[verdicts]]
+name = "fma"
+dtype = "f32"
+ok = true
+rel = 5.131930643170882e-08
+digest = "4b5cfcc9c5d7ea01"
+
+[[verdicts]]
+name = "fma"
+dtype = "f16"
+ok = true
+rel = 0.0003446366061054469
+digest = "2fe59c021ee1f093"
+
+[[verdicts]]
+name = "reduce_add"
+dtype = "f32"
+ok = true
+rel = 1.0852382291140491e-07
+digest = "65b93ab157514eac"
+
+[[verdicts]]
+name = "reduce_add"
+dtype = "f16"
+ok = true
+rel = 0.00019373587342589604
+digest = "3b7166f08a6d4369"
+
+[[verdicts]]
+name = "reduce_max"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "bd06ead13607a722"
+
+[[verdicts]]
+name = "reduce_max"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "cc14deed4db75cec"
+
+[[verdicts]]
+name = "copy_1d"
+dtype = "bytes"
+ok = true
+rel = 0.0
+digest = "545d3eddcec4b3be"
+
+[[verdicts]]
+name = "copy_2d"
+dtype = "bytes"
+ok = true
+rel = 0.0
+digest = "dbe35a3050064b98"
+
+[[verdicts]]
+name = "mma"
+dtype = "f16"
+ok = true
+rel = 0.00022130849714876254
+digest = "8181d9839c8db2e4"
+
+[[verdicts]]
+name = "barrier_cluster"
+dtype = "none"
+ok = true
+rel = 0.0
+digest = "f8e1eba26e903a8e"
+
+[[verdicts]]
+name = "barrier_global"
+dtype = "none"
+ok = true
+rel = 0.0
+digest = "63bc76895ce69d0c"
+
+[[planted]]
+name = "planted_add_is_sub"
+dtype = "f32"
+ok = false
+rel = 1.0324731362482324
+error = "max error 1.03 over max |reference| > 1e-06"
+digest = "600fc70094619e05"
+
+[[planted]]
+name = "planted_add_is_sub"
+dtype = "f16"
+ok = false
+rel = 1.0326582278481014
+error = "max error 1.03 over max |reference| > 0.001"
+digest = "75951ea4c699b4b4"
+
+[[planted]]
+name = "planted_copy_2d_strides_swapped"
+dtype = "bytes"
+ok = false
+rel = 1.0
+error = "126 words differ, first at 10"
+digest = "df3de63f25c83ae1"
+
+[[planted]]
+name = "planted_barrier_global_removed"
+dtype = "none"
+ok = false
+rel = 1.0
+error = "3 words differ, first at 1"
+digest = "819a7657e9b90cce"

@@ -1,0 +1,310 @@
+# Copyright 2026 ETH Zurich and the Alloy authors.
+"""The SoftHier v1 rows (``softhier.toml``) and their verdicts (``softhier_verified.toml``).
+
+A SoftHier row is C that a kernel on the GVSoC model ``pulp.chips.soft_hier_old.flex_cluster`` calls: an RVV loop on
+the Spatz vector unit, an iDMA copy and its wait, a RedMulE product and its wait, or a barrier. Rows are verified by
+running them on GVSoC (``softhier_harness.py``); ``python -m alloy.isa.softhier verify`` does that where the simulator
+is installed, and ``record`` turns the harness's output from another machine into the verdict file.
+
+    python -m alloy.isa.softhier arch                  # the v1 architecture file (SOFTHIER_ARCH_FILE)
+    python -m alloy.isa.softhier rows > rows.json      # the harness input, planted rows included
+    python -m alloy.isa.softhier verify                # run the harness here (SOFTHIER_SDK, SOFTHIER_GVSOC set)
+    python -m alloy.isa.softhier record out.txt        # verdicts from a harness run elsewhere
+"""
+
+import argparse
+import dataclasses
+import datetime
+import functools
+import hashlib
+import json
+import os
+import pathlib
+import string
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass
+
+__all__ = ["ROWS_PATH", "Row", "Verdict", "build_line", "code", "digest", "rows", "verdicts"]
+
+HERE = pathlib.Path(__file__).parent
+ROWS_PATH = HERE / "softhier.toml"
+VERDICTS_PATH = HERE / "softhier_verified.toml"
+HARNESS = HERE / "softhier_harness.py"
+#: The sources every verdict ran on (alloy-workspace notes/isa-tensix-softhier.md, SoftHier section).
+PINS = {
+    "gvsoc": "gvsoc/gvsoc a453fa09 (branch chi/power_interface): core 4be5293a, engine 16dadd30 (husterZC/gvsoc-engine), "
+    "pulp 6a00247d (chi/update_soft_hier); SystemC 3.0.1; DRAMSys 8565f18 rebuilt against it",
+    "sdk": "pulp-platform/softhier-sdk c32f3eba212e (chi/soft_hier_dram3d)",
+    "toolchain": "husterZC/gun_toolchain v2.0.0 toolchain.tar.xz (sha256 f08793bf081a), riscv32-unknown-elf-gcc 14.2.0",
+}
+TARGET = "pulp.chips.soft_hier_old.flex_cluster"
+#: Writes the v1 flex_cluster_arch.h over the SDK's own: its headers include it by quotes, so the compiler takes the
+#: copy beside them before any -I folder (a header of another configuration breaks the barriers without an error).
+ARCH_HEADER = (
+    "python -m alloy.isa.softhier arch > alloy_v1.py; python $SOFTHIER_SDK/utilities/config.py alloy_v1.py "
+    "--output-dir $SOFTHIER_SDK/runtime/runtime/include"
+)
+#: The SDK's compile flags (runtime/CMakeLists.txt) with zvfh added, so f16 vector intrinsics compile.
+FLAGS = ["-mabi=ilp32d", "-mcmodel=medlow", "-march=rv32imafdv_zfh_zvfh", "-O3", "-ffast-math", "-fno-builtin",
+         "-fno-tree-vectorize", "-fno-common", "-ffunction-sections"]  # fmt: skip
+#: Per kind and element type: the largest max |out - ref| / max |ref| a run may show. One rounding for elementwise
+#: rows; a sum of 300 terms in the element type for reductions; f16 rounding of an f32 sum for the product.
+TOLERANCE = {"f32": 1e-6, "f16": 1e-3, "reduction_f32": 1e-4, "reduction_f16": 2e-2, "mma_f16": 1e-2}
+C_TYPES = {"f32": "float", "f16": "_Float16"}
+#: Wrong rows the harness must fail: a row's name, and the text in its code swapped for the wrong one.
+PLANTED = {
+    "planted_add_is_sub": ("add", "__riscv_vfadd_vv_", "__riscv_vfsub_vv_"),
+    "planted_copy_2d_strides_swapped": (
+        "copy_2d", "flex_dma_async_2d(dst, src, row_bytes, dst_stride, src_stride, rows)",
+        "flex_dma_async_2d(dst, src, row_bytes, src_stride, dst_stride, rows)",
+    ),
+    "planted_barrier_global_removed": ("barrier_global", "flex_global_barrier_xy();", ";"),
+}  # fmt: skip
+RUN_TIMEOUT = 3600
+
+
+@dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
+class Row:
+    """One way to do ``op`` on SoftHier: its unit (spatz, idma, redmule, cluster), the ``kind`` of program that checks
+    it, the element types it was run at, the call it makes, and its ``code`` (``$t``, ``$b``, ``$s`` stand for the C
+    type, its bits, and its RVV suffix). ``name`` tells apart rows of one op."""
+
+    op: str
+    unit: str
+    kind: str
+    dtypes: tuple[str, ...]
+    call: str
+    code: str
+    name: str = ""
+    note: str = ""
+    #: A wait runs inside the program of the row that issues its work, whose code holds the wait's code.
+    checked_by: str = ""
+
+    def key(self) -> str:
+        return self.name or self.op
+
+
+@dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
+class Verdict:
+    """One row's run at one element type; ``digest`` is :func:`digest` of the row as it ran."""
+
+    name: str
+    dtype: str
+    ok: bool
+    rel: float | None
+    error: str = ""
+    digest: str = ""
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def table(path: pathlib.Path = ROWS_PATH) -> dict:
+    return tomllib.loads(path.read_text())
+
+
+def rows() -> tuple[Row, ...]:
+    return tuple(Row(op=op, **row) for op, entries in table()["ops"].items() for row in entries)
+
+
+def config() -> dict:
+    return table()["target"]["config"]
+
+
+def vlmax(dtype: str) -> int:
+    """Elements of one LMUL-8 register group: VLEN * 8 / SEW, VLEN = VLSU ports x port width."""
+    vlen = config()["spatz_num_vlsu_port"] * config()["spatz_vlsu_port_width"]
+    return vlen * 8 // int(dtype[1:])
+
+
+def spelled(text: str, dtype: str) -> str:
+    """``text`` with ``$t``, ``$b``, ``$s`` filled for ``dtype`` (a non-vector row has none)."""
+    if dtype not in C_TYPES:
+        return text
+    return string.Template(text).substitute(t=C_TYPES[dtype], b=dtype[1:], s=dtype)
+
+
+def code(row: Row, dtype: str) -> str:
+    return spelled(row.code, dtype).strip() + "\n"
+
+
+def function(row: Row, dtype: str) -> str:
+    """The function of ``row``'s code the check calls by name (vector and barrier rows)."""
+    return f"alloy_{row.op}_{dtype}" if dtype in C_TYPES else f"alloy_{row.key()}"
+
+
+def tolerance(row: Row, dtype: str) -> float:
+    if row.kind in ("reduction", "mma"):
+        return TOLERANCE[f"{row.kind}_{dtype}"]
+    return TOLERANCE.get(dtype, 0.0)
+
+
+def arch() -> str:
+    """The v1 configuration as the simulator's architecture file, the form of the SDK's examples/SoftHier/config."""
+    lines = ["class FlexClusterArch:", "", "    def __init__(self):"]
+    for name, value in config().items():
+        text = hex(value) if isinstance(value, int) and ("base" in name or "size" in name or "addr" in name) else value
+        lines.append(f"        self.{name} = {text}")
+    return "\n".join(lines) + "\n"
+
+
+def build_line() -> str:
+    """The line that compiles an answer's code, saved as alloy.c, once :data:`ARCH_HEADER` has written the v1
+    flex_cluster_arch.h into the SDK's include folder."""
+    return " ".join(["riscv32-unknown-elf-gcc", *FLAGS, "-I", "$SOFTHIER_SDK/runtime/runtime/include", "-c", "alloy.c",
+                     "-o", "alloy.o"])  # fmt: skip
+
+
+def link_line() -> str:
+    """The line that builds the program: the SDK headers define their functions (not static), so the kernel and main
+    share one file, program.c."""
+    sdk = "$SOFTHIER_SDK/runtime/runtime"
+    return " ".join(["riscv32-unknown-elf-gcc", "-I", f"{sdk}/include", "-T", f"{sdk}/flex_memory.ld",
+                     "-nostartfiles", *FLAGS, "-Wl,--gc-sections", "-o", "softhier.elf", f"{sdk}/flex_start.s",
+                     "program.c"])  # fmt: skip
+
+
+def run_line() -> str:
+    return f"SOFTHIER_ARCH_FILE=alloy_v1.py gvsoc --target={TARGET} --binary softhier.elf run"
+
+
+def digest(row: Row, dtype: str) -> str:
+    """What a run of ``row`` at ``dtype`` checked: its code, kind, unit, the configuration, the flags, the bound."""
+    checked = [code(row, dtype), row.kind, row.unit, dtype, config(), FLAGS, tolerance(row, dtype)]
+    return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
+    return tomllib.loads(path.read_text()) if path.is_file() else {}
+
+
+def verdicts(path: pathlib.Path = VERDICTS_PATH) -> dict[tuple[str, str], Verdict]:
+    """``(name, dtype)`` -> the recorded verdict of that row as it is now: a record of a row changed since its run is
+    stale and left out, so the row is unverified until it runs again."""
+    current = {(r.key(), d): digest(r, d) for r in rows() for d in r.dtypes}
+    found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
+    return {(v.name, v.dtype): v for v in found if current.get((v.name, v.dtype)) == v.digest}
+
+
+def verdict_of(row: Row, dtype: str) -> Verdict | None:
+    """``row``'s current verdict at ``dtype``: a wait's is the verdict of the row whose program runs it."""
+    return verdicts().get((row.checked_by or row.key(), dtype))
+
+
+def planted() -> tuple[Row, ...]:
+    """The wrong rows: real rows with one call changed, which their check must fail."""
+    by_key = {r.key(): r for r in rows()}
+    found = []
+    for name, (real, right, wrong) in PLANTED.items():
+        row = by_key[real]
+        assert right in row.code, (name, right)
+        found.append(dataclasses.replace(row, name=name, code=row.code.replace(right, wrong)))
+    return tuple(found)
+
+
+def harness_rows(with_planted: bool = True) -> list[dict]:
+    """Every row at every element type it runs at, as the harness reads them."""
+    chosen = tuple(r for r in rows() if not r.checked_by) + (planted() if with_planted else ())
+    by_key = {r.key(): r for r in rows()}
+    real = {
+        r.key(): by_key[PLANTED[r.key()][0]] if r.key() in PLANTED else r for r in chosen
+    }  # whose function it calls
+    return [
+        {"name": r.key(), "op": r.op, "dtype": d, "kind": r.kind, "unit": r.unit, "code": code(r, d),
+         "fn": function(real[r.key()], d), "tol": tolerance(r, d)}
+        for r in chosen
+        for d in r.dtypes
+    ]  # fmt: skip
+
+
+def spec(jobs: int = 8, scratch: str | None = None) -> dict:
+    """The harness's input: the configuration, the build, link, and run lines as argument lists, and the rows."""
+    compile_ = ["riscv32-unknown-elf-gcc", *FLAGS, "-I", "{sdk}/runtime/runtime/include", "-c", "alloy.c", "-o",
+                "alloy.o"]  # fmt: skip
+    link = ["riscv32-unknown-elf-gcc", "-I", "{sdk}/runtime/runtime/include", "-T",
+            "{sdk}/runtime/runtime/flex_memory.ld", "-nostartfiles", *FLAGS, "-Wl,--gc-sections", "-o", "softhier.elf",
+            "{sdk}/runtime/runtime/flex_start.s"]  # fmt: skip
+    run = [f"--target={TARGET}", "--binary", "softhier.elf", "run"]
+    return {"arch": arch(), "compile": compile_, "link": link, "run": run, "rows": harness_rows(), "jobs": jobs,
+            "scratch": scratch}  # fmt: skip
+
+
+def parsed(output: str) -> tuple[list[Verdict], list[Verdict]]:
+    """The harness's printed verdicts, digested, split into the table's rows and the planted ones."""
+    by_key = {r.key(): r for r in rows() + planted()}
+    found = [Verdict(**json.loads(line.split(" ", 1)[1])) for line in output.splitlines()
+             if line.startswith("SOFTHIER-VERDICT ")]  # fmt: skip
+    found = [dataclasses.replace(v, digest=digest(by_key[v.name], v.dtype)) for v in found]
+    return [v for v in found if v.name not in PLANTED], [v for v in found if v.name in PLANTED]
+
+
+def verdicts_text(found: list[Verdict], wrong: list[Verdict], run: str) -> str:
+    head = [
+        "# Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated",
+        "# SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.",
+        f'run = "{run}"',
+        *(f'{key} = "{value}"' for key, value in PINS.items()),
+        f'target = "{TARGET}"',
+        "",
+    ]
+    body = []
+    for section, verdicts_ in (("verdicts", found), ("planted", wrong)):
+        for v in verdicts_:
+            fields = {"name": v.name, "dtype": v.dtype, "ok": v.ok, "rel": v.rel, "error": v.error or None,
+                      "digest": v.digest or None}  # fmt: skip
+            body += [f"[[{section}]]", *(f"{k} = {json.dumps(x)}" for k, x in fields.items() if x is not None), ""]
+    return "\n".join(head + body)
+
+
+def record(output: str) -> tuple[list[Verdict], list[Verdict]]:
+    """The harness's output written as :data:`VERDICTS_PATH`; every row and planted row must have a verdict."""
+    found, wrong = parsed(output)
+    expected = len(harness_rows())  # waits run inside their issuers' programs
+    if len(found) + len(wrong) != expected:
+        raise RuntimeError(f"the harness gave {len(found) + len(wrong)} of {expected} verdicts")
+    VERDICTS_PATH.write_text(verdicts_text(found, wrong, datetime.datetime.now(datetime.UTC).date().isoformat()))
+    recorded.cache_clear()
+    return found, wrong
+
+
+def run_harness(jobs: int = 8) -> str:
+    """The harness over every row on the GVSoC of ``SOFTHIER_GVSOC``; its printed output."""
+    for name in ("SOFTHIER_SDK", "SOFTHIER_GVSOC"):
+        if name not in os.environ:
+            raise RuntimeError(f"{name} is not set: the harness builds with the SDK and runs on GVSoC")
+    with tempfile.TemporaryDirectory(prefix="alloy_softhier_") as tmp:
+        work = pathlib.Path(tmp)
+        (work / "rows.json").write_text(json.dumps(spec(jobs, tmp)))
+        done = subprocess.run([sys.executable, str(HARNESS), str(work / "rows.json")], capture_output=True, text=True,
+                              check=False, timeout=RUN_TIMEOUT)  # fmt: skip
+    if done.returncode != 0:
+        raise RuntimeError(f"the harness exited {done.returncode}: {done.stderr[-1500:]}")
+    return done.stdout
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m alloy.isa.softhier", description=__doc__)
+    parser.add_argument("command", choices=("arch", "rows", "verify", "record"))
+    parser.add_argument("output", nargs="?", type=pathlib.Path, help="record: the harness's printed output")
+    parser.add_argument("--jobs", type=int, default=8)
+    args = parser.parse_args(argv)
+    if args.command == "arch":
+        print(arch(), end="")
+        return 0
+    if args.command == "rows":
+        print(json.dumps(spec(args.jobs)))
+        return 0
+    text = args.output.read_text() if args.command == "record" else run_harness(args.jobs)
+    found, wrong = record(text)
+    for v in found + wrong:
+        state = "ok" if v.ok else "FAIL"
+        print(f"{v.name:32} {v.dtype:5} {state} {v.rel if v.rel is not None else ''} {v.error[:120]}")
+    return 1 if any(not v.ok for v in found) or any(v.ok for v in wrong) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
