@@ -398,3 +398,16 @@ def test_whole_rows_of_a_matrix_are_one_run_that_starts_at_their_first_row():
 
     assert isinstance(answer, Feasible), answer
     assert answer.steps[0].spelling == "alloy_copy_1d(local(offset), hbm_west(node, offset) + row0 * 128, 1024)"
+
+
+@pytest.mark.parametrize(("op", "names"), [("reduce_add", ("x", "y")), ("add", ("a", "b", "c")), ("fma", ("x", "y"))])
+def test_a_vector_request_with_operands_its_row_does_not_take_is_invalid(op: str, names: tuple[str, ...]):
+    answer = ask(Request("softhier", op, {name: shared("f32", 64) for name in names}), verify=False)
+
+    assert isinstance(answer, Invalid) and answer.why is Why.OPERANDS
+
+
+def test_a_reduction_of_no_elements_is_invalid():
+    answer = ask(Request("softhier", "reduce_max", {"x": shared("f32", 0)}), verify=False)
+
+    assert isinstance(answer, Invalid) and answer.why is Why.MALFORMED

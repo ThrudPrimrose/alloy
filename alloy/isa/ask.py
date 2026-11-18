@@ -1444,6 +1444,9 @@ SOFTHIER_BYTES = {"f64": 8, "f32": 4, "i32": 4, "f16": 2, "bf16": 2, "i16": 2, "
 #: SoftHier's completion tokens: the wait row's name and what the wait completes.
 SOFTHIER_WAITS = {"idma": ("wait_idma", "the iDMA transfers the cluster's DMA core issued have landed"),
                   "redmule": ("wait_redmule", "RedMulE has written the product into c")}  # fmt: skip
+#: The operand names a Spatz row takes, per kind: one operand that names the type and length, or all of them.
+SOFTHIER_OPERANDS = {"move": ({"x"}, {"src", "dst"}), "binary": ({"x"}, {"a", "b"}, {"x", "y"}),
+                     "fma": ({"x"}, {"a", "b", "c"}), "reduction": ({"x"},)}  # fmt: skip
 SOFTHIER_INTO_TCDM = ("copy it into the cluster's TCDM first: ask softhier copy --src global:<type>:<shape> --dst "
                       "shared:<type>:<shape> (iDMA), then wait on=idma")  # fmt: skip
 
@@ -1548,6 +1551,11 @@ def softhier_vector(request: Request) -> Answer:
     if not request.operands:
         return bad(request, Why.OPERANDS, f"{request.op} needs an operand: it names the element type and the length",
                    spell(x=one))  # fmt: skip
+    taken = SOFTHIER_OPERANDS[row.kind]
+    if set(request.operands) not in taken:
+        named = ", ".join(sorted(request.operands))
+        return bad(request, Why.OPERANDS, f"softhier {request.op} takes operands {' or '.join(', '.join(sorted(t)) for t in taken)}, "
+                   f"not {named}", spell(x=one))  # fmt: skip
     if why := mixed(request):
         return bad(request, Why.MIXED_TYPES, why, spell(x=one))
     dtype = dtype_of(request)
@@ -1560,10 +1568,12 @@ def softhier_vector(request: Request) -> Answer:
             return no(request, Why.SPACE, f"the Spatz row loads and stores the cluster's TCDM (shared), not "
                       f"{operand.space}", spell(x=Operand("shared", dtype, operand.shape or (1024,))), fix=fix)  # fmt: skip
     shapes = {o.shape for o in request.operands.values()}
-    if len(shapes) > 1 and row.kind != "reduction":
+    if len(shapes) > 1:
         reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
         return bad(request, Why.CHAIN, reason, spell(x=Operand("shared", dtype, (1024,))))
     n = max(math.prod(s) for s in shapes)
+    if n < 1:
+        return bad(request, Why.MALFORMED, f"{request.op} needs at least one element", spell(x=one))
     size = int(dtype[1:]) // 8
     if n * size * (1 + len(request.operands)) > softhier.config()["cluster_tcdm_size"]:
         return no(request, Why.SHAPE, f"{n} {dtype} per operand do not fit the cluster's TCDM "
