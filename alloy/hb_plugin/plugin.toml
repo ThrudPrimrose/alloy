@@ -78,3 +78,23 @@ name = "Alloy stub"
 full_name = "Alloy (stub agent)"
 optimizer = "alloy.hb_plugin.tuners:AlloyToolStub"
 extends = ["dace_cpu_canon"]
+
+# The agent-study configurations (alloy-workspace notes/design-review-2026-11-18.md, "Ablation"): one base prompt and one
+# task spec. `none` is the no-packet control "", `tool` is alloy-isa above. prompt-only adds guidance and no facts;
+# docs-md the vendor's pages by the rule in pages.py; facts-page the lookup's facts for one target as one page
+# (`python -m alloy.hb_plugin.pages` writes both kinds of page).
+[packets.accel-guidance]
+name = "Unfamiliar-accelerator guidance (no facts)"
+overlays = ["alloy:prompt/overlay-guidance.yaml"]
+
+[packets.tt-docs-md]
+name = "tt-metal v0.63.0 docs and kernel API headers"
+skills = ["tt-metal-compute-api", "tt-metal-dataflow-api", "tt-metal-docs"]
+
+[packets.alloy-facts-tensix]
+name = "Alloy facts page (Tensix)"
+skills = ["alloy-facts-tensix"]
+
+[packets.alloy-facts-softhier]
+name = "Alloy facts page (SoftHier)"
+skills = ["alloy-facts-softhier"]
