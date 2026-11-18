@@ -1,0 +1,49 @@
+# The SoftHier v1 stack the rows of softhier.toml run on, pinned. helpers/build_softhier.sh builds it from this file
+# into one prefix; helpers/build_softhier_image.sh packages that prefix as an Apptainer (Singularity) image, whose
+# sha256 the verdict file records. Found 2026-11-18: the gvsoc branch chi/power_interface is the one superproject whose
+# submodules build the pinned gvsoc-pulp branch chi/update_soft_hier (gvsoc main and the August superprojects lack the
+# power API and the direct ELF preload it calls).
+
+[base]
+# Debian 12 with GCC 13.5 and Python 3.11: the host compiler for GVSoC, SystemC, and DRAMSys.
+image = "docker://gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea8088"
+
+[gvsoc]
+url = "https://github.com/gvsoc/gvsoc.git"
+commit = "a453fa09fe53ff306c91072066ea3ff559a0853a"  # branch chi/power_interface, 2026-10-10
+target = "pulp.chips.soft_hier_old.flex_cluster"
+
+# What `git submodule update --init --recursive` checks out at that commit; the build refuses any other.
+[gvsoc.submodules]
+config_tree = "d134f4100bffdc0de196f6672e005ff3b58ad083"
+core = "4be5293a4976eea02d224e425493b755d46b1d15"  # gvsoc-core chi/power_interface
+engine = "16dadd30d76a0aa2a33a85d3bdc52a75558a83c3"  # husterZC/gvsoc-engine chi/power_interface
+gvrun = "e9030b5b9aa963dd4e820ad71676cc984cc02ddb"
+gvtest = "12cfe2c4a2ef527edabd0368b0c04d9bf06c522a"
+pulp = "6a00247dc3c621d5979fcd6abfa0c39d889a3f6a"  # gvsoc-pulp chi/update_soft_hier
+pulpos = "f216d7b8d830620b964187738089c95a29de44ae"
+
+[sdk]
+url = "https://github.com/pulp-platform/softhier-sdk.git"
+commit = "c32f3eba212e5f44e9a65610836991729c0c58ce"  # branch chi/soft_hier_dram3d
+
+[toolchain]
+# GCC 14.2.0 for riscv32-unknown-elf with riscv_vector.h; the SDK's own make file downloads the same archive.
+url = "https://github.com/husterZC/gun_toolchain/releases/download/v2.0.0/toolchain.tar.xz"
+sha256 = "f08793bf081a23da369f1c054cdff790f09d0286ba4447799c5b753cfba28717"
+
+[systemc]
+url = "https://github.com/accellera-official/systemc.git"
+commit = "11ad094d282fd5330b27ab57f90f9d231a763da1"  # tag 3.0.1, the version gvsoc's Makefile names
+
+# The HBM model. gvsoc ships a prebuilt libDRAMSys_Simulator.so linked to SystemC 2.3, which fails to load next to
+# SystemC 3.0.1; the build compiles this commit with gvsoc's add_dramsyslib_patches/patch instead.
+[dramsys]
+url = "https://github.com/tukl-msd/DRAMSys.git"
+commit = "8565f18b869c26eab712e3bb6494c4d6ae5dd73f"  # v5.4.0
+
+# The Python packages GVSoC's launcher (gapy) imports are the `softhier` extra of pyproject.toml; the build installs
+# that extra, and these build tools, with this uv.
+[python]
+uv = "0.11.32"
+build = ["cmake==4.4.5", "ninja==1.13.2", "setuptools==84.2.1"]

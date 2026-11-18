@@ -2,7 +2,8 @@
 """Runs SoftHier table rows on GVSoC and prints one JSON verdict per row. Standalone: it runs next to the simulator
 (Python 3, the standard library only) and never imports alloy; alloy's tests read the programs it renders.
 
-    python3 softhier_harness.py rows.json   # {"arch", "compile", "link", "run", "rows": [{"name", "dtype", ...}]}
+    python3 softhier_harness.py rows.json        # {"arch", "compile", "link", "run", "rows": [{"name", ...}]}
+    python3 softhier_harness.py arch softhier.toml   # the v1 configuration as GVSoC's architecture file
 
 Each row runs as one program built with the SDK and the GCC 14 RISC-V toolchain: the row's code (as the lookup
 answers it, also compiled alone with the answer's build line), then a driver that puts deterministic inputs into
@@ -297,16 +298,29 @@ def run_row(row: dict, spec: dict, root: pathlib.Path) -> dict:
     return verdict | {"ok": ok, "rel": rel, "error": error}
 
 
+def arch_file(config: dict) -> str:
+    """``config`` (softhier.toml's [target.config]) in the form of the SDK's examples/SoftHier/config files."""
+    lines = ["class FlexClusterArch:", "", "    def __init__(self):"]
+    for name, value in config.items():
+        text = hex(value) if isinstance(value, int) and ("base" in name or "size" in name or "addr" in name) else value
+        lines.append(f"        self.{name} = {text}")
+    return "\n".join(lines) + "\n"
+
+
 def main(path: str) -> int:
     spec = json.loads(pathlib.Path(path).read_text())
     with tempfile.TemporaryDirectory(prefix="alloy_softhier_", dir=spec.get("scratch")) as tmp:
         root = pathlib.Path(tmp)
         (root / "arch.py").write_text(spec["arch"])
-        # the SDK headers include flex_cluster_arch.h by quotes, from their own folder: it is replaced there
+        # the SDK headers include flex_cluster_arch.h by quotes, from their own folder: the v1 header must be there (an
+        # image built for v1 holds it already; a checkout gets it written)
         sdk = os.environ["SOFTHIER_SDK"]
-        include = os.path.join(sdk, "runtime", "runtime", "include")
         subprocess.run([sys.executable, os.path.join(sdk, "utilities", "config.py"), str(root / "arch.py"),
-                        "--output-dir", include], check=True, capture_output=True)  # fmt: skip
+                        "--output-dir", str(root)], check=True, capture_output=True)  # fmt: skip
+        for name in ("flex_cluster_arch.h", "flex_cluster_arch.inc"):
+            target = pathlib.Path(sdk, "runtime", "runtime", "include", name)
+            if target.read_text() != (root / name).read_text():
+                target.write_text((root / name).read_text())
         with concurrent.futures.ThreadPoolExecutor(max_workers=spec.get("jobs", 4)) as pool:
             futures = [pool.submit(run_row, row, spec, root) for row in spec["rows"]]
             for row, future in zip(spec["rows"], futures, strict=True):
@@ -325,4 +339,9 @@ def main(path: str) -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1] == "arch":
+        import tomllib
+
+        print(arch_file(tomllib.loads(pathlib.Path(sys.argv[2]).read_text())["target"]["config"]), end="")
+        sys.exit(0)
     sys.exit(main(sys.argv[1]))

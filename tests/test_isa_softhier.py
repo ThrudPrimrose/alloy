@@ -301,12 +301,14 @@ def test_a_result_off_by_one_f32_ulp_passes_the_add_bound_and_one_off_by_a_thous
 
 @pytest.mark.softhier
 def test_every_row_runs_correct_on_gvsoc_and_every_planted_row_fails():
-    if not (os.environ.get("SOFTHIER_GVSOC") and os.environ.get("SOFTHIER_SDK")):
-        pytest.skip("GVSoC is absent: set SOFTHIER_GVSOC and SOFTHIER_SDK (see alloy/isa/softhier.py)")
-    if shutil.which("riscv32-unknown-elf-gcc") is None:
-        pytest.skip("the GCC 14 RISC-V toolchain is not on PATH")
+    """In the SoftHier v1 image (SOFTHIER_IMAGE, helpers/build_softhier_image.sh), or on a GVSoC installed here."""
+    image = os.environ.get("SOFTHIER_IMAGE")
+    if image and shutil.which("singularity") is None:
+        pytest.skip("SOFTHIER_IMAGE is set but singularity is not on PATH")
+    if not image and not (os.environ.get("SOFTHIER_GVSOC") and os.environ.get("SOFTHIER_SDK")):
+        pytest.skip("GVSoC is absent: set SOFTHIER_IMAGE, or SOFTHIER_GVSOC and SOFTHIER_SDK (alloy/isa/softhier.py)")
 
-    found, wrong = softhier.parsed(softhier.run_harness())
+    found, wrong = softhier.parsed(softhier.run_harness(image=pathlib.Path(image) if image else None))
 
     assert len(found) == len(softhier.harness_rows(with_planted=False))
     assert all(v.ok for v in found), [dataclasses.asdict(v) for v in found if not v.ok]

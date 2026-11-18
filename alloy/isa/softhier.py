@@ -8,8 +8,9 @@ is installed, and ``record`` turns the harness's output from another machine int
 
     python -m alloy.isa.softhier arch                  # the v1 architecture file (SOFTHIER_ARCH_FILE)
     python -m alloy.isa.softhier rows > rows.json      # the harness input, planted rows included
-    python -m alloy.isa.softhier verify                # run the harness here (SOFTHIER_SDK, SOFTHIER_GVSOC set)
-    python -m alloy.isa.softhier record out.txt        # verdicts from a harness run elsewhere
+    python -m alloy.isa.softhier verify --image softhier-v1.sif   # run the harness in the image (helpers/build_softhier*)
+    python -m alloy.isa.softhier verify                # or here, with SOFTHIER_SDK and SOFTHIER_GVSOC set
+    python -m alloy.isa.softhier record out.txt --image softhier-v1.sif   # verdicts from a run elsewhere
 """
 
 import argparse
@@ -20,6 +21,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import string
 import subprocess
 import sys
@@ -28,6 +30,8 @@ import tomllib
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
+
+from alloy.isa import softhier_harness
 
 __all__ = ["ROWS_PATH", "Row", "Verdict", "build_line", "code", "digest", "rows", "verdicts"]
 
@@ -144,11 +148,7 @@ def tolerance(row: Row, dtype: str) -> float:
 
 def arch() -> str:
     """The v1 configuration as the simulator's architecture file, the form of the SDK's examples/SoftHier/config."""
-    lines = ["class FlexClusterArch:", "", "    def __init__(self):"]
-    for name, value in config().items():
-        text = hex(value) if isinstance(value, int) and ("base" in name or "size" in name or "addr" in name) else value
-        lines.append(f"        self.{name} = {text}")
-    return "\n".join(lines) + "\n"
+    return softhier_harness.arch_file(config())
 
 
 def build_line() -> str:
@@ -242,13 +242,14 @@ def parsed(output: str) -> tuple[list[Verdict], list[Verdict]]:
     return [v for v in found if v.name not in PLANTED], [v for v in found if v.name in PLANTED]
 
 
-def verdicts_text(found: list[Verdict], wrong: list[Verdict], run: str) -> str:
+def verdicts_text(found: list[Verdict], wrong: list[Verdict], run: str, image: str = "") -> str:
     head = [
         "# Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated",
         "# SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.",
         f'run = "{run}"',
         *(f'{key} = "{value}"' for key, value in PINS.items()),
         f'target = "{TARGET}"',
+        *([f'image = "{image}"'] if image else []),
         "",
     ]
     body = []
@@ -260,27 +261,38 @@ def verdicts_text(found: list[Verdict], wrong: list[Verdict], run: str) -> str:
     return "\n".join(head + body)
 
 
-def record(output: str) -> tuple[list[Verdict], list[Verdict]]:
+def record(output: str, image: str = "") -> tuple[list[Verdict], list[Verdict]]:
     """The harness's output written as :data:`VERDICTS_PATH`; every row and planted row must have a verdict."""
     found, wrong = parsed(output)
     expected = len(harness_rows())  # waits run inside their issuers' programs
     if len(found) + len(wrong) != expected:
         raise RuntimeError(f"the harness gave {len(found) + len(wrong)} of {expected} verdicts")
-    VERDICTS_PATH.write_text(verdicts_text(found, wrong, datetime.datetime.now(datetime.UTC).date().isoformat()))
+    today = datetime.datetime.now(datetime.UTC).date().isoformat()
+    VERDICTS_PATH.write_text(verdicts_text(found, wrong, today, image))
     recorded.cache_clear()
     return found, wrong
 
 
-def run_harness(jobs: int = 8) -> str:
-    """The harness over every row on the GVSoC of ``SOFTHIER_GVSOC``; its printed output."""
-    for name in ("SOFTHIER_SDK", "SOFTHIER_GVSOC"):
-        if name not in os.environ:
-            raise RuntimeError(f"{name} is not set: the harness builds with the SDK and runs on GVSoC")
+def image_digest(image: pathlib.Path) -> str:
+    """``sha256:<hex>`` of an image file, as the verdict file records it."""
+    return "sha256:" + hashlib.sha256(image.read_bytes()).hexdigest()
+
+
+def run_harness(jobs: int = 8, image: pathlib.Path | None = None) -> str:
+    """The harness over every row: inside ``image`` (the SoftHier v1 Apptainer image, which sets SOFTHIER_SDK and
+    SOFTHIER_GVSOC), or on the GVSoC those variables name here. Its printed output."""
+    if image is None:
+        for name in ("SOFTHIER_SDK", "SOFTHIER_GVSOC"):
+            if name not in os.environ:
+                raise RuntimeError(f"{name} is not set: the harness builds with the SDK and runs on GVSoC")
     with tempfile.TemporaryDirectory(prefix="alloy_softhier_") as tmp:
         work = pathlib.Path(tmp)
         (work / "rows.json").write_text(json.dumps(spec(jobs, tmp)))
-        done = subprocess.run([sys.executable, str(HARNESS), str(work / "rows.json")], capture_output=True, text=True,
-                              check=False, timeout=RUN_TIMEOUT)  # fmt: skip
+        shutil.copy(HARNESS, work / "softhier_harness.py")
+        command = [sys.executable, str(work / "softhier_harness.py"), str(work / "rows.json")]
+        if image is not None:
+            command = ["singularity", "exec", "-B", tmp, str(image), "python3", *command[1:]]
+        done = subprocess.run(command, capture_output=True, text=True, check=False, timeout=RUN_TIMEOUT)
     if done.returncode != 0:
         raise RuntimeError(f"the harness exited {done.returncode}: {done.stderr[-1500:]}")
     return done.stdout
@@ -291,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=("arch", "rows", "verify", "record"))
     parser.add_argument("output", nargs="?", type=pathlib.Path, help="record: the harness's printed output")
     parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument("--image", type=pathlib.Path, help="verify: run inside this image; both: record its digest")
     args = parser.parse_args(argv)
     if args.command == "arch":
         print(arch(), end="")
@@ -298,8 +311,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rows":
         print(json.dumps(spec(args.jobs)))
         return 0
-    text = args.output.read_text() if args.command == "record" else run_harness(args.jobs)
-    found, wrong = record(text)
+    text = args.output.read_text() if args.command == "record" else run_harness(args.jobs, args.image)
+    found, wrong = record(text, image_digest(args.image) if args.image else "")
     for v in found + wrong:
         state = "ok" if v.ok else "FAIL"
         print(f"{v.name:32} {v.dtype:5} {state} {v.rel if v.rel is not None else ''} {v.error[:120]}")
