@@ -25,7 +25,7 @@ import tomllib
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-__all__ = ["IMAGE", "ROWS_PATH", "Row", "Verdict", "digest", "rows", "verdicts", "verify"]
+__all__ = ["IMAGE", "ROWS_PATH", "Row", "Rung", "Verdict", "digest", "rows", "rungs", "verdicts", "verify"]
 
 HERE = pathlib.Path(__file__).parent
 ROWS_PATH = HERE / "tensix.toml"
@@ -80,6 +80,31 @@ def table(path: pathlib.Path = ROWS_PATH) -> dict:
 
 def rows() -> tuple[Row, ...]:
     return tuple(Row(op=op, **row) for op, entries in table()["ops"].items() for row in entries)
+
+
+@dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
+class Rung:
+    """A math kernel for ``op`` written on SFPU lanes (SFPI), for when the tile call is less accurate than the caller
+    needs: its inline source, the calls that run it on DST tile 0, and the error measured on a Blackhole."""
+
+    op: str
+    name: str
+    dtype: str
+    unit: str
+    #: Bound in ulp from the card run: max relative error times 2^24.
+    error_ulp: float
+    #: Where its error was measured: tt-metal version, device, date, and the run's commit.
+    card: str
+    init: str
+    call: str
+    code: str
+    note: str = ""
+
+
+def rungs(op: str, dtype: str) -> tuple[Rung, ...]:
+    """The SFPI math kernels of ``op`` at ``dtype``, most accurate first."""
+    found = (Rung(op=name, **r) for name, entries in table().get("rungs", {}).items() for r in entries)
+    return tuple(sorted((r for r in found if r.op == op and r.dtype == dtype), key=lambda r: r.error_ulp))
 
 
 def dtypes() -> tuple[str, ...]:

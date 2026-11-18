@@ -19,7 +19,7 @@ header = "eltwise_unary/exp.h"
 init = "exp_tile_init()"
 call = "exp_tile(0)"
 domain = [-4.0, 4.0]
-note = "On the Blackhole with tt-metal 0.63, exp_tile is accurate to bf16 only: max relative error 1.73e-3 over [-7, 7] in every sub-range, with fp32_dest_acc_en, UnpackToDestFp32 and HiFi4 (card probe of 2026-11-18). A log refined by Newton or Halley steps through it stops at an absolute error of 1.7e-3."
+note = "On the Blackhole with tt-metal 0.63, exp_tile is accurate to bf16 only: max relative error 1.73e-3 over [-7, 7] in every sub-range, with fp32_dest_acc_en, UnpackToDestFp32 and HiFi4 (card probe of 2026-11-18). A log refined by Newton or Halley steps through it stops at an absolute error of 1.7e-3. The SFPI rung alloy_exp_f32_sfpi (rungs.exp below) holds f32 on the card. exp2_tile does not help on 0.63: mul_unary_tile(0, 0x3FB8AA3B) (x log2 e) then exp2_tile gave output identical to exp_tile on the card, rel 1.73e-3 (commit dd226b3), although the v0.63.0 tag's Blackhole ckernel_sfpu_exp2.h holds Moroz exp_21f: the container's exp2 goes through exp."
 
 [[ops.log]]
 kind = "unary"
@@ -29,7 +29,7 @@ header = "compute_kernel_api.h"
 init = { v06 = "log_tile_init<false>()", v08 = "log_tile_init()" }
 call = { v06 = "log_tile<false>(0)", v08 = "log_tile(0)" }
 domain = [0.01, 100.0]
-note = "tt-metal 0.6x log is a low-order approximation: on a Blackhole with tt-metal 0.63 its absolute error is 0.012 to 0.0165 over [1e-3, 1e3], so its relative error passes 1 near x = 1; both template arguments give the same output (card probes of 2026-11-16 and 2026-11-18). On 0.63 a log accurate to f32 must be built from the f32-accurate SFPU binary rows (div_binary_tile: max relative error 2.4e-7 on the card) with its own range reduction. 0.8x holds the table's bound on ttsim."
+note = "tt-metal 0.6x log is a low-order approximation: on a Blackhole with tt-metal 0.63 its absolute error is 0.012 to 0.0165 over [1e-3, 1e3], so its relative error passes 1 near x = 1; both template arguments give the same output (card probes of 2026-11-16 and 2026-11-18). On 0.63 a log accurate to f32 must be built from the f32-accurate SFPU binary rows (div_binary_tile: max relative error 2.4e-7 on the card) with its own range reduction; the SFPI rung alloy_log_f32_sfpi (rungs.log below) does so on SFPU lanes and holds f32 on the card. 0.8x holds the table's bound on ttsim."
 
 [[ops.sqrt]]
 kind = "unary"
@@ -38,6 +38,7 @@ header = "eltwise_unary/sqrt.h"
 init = "sqrt_tile_init()"
 call = "sqrt_tile(0)"
 domain = [0.01, 100.0]
+note = "On a Blackhole with tt-metal 0.63, sqrt_tile() (legacy_compat = true, the default) has max relative error 5.5e-6 over x log-uniform in [1e-3, 1e3]; sqrt_tile_init<false>() and sqrt_tile<false>(0) give 9.3e-8, f32 accuracy, and run faster (0.77 ms against 0.98 ms on the probe; card run of 2026-11-18, alloy-tenstorrent agents commit dd226b3). 0.8x on ttsim: the table's bound."
 
 [[ops.rsqrt]]
 kind = "unary"
@@ -199,3 +200,109 @@ init = "cumsum_tile_init()"
 call = "cumsum_tile(0, i == 0)"
 domain = [0.5, 2.0]
 note = "the inclusive prefix sum down each column; tiles of one column arrive top to bottom, first = true only for the top one (i == 0 here), and no other SFPU call runs between them; along rows: transpose_tile before and transpose_dest after"
+
+# SFPI math kernels: written on SFPU lanes for ops whose tile call is less accurate than f32 on a tt-metal version.
+# `code` goes in the compute kernel source above namespace NAMESPACE; `init` and `call` run it on DST tile 0.
+[[rungs.log]]
+name = "alloy_log_f32_sfpi"
+dtype = "f32"
+unit = "SFPU"
+error_ulp = 3.79
+card = "tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 7d69842: max abs error 3.05e-07, max rel error 2.26e-07 over x log-uniform in [1e-3, 1e3], worst x 0.99999958"
+init = "MATH((llk_math_eltwise_unary_sfpu_init<SfpuType::unused, APPROX>()))"
+call = "MATH((_llk_math_eltwise_unary_sfpu_params_<APPROX>(alloy_log_f32_face, 0, (int)VectorMode::RC)))"
+note = "dev: built after the pilot's failures, when log_tile on 0.63 missed f32 by 0.0165. Alloy's CPU rung alloy_log_f32_fast on SFPU lanes, with one change: exexp and setexp split the exponent and mantissa (no integer add and shift of the bit pattern), and the division f / (2 + f) is approx_recip plus two Newton steps. The polynomial and the ln2 hi/lo split are the CPU rung's. On the card probe it took 1.8 ms where log_tile took 0.7 ms. The compute kernel includes compute_kernel_api.h, which under TRISC_MATH declares sfpi, SfpuType, VectorMode and the llk SFPU helpers; keep fp32_dest_acc_en and UnpackToDestFp32, or DST holds bf16. Contract: finite x; 0 gives -inf, negative x NaN."
+code = '''
+#ifdef TRISC_MATH
+// f32 log on SFPU lanes: x = 2^n * m, m in [sqrt(1/2), sqrt(2)), f = m - 1,
+// s = f / (2 + f), log x = n ln2 + 2s + s R(s^2) (Alloy rung alloy_log_f32_fast).
+sfpi_inline sfpi::vFloat alloy_log_f32(sfpi::vFloat x) {
+    sfpi::vInt e = sfpi::exexp(x);          // unbiased exponent
+    sfpi::vFloat m = sfpi::setexp(x, 127);  // mantissa in [1, 2)
+    v_if (m > 1.41421356f) {
+        m = m * 0.5f;
+        e = e + 1;
+    }
+    v_endif;
+    // int32_to_float reads sign-magnitude, as in ckernel_sfpu_log.h
+    v_if (e < 0) { e = sfpi::setsgn(~e + 1, 1); }
+    v_endif;
+    sfpi::vFloat n = sfpi::int32_to_float(e, 0);
+    sfpi::vFloat f = m - 1.0f;
+    sfpi::vFloat d = f + 2.0f;
+    // 1/d: hardware estimate plus two Newton steps, d in [1.7, 2.5)
+    sfpi::vFloat r = sfpi::approx_recip(d);
+    sfpi::vFloat two = 2.0f;
+    r = r * (two - d * r);
+    r = r * (two - d * r);
+    sfpi::vFloat s = f * r;
+    sfpi::vFloat z = s * s;
+    sfpi::vFloat c1 = 0.41215285658836365f;
+    sfpi::vFloat c0 = 0.6665537357330322f;
+    sfpi::vFloat big = z * (c1 * z + c0);
+    sfpi::vFloat lo = s * (f - big);
+    sfpi::vFloat ln2hi = 0.693145751953125f;
+    sfpi::vFloat ln2lo = 1.428606765330187e-06f;
+    sfpi::vFloat v = n * ln2hi + (f + (n * ln2lo - lo));
+    v_if (x == 0.0f) { v = -std::numeric_limits<float>::infinity(); }
+    v_endif;
+    v_if (x < 0.0f) { v = std::numeric_limits<float>::quiet_NaN(); }
+    v_endif;
+    return v;
+}
+
+// one face: 8 rows of 32 lanes per iteration
+inline void alloy_log_f32_face() {
+#pragma GCC unroll 0
+    for (int d = 0; d < 8; d++) {
+        sfpi::dst_reg[0] = alloy_log_f32(sfpi::dst_reg[0]);
+        sfpi::dst_reg++;
+    }
+}
+#endif
+'''
+
+[[rungs.exp]]
+name = "alloy_exp_f32_sfpi"
+dtype = "f32"
+unit = "SFPU"
+error_ulp = 1.66
+card = "tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 5cc4565: max rel error 9.87e-08, max abs error 7.10e-05 over x uniform in [-7, 7], worst x -6.99997"
+init = "MATH((llk_math_eltwise_unary_sfpu_init<SfpuType::unused, APPROX>()))"
+call = "MATH((_llk_math_eltwise_unary_sfpu_params_<APPROX>(alloy_exp_f32_face, 0, (int)VectorMode::RC)))"
+note = "dev: built after the pilot's failures, when exp_tile on 0.63 held bf16 only (rel 1.73e-3: a degree-2 polynomial and squarings). n = round(x / ln2) by the 1.5 * 2^23 shifter, r = x - n ln2 with the ln2 hi/lo split of the log rung, Taylor degree 7 on |r| <= ln2 / 2, and 2^n added to the result's exponent by setexp. On the card probe it took 1.5 ms. Checked on [-7, 7] only; no clamp, so |x| above about 87 overflows the exponent field instead of giving inf or 0. Same includes and compute config as the log rung."
+code = '''
+#ifdef TRISC_MATH
+// f32 exp on SFPU lanes for |x| < 87: n = round(x / ln2) by the 1.5 * 2^23 shifter,
+// r = x - n ln2 (hi/lo split), p = Taylor degree 7 on |r| <= ln2 / 2, exp x = p * 2^n.
+sfpi_inline sfpi::vFloat alloy_exp_f32(sfpi::vFloat x) {
+    sfpi::vFloat shifter = 12582912.0f;  // 1.5 * 2^23: t's low mantissa bits hold n
+    sfpi::vFloat inv_ln2 = 1.4426950408889634f;
+    sfpi::vFloat t = x * inv_ln2 + shifter;
+    sfpi::vFloat nf = t - shifter;
+    sfpi::vInt n = sfpi::reinterpret<sfpi::vInt>(t) - 0x4B400000;
+    sfpi::vFloat ln2hi = 0.693145751953125f;
+    sfpi::vFloat ln2lo = 1.428606765330187e-06f;
+    sfpi::vFloat r = x - nf * ln2hi;
+    r = r - nf * ln2lo;
+    sfpi::vFloat p = 1.9841269841269841e-04f;  // 1/7!
+    p = p * r + 1.3888888888888889e-03f;
+    p = p * r + 8.3333333333333332e-03f;
+    p = p * r + 4.1666666666666664e-02f;
+    p = p * r + 1.6666666666666666e-01f;
+    p = p * r + 0.5f;
+    p = p * r + 1.0f;
+    p = p * r + 1.0f;
+    // p in [0.7, 1.42]: add n to its biased exponent
+    return sfpi::setexp(p, sfpi::exexp_nodebias(p) + n);
+}
+
+inline void alloy_exp_f32_face() {
+#pragma GCC unroll 0
+    for (int d = 0; d < 8; d++) {
+        sfpi::dst_reg[0] = alloy_exp_f32(sfpi::dst_reg[0]);
+        sfpi::dst_reg++;
+    }
+}
+#endif
+'''

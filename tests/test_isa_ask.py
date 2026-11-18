@@ -236,7 +236,7 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,)), "b": Operand("vector", "f32", (8,))}), "mix"),
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}, max_ulp=1.0), "add is exact"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}), "one 32x32 tile"),
-    (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
+    (Request("tensix", "sqrt", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
     (Request("sme", "add"), "mma only"),
 ])  # fmt: skip
 def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(request_, reason):

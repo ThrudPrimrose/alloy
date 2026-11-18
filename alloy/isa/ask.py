@@ -560,10 +560,14 @@ def answered(request: Request, verify: bool) -> Answer:
         return bad(
             request, Why.OPERATION, f"no operation {request.op!r}", "an op of `python -m alloy.isa ops`, mma, or copy"
         )
-    if request.max_ulp is not None and (request.op not in functions() or request.target == "tensix"):
-        what = "a Tensix tile call has one accuracy" if request.target == "tensix" else f"{request.op} is exact"
+    if request.max_ulp is not None and request.target == "tensix":
+        return sfpi_rung(request)
+    if request.max_ulp is not None and request.op not in functions():
         return bad(
-            request, Why.BOUND, f"max_ulp selects a rung of a math kernel; {what}", "the request without max_ulp"
+            request,
+            Why.BOUND,
+            f"max_ulp selects a rung of a math kernel; {request.op} is exact",
+            "the request without max_ulp",
         )
     if request.target in CPU:
         return vector_op(request, verify)
@@ -979,6 +983,8 @@ def tile_call(request: Request) -> Answer:
         *((f"{tiles} tiles: {each}",) if tiles > 1 else ()),
         *(("the FPU reads its sources at TF32 (19 bits): about 1e-3 relative error in f32; unit sfpu keeps f32",)
           if unit == "fpu" and dtype == "f32" else ()),
+        *(f"{r.name}, an SFPI kernel of {r.op} at {r.error_ulp:.3g} ulp on the card: ask with --max-ulp "
+          f"{math.ceil(r.error_ulp)}" for r in tensix.rungs(row.op, dtype)[:1]),
     )  # fmt: skip
     steps: tuple[Step, ...] = (Step(unit, init, 1 if once else tiles), Step(unit, call, tiles))
     setup = {"header": row.header}
@@ -991,6 +997,30 @@ def tile_call(request: Request) -> Answer:
         setup |= {"compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
                   "scaler": "one tile in CB c1: 1 in the first row of each 16x16 face"}  # fmt: skip
     return Feasible(request, unit, steps, setup, f"{init};\n{call};", check, notes)
+
+
+def sfpi_rung(request: Request) -> Answer:
+    """The most accurate Tensix math kernel on SFPU lanes (tensix.toml's rungs) within ``max_ulp``, checked on a
+    Blackhole: its full source, which the compute kernel inlines, and the calls that run it on DST tile 0."""
+    dtype = dtype_of(request)
+    found = tensix.rungs(request.op, dtype)
+    if not found:
+        reason = f"no SFPI rung for {request.op} on {dtype}; a Tensix tile call has one accuracy"
+        return bad(request, Why.BOUND, reason, "the request without max_ulp")
+    within = [r for r in found if request.max_ulp is not None and r.error_ulp <= request.max_ulp]
+    if not within:
+        best = found[0]
+        return no(request, Why.NO_RUNG, f"the most accurate {request.op} rung, {best.name}, holds "
+                  f"{best.error_ulp:.3g} ulp on the card", f"max_ulp {best.error_ulp:.3g}")  # fmt: skip
+    rung = within[-1]  # the loosest within the bound: rungs are sorted most accurate first
+    steps = (Step("sfpu", rung.init, 1), Step("sfpu", rung.call, 1))
+    setup = {
+        "header": "compute_kernel_api.h (under TRISC_MATH it brings sfpi and the llk SFPU helpers)",
+        "compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4; unpack_to_dest_mode UnpackToDestFp32 "
+        "for the CBs copied into DST",
+    }
+    notes = (f"rung {rung.name}: {rung.error_ulp:.3g} ulp, measured on the card ({rung.card})", rung.note)
+    return Feasible(request, "sfpu", steps, setup, rung.code, Check("run", f"card: {rung.card}"), notes)
 
 
 def mma_nearest(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tuple[str, ...]:

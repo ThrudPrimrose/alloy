@@ -435,6 +435,7 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         print(
             json.dumps(
                 [{**dataclasses.asdict(r), "verdict": None if v is None else dataclasses.asdict(v)} for r, v in picked]
+                + [{**dataclasses.asdict(r), "kind": "sfpi_rung"} for r in tensix.rungs(op, dtype)]
             )
         )
         return 0
@@ -458,6 +459,13 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
             print(f"    FAILED on ttsim: {verdict.error[:200]}")
         if row.note:
             print(f"    note: {row.note}")
+    for rung in tensix.rungs(op, dtype):
+        print(f"  SFPU math kernel {rung.name}: {rung.error_ulp:.3g} ulp, measured on the card ({rung.card})")
+        print(f"    init: {rung.init}")
+        print(f"    call: {rung.call}")
+        print(f"    note: {rung.note}")
+        print("    code:")
+        print("".join(f"      {line}\n" for line in rung.code.splitlines()), end="")
     print(f"  note: {tensix.table()['target']['note']}")
     return 2 if any(v is not None and not v.ok for _, v in picked) else 0
 
