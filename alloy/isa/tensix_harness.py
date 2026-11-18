@@ -31,6 +31,19 @@ def compute_include(header: str, new: bool) -> str:
     return header if header == "compute_kernel_api.h" else f"compute_kernel_api/{header}"
 
 
+def compute_headers(row: dict, new: bool) -> list[str]:
+    """Every header the compute kernel of ``row`` includes, as include paths of tt-metal 0.8x (``new``) or 0.6x: the
+    harness programs include exactly these, and the lookup prints them."""
+    if row["kind"] == "matmul":
+        names = ["common.h", "tile_move_copy.h", row["header"]]
+        names += ["compute_kernel_hw_startup.h", "src_order.h"] if new else []
+    elif row["kind"] == "reduction":
+        names = ["common.h", row["header"]]
+    else:
+        names = ["common.h", "tile_move_copy.h", "eltwise_unary/eltwise_unary.h", "eltwise_binary.h", row["header"]]
+    return [compute_include(h, new) for h in dict.fromkeys(names)]
+
+
 def dataflow_include(new: bool) -> str:
     return "api/dataflow/dataflow_api.h" if new else "dataflow_api.h"
 
@@ -123,10 +136,7 @@ def matmul_compute(row: dict, new: bool) -> str:
     ``kt`` of A from CB 0 and of B from CB 1), as tt-metal's single-core matmul example does. 0.8x starts the hardware
     with ``SrcOrder::Reverse`` (matmul sends in0 to SrcB) and inits with ``matmul_init``; 0.6x's ``mm_init`` does
     both."""
-    headers = ["common.h", "tile_move_copy.h", row["header"]] + (
-        ["compute_kernel_hw_startup.h", "src_order.h"] if new else []
-    )
-    includes = "\n".join(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers))
+    includes = "\n".join(f'#include "{h}"' for h in compute_headers(row, new))
     entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
     close = "" if new else "}  // namespace NAMESPACE"
     return f"""
@@ -172,8 +182,7 @@ def reduction_compute(row: dict, new: bool) -> str:
 #include <cstdint>
 #define REDUCE_OP {pool}
 #define REDUCE_DIM {dim}
-#include "{compute_include("common.h", new)}"
-#include "{compute_include(row["header"], new)}"
+{chr(10).join(f'#include "{h}"' for h in compute_headers(row, new))}
 {entry} {{
     uint32_t num_tiles = get_arg_val<uint32_t>(0);
     constexpr auto c0 = tt::CBIndex::c_0;
@@ -207,8 +216,7 @@ def compute(row: dict, new: bool) -> str:
         return matmul_compute(row, new)
     if row["kind"] == "reduction":
         return reduction_compute(row, new)
-    headers = ("common.h", "tile_move_copy.h", "eltwise_unary/eltwise_unary.h", "eltwise_binary.h", row["header"])
-    includes = "\n".join(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers))
+    includes = "\n".join(f'#include "{h}"' for h in compute_headers(row, new))
     entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
     close = "" if new else "}  // namespace NAMESPACE"
     start, steps, pops = body(row, new)

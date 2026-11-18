@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any, NoReturn
 
-from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tile
+from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tensix_harness, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -442,6 +442,12 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
     run = tensix.recorded()
     for row, verdict in picked:
         print(f"  {row.unit} ({row.kind}): header {row.header}")
+        fields = {"kind": row.kind, "header": row.header}
+        for version, new in (("v06", False), ("v08", True)):
+            lines = " ".join(f'#include "{h}"' for h in tensix_harness.compute_headers(fields, new))
+            print(
+                f'    includes [{version}] compute: {lines}; reader/writer: #include "{tensix_harness.dataflow_include(new)}"'
+            )
         for name, value in (("init", row.init), ("call", row.call)):
             spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
             print(f"    {name}: {spelled}")

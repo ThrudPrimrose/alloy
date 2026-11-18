@@ -307,3 +307,16 @@ def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
 
     assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
     assert answer.nearest == ("tensix neg", "tensix reduce_max") and "negative_tile" in answer.fix
+
+
+def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_per_version(capsys):
+    assert main(["lookup", "tensix", "sin", "f32"]) == 0
+
+    printed = capsys.readouterr().out
+    assert (
+        'includes [v06] compute: #include "compute_kernel_api/common.h"' in printed
+        and '#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"' in printed  # init_sfpu
+        and 'reader/writer: #include "dataflow_api.h"' in printed
+    )  # TensorAccessor at 0.6x, no tensor_accessor.h
+    assert 'includes [v08] compute: #include "api/compute/common.h"' in printed
+    assert '#include "compute_kernel_api/eltwise_unary/trigonometry.h"' in printed  # the row's own header
