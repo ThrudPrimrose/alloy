@@ -65,3 +65,12 @@ def test_a_task_round_trips_through_its_shape():
     renamed = Task("k2", "map", (("u", 0.0, 1.0), ("v", 0.0, 1.0)), "w", ("w = (u * v)",))
 
     assert eval_set.shape_of(task) == eval_set.shape_of(renamed)
+
+
+def test_the_draw_is_seeded_and_skips_what_keep_refuses():
+    first = eval_set.draw("cpu", 5, lambda name: "tsvc" not in name)
+
+    assert first == eval_set.draw("cpu", 5, lambda name: "tsvc" not in name)
+    assert len(first) == 5 and not any("tsvc" in name for name in first)
+    assert set(first) <= set(eval_set.pool())
+    assert not {name.rsplit("/", 1)[-1] for name in eval_set.pool()} & eval_set.DEV

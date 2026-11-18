@@ -13,16 +13,20 @@ import dataclasses
 import json
 import math
 import pathlib
+import random
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import hpcagent_bench
+from hpcagent_bench.cpf.cache import Target
+from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import KERNELS, BenchSpec
 from hpcagent_bench.support.distributions.domain import RawDomain
 from hpcagent_bench.support.distributions.domain import parse as parse_domain
+from hpcagent_bench.tags import resolve as resolve_tag
 
-__all__ = ["DEV", "Task", "admit", "admitted", "main"]
+__all__ = ["DEV", "Task", "admit", "admitted", "draw", "main", "pool"]
 
 #: The kernels the tool was built and debugged on (design review F13): never in the eval set.
 DEV = frozenset({"fuse_diamond", "tsvc_2_s451", "transc_log_wide"})
@@ -314,7 +318,52 @@ def admitted() -> tuple[list[Task], dict[str, str]]:
     return tasks, refused
 
 
-def main() -> int:
+#: The CPU and GPU agent tasks are drawn from the studies' kernels (design review F1).
+POOL_TAGS = ("llr40", "scicomp40")
+#: The draw's seed, fixed at the freeze: a run that redraws gets the same tasks.
+DRAW_SEED = "ics27-eval"
+TARGETS = {"cpu": ("canon_cpu", Target.CPU), "gpu": ("canon_gpu", Target.GPU)}
+
+
+def pool() -> list[str]:
+    """The kernels of :data:`POOL_TAGS`, sorted, without the dev kernels."""
+    names = {name for tag in POOL_TAGS for name in resolve_tag(tag)}
+    return sorted(name for name in names if name.rsplit("/", 1)[-1] not in DEV)
+
+
+def alloy_takes(name: str, target: str) -> bool:
+    """Whether the bench's pipeline for ``target`` builds the kernel and, on the CPU, Alloy outlines a scope of it."""
+    from alloy import configuration_matrix
+    from alloy.hb_plugin.adapter import nothing_to_generate, pipeline_sdfg
+
+    pipeline, where = TARGETS[target]
+    try:
+        sdfg = pipeline_sdfg(BenchSpec.load(name), pipeline, Precision.FP64, where)
+    except Exception:  # a kernel the bench's pipeline cannot build for this target is not drawn
+        return False
+    return target == "gpu" or not nothing_to_generate(sdfg, configuration_matrix.load())
+
+
+def draw(target: str, count: int, keep: Callable[[str], bool]) -> list[str]:
+    """The first ``count`` kernels of the pool, in the order a :data:`DRAW_SEED` shuffle gives, that ``keep`` takes."""
+    order = pool()
+    random.Random(f"{DRAW_SEED}-{target}").shuffle(order)
+    drawn: list[str] = []
+    for name in order:
+        if len(drawn) == count:
+            break
+        if keep(name):
+            drawn.append(name)
+    return drawn
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``eval_set`` prints the Tensix tasks as JSON; ``eval_set draw cpu|gpu [N]`` the drawn kernels, one per line."""
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["draw"]:
+        target, count = args[1], int(args[2]) if len(args) > 2 else 20
+        print("\n".join(draw(target, count, lambda name: alloy_takes(name, target))))
+        return 0
     tasks, _ = admitted()
     json.dump([dataclasses.asdict(t) for t in tasks], sys.stdout, indent=1)
     print()
