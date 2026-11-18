@@ -56,9 +56,11 @@ ARCH_HEADER = (
 #: The SDK's compile flags (runtime/CMakeLists.txt) with zvfh added, so f16 vector intrinsics compile.
 FLAGS = ["-mabi=ilp32d", "-mcmodel=medlow", "-march=rv32imafdv_zfh_zvfh", "-O3", "-ffast-math", "-fno-builtin",
          "-fno-tree-vectorize", "-fno-common", "-ffunction-sections"]  # fmt: skip
-#: Per kind and element type: the largest max |out - ref| / max |ref| a run may show. One rounding for elementwise
-#: rows; a sum of 300 terms in the element type for reductions; f16 rounding of an f32 sum for the product.
-TOLERANCE = {"f32": 1e-6, "f16": 1e-3, "reduction_f32": 1e-4, "reduction_f16": 2e-2, "mma_f16": 1e-2}
+#: Per kind and element type: the largest max |out - ref| / max |ref| a run may show. Elementwise: one rounding (2u).
+#: reduce_add: one rounding per strip of a sum whose last strip holds the largest terms (5 strips of f32, 3 of f16, a
+#: few u), so dropping the tail or five terms is outside it. reduce_max is exact. mma: the model rounds an f32 sum to
+#: f16 once (2u, about 4.5x the 2.2e-4 measured on 2026-11-18).
+TOLERANCE = {"f32": 1e-6, "f16": 1e-3, "reduction_f32": 1e-6, "reduction_f16": 2e-3, "mma_f16": 1e-3}
 C_TYPES = {"f32": "float", "f16": "_Float16"}
 #: Wrong rows the harness must fail: a row's name, and the text in its code swapped for the wrong one.
 PLANTED = {
@@ -68,6 +70,8 @@ PLANTED = {
         "flex_dma_async_2d(dst, src, row_bytes, src_stride, dst_stride, rows)",
     ),
     "planted_barrier_global_removed": ("barrier_global", "flex_global_barrier_xy();", ";"),
+    "planted_reduce_add_without_tail": ("reduce_add", "i < n;", "i + __riscv_vsetvlmax_e${b}m8() <= n;"),
+    "planted_reduce_max_without_tail": ("reduce_max", "i < n;", "i + __riscv_vsetvlmax_e${b}m8() <= n;"),
 }  # fmt: skip
 RUN_TIMEOUT = 3600
 
@@ -146,6 +150,8 @@ def function(row: Row, dtype: str) -> str:
 
 
 def tolerance(row: Row, dtype: str) -> float:
+    if row.op == "reduce_max":
+        return 0.0
     if row.kind in ("reduction", "mma"):
         return TOLERANCE[f"{row.kind}_{dtype}"]
     return TOLERANCE.get(dtype, 0.0)

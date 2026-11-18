@@ -325,3 +325,49 @@ def test_every_row_runs_correct_on_gvsoc_and_every_planted_row_fails():
     assert len(found) == len(softhier.harness_rows(with_planted=False))
     assert all(v.ok for v in found), [dataclasses.asdict(v) for v in found if not v.ok]
     assert wrong and not any(v.ok for v in wrong), wrong
+
+
+def vector_row(op: str, dtype: str) -> dict:
+    return next(r for r in softhier.harness_rows() if (r["name"], r["dtype"]) == (op, dtype))
+
+
+def words_of(values: list[float], dtype: str) -> list[int]:
+    return [softhier_harness.bits(softhier_harness.rounded(x, dtype), dtype) for x in values]
+
+
+@pytest.mark.parametrize("dtype", ["f32", "f16"])
+def test_a_reduction_that_drops_the_tail_strip_or_five_terms_fails_its_check(dtype: str):
+    """The tail strip holds the largest terms: a sum or maximum without it, or a sum short of five terms, is caught."""
+    xs = softhier_harness.vector_inputs("reduce_add", dtype, 1)[0]
+    tail = softhier_harness.TAIL
+    total, maximum = vector_row("reduce_add", dtype), vector_row("reduce_max", dtype)
+
+    assert softhier_harness.compare(total, words_of([sum(xs)], dtype), [])[0] is True
+    assert softhier_harness.compare(total, words_of([sum(xs[:-tail])], dtype), [])[0] is False
+    assert softhier_harness.compare(total, words_of([sum(xs[5:])], dtype), [])[0] is False
+    assert softhier_harness.compare(maximum, words_of([max(xs[:-tail])], dtype), [])[0] is False
+    assert maximum["tol"] == 0.0
+
+
+@pytest.mark.parametrize("dtype", ["f32", "f16"])
+def test_an_fma_that_rounds_the_product_first_fails_its_check(dtype: str):
+    """The row claims one rounding: its probes are a power of two fused and 0 unfused."""
+    row = vector_row("fma", dtype)
+    a, b, c = softhier_harness.vector_inputs("fma", dtype, 3)
+    fused = [a_ * b_ + c_ for a_, b_, c_ in zip(a, b, c, strict=True)]
+    unfused = [softhier_harness.rounded(a_ * b_, dtype) + c_ for a_, b_, c_ in zip(a, b, c, strict=True)]
+
+    assert softhier_harness.compare(row, words_of(fused, dtype), [])[0] is True
+    assert softhier_harness.compare(row, words_of(unfused, dtype), [])[0] is False
+
+
+def test_the_product_bound_is_a_few_times_the_error_measured_on_gvsoc():
+    measured = 2.2130849714876254e-4  # the mma run of 2026-11-18, before this bound
+
+    assert measured < vector_row("mma", "f16")["tol"] <= 5 * measured
+
+
+def test_each_planted_row_without_its_tail_strip_loops_only_over_whole_strips():
+    for name in ("planted_reduce_add_without_tail", "planted_reduce_max_without_tail"):
+        sut = next(r for r in softhier.planted() if r.key() == name)
+        assert "i + __riscv_vsetvlmax_e32m8() <= n;" in softhier.code(sut, "f32")

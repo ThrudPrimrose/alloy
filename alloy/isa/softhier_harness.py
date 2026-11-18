@@ -36,7 +36,14 @@ TCDM = (0x1000, 0x20000, 0x40000, 0x60000)
 #: HBM offsets on west node 0.
 HBM = (0x1000, 0x100000)
 #: Inputs per op: the interval values are drawn from.
-DOMAIN = {"reduce_add": (0.5, 1.0), "mma": (-1.0, 1.0)}
+DOMAIN = {"mma": (-1.0, 1.0)}
+#: A reduction's input: the last TAIL elements (the tail strip at e32m8 and at e16m8: 300 = 4 x 64 + 44 = 2 x 128 + 44)
+#: are the largest, so a loop that drops the tail strip, or a few terms, is outside the bound.
+TAIL, BODY_DOMAIN, TAIL_DOMAIN = 44, (0.5, 1.0), (8.0, 16.0)
+#: fma inputs whose product needs more bits than the type holds: a * b + c is a power of two fused, and 0 when the
+#: product is rounded first. Per type: a = b and c, appended after the drawn elements.
+FMA_PROBE = {"f32": (1 + 2.0**-12, -(1 + 2.0**-11)), "f16": (1 + 2.0**-6, -(1 + 2.0**-5))}
+FMA_PROBES = 4
 CTYPE = {"f32": "float", "f16": "_Float16"}
 WORD = {"f32": ("I", "f", 32), "f16": ("H", "e", 16)}
 
@@ -58,9 +65,22 @@ def value(word: int, dtype: str) -> float:
 
 
 def draw(op: str, dtype: str, count: int, seed: int) -> list[float]:
-    low, high = DOMAIN.get(op, (-4.0, 4.0))
     generator = random.Random(seed)
+    if op in ("reduce_add", "reduce_max"):
+        domains = [BODY_DOMAIN] * (count - TAIL) + [TAIL_DOMAIN] * TAIL
+        return [rounded(generator.uniform(*domain), dtype) for domain in domains]
+    low, high = DOMAIN.get(op, (-4.0, 4.0))
     return [rounded(generator.uniform(low, high), dtype) for _ in range(count)]
+
+
+def vector_inputs(op: str, dtype: str, arity: int) -> list[list[float]]:
+    """The operands of a vector row's check; fma's last FMA_PROBES elements tell a fused product from a rounded one."""
+    inputs = [draw(op, dtype, VECTOR_N, seed) for seed in range(arity)]
+    if op == "fma":
+        factor, addend = FMA_PROBE[dtype]
+        for xs, probe in zip(inputs, (factor, factor, addend), strict=True):
+            xs[-FMA_PROBES:] = [probe] * FMA_PROBES
+    return inputs
 
 
 def c_array(name: str, words: list[int], width: int) -> str:
@@ -89,7 +109,7 @@ def program(row: dict) -> tuple[str, list[int]]:
     if kind in ("binary", "fma", "move", "reduction"):
         width = WORD[dtype][2]
         arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1}[kind]
-        inputs = [draw(op, dtype, VECTOR_N, seed) for seed in range(arity)]
+        inputs = vector_inputs(op, dtype, arity)
         for i, xs in enumerate(inputs):
             data += c_array(f"IN{i}", [bits(x, dtype) for x in xs], width)
         t = CTYPE[dtype]
@@ -221,7 +241,7 @@ def reference(row: dict) -> list[float]:
         a, b, c = (draw("mma", "f16", count, seed) for seed, count in enumerate((m * k, k * n, m * n)))
         return [c[i * n + j] + sum(a[i * k + p] * b[p * n + j] for p in range(k)) for i in range(m) for j in range(n)]
     arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1}[kind]
-    xs = [draw(op, dtype, VECTOR_N, seed) for seed in range(arity)]
+    xs = vector_inputs(op, dtype, arity)
     if kind == "reduction":
         return [sum(xs[0]) if op == "reduce_add" else max(xs[0])]
     if kind == "move":
@@ -247,6 +267,10 @@ def compare(row: dict, words: list[int], exact: list[int]) -> tuple[bool, float 
     got = [value(w, dtype) for w in words]
     scale = max(abs(x) for x in want) or 1.0
     rel = max(abs(g - w) for g, w in zip(got, want, strict=True)) / scale
+    if row["kind"] == "fma":  # one rounding: the probes hold the exact a * b + c, a product rounded first gives 0
+        fused = [rounded(w, dtype) for w in want[-FMA_PROBES:]]
+        if got[-FMA_PROBES:] != fused:
+            return False, rel, f"the fma probes give {got[-FMA_PROBES:]}, not the fused {fused}"
     return (
         rel <= row["tol"],
         rel,
