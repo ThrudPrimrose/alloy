@@ -79,6 +79,9 @@ mkdir -p gvsoc/third_party/DRAMSys
 if [ ! -e gvsoc/third_party/DRAMSys/libDRAMSys_Simulator.so ]; then
     fetch "$BUILD/DRAMSys" "$(pin dramsys url)" "$(pin dramsys commit)"
     git -C "$BUILD/DRAMSys" apply "$PREFIX/gvsoc/add_dramsyslib_patches/build_dynlib_from_github_dramsys5/patch"
+    # DRAMSys appends -march=native: the library then runs only on CPUs like the build host (an EPYC node died with
+    # SIGILL on an ault03 build, 11-18). Build for the x86-64 baseline instead.
+    sed -i 's/ -march=native//' "$BUILD/DRAMSys/CMakeLists.txt"
     fetched=()
     while read -r name url sha256; do  # each archive DRAMSys's CMake would fetch, checked, as its source folder
         curl -fsSL -o "$BUILD/$name.archive" "$url"
