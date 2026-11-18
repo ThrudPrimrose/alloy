@@ -38,6 +38,15 @@ tools = ["alloy_profile", "alloy_speculative", "alloy_isa"]
 overlays = ["alloy:prompt/overlay-choice.yaml"]
 env = { JUDGE_INPUT_MODE = "any" }  # a mode tool hands back a library, submitted as is
 
+# The full system of the agent study: Alloy's tuned C to start from, the sweep over the agent's edits, and the
+# intrinsics reference; the agent submits the library it builds.
+[packets.alloy-full]
+name = "Alloy (start, sweep, ISA lookup)"
+skills = ["alloy", "alloy-isa"]
+tools = ["alloy_profile", "alloy_sweep", "alloy_isa"]
+overlays = ["alloy:prompt/overlay.yaml"]
+env = { JUDGE_INPUT_MODE = "any" }
+
 # The intrinsics reference alone: the agent writes its own source, so the input mode stays the benchmark's.
 [packets.alloy-isa]
 name = "Alloy (ISA lookup)"

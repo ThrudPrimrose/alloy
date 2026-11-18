@@ -121,6 +121,21 @@ def outside_targets(payload: dict[str, Any], allowed: frozenset[str]) -> str:
     return ""
 
 
+class SweepArgs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    folder: str = pydantic.Field(description="the `folder` an alloy_profile answer gave, after your edits")
+
+
+SWEEP = (
+    "Alloy's sweep over your edits: each scopes/<symbol>.c of `folder` (the `best/` folder an alloy_profile answer "
+    "gave, edited in place) is compiled with every compiler, FP level, vector library and ISA flag set Alloy tries, "
+    "verified against the kernel's own rendering, and timed. Answers like alloy_profile: a new folder with each "
+    "scope's fastest verified build, its Makefile, and the ranked report. Keep each scope's function signature."
+)
+tool(spec=Spec(SWEEP, SweepArgs, f"- `alloy_sweep` -- {SWEEP}", HINTS), core=False, name="alloy_sweep")(poster("sweep"))
+
+
 def isa_query(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = frozenset(t for t in os.environ.get(TARGETS_ENV, "").split(",") if t)
     if allowed and (why := outside_targets(payload, allowed)):
