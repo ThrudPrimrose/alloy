@@ -421,16 +421,16 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
 
 def softhier_lookup(op: str, dtype: str, as_json: bool) -> int:
     """Every SoftHier row of ``op`` at ``dtype`` with its code and recorded GVSoC verdict; exit 2 when a row failed its
-    run. A copy, a wait, or a barrier moves no typed data: its rows answer at any element type."""
+    run. A row of untyped data (bytes, none: a copy, its wait, a barrier) answers at any element type."""
     found = [r for r in softhier.rows() if r.op == op]
     if not found:
         known = sorted({r.op for r in softhier.rows()})
         raise KeyError(f"softhier/{dtype}/{op}: no SoftHier row{suggestion(op, known)} (rows: {', '.join(known)})")
-    typed = [r for r in found if dtype in r.dtypes or r.unit != "spatz"]
+    typed = [r for r in found if dtype in r.dtypes or softhier.untyped(r)]
     if not typed:
         dtypes = ", ".join(sorted({d for r in found for d in r.dtypes}))
         raise KeyError(f"softhier/{dtype}/{op}: the {op} rows are {dtypes}; ask with one of those")
-    picked = [(r, r.dtypes[0] if r.unit != "spatz" else dtype) for r in typed]
+    picked = [(r, r.dtypes[0] if softhier.untyped(r) else dtype) for r in typed]
     verdicts = [softhier.verdict_of(r, d) for r, d in picked]
     if as_json:
         print(json.dumps([{**dataclasses.asdict(r), "code": softhier.code(r, d),

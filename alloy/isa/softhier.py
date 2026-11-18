@@ -114,6 +114,11 @@ def rows() -> tuple[Row, ...]:
     return tuple(Row(op=op, **row) for op, entries in table()["ops"].items() for row in entries)
 
 
+def untyped(row: Row) -> bool:
+    """A row that moves bytes or no data (a copy, its wait, a barrier): it answers at any element type."""
+    return set(row.dtypes) <= {"bytes", "none"}
+
+
 def config() -> dict:
     return table()["target"]["config"]
 

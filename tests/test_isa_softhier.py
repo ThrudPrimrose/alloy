@@ -256,6 +256,18 @@ def test_the_lookup_prints_a_rows_code_and_build_line_and_refuses_an_element_typ
     assert "the add rows are f16, f32" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(("op", "dtype", "taken"), [("mma", "f32", "f16"), ("wait", "f32", None)])
+def test_only_a_row_of_untyped_data_answers_any_element_type(op: str, dtype: str, taken: str | None,
+                                                          capsys: pytest.CaptureFixture[str]):  # fmt: skip
+    """RedMulE multiplies f16: an f32 lookup is refused with the type it takes; a wait moves no data."""
+    code = main(["lookup", "softhier", op, dtype])
+
+    if taken is None:
+        assert code == 0 and "wait_idma on idma" in capsys.readouterr().out
+    else:
+        assert code == 2 and f"the {op} rows are {taken}" in capsys.readouterr().err
+
+
 def test_the_harness_program_runs_the_rows_code_verbatim_inside_the_sdk_frame():
     for row in softhier.harness_rows():
         source, _ = softhier_harness.program(row)
