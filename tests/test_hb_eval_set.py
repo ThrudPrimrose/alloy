@@ -17,6 +17,7 @@ from alloy.hb_plugin.eval_set import Refused, Task, admit
         ("transc_log_sincos_sum", "reduce", ["t", "x"], ("out = sum(((log(x) * cos(t)) + sin(t)))",)),
         ("mat_scaled_add", "map", ["A", "B"], ("B = (B + (2.0 * A))",)),  # 2-D, the bench's scalar alpha
         ("tsvc_2_s1112", "map", ["b"], ("a = (b + 1.0)",)),  # a reversed loop
+        ("tsvc_2_s251", "map", ["b", "c", "d"], ("s = (b + (c * d))", "a = (s * s)")),  # a scalar temporary
     ],
 )
 def test_an_admitted_kernel_is_its_program_over_whole_arrays(kernel, kind, inputs, program):

@@ -146,6 +146,30 @@ def plain(st: ast.stmt) -> ast.stmt:
     return st
 
 
+class Indexed(ast.NodeTransformer):
+    """Every use of a loop body's scalar temporaries as an element at the nest's index."""
+
+    def __init__(self, temps: set[str], index: list[str]) -> None:
+        self.temps, self.index = temps, index
+
+    def visit_Name(self, node: ast.Name) -> ast.expr:
+        if node.id not in self.temps:
+            return node
+        names: list[ast.expr] = [ast.Name(i) for i in self.index]
+        at = names[0] if len(names) == 1 else ast.Tuple(names)
+        return ast.copy_location(ast.Subscript(ast.Name(node.id), at, node.ctx), node)
+
+
+def per_element(body: list[ast.stmt], index: list[str], zeroed: set[str]) -> list[ast.stmt]:
+    """``body`` with each scalar it assigns (not an accumulator) made an array over the nest."""
+    temps = {
+        b.targets[0].id
+        for b in body
+        if isinstance(b, ast.Assign) and isinstance(b.targets[0], ast.Name) and b.targets[0].id not in zeroed
+    }
+    return [Indexed(temps, index).visit(b) for b in body] if temps else body
+
+
 RETURNED = "out"
 
 
@@ -179,6 +203,7 @@ def statements(fn: ast.FunctionDef, scalars: dict[str, float]) -> Iterator[tuple
             raise Refused(f"line {st.lineno}: {ast.unparse(st).splitlines()[0]} is neither a loop nest nor setup")
         extents: dict[str, str] = {}
         index, body = nest(st, extents)
+        body = per_element(body, index, zeroed)
         for inner in body:
             if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
                 raise Refused(f"line {inner.lineno}: not one assignment")
