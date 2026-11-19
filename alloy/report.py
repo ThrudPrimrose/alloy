@@ -26,7 +26,9 @@ from alloy.heuristics.predict import Prediction, Predictions
 from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_json
 
 #: The report layout; a reader refuses any other.
-SCHEMA = 7
+SCHEMA = 8
+#: Layouts a reader accepts: 7 lacks only ``intrinsics``, which defaults to "" (the E1 runs at bed7888 wrote 7).
+READS = (7, SCHEMA)
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -125,6 +127,8 @@ class ScopeRecord:
     baseline: Time | None
     top: tuple[Variant, ...]
     advice: str = ""
+    #: The intrinsic-tasklet axis: the ISAs and levels built on which loops, or why none.
+    intrinsics: str = ""
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -300,6 +304,7 @@ def scope_record(
             for rank, b in enumerate(top, start=1)
         ),
         advice=advice,
+        intrinsics=rep.intrinsics,
     )
 
 
@@ -473,6 +478,8 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         f"libm calls: {s.calls_libm}; reduction: {s.has_reduction}; accumulation length: {s.accumulation_length}; "
         f"{s.candidates} candidates, dropped: {dropped}. Baseline (matrix default): {time_text(s.baseline)} ms.",
         "",
+        f"Intrinsic tasklets: {s.intrinsics or 'not swept'}",
+        "",
         *pruned_lines(s.pruned),
         "```",
         tree.render(s.tree),
@@ -551,8 +558,8 @@ def write(
 
 
 def load(path: pathlib.Path) -> Report:
-    """The ``report.json`` at ``path``; any other schema version is refused."""
+    """The ``report.json`` at ``path``; a schema version outside :data:`READS` is refused."""
     r = validated_json(Report, path)
-    if r.schema != SCHEMA:
-        raise ValueError(f"{path}: report schema {r.schema}, this Alloy reads {SCHEMA}")
+    if r.schema not in READS:
+        raise ValueError(f"{path}: report schema {r.schema}, this Alloy reads {READS}")
     return r

@@ -213,6 +213,19 @@ def test_a_report_of_another_schema_is_refused(tmp_path):
         report.load(path)
 
 
+def schema_7(data: dict) -> None:
+    data["schema"] = 7
+    for scope in data["scopes"]:
+        del scope["intrinsics"]
+
+
+def test_a_schema_7_report_loads_without_the_intrinsics_line(tmp_path):
+    loaded = report.load(edited(tmp_path, schema_7))
+
+    assert loaded.schema == 7
+    assert all(s.intrinsics == "" for s in loaded.scopes)
+
+
 def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_path):
     program = outlined()
     builds = (

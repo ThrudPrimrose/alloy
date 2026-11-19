@@ -197,9 +197,8 @@ def tail_reason(candidate: Candidate, matrix: Matrix, f: Facts, host_isas: tuple
 
 def reason(candidate: Candidate, matrix: Matrix, f: Facts, vectorizes: bool, host_isas: tuple[str, ...]) -> str:
     """Why ``candidate`` is not worth building, or ``""``."""
-    explicit = (
-        bool(candidate.tail) and matrix.tails[candidate.tail].render == "sve"
-    )  # vector code without the vectorizer
+    # vector code without the vectorizer: explicit SVE loops, or intrinsic tasklets
+    explicit = bool(candidate.intrinsic) or (bool(candidate.tail) and matrix.tails[candidate.tail].render == "sve")
     vector_cell = is_vector_cell(candidate)
     if vector_cell and not explicit and not vectorizes:
         return "nothing vectorizes"

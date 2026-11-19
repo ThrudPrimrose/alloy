@@ -23,7 +23,7 @@ def edited_run(tmp_path: pathlib.Path, edit: str) -> tuple[api.Result, str]:
     assert old in text, f"{old!r} not in the rendered scope"
     edited = tmp_path / "edited" / unit.name
     edited.parent.mkdir()
-    edited.write_text(text.replace(old, new, 1))
+    edited.write_text(text.replace(old, new))  # every loop: an intrinsic unit repeats the body in its remainder loop
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     result = api.generate(
         sdfg, tmp_path / "second", manifest=manifest, matrix=matrix, mode=Mode.SPECULATIVE, sources={unit.stem: edited}

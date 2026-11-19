@@ -12,8 +12,12 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
+from alloy.isa.ops import OPS
+
 #: The matrix shipped with the package.
 DEFAULT_PATH = pathlib.Path(__file__).resolve().parent / "configuration_matrix.toml"
+#: The CPU targets of the ISA lookup (``alloy.isa.ask.CPU``) an intrinsic tasklet may be spelled for.
+LOOKUP_TARGETS = ("avx2", "avx512", "neon", "sve")
 #: Every table of the file: an unknown or a missing key is an error.
 STRICT = ConfigDict(extra="forbid")
 
@@ -64,6 +68,15 @@ class Tail:
 
     isas: tuple[str, ...]
     render: Literal["", "sve"] = ""
+
+
+@dataclass(slots=True, frozen=True, config=STRICT)
+class IntrinsicTasklets:
+    """The intrinsic-tasklet axis: the lookup target that spells each declared ISA, and the lookup ops a tasklet may
+    be built from."""
+
+    rows: tuple[str, ...]
+    targets: dict[str, str]
 
 
 @dataclass(slots=True, frozen=True, config=STRICT)
@@ -137,6 +150,7 @@ class MatrixFile:
     veclibs: dict[str, Veclib]
     isas: dict[str, Isa]
     tails: dict[str, Tail]
+    intrinsic_tasklets: IntrinsicTasklets
     compilers: dict[str, Compiler]
     codegen: Codegen
     timing: Timing
@@ -154,6 +168,7 @@ class Matrix:
     veclibs: dict[str, Veclib]
     isas: dict[str, Isa]
     tails: dict[str, Tail]
+    intrinsic_tasklets: IntrinsicTasklets
     compilers: dict[str, Compiler]
     knobs: dict[str, tuple[str, ...]]
     timing: Timing
@@ -220,6 +235,13 @@ def check_consistency(m: Matrix) -> None:
     for name, tail in m.tails.items():
         if unknown := sorted(set(tail.isas) - m.isas.keys()):
             raise ValueError(f"{m.path}: tails.{name}.isas names undeclared ISAs {unknown}")
+    intrinsic = m.intrinsic_tasklets
+    if unknown := sorted(set(intrinsic.targets) - m.isas.keys()):
+        raise ValueError(f"{m.path}: intrinsic_tasklets.targets names undeclared ISAs {unknown}")
+    if unknown := sorted(set(intrinsic.targets.values()) - set(LOOKUP_TARGETS)):
+        raise ValueError(f"{m.path}: intrinsic_tasklets.targets names no lookup target {unknown}")
+    if unknown := sorted(set(intrinsic.rows) - OPS.keys()):
+        raise ValueError(f"{m.path}: intrinsic_tasklets.rows names unknown lookup ops {unknown}")
     for name, lib in m.veclibs.items():
         if lib.fp_level not in m.fp_levels:
             raise ValueError(f"{m.path}: veclibs.{name}.fp_level {lib.fp_level!r} is not declared")
@@ -253,6 +275,7 @@ def load(path: pathlib.Path = DEFAULT_PATH) -> Matrix:
         veclibs=f.veclibs,
         isas=f.isas,
         tails=f.tails,
+        intrinsic_tasklets=f.intrinsic_tasklets,
         compilers=f.compilers,
         knobs=f.codegen.knobs,
         timing=f.timing,

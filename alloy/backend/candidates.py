@@ -5,6 +5,7 @@ import ctypes.util
 from dataclasses import dataclass, field
 
 from alloy import machine
+from alloy.backend import intrinsics
 from alloy.configuration_matrix import Compiler, Matrix
 from alloy.frontend.scopes import Scope
 from alloy.heuristics import fission
@@ -26,7 +27,9 @@ class Candidate:
     an empty ``fp_level`` / ``cost_model`` means the matrix default, an empty ``isa`` the build
     flags' ``-march=native``, an empty ``tail`` the compiler's own loop tail; ``fission`` renders the scope with its
     maps cut by :func:`fission.cuts`; ``serial`` builds the same source with no OpenMP region; ``approx`` names the
-    ladder rung its libm calls go to (:mod:`alloy.isa.approximation`), empty for the library."""
+    ladder rung its libm calls go to (:mod:`alloy.isa.approximation`), empty for the library; ``intrinsic`` names the
+    ISA whose lookup rows spell the innermost loop bodies as tasklets (:mod:`alloy.backend.intrinsics`), empty for
+    the compiler's own vectorization."""
 
     language: str
     compiler: str
@@ -39,12 +42,17 @@ class Candidate:
     fission: bool = False
     serial: bool = False
     approx: str = ""
+    intrinsic: str = ""
     note: str = field(default="default", compare=False)
 
     def resolved(self, matrix: Matrix) -> tuple[str, str]:
         """``(fp_level, cost_model)`` with the defaults filled in."""
         d = matrix.defaults
         return self.fp_level or d.fp_level, self.cost_model or d.cost_model
+
+    def fused(self, matrix: Matrix) -> bool:
+        """Whether an intrinsic tasklet takes the fma row: at every FP level but the one that forbids contraction."""
+        return bool(self.intrinsic) and intrinsics.fuses(matrix, self.fp_level)
 
     def tolerance(self, matrix: Matrix) -> str:
         """How this candidate's outputs are compared: its FP level's tolerance, and the band for an inline kernel,
@@ -62,6 +70,7 @@ class Candidate:
             model,
             self.veclib,
             *filter(None, (self.isa, self.tail, split, threading, self.approx and f"approx-{self.approx}")),
+            *filter(None, (self.intrinsic and f"intrinsic-{self.intrinsic}",)),
         ]
         return "_".join(parts + [f"{k}-{v}" for k, v in self.knobs])
 
@@ -72,6 +81,8 @@ class Candidate:
         render = self.render(matrix)
         params = (*params, ("render", render)) if render else params
         params = (*params, ("approx", self.approx)) if self.approx else params
+        if self.intrinsic:
+            params = (*params, ("intrinsic", self.intrinsic + ("+fma" if self.fused(matrix) else "")))
         return self.language, ((*params, ("fission", "cut")) if self.fission else params)
 
     def render(self, matrix: Matrix) -> str:
@@ -83,7 +94,8 @@ class Candidate:
         level, model = self.resolved(matrix)
         threading = "serial" if self.serial else ""
         fixed = [self.compiler, level, model, self.veclib, self.isa or "native"]
-        return "_".join(fixed + list(filter(None, (self.tail, threading, self.approx and f"approx-{self.approx}"))))
+        approx, intrinsic = self.approx and f"approx-{self.approx}", self.intrinsic and f"intrinsic-{self.intrinsic}"
+        return "_".join(fixed + list(filter(None, (self.tail, threading, approx, intrinsic))))
 
     def codegen_params(self, matrix: Matrix) -> dict[str, str]:
         """Every readable-codegen knob this candidate renders with."""
@@ -134,10 +146,12 @@ def flips(
     finite_inputs: bool,
     isas: tuple[str, ...] = (),
     fission: bool = False,
+    intrinsic: tuple[tuple[str, str], ...] = (),
 ) -> list[Candidate]:
     """The default for one language and compiler, then every single-factor change of it; ``isas`` are the ISAs the
     host runs (:meth:`Matrix.host_isas`), tried where the compiler spells them; ``fission`` adds the fissioned
-    rendering (the scope has a cut). The serial builds come last, so every OpenMP build precedes them in sweep order; a
+    rendering (the scope has a cut); ``intrinsic`` the intrinsic-tasklet cells (ISA, FP level) of
+    :func:`intrinsics.offer`, each with the compiler's spelling of its ISA where it has one. The serial builds come last, so every OpenMP build precedes them in sweep order; a
     scope that reduces stops short of :data:`SERIAL_LEVEL` by default, so it builds only the first."""
     comp, d = matrix.compilers[compiler], matrix.defaults
     levels = fp_levels(matrix, scope, finite_inputs=finite_inputs)
@@ -162,6 +176,10 @@ def flips(
         out += [Candidate(language, compiler, approx=level, note=f"approx {level}") for level in approximation.LEVELS]
     if fission:
         out.append(Candidate(language, compiler, fission=True, note="fission"))
+    for isa, level in intrinsic:
+        spelled = isa if isa in comp.isa else ""
+        note = f"intrinsic {isa}" + (f", fp {level}" if level else "")
+        out.append(Candidate(language, compiler, fp_level=level, isa=spelled, intrinsic=isa, note=note))
     out.append(Candidate(language, compiler, serial=True, note="serial"))
     if SERIAL_LEVEL in levels and not scope.has_reduction:
         out.append(Candidate(language, compiler, fp_level=SERIAL_LEVEL, serial=True, note=f"serial, fp {SERIAL_LEVEL}"))
@@ -218,10 +236,11 @@ def one_factor_at_a_time(matrix: Matrix, scope: Scope, *, finite_inputs: bool = 
     usable, _ = matrix.usable_compilers()
     isas = matrix.host_isas(machine.cpu_flags())
     cut = bool(fission.cuts(scope.sdfg, fission.vector_registers()))
+    cells = intrinsics.offer(matrix, scope.sdfg, isas).cells
     return [
         c
         for lang in matrix.languages
         for comp, spec in usable.items()
         if lang in spec.executables
-        for c in flips(matrix, scope, lang, comp, finite_inputs=finite_inputs, isas=isas, fission=cut)
+        for c in flips(matrix, scope, lang, comp, finite_inputs=finite_inputs, isas=isas, fission=cut, intrinsic=cells)
     ]

@@ -13,7 +13,7 @@ from hpcagent_bench.spec import BenchSpec
 
 from alloy import api
 from alloy.frontend import inputs
-from helpers import MATRIX
+from helpers import MATRIX, gcc_only
 
 SMALL = dataclasses.replace(
     MATRIX,
@@ -104,3 +104,26 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(pipeline, t
     full, default = sut.timings.program.arms["alloy_full"], sut.timings.program.arms["dace_default"]
     assert full.verdict.ok
     assert math.isfinite(default.median / full.median)
+
+
+@pytest.mark.e2e
+@pytest.mark.gcc
+@pytest.mark.parametrize("kernel", ["tsvc_2_vpv", "tsvc_2_s1351", "tsvc_2_vsumr"])
+def test_an_intrinsic_tasklet_candidate_builds_verifies_and_is_timed(kernel, tmp_path):
+    """The intrinsic-tasklet axis on this host's ISAs: each ISA's candidate builds, matches the reference (exactly for
+    an elementwise loop, in the band for the reassociated sum), and is screened like every other candidate."""
+    autogen.ensure(kernel, ["dace"])
+    bench = Benchmark(kernel)
+    sdfg = dace_program(bench).to_sdfg(simplify=False)
+    manifest = inputs.load(paths.BENCHMARKS / bench.spec.relative_path / f"{bench.spec.module_name}.yaml")
+    matrix = dataclasses.replace(gcc_only(tmp_path), timing=SMALL.timing)
+
+    sut = api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=matrix)
+
+    assert sut.verification is not None and sut.timings is not None
+    (rep,) = sut.scopes
+    built = [b for b in rep.builds if b.candidate.intrinsic and not b.duplicate_of]
+    assert built and not [b.error for b in built if b.error], rep.intrinsics
+    verdicts, screen = sut.verification.verdicts[rep.scope.symbol], sut.timings.scopes[rep.scope.symbol].screen
+    assert all(verdicts[b.name].ok for b in built)
+    assert all(math.isfinite(screen[b.name].median) for b in built)

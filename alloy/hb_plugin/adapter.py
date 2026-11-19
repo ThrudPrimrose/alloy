@@ -43,6 +43,7 @@ from hpcagent_bench.precision import Precision, numpy_dtype
 from hpcagent_bench.spec import RUNGS, BenchSpec, parse_preset
 
 from alloy import api, configuration_matrix, gpu, gpu_build
+from alloy.backend import intrinsics
 from alloy.backend.build import Build
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
@@ -593,22 +594,26 @@ def gpu_libraries(
     duplicate device object drops out."""
     dialect = form_dialect(task)
 
-    def rendered_form(scalar_decl: str) -> RenderedForm:
+    def rendered_form(scalar_decl: str, intrinsic: bool = False) -> RenderedForm:
+        source = intrinsics.device_rendered(program, dialect) if intrinsic else program
         with set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=scalar_decl or "eager"):
             return render_canonical(
-                spec, spec.short_name, program, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS
+                spec, spec.short_name, source, dialect, task.precision.value, Target.GPU, DEFAULT_HINTS
             )
 
-    forms = {"": rendered_form("")}
+    forms = {("", False): rendered_form("")}
     # the episode's folder when there is one: the judge takes a submitted library only from there
     compilers, folder, arch = gpu_build.load(), folder or scratch_folder(spec), gpu_arch(dialect)
-    folder = form_folder(folder, forms[""])
+    folder = form_folder(folder, forms["", False])
     seen: set[str] = set()
     built: list[tuple[gpu_build.GpuBuild, Submission]] = []
-    for candidate in gpu_build.candidates(compilers, dialect, "atomic" in forms[""].device_code):
-        if candidate.scalar_decl not in forms:
-            forms[candidate.scalar_decl] = rendered_form(candidate.scalar_decl)
-        form = forms[candidate.scalar_decl]
+    for candidate in gpu_build.candidates(compilers, dialect, "atomic" in forms["", False].device_code):
+        key = (candidate.scalar_decl, candidate.intrinsic)
+        try:
+            form = forms[key] if key in forms else forms.setdefault(key, rendered_form(*key))
+        except intrinsics.Refused as refused:
+            print(f"alloy: {spec.short_name}: no intrinsic tasklets: {refused}", file=sys.stderr, flush=True)
+            continue
         result = gpu_build.build(compilers, candidate, form.code, form.device_code, folder, arch, tuple(form.libraries))
         if result.library is None or result.device_hash in seen:
             why = result.error.splitlines()[-1] if result.error else "a duplicate device object"
