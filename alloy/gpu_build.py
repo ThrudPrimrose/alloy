@@ -63,19 +63,20 @@ class GpuCompiler:
 class GpuCandidate:
     """One build of a GPU program: a compiler, a floating-point level ("" the compiler's default), whether
     floating-point atomics may take the unsafe hardware path (AMD, a scope with an accumulation), and where the device
-    code declares its scalars (DaCe's ``scalar_decl``; "" the default, ``eager``)."""
+    code declares its scalars (DaCe's ``scalar_decl``; "" the default, ``eager``); ``intrinsic``: the device maps
+    are rendered with tasklets of the checked SIMT rows (:func:`alloy.backend.intrinsics.device_rendered`)."""
 
     compiler: str
     fp: str = ""
     unsafe_atomics: bool = False
     scalar_decl: str = ""
+    intrinsic: bool = False
 
     @property
     def name(self) -> str:
         atomics = "unsafe-atomics" if self.unsafe_atomics else ""
-        return "_".join(
-            filter(None, (self.compiler, self.fp, atomics, self.scalar_decl and f"decl-{self.scalar_decl}"))
-        )
+        decl, intrinsic = self.scalar_decl and f"decl-{self.scalar_decl}", "intrinsic" if self.intrinsic else ""
+        return "_".join(filter(None, (self.compiler, self.fp, atomics, decl, intrinsic)))
 
 
 def usage(built: "GpuBuild", dialect: str) -> dict[str, gpu.Usage]:
@@ -124,7 +125,7 @@ def load(path: pathlib.Path = GPU_MATRIX) -> dict[str, GpuCompiler]:
 def candidates(compilers: dict[str, GpuCompiler], dialect: str, accumulates: bool) -> list[GpuCandidate]:
     """The default (the dialect's first compiler with no flag) and every single-factor change of it: each other
     compiler, each floating-point level, the unsafe atomics where the program accumulates and the compiler has them,
-    and each other place for the device code's scalar declarations (:data:`SCALAR_DECL`)."""
+    each other place for the device code's scalar declarations (:data:`SCALAR_DECL`), and the intrinsic tasklets."""
     own = [c for c in compilers.values() if c.dialect == dialect]
     if not own:
         return []
@@ -135,6 +136,7 @@ def candidates(compilers: dict[str, GpuCompiler], dialect: str, accumulates: boo
     if accumulates and first.atomics:
         out.append(GpuCandidate(first.name, unsafe_atomics=True))
     out += [GpuCandidate(first.name, scalar_decl=place) for place in SCALAR_DECL]
+    out.append(GpuCandidate(first.name, intrinsic=True))
     return out
 
 

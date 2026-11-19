@@ -30,11 +30,12 @@ def test_the_default_is_the_dialects_first_compiler_and_every_other_candidate_ch
 
     assert sut[0] == GpuCandidate("hipcc")
     assert [c.name for c in sut[1:]] == [
-        "amdclang", "hipcc_nocontract", "hipcc_fast", "hipcc_unsafe-atomics", "hipcc_decl-late", "hipcc_decl-late_fused"
+        "amdclang", "hipcc_nocontract", "hipcc_fast", "hipcc_unsafe-atomics", "hipcc_decl-late", "hipcc_decl-late_fused",
+        "hipcc_intrinsic",
     ]  # fmt: skip
     assert not [c for c in gpu_build.candidates(COMPILERS, "hip", accumulates=False) if c.unsafe_atomics]
     assert [c.name for c in gpu_build.candidates(COMPILERS, "cuda", accumulates=True)] == [
-        "nvcc", "clang_cuda", "nvcc_nocontract", "nvcc_fast", "nvcc_decl-late", "nvcc_decl-late_fused"
+        "nvcc", "clang_cuda", "nvcc_nocontract", "nvcc_fast", "nvcc_decl-late", "nvcc_decl-late_fused", "nvcc_intrinsic"
     ]  # fmt: skip
 
 
