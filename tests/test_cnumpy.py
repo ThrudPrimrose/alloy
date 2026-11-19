@@ -243,3 +243,18 @@ def test_a_dereference_of_an_output_pointer_is_its_first_element_and_pragmas_are
 
     assert "out[0] = s" in module and "pragma" not in module
     assert out[0] == 6.0
+
+
+def test_a_constant_extent_stays_a_name_so_the_index_splits_against_it():
+    source = """
+    constexpr int64_t nb = 3;
+    void k(double *restrict q, const int64_t batch) {
+      for (int64_t b = 0; b < batch; ++b) for (int64_t i = 0; i < nb; ++i) q[(b)*(nb) + (i)] += 1.0 * b;
+    }"""
+    module, kernel = lifted(source, binding("k", ("q", "ptr_double", ["batch", "nb"]), ("batch", "int64", [])))
+    q = np.zeros((2, 3))
+
+    kernel(q, 2)
+
+    assert "q[b, i]" in module
+    np.testing.assert_array_equal(q, [[0.0] * 3, [1.0] * 3])

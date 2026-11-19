@@ -258,10 +258,9 @@ def symbolic(scope: Scope, node: Node) -> sympy.Expr:
     if kind == "parenthesized_expression":
         return symbolic(scope, node.named_children[0])
     if kind == "identifier" and text(scope, node) in scope.constants:
-        literal, dtype = scope.constants[text(scope, node)]
-        if is_integer_dtype(dtype):
-            scope.used.add(text(scope, node))
-            return sympy.Integer(int(literal))
+        if is_integer_dtype(scope.constants[text(scope, node)][1]):
+            scope.used.add(text(scope, node))  # a symbol, as the shapes name it
+            return sympy.Symbol(python_identifier(text(scope, node)), integer=True)
     elif kind == "identifier" and text(scope, node) not in CONSTANTS:
         known(scope, node)
         return sympy.Symbol(python_name(scope, text(scope, node)), integer=True)
