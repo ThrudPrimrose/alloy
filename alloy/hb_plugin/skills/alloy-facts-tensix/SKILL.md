@@ -6,7 +6,7 @@ when: before writing a Tensix compute, reader or writer kernel, and before calli
 
 # Tenstorrent Tensix (Blackhole p150): Alloy's checked facts
 
-Every row is a compute-kernel call on a 32x32 tile in DST. Each row lists its includes and its init and call per tt-metal version ([v06]: tt-metal 0.6x, [v08]: tt-metal 0.8x), the platform each verdict ran on with the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its error measured on a Blackhole card.
+Every row is a compute-kernel call on a 32x32 tile in DST, spelled for tt-metal 0.63 (the card's version). Each row lists its includes and its init and call, the platform each verdict ran on with the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its error measured on a Blackhole card.
 
 ## Target
 
@@ -21,8 +21,7 @@ Tenstorrent Tensix (Blackhole p150): tile calls, not intrinsics; dtypes f32, bf1
 ```text
 tensix/f32,bf16/exp: v[j] = exp(x[j]), applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/exp.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/exp.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/exp.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/exp.h"; reader/writer: #include "dataflow_api.h"
     init: exp_tile_init()
     call: exp_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 6.5e-08
@@ -74,10 +73,9 @@ tensix/f32,bf16/exp: v[j] = exp(x[j]), applied to a 32x32 tile
 ```text
 tensix/f32,bf16/log: log, applied to a 32x32 tile
   SFPU (unary): header compute_kernel_api.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/compute_kernel_api.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
-    init: log_tile_init<false>() [v06], log_tile_init() [v08]
-    call: log_tile<false>(0) [v06], log_tile(0) [v08]
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
+    init: log_tile_init<false>()
+    call: log_tile<false>(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 7.1e-08
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.004
     f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [0.001, 1000]: max rel error 3.35e+04, max abs error 0.0165 (OUTSIDE the row's bound 0.01 rel; probe_log-false, agents 8ec7b7d)
@@ -141,8 +139,7 @@ tensix/f32,bf16/log: log, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/sqrt: v[j] = sqrt(x[j]), applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/sqrt.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/sqrt.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/sqrt.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/sqrt.h"; reader/writer: #include "dataflow_api.h"
     init: sqrt_tile_init()
     call: sqrt_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 8.5e-08
@@ -156,8 +153,7 @@ tensix/f32,bf16/sqrt: v[j] = sqrt(x[j]), applied to a 32x32 tile
 ```text
 tensix/f32,bf16/rsqrt: rsqrt, applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/rsqrt.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/rsqrt.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/rsqrt.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/rsqrt.h"; reader/writer: #include "dataflow_api.h"
     init: rsqrt_tile_init()
     call: rsqrt_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 7.3e-08
@@ -169,8 +165,7 @@ tensix/f32,bf16/rsqrt: rsqrt, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/recip: recip, applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/recip.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/recip.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/recip.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/recip.h"; reader/writer: #include "dataflow_api.h"
     init: recip_tile_init()
     call: recip_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 7.1e-08
@@ -182,8 +177,7 @@ tensix/f32,bf16/recip: recip, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/abs: v[j] = |x[j]|, applied to a 32x32 tile
   SFPU (unary): header compute_kernel_api.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/compute_kernel_api.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
     init: abs_tile_init()
     call: abs_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
@@ -195,8 +189,7 @@ tensix/f32,bf16/abs: v[j] = |x[j]|, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/neg: v[j] = -x[j], applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/negative.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/negative.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/negative.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/negative.h"; reader/writer: #include "dataflow_api.h"
     init: negative_tile_init()
     call: negative_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
@@ -208,8 +201,7 @@ tensix/f32,bf16/neg: v[j] = -x[j], applied to a 32x32 tile
 ```text
 tensix/f32,bf16/tanh: tanh, applied to a 32x32 tile
   SFPU (unary): header compute_kernel_api.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/compute_kernel_api.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api.h"; reader/writer: #include "dataflow_api.h"
     init: tanh_tile_init()
     call: tanh_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 1.2e-07
@@ -222,8 +214,7 @@ tensix/f32,bf16/tanh: tanh, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/sin: v[j] = sin(x[j]), applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/trigonometry.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/trigonometry.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/trigonometry.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/trigonometry.h"; reader/writer: #include "dataflow_api.h"
     init: sin_tile_init()
     call: sin_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 1.1e-07
@@ -235,8 +226,7 @@ tensix/f32,bf16/sin: v[j] = sin(x[j]), applied to a 32x32 tile
 ```text
 tensix/f32,bf16/cos: v[j] = cos(x[j]), applied to a 32x32 tile
   SFPU (unary): header eltwise_unary/trigonometry.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/trigonometry.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/trigonometry.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/trigonometry.h"; reader/writer: #include "dataflow_api.h"
     init: cos_tile_init()
     call: cos_tile(0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 1.1e-07
@@ -248,15 +238,13 @@ tensix/f32,bf16/cos: v[j] = cos(x[j]), applied to a 32x32 tile
 ```text
 tensix/f32,bf16/add: v[j] = a[j] + b[j], applied to a 32x32 tile
   FPU (binary): header eltwise_binary.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
-    init: add_tiles_init(c0, c1) [v06], add_init(c0, c1) [v08]
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
+    init: add_tiles_init(c0, c1)
     call: add_tiles(c0, c1, 0, 0, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.00049
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.0036
   SFPU (binary_sfpu): header eltwise_binary_sfpu.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_binary_sfpu.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
     init: add_binary_tile_init()
     call: add_binary_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 6e-08
@@ -268,15 +256,13 @@ tensix/f32,bf16/add: v[j] = a[j] + b[j], applied to a 32x32 tile
 ```text
 tensix/f32,bf16/sub: v[j] = a[j] - b[j], applied to a 32x32 tile
   FPU (binary): header eltwise_binary.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
-    init: sub_tiles_init(c0, c1) [v06], sub_init(c0, c1) [v08]
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
+    init: sub_tiles_init(c0, c1)
     call: sub_tiles(c0, c1, 0, 0, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.00049
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.0021
   SFPU (binary_sfpu): header eltwise_binary_sfpu.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_binary_sfpu.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
     init: sub_binary_tile_init()
     call: sub_binary_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 3.9e-08
@@ -288,15 +274,13 @@ tensix/f32,bf16/sub: v[j] = a[j] - b[j], applied to a 32x32 tile
 ```text
 tensix/f32,bf16/mul: v[j] = a[j] * b[j], applied to a 32x32 tile
   FPU (binary): header eltwise_binary.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
-    init: mul_tiles_init(c0, c1) [v06], mul_init(c0, c1) [v08]
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h"; reader/writer: #include "dataflow_api.h"
+    init: mul_tiles_init(c0, c1)
     call: mul_tiles(c0, c1, 0, 0, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.002
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.009
   SFPU (binary_sfpu): header eltwise_binary_sfpu.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_binary_sfpu.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
     init: mul_binary_tile_init()
     call: mul_binary_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 5.7e-08
@@ -308,8 +292,7 @@ tensix/f32,bf16/mul: v[j] = a[j] * b[j], applied to a 32x32 tile
 ```text
 tensix/f32,bf16/div: v[j] = a[j] / b[j], applied to a 32x32 tile
   SFPU (binary_sfpu): header eltwise_binary_sfpu.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_binary_sfpu.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_binary_sfpu.h"; reader/writer: #include "dataflow_api.h"
     init: div_binary_tile_init()
     call: div_binary_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 6.7e-08
@@ -322,8 +305,7 @@ tensix/f32,bf16/div: v[j] = a[j] / b[j], applied to a 32x32 tile
 ```text
 tensix/f32,bf16/max: v[j] = max(a[j], b[j]); NaN and equal zeros differ per ISA, see the row, applied to a 32x32 tile
   SFPU (binary_sfpu): header binary_max_min.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/binary_max_min.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/binary_max_min.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/binary_max_min.h"; reader/writer: #include "dataflow_api.h"
     init: binary_max_tile_init()
     call: binary_max_tile(0, 1, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
@@ -336,8 +318,7 @@ tensix/f32,bf16/max: v[j] = max(a[j], b[j]); NaN and equal zeros differ per ISA,
 ```text
 tensix/f32,bf16/broadcast: v[j] = s for every lane j (s is a scalar), applied to a 32x32 tile
   SFPU (fill): header eltwise_unary/fill.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/fill.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/fill.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/fill.h"; reader/writer: #include "dataflow_api.h"
     init: fill_tile_init()
     call: fill_tile(0, 2.5f)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
@@ -350,10 +331,9 @@ tensix/f32,bf16/broadcast: v[j] = s for every lane j (s is a scalar), applied to
 ```text
 tensix/f32,bf16/mma: mma, applied to a 32x32 tile
   FPU (matmul): header matmul.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/matmul.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/matmul.h" #include "api/compute/compute_kernel_hw_startup.h" #include "api/compute/src_order.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
-    init: mm_init(c0, c1, c16) [v06], compute_kernel_hw_startup<SrcOrder::Reverse>(c0, c1, c16); matmul_init(c0, c1) [v08]
-    call: matmul_tiles(c0, c1, 0, 0, 0, false) [v06], matmul_tiles(c0, c1, 0, 0, 0) [v08]
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/matmul.h"; reader/writer: #include "dataflow_api.h"
+    init: mm_init(c0, c1, c16)
+    call: matmul_tiles(c0, c1, 0, 0, 0, false)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.001
     bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x, the [v08] spelling only: max rel error 0.0029
 ```
@@ -363,8 +343,7 @@ tensix/f32,bf16/mma: mma, applied to a 32x32 tile
 ```text
 tensix/f32,bf16/reduce_add: s = sum of every active lane of v, applied to a 32x32 tile
   FPU (reduction): header reduce.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/reduce.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/reduce.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/reduce.h"; reader/writer: #include "dataflow_api.h"
     init: reduce_init<PoolType::SUM, ReduceDim::REDUCE_SCALAR>(c0, c1, c16)
     call: reduce_tile<PoolType::SUM, ReduceDim::REDUCE_SCALAR>(c0, c1, 0, 0, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0.00083
@@ -377,8 +356,7 @@ tensix/f32,bf16/reduce_add: s = sum of every active lane of v, applied to a 32x3
 ```text
 tensix/f32,bf16/reduce_max: s = the largest active lane of v; NaN lanes differ per ISA, applied to a 32x32 tile
   FPU (reduction): header reduce.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/reduce.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/reduce.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/reduce.h"; reader/writer: #include "dataflow_api.h"
     init: reduce_init<PoolType::MAX, ReduceDim::REDUCE_SCALAR>(c0, c1, c16)
     call: reduce_tile<PoolType::MAX, ReduceDim::REDUCE_SCALAR>(c0, c1, 0, 0, 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
@@ -391,8 +369,7 @@ tensix/f32,bf16/reduce_max: s = the largest active lane of v; NaN lanes differ p
 ```text
 tensix/f32,bf16/scan_add: v[j] = x[0] + ... + x[j], the inclusive prefix sum of a register, applied to a 32x32 tile
   SFPU (scan): header cumsum.h
-    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/cumsum.h"; reader/writer: #include "dataflow_api.h"
-    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/cumsum.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    includes compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/cumsum.h"; reader/writer: #include "dataflow_api.h"
     init: cumsum_tile_init()
     call: cumsum_tile(0, i == 0)
     f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 5.7e-07

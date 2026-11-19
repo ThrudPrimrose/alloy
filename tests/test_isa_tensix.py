@@ -73,7 +73,7 @@ def test_the_lookup_offers_both_units_of_an_op_with_their_recorded_errors(capsys
 
     printed = capsys.readouterr().out
     assert "FPU (binary)" in printed and "SFPU (binary_sfpu)" in printed
-    assert "add_tiles_init(c0, c1) [v06], add_init(c0, c1) [v08]" in printed
+    assert "init: add_tiles_init(c0, c1)" in printed and "add_init(c0, c1)" not in printed  # the card's 0.63 only
     assert printed.count("verified on ttsim") == 2
 
 
@@ -333,7 +333,7 @@ def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(
     assert main(["lookup", "tensix", "log", "f32"]) == 0
 
     printed = capsys.readouterr().out
-    assert "log_tile<false>(0) [v06]" in printed and "0.012 to 0.0165" in printed
+    assert "log_tile<false>(0)" in printed and "0.012 to 0.0165" in printed
     assert "SFPU math kernel alloy_log_f32_sfpi" in printed and "tt-metal 0.63, Blackhole p150" in printed
     kernel = printed.split("SFPU math kernel alloy_log_f32_sfpi", 1)[1]  # the rung's text pastes in: no includes
     assert "sfpi_inline sfpi::vFloat alloy_log_f32(sfpi::vFloat x)" in kernel and "#include" not in kernel
@@ -373,14 +373,14 @@ def test_the_plain_log_tile_answer_points_at_the_sfpi_rung():
     assert isinstance(answer, Feasible) and any("alloy_log_f32_sfpi" in note for note in answer.notes)
 
 
-def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_per_version(capsys):
+def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_at_the_cards_version(capsys):
     assert main(["lookup", "tensix", "sin", "f32"]) == 0
 
     printed = capsys.readouterr().out
     assert (
-        'includes [v06] compute: #include "compute_kernel_api/common.h"' in printed
+        'includes compute: #include "compute_kernel_api/common.h"' in printed
         and '#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"' in printed  # init_sfpu
         and 'reader/writer: #include "dataflow_api.h"' in printed
     )  # TensorAccessor at 0.6x, no tensor_accessor.h
-    assert 'includes [v08] compute: #include "api/compute/common.h"' in printed
+    assert '"api/compute/' not in printed  # no tt-metal 0.8x spelling beside the card's (owner, 11-19)
     assert '#include "compute_kernel_api/eltwise_unary/trigonometry.h"' in printed  # the row's own header

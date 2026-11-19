@@ -13,6 +13,10 @@ __all__ = ["ASKED", "TARGETS", "asked_lines", "checked", "feasible_lines", "page
            "tensix_rung_lines", "tensix_title"]  # fmt: skip
 
 
+#: The tt-metal spelling of the card the eval runs on (Daisytuner Blackhole, tt-metal 0.63).
+CARD_VERSION = "v06"
+
+
 def tensix_title(dtypes: str, op: str) -> str:
     return f"tensix/{dtypes}/{op}: {OPS[op].semantics if op in OPS else op}, applied to a 32x32 tile"
 
@@ -38,14 +42,11 @@ def tensix_row_lines(row: tensix.Row, runs: Sequence[tuple[str, tensix.Verdict |
     label is its dtype on a page, and empty in a lookup, which names the ``dtype``."""
     lines = [f"  {row.unit} ({row.kind}): header {row.header}"]
     fields = {"kind": row.kind, "header": row.header}
-    for version, new in (("v06", False), ("v08", True)):
-        compute = " ".join(f'#include "{h}"' for h in tensix_harness.compute_headers(fields, new))
-        lines.append(
-            f'    includes [{version}] compute: {compute}; reader/writer: #include "{tensix_harness.dataflow_include(new)}"'
-        )
+    # Only the card's tt-metal (0.63, the [v06] spelling): two versions side by side misled agents (owner, 11-19).
+    compute = " ".join(f'#include "{h}"' for h in tensix_harness.compute_headers(fields, False))
+    lines.append(f'    includes compute: {compute}; reader/writer: #include "{tensix_harness.dataflow_include(False)}"')
     for name, value in (("init", row.init), ("call", row.call)):
-        spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
-        lines.append(f"    {name}: {spelled}")
+        lines.append(f"    {name}: {value if isinstance(value, str) else value[CARD_VERSION]}")
     lines += [tensix_verdict_line(row, verdict, label) for label, verdict in runs]
     for label, _ in runs:  # the card-0.63 measurement beside the ttsim run, where a probe measured the row
         if card := tensix.card_line(row, label or dtype):
@@ -164,8 +165,8 @@ def tensix_page() -> str:
     out = [
         f"# {target['title']}: Alloy's checked facts",
         "",
-        "Every row is a compute-kernel call on a 32x32 tile in DST. Each row lists its includes and its init and call "
-        "per tt-metal version ([v06]: tt-metal 0.6x, [v08]: tt-metal 0.8x), the platform each verdict ran on with "
+        "Every row is a compute-kernel call on a 32x32 tile in DST, spelled for tt-metal 0.63 (the card's version). "
+        "Each row lists its includes and its init and call, the platform each verdict ran on with "
         "the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its "
         "error measured on a Blackhole card.",
         "",
