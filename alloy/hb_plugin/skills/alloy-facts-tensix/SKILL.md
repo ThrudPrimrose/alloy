@@ -317,6 +317,34 @@ tensix/f32,bf16/div: v[j] = a[j] / b[j], applied to a 32x32 tile
     f32: measured on a Blackhole card with tt-metal 0.63, the [v06] spelling, x in [0.001, 1000]: max rel error 2.43e-07, max abs error 0.132 (within the row's bound 0.01 rel; probe_div-binary, agents 8ec7b7d)
 ```
 
+## max
+
+```text
+tensix/f32,bf16/max: v[j] = max(a[j], b[j]); NaN and equal zeros differ per ISA, see the row, applied to a 32x32 tile
+  SFPU (binary_sfpu): header binary_max_min.h
+    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/binary_max_min.h"; reader/writer: #include "dataflow_api.h"
+    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/binary_max_min.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    init: binary_max_tile_init()
+    call: binary_max_tile(0, 1, 0)
+    f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
+    bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
+    note: the elementwise maximum of two DST tiles; a max reduction over tiles folds each tile into a running maximum tile with it
+```
+
+## broadcast
+
+```text
+tensix/f32,bf16/broadcast: v[j] = s for every lane j (s is a scalar), applied to a 32x32 tile
+  SFPU (fill): header eltwise_unary/fill.h
+    includes [v06] compute: #include "compute_kernel_api/common.h" #include "compute_kernel_api/tile_move_copy.h" #include "compute_kernel_api/eltwise_unary/eltwise_unary.h" #include "compute_kernel_api/eltwise_binary.h" #include "compute_kernel_api/eltwise_unary/fill.h"; reader/writer: #include "dataflow_api.h"
+    includes [v08] compute: #include "api/compute/common.h" #include "api/compute/tile_move_copy.h" #include "api/compute/eltwise_unary/eltwise_unary.h" #include "api/compute/eltwise_binary.h" #include "api/compute/eltwise_unary/fill.h"; reader/writer: #include "api/dataflow/dataflow_api.h"
+    init: fill_tile_init()
+    call: fill_tile(0, 2.5f)
+    f32: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
+    bf16: verified on ttsim v1.16.0 (simulated Blackhole) with tt-metal 0.8x: max rel error 0
+    note: fill_tile(dst, value) writes value (a float) to every element of DST tile dst; no circular buffer is read
+```
+
 ## mma
 
 ```text

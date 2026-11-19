@@ -153,6 +153,26 @@ init = "div_binary_tile_init()"
 call = "div_binary_tile(0, 1, 0)"
 domain = [0.5, 8.0]
 
+[[ops.max]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "binary_max_min.h"
+init = "binary_max_tile_init()"
+call = "binary_max_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+note = "the elementwise maximum of two DST tiles; a max reduction over tiles folds each tile into a running maximum tile with it"
+
+# A constant over a whole tile: the scalar operand of a binary op (2.0 * A) filled into a DST tile, which the binary
+# SFPU rows then read like any other operand.
+[[ops.broadcast]]
+kind = "fill"
+unit = "SFPU"
+header = "eltwise_unary/fill.h"
+init = "fill_tile_init()"
+call = "fill_tile(0, 2.5f)"
+domain = [-8.0, 8.0]
+note = "fill_tile(dst, value) writes value (a float) to every element of DST tile dst; no circular buffer is read"
+
 # A matrix product of tiles on the FPU: C (one tile) += A (one row of K tiles) x B (one column of them), accumulated in
 # DST. The FPU reads f32 operands at TF32 (A keeps 10 mantissa bits, B 9 at HiFi4) with fp32_dest_acc_en; without it
 # they are cut to bf16. 0.8x starts the hardware with SrcOrder::Reverse (matmul sends in0 to SrcB) and moves the

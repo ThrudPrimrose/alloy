@@ -107,6 +107,9 @@ def body(row: dict, new: bool) -> "tuple[str, str, str]":
     """The start-up, the per-tile body and the pops of ``row``'s kind: a unary row copies its tile to DST for the
     SFPU; a binary SFPU row copies both operands to DST; a binary FPU row reads both from their CBs."""
     init, call = spelled(row["init"], new), spelled(row["call"], new)
+    if row["kind"] == "fill":  # no operand: the input tile is read and dropped, DST tile 0 is written
+        start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
+        return start, f"cb_wait_front(c0, 1);\n        {init};\n        {call};", "cb_pop_front(c0, 1);"
     if row["kind"] in ("unary", "scan"):
         start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
         if row["kind"] == "scan":  # one init: the running totals stay in SFPU registers from tile to tile
@@ -288,7 +291,7 @@ def inputs(row: dict) -> list:
     import torch
 
     lo, hi = row["domain"]
-    count = 1 if row["kind"] == "unary" else 2
+    count = 1 if row["kind"] in ("unary", "fill") else 2
     base = torch.linspace(lo, hi, TILES * TILE, dtype=torch.float32)
     if row["kind"] == "matmul":  # A is one row of TILES K tiles (32 x 32 TILES), B one column of them
         return [base.reshape(32, TILES * 32), base.roll(97).reshape(TILES * 32, 32)]
@@ -306,10 +309,20 @@ def dest_fp32(row: dict) -> bool:
     return row["dtype"] == "f32" or row["kind"] in ("matmul", "reduction")
 
 
-def reference(op: str, xs: list):
+def filled(call: str) -> float:
+    """The value a ``fill_tile(dst, value)`` call writes."""
+    found = re.search(r",\s*([-+0-9.eE]+)f?\s*\)", call)
+    if found is None:
+        raise ValueError(f"a fill call names its value: {call}")
+    return float(found.group(1))
+
+
+def reference(op: str, xs: list, call: str = ""):
     import torch
 
     x = xs[0].double()
+    if op == "broadcast":
+        return torch.full_like(x, filled(call))
     unary = {
         "exp": torch.exp, "log": torch.log, "sqrt": torch.sqrt, "rsqrt": torch.rsqrt, "recip": torch.reciprocal,
         "abs": torch.abs, "neg": torch.neg, "tanh": torch.tanh, "sin": torch.sin, "cos": torch.cos,
@@ -323,7 +336,7 @@ def reference(op: str, xs: list):
     y = xs[1].double()
     if op == "mma":  # apart from the elementwise rows, whose tiles do not chain as a product
         return x @ y
-    return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y}[op]
+    return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y, "max": torch.maximum(x, y)}[op]
 
 
 def run(dev, row: dict, new: bool) -> dict:
@@ -387,7 +400,7 @@ def run(dev, row: dict, new: bool) -> dict:
     ]  # fmt: skip
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
     got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
-    want = reference(row["op"], [x.float() for x in xs])
+    want = reference(row["op"], [x.float() for x in xs], spelled(row["call"], new))
     if row["kind"] == "reduction":  # REDUCE_SCALAR leaves the value at face 0 [0, 0] and zeros elsewhere
         got, want = got[0, 0].reshape(1), want.reshape(1)
     if matmul:  # a sum of products: its error is relative to the result's scale, not to each element
