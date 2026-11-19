@@ -319,8 +319,10 @@ def admitted() -> tuple[list[Task], dict[str, str]]:
     return tasks, refused
 
 
-#: The CPU and GPU agent tasks are drawn from the studies' kernels (design review F1).
-POOL_TAGS = ("llr40", "scicomp40")
+#: The CPU and GPU agent tasks are drawn from the studies' kernels (design review F1); ML joins at the freeze, and the
+#: draw aims for about 100 tasks per target (owner, 11-19: 20 is too few for a comparison).
+POOL_TAGS = ("llr40", "scicomp40", "ml40")
+DRAW_COUNT = 100
 #: The draw's seed, fixed at the freeze: a run that redraws gets the same tasks.
 DRAW_SEED = "ics27-eval"
 TARGETS = {"cpu": ("canon_cpu", Target.CPU), "gpu": ("canon_gpu", Target.GPU)}
@@ -363,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     """``eval_set`` prints the Tensix tasks as JSON; ``eval_set draw cpu|gpu [N]`` the drawn kernels, one per line."""
     args = sys.argv[1:] if argv is None else argv
     if args[:1] == ["draw"]:
-        target, count = args[1], int(args[2]) if len(args) > 2 else 20
+        target, count = args[1], int(args[2]) if len(args) > 2 else DRAW_COUNT
         print("\n".join(draw(target, count, lambda name: alloy_takes(name, target))))
         return 0
     tasks, _ = admitted()
