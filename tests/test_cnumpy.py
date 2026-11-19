@@ -1,5 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import json
+import pathlib
+import re
 import types
 from typing import Any
 
@@ -208,3 +210,18 @@ def test_the_command_line_writes_the_numpy_and_the_sdfg(tmp_path):
     assert "y[:] = np.sqrt(x)" in (tmp_path / "k.py").read_text()
     sdfg = dace.SDFG.from_file(str(tmp_path / "k.sdfg"))
     assert {"x", "y"} <= set(sdfg.arrays) and "N" in sdfg.free_symbols
+
+
+def test_every_refusal_reason_on_the_skill_page_is_one_the_lifter_prints():
+    page = pathlib.Path(cnumpy.__file__).parent.parent / "hb_plugin" / "skills" / "alloy-c" / "SKILL.md"
+    table = page.read_text().split("## Refused, with the reason printed")[1]
+    reasons = {
+        r
+        for line in table.splitlines()
+        if line.startswith("| `")
+        for r in re.findall(r"`([^`]+)`", line.split(" | ")[0])
+    }
+    code = pathlib.Path(cnumpy.__file__).read_text()
+
+    assert len(reasons) > 20
+    assert [r for r in reasons if f'"{r}"' not in code] == []
