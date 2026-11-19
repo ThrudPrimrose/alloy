@@ -1126,9 +1126,10 @@ def lift(source: str, binding: dict[str, Any]) -> Lifted:
     """The kernel of ``binding`` (``kernel``, ``args`` with ``name``, ``kind``, ``shape``) as loop-level Python."""
     scope = Scope(source.encode())
     read_file(scope)
-    if binding["kernel"] not in scope.functions:
-        raise Refused("no function of the binding's name", binding["kernel"])
-    node = scope.functions[binding["kernel"]]
+    name = binding.get("symbols", {}).get("c", binding["kernel"])  # the C symbol, when it differs from the name
+    if name not in scope.functions:
+        raise Refused("no function of the binding's name", name)
+    node = scope.functions[name]
     declarator = declarator_of(node)
     assert declarator is not None
     for arg in binding["args"]:

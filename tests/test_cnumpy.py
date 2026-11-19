@@ -310,3 +310,11 @@ def test_a_const_index_local_delinearizes_through_its_value():
 
     assert "aa[i, j] = aa[i - 1, j - 1] + 1.0" in module
     np.testing.assert_array_equal(aa, [[0, 0, 0], [0, 1, 1], [0, 1, 2]])
+
+
+def test_the_binding_s_c_symbol_names_the_function_when_it_differs_from_the_kernel_name():
+    bound = {**binding("K_fp64", ("x", "ptr_double", ["N"]), ("N", "int64", [])), "symbols": {"c": "k_fp64"}}
+
+    module = cnumpy.translate("void k_fp64(double *restrict x, const int64_t N) { x[0] = 1.0; }", bound)
+
+    assert "x[0] = 1.0" in module
