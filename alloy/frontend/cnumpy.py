@@ -586,11 +586,14 @@ def call(scope: Scope, node: Node) -> str:
 
 
 def factors(scope: Scope, node: Node) -> list[str]:
-    """The factors of an element count such as ``(size_t)((NI) * (NK)) * sizeof(T)``, ``sizeof`` dropped."""
-    if node.type == "parenthesized_expression":
-        return factors(scope, node.named_children[0])
+    """The axes of an element count such as ``(size_t)(((K)) * ((M + 1))) * sizeof(T)``: the operands of its
+    products, a parenthesized operand one axis, ``sizeof`` dropped. A cast's own parentheses are no axis."""
     if node.type == "cast_expression":
-        return factors(scope, child(scope, node, "value"))
+        value = child(scope, node, "value")
+        inner = value.named_children[0] if value.type == "parenthesized_expression" else value
+        return [expression(scope, inner)] if inner.type == "parenthesized_expression" else factors(scope, inner)
+    if node.type == "parenthesized_expression" and any(n.type == "sizeof_expression" for n in walk(node)):
+        return factors(scope, node.named_children[0])
     if node.type == "binary_expression" and text(scope, child(scope, node, "operator")) == "*":
         return factors(scope, child(scope, node, "left")) + factors(scope, child(scope, node, "right"))
     if node.type == "sizeof_expression":
