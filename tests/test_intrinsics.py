@@ -130,7 +130,9 @@ def compiled(code: str, tmp_path, name: str) -> ctypes.CDLL:
     source = tmp_path / f"{name}.c"
     source.write_text(code)
     library = tmp_path / f"lib{name}.so"
-    subprocess.run(["gcc", "-O2", "-march=native", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
+    subprocess.run(
+        ["gcc", "-std=gnu17", "-O2", "-march=native", "-shared", "-fPIC", str(source), "-o", str(library)], check=True
+    )
     return ctypes.CDLL(str(library))
 
 

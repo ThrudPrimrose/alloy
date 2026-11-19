@@ -744,7 +744,8 @@ def rendered(sdfg: dace.SDFG, lookup: str, fused: bool, rows: Iterable[str]) -> 
         header = spelling.header()
         rewrite(copied, plan, spelling)
     copied.validate()
-    return copied, header
+    # DaCe spells the accumulator's alignment `alignas`, a keyword only from C23; <stdalign.h> defines it in C11/C17
+    return copied, f"{header}\n#include <stdalign.h>"
 
 
 @functools.cache
