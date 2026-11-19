@@ -2,8 +2,8 @@
 """Tensix tile programs of the eval tasks (``eval_set.admitted()``, which equals alloy-tenstorrent's
 ``agents/tasks.json``), from DaCe's tile nodes.
 
-    python -m alloy.tensixgen generate OUT [TASK ...] [--version v06|v08] [--dst-block N] [--cores K] [--no-fp32-acc]
-    python -m alloy.tensixgen ttsim [TASK ...] [--dst-block N] [--cores K] [--no-fp32-acc]   # one container per task
+    python -m alloy.tensixgen generate OUT [TASK ...] [--version v06|v08] [--dst-block N] [--cores K]
+    python -m alloy.tensixgen ttsim [TASK ...] [--dst-block N] [--cores K]   # one container per task
 """
 
 import argparse
@@ -26,7 +26,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", choices=("v06", "v08"), default="v06", help="tt-metal spelling (generate)")
     parser.add_argument("--dst-block", type=int, default=0, help="tiles per DST acquire (0: the most that fit)")
     parser.add_argument("--cores", type=int, default=0, help="cores (0: the whole grid, as contract v2)")
-    parser.add_argument("--no-fp32-acc", action="store_true", help="16-bit DST accumulation")
     parser.add_argument("--cache", type=pathlib.Path, default=ttsim.default_cache())
     args = parser.parse_args(argv)
     names = list(args.names)
@@ -38,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"no task {', '.join(sorted(unknown))}")
     tasks = [t for t in tasks if not names or t["name"] in names]
-    options = Options(args.dst_block, args.cores, not args.no_fp32_acc)
+    options = Options(args.dst_block, args.cores)
     if out is not None:
         for p in programs(tasks, options, args.version):
             print(p.write(out / p.name))

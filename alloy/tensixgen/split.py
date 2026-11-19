@@ -21,14 +21,14 @@ from dataclasses import dataclass
 
 import dace
 from dace.libraries.standard.nodes import Reduce
-from dace.libraries.tileops.nodes import MaskedCopyLibraryNode
+from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileBinop
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 
 from alloy.isa.tensix_harness import compute_include, dataflow_include
-from alloy.tensixgen.backend import EXPANSIONS, Refused, code, node_code, op_of, rule, use_tensix
+from alloy.tensixgen.backend import TILE_NODES, Refused, code, constant, node_code, op_of, rule, use_tensix
 
-__all__ = ["ACC_CB", "OUT_CB", "Body", "Options", "Program", "Step", "body_of", "capacity", "program", "tile_body"]
+__all__ = ["ACC_CB", "DST_TILES", "OUT_CB", "Body", "Options", "Program", "Step", "body_of", "program", "tile_body"]
 
 CONTRACT = 2
 OUT_CB = 16
@@ -36,20 +36,20 @@ OUT_CB = 16
 ACC_CB = 24
 #: Core counts the sweep offers; 0 is the whole compute grid (what contract v2's host runs).
 CORE_COUNTS = (0, 64, 32, 8)
+#: The tiles of each array under contract v2; a reduction core with none would leave its writer waiting on CB 16.
+TILES = 1024
+#: DST tiles one acquire holds in half-sync mode (tt-metal's default) at fp32 accumulation, which the contract needs.
+DST_TILES = 4
+#: The one load and store subset admitted: one tile of consecutive elements.
+LANES = 1024
 
 
 @dataclass(frozen=True, slots=True)
 class Options:
-    """The sweep axes: tiles per DST acquire (0: the most that fit), cores (0: the whole grid), fp32 accumulation."""
+    """The sweep axes: tiles per DST acquire (0: the most that fit), cores (0: the whole grid)."""
 
     dst_block: int = 0
     cores: int = 0
-    fp32_acc: bool = True
-
-
-def capacity(fp32_acc: bool) -> int:
-    """DST tiles one acquire holds in half-sync mode (tt-metal's default): 4 at fp32, 8 at 16 bits."""
-    return 4 if fp32_acc else 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +82,9 @@ class Slots:
         self.reads, self.of, self.left, self.width = reads, dict[str, int](), dict[int, int](), 0
 
     def take(self, data: str) -> int:
-        free = [k for k in range(capacity(True)) if self.left.get(k, 0) <= 0]
+        free = [k for k in range(DST_TILES) if self.left.get(k, 0) <= 0]
         if not free:
-            raise Refused(f"{data}: more live tiles than the {capacity(True)} DST tiles of one fp32 acquire")
+            raise Refused(f"{data}: more live tiles than the {DST_TILES} DST tiles of one fp32 acquire")
         return self.bind(data, free[0])
 
     def bind(self, data: str, k: int) -> int:
@@ -108,8 +108,9 @@ def copy(cb: int, version: str) -> Step:
     return Step(init, f"copy_tile({cb}, t, _o);")
 
 
-def tile_body(sdfg: dace.SDFG) -> tuple[dace.SDFGState, dace.SDFG] | Reduce:
-    """The one state holding the vectorized tile body's copies, or (no tile body) one ``Reduce`` node."""
+def tile_body(sdfg: dace.SDFG) -> tuple[dace.SDFGState, Reduce | None]:
+    """The one state holding the vectorized tile body's copies, or (no tile body) the state of the one ``Reduce`` node,
+    and that node."""
     copies = [st for n, st in sdfg.all_nodes_recursive() if isinstance(n, MaskedCopyLibraryNode)]
     if copies:
         states = {id(st): st for st in copies}
@@ -118,16 +119,29 @@ def tile_body(sdfg: dace.SDFG) -> tuple[dace.SDFGState, dace.SDFG] | Reduce:
         state = copies[0]
         if not isinstance(state, dace.SDFGState):
             raise Refused("tile copies outside a state")
-        return state, state.sdfg
-    found = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+        return state, None
+    found = [
+        (st, n) for n, st in sdfg.all_nodes_recursive() if isinstance(n, Reduce) and isinstance(st, dace.SDFGState)
+    ]
     if len(found) != 1:
         raise Refused("neither a vectorized tile body nor one Reduce")
     return found[0]
 
 
+def dense(subset: dace.subsets.Subset) -> bool:
+    """Whether ``subset`` is one tile of consecutive elements: unit stride over :data:`LANES` in its last dimension,
+    one index in every other."""
+    *rest, (_, _, step) = subset.ndrange()
+    return step == 1 and subset.num_elements() == LANES and all(b == e for b, e, _ in rest)
+
+
 def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: dict[str, float],
             version: str) -> Body:  # fmt: skip
     """The steps of one tile of the tile body ``state``; input k of ``inputs`` is read into CB k."""
+    for n in state.data_nodes():
+        if sdfg.arrays[n.data].dtype != dace.float32:
+            raise Refused(f"{n.data} is {sdfg.arrays[n.data].dtype}: contract v2 moves float32 tiles")
+    spans: set[tuple[str, tuple]] = set()  # each load's and store's subset, with its array's shape
     reads: dict[str, int] = {}
     for e in state.edges():
         if isinstance(e.src, nodes.AccessNode) and not e.data.is_empty():
@@ -147,7 +161,7 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
                 if not desc.transient and isinstance(desc, dace.data.Scalar):  # a scalar argument: a filled tile
                     if src.data not in scalars:
                         raise Refused(f"the scalar {src.data} has no value at generation")
-                    init, call, _ = code("broadcast", ("_c",), scalars[src.data], version)
+                    init, call = code("broadcast", ("_c",), scalars[src.data], version)
                     steps.append(Step(init, call, (("_c", slots.take(node.data)),)))
                     ops.append("broadcast")
                 elif src.data in slots.of:  # a copy between tiles: one DST tile
@@ -162,7 +176,15 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
             src, dst = state.in_edges(node)[0].src, state.out_edges(node)[0].dst
             if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
                 raise Refused(f"{node.label}: a copy between non-data nodes")
-            if not sdfg.arrays[src.data].transient:  # a load: the reader's CB copied to DST
+            load = not sdfg.arrays[src.data].transient
+            inner, outer = state.in_edges(node)[0], state.out_edges(node)[0]
+            span = inner.data.get_src_subset(inner, state) if load else outer.data.get_dst_subset(outer, state)
+            if span is None or not dense(span):
+                raise Refused(f"{node.label}: {span} is not one tile of consecutive elements")
+            spans.add((str(span), tuple(sdfg.arrays[src.data if load else dst.data].shape)))
+            if len(spans) > 1:  # the host reads and writes tile k of every array at the same index
+                raise Refused(f"{node.label}: the loads and stores take different tiles: {sorted(spans)}")
+            if load:  # a load: the reader's CB copied to DST
                 if src.data not in inputs:
                     raise Refused(f"{node.label}: loads {src.data}, not an input of the task")
                 cb = inputs.index(src.data)
@@ -172,8 +194,8 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
                 raise Refused("more than one tile leaves the body: contract v2 writes one output")
             else:  # the store: packed to CB 16 after the block; its DST tile stays taken
                 result = slots.of[src.data]
-        elif type(node) in EXPANSIONS:
-            init, call, _ = node_code(node, version)
+        elif type(node) in TILE_NODES:
+            init, call = node_code(node, version)
             ops.append(op_of(node))
             ins = {e.dst_conn: e.src.data for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode)}
             outs = {e.src_conn: e.dst.data for e in state.out_edges(node) if isinstance(e.dst, nodes.AccessNode)}
@@ -181,7 +203,13 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
                 if result >= 0:
                     raise Refused("more than one tile leaves the body: contract v2 writes one output")
                 result, fold, fold_op = slots.of[ins["_src"]], Step(init, call), op_of(node)
-            elif "_b" in ins:  # a binary op: its output may take a dying operand's DST tile
+            elif isinstance(node, TileBinop):  # a binary op: its output may take a dying operand's DST tile
+                for conn, kind, expr in (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b)):
+                    if kind == "Symbol":  # a constant operand: a filled tile
+                        ins[conn] = f"{node.label}{conn}"
+                        fill_init, fill = code("broadcast", ("_c",), constant(node, expr), version)
+                        steps.append(Step(fill_init, fill, (("_c", slots.take(ins[conn])),)))
+                        ops.append("broadcast")
                 a, b = slots.read(ins["_a"]), slots.read(ins["_b"])
                 k = next((x for x in (a, b) if slots.dead(x)), None)
                 k = slots.take(outs["_c"]) if k is None else slots.bind(outs["_c"], k)
@@ -205,16 +233,22 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
     return Body(steps, slots.width, result, fold, ops, fold_op)
 
 
-def reduce_body(node: Reduce, inputs: list[str], version: str) -> Body:
-    """A ``Reduce`` that sums or maxes a whole input: one copy per tile, folded like a vectorized reduction."""
+def reduce_body(node: Reduce, state: dace.SDFGState, inputs: list[str], version: str) -> Body:
+    """A ``Reduce`` that sums a whole input: one copy per tile, folded like a vectorized reduction."""
     # shortcut: the vectorizer leaves a whole-array Reduce node (tsvc_2_s311) unvectorized; the split takes it as a
     # load and a TileReduce. Upgrade when the vectorizer lifts Reduce nodes into tile bodies.
-    ops = {"lambda a, b: a + b": "add", "lambda a, b: max(a, b)": "max"}
-    if node.wcr not in ops or (node.axes is not None and len(node.axes) != 1) or len(inputs) != 1:
-        raise Refused(f"{node.label}: only a full sum or max of one input reduces on Tensix")
-    init, call, _ = code(ops[node.wcr], ("_dst", "_src", "_dst"), version=version)
+    (edge,) = state.in_edges(node)
+    desc = state.sdfg.arrays[edge.data.data]
+    rank = len(desc.shape)
+    if node.wcr != "lambda a, b: a + b" or len(inputs) != 1:
+        raise Refused(f"{node.label}: only a sum of one input reduces on Tensix")
+    if node.axes is not None and sorted(node.axes) != list(range(rank)):
+        raise Refused(f"{node.label}: reduces axes {node.axes} of {rank}, not the whole input")
+    if desc.dtype != dace.float32:
+        raise Refused(f"{edge.data.data}: contract v2 moves float32 tiles")
+    init, call = code("add", ("_dst", "_src", "_dst"), version=version)
     load = dataclasses.replace(copy(0, version), tiles=(("_o", 0),))
-    return Body([load], 1, 0, Step(init, call), [ops[node.wcr]], ops[node.wcr])
+    return Body([load], 1, 0, Step(init, call), ["add"], "add")
 
 
 def slot(width: int, k: int) -> str:
@@ -232,7 +266,7 @@ def placed(step: Step, at: dict[str, str]) -> str:
     return text
 
 
-def compute(name: str, title: str, body: Body, block: int, fp32_acc: bool, inputs: int, version: str) -> str:
+def compute(name: str, title: str, body: Body, block: int, inputs: int, version: str) -> str:
     new = version == "v08"
     width, indent = body.width, "        "
     lines: list[str] = []
@@ -297,7 +331,7 @@ def compute(name: str, title: str, body: Body, block: int, fp32_acc: bool, input
     head = [
         f"// {name}: {title}",
         f"// Generated by alloy.tensixgen from DaCe's tile nodes (contract v{CONTRACT}, tt-metal {version}): {block}"
-        f" tile(s) per DST acquire, {width} DST tile(s) per tile, fp32 accumulation {'on' if fp32_acc else 'off'}.",
+        f" tile(s) per DST acquire, {width} DST tile(s) per tile, fp32 accumulation.",
         *(f"// {op}: {r.source}" for op, r in rules.items()),
         "#include <stdint.h>",
         *(f'#include "{compute_include(h, new)}"' for h in dict.fromkeys(headers)),
@@ -405,17 +439,19 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
         raise ValueError(f"version {version}: v06 or v08")
     inputs = [str(name) for name, *_ in task["inputs"]]
     use_tensix(sdfg)
-    found = tile_body(sdfg)
-    if isinstance(found, Reduce):
-        body = reduce_body(found, inputs, version)
+    if options.cores > TILES:
+        raise Refused(f"{task['name']}: {options.cores} cores for {TILES} tiles leave a core without a tile")
+    state, node = tile_body(sdfg)
+    if node is None:
+        body = body_of(state, state.sdfg, inputs, scalars, version)
     else:
-        body = body_of(found[0], found[1], inputs, scalars, version)
+        body = reduce_body(node, state, inputs, version)
     reduce = task["kind"] == "reduce"
     if reduce != (body.reduce is not None):
         raise Refused(
             f"{task['name']}: the task is a {task['kind']}, its tile body {'is not ' if reduce else ''}a reduction"
         )
-    room = capacity(options.fp32_acc) // body.width
+    room = DST_TILES // body.width
     block = options.dst_block or room
     if not 1 <= block <= room:
         raise Refused(f"{task['name']}: {block} tile(s) of {body.width} DST tile(s) each exceed one DST acquire")
@@ -424,10 +460,10 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     extra = [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
     extra += [{"index": ACC_CB, "tiles": 2, "format": "float32"}] if reduce else []
     config: dict[str, object] = {
-        "fp32_dest_acc_en": options.fp32_acc,
+        "fp32_dest_acc_en": True,
         "math_approx_mode": False,
         "math_fidelity": "HiFi4",
-        "unpack_to_dest_fp32": [*range(count), *([ACC_CB] if reduce else [])] if options.fp32_acc else [],
+        "unpack_to_dest_fp32": [*range(count), *([ACC_CB] if reduce else [])],
         "extra_cbs": extra,
     }
     descriptor: dict[str, object] = {
@@ -437,10 +473,8 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
         "reduce": body.fold_op,
         "options": dataclasses.asdict(dataclasses.replace(options, dst_block=block)),
         "axes": {
-            "dst_block": list(range(1, capacity(True) // body.width + 1)),
-            "dst_block_16bit": list(range(1, capacity(False) // body.width + 1)),
+            "dst_block": list(range(1, DST_TILES // body.width + 1)),
             "cores": list(CORE_COUNTS),
-            "fp32_acc": [True, False],
         },
         "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), OUT_CB]}
         | ({str(ACC_CB): [2, "float32"]} if reduce else {}),
@@ -453,7 +487,7 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     return Program(
         str(task["name"]),
         reader(count, block, version),
-        compute(str(task["name"]), title, body, block, options.fp32_acc, count, version),
+        compute(str(task["name"]), title, body, block, count, version),
         writer(block, version),
         config,
         descriptor,

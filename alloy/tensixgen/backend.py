@@ -1,31 +1,30 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Tensix as one more backend of DaCe's tile nodes (``dace.libraries.tileops``): a ``tensix`` implementation of
-``TileBinop``, ``TileUnop`` and ``TileReduce``, registered from Alloy, built from the checked rows of
-``alloy/isa/tensix.toml``. A tile is one 32x32 Tensix tile in DST (1024 lanes, full tiles only, no lane masks).
+"""Tensix code for DaCe's tile nodes (``dace.libraries.tileops``): ``TileBinop``, ``TileUnop`` and ``TileReduce`` as
+the init and call of a checked row of ``alloy/isa/tensix.toml``. A tile is one 32x32 Tensix tile in DST (1024 lanes,
+full tiles only, no lane masks).
 
-An expansion is a C++ tasklet of two lines, the row's init and its call, whose DST tile arguments are the node's
-connectors (``_a``, ``_b``, ``_c``; ``_src``, ``_dst``): the kernel split (:mod:`alloy.tensixgen.split`) assigns each
-tile a DST index and substitutes it. A unary call works in place, on ``_c``. An SFPI rung's source goes in the
-tasklet's ``code_global``."""
+A node's call names its DST tile arguments by the node's connectors (``_a``, ``_b``, ``_c``; ``_src``, ``_dst``): the
+kernel split (:mod:`alloy.tensixgen.split`) assigns each tile a DST index and substitutes it. A unary call works in
+place, on ``_c``. An SFPI rung's source goes in the compute kernel's head."""
 
+import math
 import re
 from dataclasses import dataclass
 
 import dace
 from dace.libraries.tileops.nodes import TileBinop, TileReduce, TileUnop
-from dace.library import register_implementation
+from dace.libraries.tileops.ops import CAST_OPS
 from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
 
 from alloy.isa import tensix
 
 __all__ = [
     "CONNECTORS",
-    "EXPANSIONS",
-    "IMPLEMENTATION",
+    "TILE_NODES",
     "Refused",
     "Rule",
     "code",
+    "constant",
     "node_code",
     "op_of",
     "place",
@@ -33,14 +32,23 @@ __all__ = [
     "use_tensix",
 ]
 
-IMPLEMENTATION = "tensix"
 #: The contract's relative tolerance: a row the card measured above it is replaced by its SFPI rung.
 TASK_RTOL = 1e-3
 #: The tile ops' names -> the Tensix row ops.
 BINARY = {"+": "add", "-": "sub", "*": "mul", "/": "div", "max": "max"}
 UNARY = {"neg": "neg", "abs": "abs", "exp": "exp", "log": "log", "sqrt": "sqrt", "sin": "sin", "cos": "cos",
          "tanh": "tanh"}  # fmt: skip
-REDUCE = {"+": "add", "max": "max"}
+REDUCE = {"+": "add"}  # contract v2's host sums a reduction's partial tiles
+#: The card evidence of the rows no probe measured (tensix_card.toml): the eval task whose generated program, in the
+#: v06 spelling, the card graded correct under contract v2 (alloy-tenstorrent agents a046cb3), and its max relative
+#: error. A task of several ops bounds its result only: cos's is the error of a sum.
+CARD_TASKS = {
+    "add": ("tsvc_2_s1351", 5.96e-08),
+    "mul": ("tsvc_2_vtv", 5.96e-08),
+    "sin": ("transc_sin_small", 1.64e-07),  # transc_sin_wide passed too: abs 6.92e-06, rel 1.58 at the zeros of sin
+    "cos": ("transc_log_sincos_sum", 1.53e-08),
+    "broadcast": ("neg_stride_rev", 5.96e-08),
+}
 #: A rung's call passes the DST tile as this argument of this function.
 RUNG_FUNC, RUNG_DST = "_llk_math_eltwise_unary_sfpu_params_", 1
 #: The positions of a row's DST tile arguments, per row kind.
@@ -79,6 +87,10 @@ def rule(op: str, version: str = "v06") -> Rule:
         raise Refused(f"the {op} row has no ttsim run at f32 within {TASK_RTOL:g}")
     card = tensix.card_verdicts().get((op, "f32", row.unit)) if version == "v06" else None
     rel = None if card is None else card.rel if card.ok and card.rel is not None else float("inf")
+    if version == "v06" and card is None:
+        if op not in CARD_TASKS:
+            raise Refused(f"the {op} row has no card run (tt-metal 0.63), which the v06 spelling runs on")
+        rel = CARD_TASKS[op][1]
     if rel is not None and rel > TASK_RTOL:
         rungs = tensix.rungs(op, "f32")
         if not rungs:
@@ -90,8 +102,10 @@ def rule(op: str, version: str = "v06") -> Rule:
     func = re.match(r"\s*(\w+)", call)
     if func is None:
         raise ValueError(f"a row's call starts with its function: {call}")
-    source = f"row {op} {row.unit} ({row.kind}), ttsim rel {verdict.rel:.3g}" + (
-        f", card rel {rel:.3g}" if rel is not None else ""
+    source = (
+        f"row {op} {row.unit} ({row.kind}), ttsim rel {verdict.rel:.3g}"
+        + (f", card rel {rel:.3g}" if rel is not None else "")
+        + (f" (task {CARD_TASKS[op][0]})" if version == "v06" and card is None else "")
     )
     init = tensix.spelled(row.init, version)
     return Rule(op, init, call, func.group(1), DST_ARGS[row.kind], row.header, "", source)
@@ -131,9 +145,11 @@ def op_of(node: nodes.LibraryNode) -> str:
     if masked(node):
         raise Refused(f"{node.label}: a masked tile")
     if isinstance(node, TileBinop) and node.op in BINARY:
-        return BINARY[node.op]
-    if isinstance(node, TileUnop) and node.kind_a == "Symbol":  # a constant cast to the tile's type: a filled tile
+        return BINARY[node.op]  # a Symbol operand is a filled tile of the split's
+    if isinstance(node, TileUnop) and node.kind_a == "Symbol" and node.op in CAST_OPS:  # a constant: a filled tile
         return "broadcast"
+    if isinstance(node, TileUnop) and node.kind_a != "Tile":
+        raise Refused(f"{node.label}: {node.op} of a {node.kind_a}, not of a tile")
     if isinstance(node, TileUnop) and node.op in UNARY:
         return UNARY[node.op]
     if isinstance(node, TileReduce) and node.op in REDUCE and node.axis is None:
@@ -145,9 +161,19 @@ def masked(node: nodes.LibraryNode) -> bool:
     return isinstance(node, TileBinop | TileUnop | TileReduce) and bool(node.has_mask)
 
 
-def code(op: str, connectors: tuple[str, ...], value: float = 0.0, version: str = "v06") -> tuple[str, str, str]:
-    """The init and the call of ``op`` on DST tiles named ``connectors`` for tt-metal ``version``, and its SFPI source
-    ("" for a row); a fill writes ``value``."""
+def constant(node: nodes.LibraryNode, expr: str | None) -> float:
+    """The value of a ``Symbol`` operand ``expr`` of ``node``: a number, maybe cast (``dace.float32(1.0)``)."""
+    try:
+        return float(re.sub(r"^dace\.\w+\((.*)\)$", r"\1", str(expr).strip()))
+    except ValueError as err:
+        raise Refused(f"{node.label}: the symbol {expr} has no value at generation") from err
+
+
+def code(op: str, connectors: tuple[str, ...], value: float = 0.0, version: str = "v06") -> tuple[str, str]:
+    """The init and the call of ``op`` on DST tiles named ``connectors`` for tt-metal ``version``; a fill writes
+    ``value``."""
+    if not math.isfinite(value):
+        raise Refused(f"the constant {value} is not finite: no C literal spells it")
     r = rule(op, version)
     call = place(r.call, r.func, dict(zip(r.dst, connectors, strict=True)))
     if op == "broadcast":
@@ -155,75 +181,38 @@ def code(op: str, connectors: tuple[str, ...], value: float = 0.0, version: str 
         if found is None:
             raise ValueError(f"a fill call names its value: {r.call}")
         call = f"{call[: found.start()]}, {float(value)!r}f{call[found.end() - 1 :]}"
-    return f"{r.init};", f"{call};", r.code
+    return f"{r.init};", f"{call};"
 
 
 #: The DST tile connectors of each node's call.
 CONNECTORS = {TileBinop: ("_a", "_b", "_c"), TileUnop: ("_c",), TileReduce: ("_dst", "_src", "_dst")}
 
 
-def node_code(node: nodes.LibraryNode, version: str = "v06") -> tuple[str, str, str]:
-    """``node``'s init and call on DST tiles named by its connectors, and its SFPI source, for tt-metal ``version``."""
+#: The compute tile nodes Tensix runs.
+TILE_NODES = (TileBinop, TileUnop, TileReduce)
+
+
+def node_code(node: nodes.LibraryNode, version: str = "v06") -> tuple[str, str]:
+    """``node``'s init and call on DST tiles named by its connectors, for tt-metal ``version``."""
     op = op_of(node)
-    value = 0.0
-    if op == "broadcast" and isinstance(node, TileUnop):
-        try:
-            value = float(str(node.expr_a))
-        except ValueError as err:
-            raise Refused(f"{node.label}: the symbol {node.expr_a} has no value at generation") from err
+    value = constant(node, node.expr_a) if op == "broadcast" and isinstance(node, TileUnop) else 0.0
     return code(op, CONNECTORS[type(node)], value, version)
 
 
-class ExpandTileTensix(ExpandTransformation):
-    """A tile node as the init and call of its Tensix row (the card's tt-metal 0.63 spelling), on DST tiles named by
-    its connectors."""
-
-    environments: list = []
-
-    @staticmethod
-    def expansion(node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        init, call, source = node_code(node)
-        return nodes.Tasklet(f"{node.label}_tensix", inputs=set(node.in_connectors), outputs=set(node.out_connectors),
-                             code=f"{init}\n{call}", language=dace.Language.CPP, code_global=source)  # fmt: skip
-
-
-class ExpandTileBinopTensix(ExpandTileTensix):
-    pass
-
-
-class ExpandTileUnopTensix(ExpandTileTensix):
-    pass
-
-
-class ExpandTileReduceTensix(ExpandTileTensix):
-    """A full reduction folds ``_src`` into the core's partial tile ``_dst``; the host folds the partial tiles."""
-
-
-EXPANSIONS: dict[type[TileBinop | TileUnop | TileReduce], type[ExpandTransformation]] = {
-    TileBinop: ExpandTileBinopTensix,
-    TileUnop: ExpandTileUnopTensix,
-    TileReduce: ExpandTileReduceTensix,
-}
-for node_type, expansion in EXPANSIONS.items():
-    if IMPLEMENTATION not in node_type.implementations:
-        register_implementation(IMPLEMENTATION, expansion, node_type)
-
-
 def use_tensix(sdfg: dace.SDFG) -> list[tuple[nodes.LibraryNode, dace.SDFGState]]:
-    """The dispatch hook: every compute tile node of ``sdfg`` set to the ``tensix`` implementation; the nodes, with
-    their states. :class:`Refused` names the first tile node without a Tensix expansion (admission)."""
+    """Admission: every compute tile node of ``sdfg``, with its state. :class:`Refused` names the first tile node
+    Tensix does not run."""
     from dace.libraries.tileops.nodes import MaskedCopyLibraryNode
 
     found = []
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, MaskedCopyLibraryNode) or not isinstance(node, nodes.LibraryNode):
             continue  # a copy is the reader's or the writer's: the kernel split moves it
-        if type(node) not in EXPANSIONS:
+        if type(node) not in TILE_NODES:
             if type(node).__module__.startswith("dace.libraries.tileops"):
-                raise Refused(f"{node.label}: no Tensix expansion of {type(node).__name__}")
+                raise Refused(f"{node.label}: no Tensix code for {type(node).__name__}")
             continue
         if not isinstance(state, dace.SDFGState):
             raise Refused(f"{node.label}: outside a state")
-        node.implementation = IMPLEMENTATION
         found.append((node, state))
     return found

@@ -43,7 +43,7 @@ def operands(task: dict):
 
 
 def verdict_of(task: dict, got, want) -> dict:
-    """host.py's ``verdict_of``; a max reduction takes the maximum of the partial tiles, without the allowance."""
+    """host.py's ``verdict_of``."""
     import torch
 
     got, want = got.double().flatten(), torch.as_tensor(want, dtype=torch.float64).flatten()
@@ -51,8 +51,6 @@ def verdict_of(task: dict, got, want) -> dict:
     if task["reduce"] == "add":
         got = got.sum().reshape(1)
         rtol += FP32_EPS * math.sqrt(TILES * 32 * 32)
-    elif task["reduce"] == "max":
-        got = got.max().reshape(1)
     diff = (got - want).abs()
     excess = (diff - (1e-5 + rtol * want.abs())).max().item()
     err = (diff / want.abs().clamp_min(1e-30)).max().item()
@@ -99,6 +97,7 @@ def run(dev, folder: pathlib.Path) -> dict:
     grid = dev.compute_with_storage_grid_size()
     cores = [(x, y) for y in range(grid.y) for x in range(grid.x)]  # core index = y * grid.x + x
     cores = cores[: task["options"]["cores"] or len(cores)]
+    assert len(cores) <= TILES, f"{len(cores)} cores for {TILES} tiles: a core without a tile hangs"
     core = ttnn.CoreRangeSet([ttnn.CoreRange(ttnn.CoreCoord(x, y), ttnn.CoreCoord(x, y)) for x, y in cores])
     reduce = bool(task["reduce"])
     out_shape = [32 * len(cores), 32] if reduce else list(xs[0].shape)

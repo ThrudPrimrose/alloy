@@ -7,16 +7,17 @@ import json
 import re
 import shutil
 
+import dace
 import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the eval tasks are bench kernels")
 
-from dace.libraries.tileops.nodes import TileBinop, TileReduce, TileUnop
+from dace.libraries.tileops.nodes import TileReduce, TileUnop
 
 from alloy.hb_plugin import eval_set
 from alloy.tensixgen import ttsim
-from alloy.tensixgen.backend import IMPLEMENTATION, Refused, place, rule
-from alloy.tensixgen.split import Options, Program, Slots
+from alloy.tensixgen.backend import Refused, code, op_of, place, rule
+from alloy.tensixgen.split import Options, Program, Slots, program
 from alloy.tensixgen.tasks import programs, tile_sdfg
 
 
@@ -46,8 +47,25 @@ def test_log_runs_its_sfpi_rung_on_the_card_which_measured_the_row_outside_the_t
     assert sin.call == "sin_tile(0)" and sin.code == ""
 
 
-def test_the_tile_nodes_have_a_tensix_implementation():
-    assert all(IMPLEMENTATION in node.implementations for node in (TileBinop, TileUnop, TileReduce))
+def test_a_unary_op_of_a_constant_is_refused_not_taken_for_a_filled_tile():
+    with pytest.raises(Refused, match="exp of a Symbol"):
+        op_of(TileUnop("e", (1024,), op="exp", kind_a="Symbol", expr_a="2.0"))
+
+
+def test_a_max_reduction_is_refused_because_the_contracts_host_sums_the_partial_tiles():
+    with pytest.raises(Refused, match="no Tensix row"):
+        op_of(TileReduce("r", (1024,), op="max"))
+
+
+def test_a_row_without_a_card_run_is_refused_for_the_cards_spelling_only():
+    assert rule("neg", "v08").call.startswith("negative_tile")
+    with pytest.raises(Refused, match="no card run"):
+        rule("neg", "v06")
+
+
+def test_a_non_finite_constant_is_refused():
+    with pytest.raises(Refused, match="not finite"):
+        code("broadcast", ("_c",), float("inf"))
 
 
 def test_a_dst_tile_is_reused_only_after_its_last_reader():
@@ -108,17 +126,48 @@ def test_the_ttsim_spelling_differs_only_where_tt_metal_renamed(tasks: dict[str,
 
 def test_a_block_beyond_one_dst_acquire_is_refused(tasks: dict[str, dict]):
     sdfg, scalars = tile_sdfg("tsvc_2_s1351")
-    from alloy.tensixgen.split import program
 
     with pytest.raises(Refused, match="exceed one DST acquire"):
         program(tasks["tsvc_2_s1351"], sdfg, scalars, Options(dst_block=3))
 
 
+def test_more_cores_than_tiles_are_refused_because_a_reduction_core_without_a_tile_hangs(tasks: dict[str, dict]):
+    sdfg, scalars = tile_sdfg("tsvc_2_s313")
+
+    with pytest.raises(Refused, match="leave a core without a tile"):
+        program(tasks["tsvc_2_s313"], sdfg, scalars, Options(cores=1025))
+
+
+def test_a_strided_load_is_refused_not_read_as_consecutive_tiles():
+    sdfg, scalars = tile_sdfg("tsvc_2_s111")  # a[2i + 1] = a[2i] + b[i]
+    task = {"name": "tsvc_2_s111", "kind": "map", "inputs": [["a", 0.0, 1.0], ["b", 0.0, 1.0]], "output": "a",
+            "program": ["a = a + b"]}  # fmt: skip
+
+    with pytest.raises(Refused, match="not one tile of consecutive elements"):
+        program(task, sdfg, scalars)
+
+
+def test_a_row_sum_is_refused_not_taken_for_a_full_sum():
+    sdfg = dace.SDFG("row_sum")
+    sdfg.add_array("A", [32, 1024], dace.float32)
+    sdfg.add_array("out", [32], dace.float32)
+    state = sdfg.add_state()
+    node = state.add_reduce("lambda a, b: a + b", [1], 0)
+    state.add_edge(state.add_read("A"), None, node, None, dace.Memlet("A[0:32, 0:1024]"))
+    state.add_edge(node, None, state.add_write("out"), None, dace.Memlet("out[0:32]"))
+    task = {"name": "row_sum", "kind": "reduce", "inputs": [["A", 0.0, 1.0]], "output": "out",
+            "program": ["out = A.sum(1)"]}  # fmt: skip
+
+    with pytest.raises(Refused, match="not the whole input"):
+        program(task, sdfg, {})
+
+
 @pytest.mark.tensix
-def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, dict]):
+@pytest.mark.parametrize("dst_block", [1, 0], ids=["dst_block=1", "dst_block=max"])
+def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, dict], dst_block: int):
     if shutil.which("docker") is None:
         pytest.fail("the tensix mark needs docker")
 
-    found = [v for task in tasks.values() for v in ttsim.run_tasks([task], ttsim.default_cache())]
+    found = [v for task in tasks.values() for v in ttsim.run_tasks([task], ttsim.default_cache(), Options(dst_block))]
 
     assert [v.name for v in found if not v.ok] == [], found
