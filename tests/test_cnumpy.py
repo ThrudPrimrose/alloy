@@ -171,7 +171,7 @@ def test_memset_constants_float_scalars_and_nested_branches_keep_c_semantics():
         ("x[0] = 1.0; goto done; done: x[1] = 2.0;", "goto"),
         ("const double *p = x + 1; x[0] = p[0];", "a pointer into an array (pointer arithmetic)"),
         ("x[0] = foo(x[1]);", "a call to a function outside math.h and BLAS"),
-        ("x[0] = twice(x[1]);", "a call to a helper function of the file (inline it into the kernel)"),
+        ("x[0] = twice(x[1]); x[1] = twice(x[0]);", "a helper function that computes its value in statements"),
         (
             "struct pair { double a; } p; x[0] = p.a;",
             "a type outside canonical C form (a struct, complex or library type)",
@@ -181,9 +181,7 @@ def test_memset_constants_float_scalars_and_nested_branches_keep_c_semantics():
     ],
 )
 def test_constructs_outside_canonical_c_are_refused_with_their_reason(body: str, reason: str):
-    source = (
-        f"static double twice(double v) {{ return 2.0 * v; }}\nvoid k(double *restrict x, const int64_t N) {{ {body} }}"
-    )
+    source = f"static double twice(double v) {{ double w = 2.0 * v; return w; }}\nvoid k(double *restrict x, const int64_t N) {{ {body} }}"
     bound = binding("k", ("x", "ptr_double", ["N"]), ("N", "int64", []))
 
     with pytest.raises(cnumpy.Refused) as refused:
@@ -318,3 +316,60 @@ def test_the_binding_s_c_symbol_names_the_function_when_it_differs_from_the_kern
     module = cnumpy.translate("void k_fp64(double *restrict x, const int64_t N) { x[0] = 1.0; }", bound)
 
     assert "x[0] = 1.0" in module
+
+
+def test_helpers_of_the_file_are_inlined_a_value_into_its_expression_a_void_one_into_the_caller():
+    source = """
+    static int64_t idx(int64_t i, int64_t j, int64_t n) { return i * n + j; }
+    static void bump(double *restrict a, const double *restrict b, const int64_t n) {
+      for (int64_t k = 0; k < n; ++k) a[k] += b[k];
+    }
+    void k(double *restrict aa, double *restrict x, const double *restrict y, const int64_t N) {
+      for (int64_t i = 1; i < N; ++i)
+        for (int64_t j = 0; j < N; ++j) aa[idx(i, j, N)] = aa[idx(i - 1, j, N)] + 1.0;
+      bump(x, y, N);
+    }"""
+    bound = binding(
+        "k",
+        ("aa", "ptr_double", ["N", "N"]),
+        ("x", "ptr_double", ["N"]),
+        ("y", "ptr_double", ["N"]),
+        ("N", "int64", []),
+    )
+    module, kernel = lifted(source, bound)
+    aa, x = np.zeros((2, 2)), np.ones(2)
+
+    kernel(aa, x, np.arange(2.0), 2)
+
+    assert "aa[i, j] = aa[i - 1, j] + 1.0" in module and "x[:] += y" in module
+    np.testing.assert_array_equal(aa, [[0.0, 0.0], [1.0, 1.0]])
+    np.testing.assert_array_equal(x, [1.0, 2.0])
+
+
+@pytest.mark.parametrize(
+    ("helpers", "call", "reason"),
+    [
+        (
+            "static double f(double v) { return v < 1.0 ? v : f(v - 1.0); }",
+            "x[0] = f(x[1]);",
+            "a recursive helper function",
+        ),
+        (
+            "static void g(double *a) { a[0] = 1.0; }",
+            "g(x + 1);",
+            "a helper call on part of an array (pointer arithmetic)",
+        ),
+        (
+            "static void g(double *a, int64_t m) { m += 1; a[0] = m; }",
+            "g(x, N);",
+            "a helper that stores to a scalar parameter",
+        ),
+    ],
+)
+def test_helpers_outside_the_inlinable_form_are_refused(helpers: str, call: str, reason: str):
+    source = f"{helpers}\nvoid k(double *restrict x, const int64_t N) {{ {call} }}"
+
+    with pytest.raises(cnumpy.Refused) as refused:
+        cnumpy.translate(source, binding("k", ("x", "ptr_double", ["N"]), ("N", "int64", [])))
+
+    assert refused.value.reason == reason

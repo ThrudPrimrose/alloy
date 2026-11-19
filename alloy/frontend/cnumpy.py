@@ -26,7 +26,7 @@ import pathlib
 import re
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -151,6 +151,11 @@ INTEGER_TYPES = ("int", "uint")
 COMPLEX_CALLS = frozenset({"cabs", "creal", "cimag", "conj", "cexp", "carg", "csqrt", "__npb_conj"})
 
 
+#: The parameters of the helpers being inlined: name -> (the caller's argument, the caller's bindings, the
+#: parameter's dtype or "ptr").
+type Bindings = dict[str, tuple[Node, Bindings, str]]
+
+
 class Refused(ValueError):
     """The C is outside canonical C form: ``reason`` names the construct, the message adds its line and text."""
 
@@ -188,6 +193,9 @@ class Scope:
     stored: set[str] = field(default_factory=set[str])
     #: Variables of the canonical loops around the statement being lifted (only their header stores to them).
     loops: set[str] = field(default_factory=set[str])
+    bindings: Bindings = field(default_factory=dict[str, tuple[Node, Bindings, str]])
+    #: Helpers being inlined, to refuse recursion.
+    inlining: set[str] = field(default_factory=set[str])
     #: File-scope constants: C name -> (Python literal, dtype).
     constants: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     #: The constants the kernel reads.
@@ -267,6 +275,9 @@ def symbolic(scope: Scope, node: Node) -> sympy.Expr:
         if is_integer_dtype(scope.constants[text(scope, node)][1]):
             scope.used.add(text(scope, node))  # a symbol, as the shapes name it
             return sympy.Symbol(python_identifier(text(scope, node)), integer=True)
+    elif kind == "identifier" and text(scope, node) in scope.bindings:
+        argument, outer, _ = scope.bindings[text(scope, node)]
+        return under(scope, outer, lambda: symbolic(scope, argument))
     elif kind == "identifier" and text(scope, node) in scope.values:
         return symbolic(scope, scope.values[text(scope, node)])  # idx = i * N + j, then a[idx]
     elif kind == "identifier" and text(scope, node) not in CONSTANTS:
@@ -284,6 +295,10 @@ def symbolic(scope: Scope, node: Node) -> sympy.Expr:
         left = symbolic(scope, child(scope, node, "left"))
         right = symbolic(scope, child(scope, node, "right"))
         return left + right if op == "+" else left - right if op == "-" else left * right
+    if kind == "call_expression" and text(scope, child(scope, node, "function")) in scope.functions:
+        function = text(scope, child(scope, node, "function"))
+        value, bindings = returned(scope, node, function)
+        return inlined(scope, function, bindings, lambda: symbolic(scope, value))
     spelled = expression(scope, node)
     for name, source in scope.opaque.items():
         if source == spelled:
@@ -375,17 +390,19 @@ def is_integer(scope: Scope, node: Node) -> bool:
         return True
     if kind == "identifier":
         name = text(scope, node)
+        if name in scope.bindings:
+            return is_integer_dtype(scope.bindings[name][2])
         if name in scope.constants:
             return is_integer_dtype(scope.constants[name][1])
         return name in INTEGER_CONSTANTS or is_integer_dtype(scope.scalars.get(name, "float64"))
     if kind == "pointer_expression":
-        name = text(scope, child(scope, node, "argument"))
+        name = array_name(scope, text(scope, child(scope, node, "argument")))
         return name in scope.arrays and is_integer_dtype(scope.arrays[name].dtype)
     if kind == "subscript_expression":
         base = node
         while base.type == "subscript_expression":
             base = child(scope, base, "argument")
-        name = text(scope, base)
+        name = array_name(scope, text(scope, base))
         return name in scope.arrays and is_integer_dtype(scope.arrays[name].dtype)
     if kind == "cast_expression":
         return is_integer_dtype(DTYPES.get(type_name(scope, child(scope, node, "type")), "float64"))
@@ -404,6 +421,9 @@ def is_integer(scope: Scope, node: Node) -> bool:
         function = text(scope, child(scope, node, "function"))
         if function.startswith("(") and function.strip("() ") in DTYPES:
             return is_integer_dtype(DTYPES[function.strip("() ")])
+        definition = scope.functions.get(function)
+        if definition is not None and type_name(scope, child(scope, definition, "type")) in DTYPES:
+            return is_integer_dtype(DTYPES[type_name(scope, child(scope, definition, "type"))])
         integer_call = function in INTEGER_CALLS or function.startswith(("__npb_f", "__npb_ceildiv", "__npb_mod"))
         return integer_call and all(is_integer(scope, a) for a in arguments_of(scope, node))
     return False
@@ -418,6 +438,9 @@ def is_nonnegative(scope: Scope, node: Node) -> bool:
         return is_integer(scope, node)
     if kind == "identifier":
         name = text(scope, node)
+        if name in scope.bindings:
+            argument, outer, _ = scope.bindings[name]
+            return under(scope, outer, lambda: is_nonnegative(scope, argument))
         if name in scope.constants:
             return not scope.constants[name][0].startswith("-")
         return name in scope.nonnegative
@@ -459,6 +482,10 @@ def expression(scope: Scope, node: Node) -> str:
         return f"({expression(scope, node.named_children[0])})"
     if kind == "identifier":
         name = text(scope, node)
+        if name in scope.bindings:
+            argument, outer, dtype = scope.bindings[name]
+            value = under(scope, outer, lambda: expression(scope, argument))
+            return value if dtype == "ptr" else f"({value})"
         if name in scope.constants:
             scope.used.add(name)
             return python_identifier(name)
@@ -478,8 +505,8 @@ def expression(scope: Scope, node: Node) -> str:
         return binary(scope, node)
     if kind == "unary_expression":
         op = text(scope, child(scope, node, "operator"))
-        argument = expression(scope, child(scope, node, "argument"))
-        return f"(not {argument})" if op == "!" else f"({op}{argument})"
+        operand = expression(scope, child(scope, node, "argument"))
+        return f"(not {operand})" if op == "!" else f"({op}{operand})"
     if kind == "conditional_expression":
         test, yes, no = (expression(scope, child(scope, node, f)) for f in ("condition", "consequence", "alternative"))
         return f"({yes} if {test} else {no})"
@@ -504,7 +531,7 @@ def expression(scope: Scope, node: Node) -> str:
 def dereference(scope: Scope, node: Node) -> str:
     """``*p`` of an array ``p`` as ``p[0]``; any other pointer expression is pointer arithmetic."""
     argument = child(scope, node, "argument")
-    name = text(scope, argument)
+    name = array_name(scope, text(scope, argument))
     if text(scope, child(scope, node, "operator")) != "*" or argument.type != "identifier" or name not in scope.arrays:
         raise refuse(scope, node, "a pointer dereference or address (pointer arithmetic)")
     return f"{python_name(scope, name)}[{', '.join('0' * len(scope.arrays[name].shape))}]"
@@ -545,7 +572,7 @@ def subscript(scope: Scope, node: Node) -> str:
         base = child(scope, base, "argument")
     if base.type != "identifier":
         raise refuse(scope, node, "a subscript of something other than a named array")
-    name = text(scope, base)
+    name = array_name(scope, text(scope, base))
     if name in scope.pointers:
         raise refuse(scope, node, "a pointer read before it holds a malloc'd array")
     array = scope.arrays.get(name)
@@ -595,8 +622,101 @@ def call(scope: Scope, node: Node) -> str:
     if base in MATH and (function.startswith("__npb_") or function not in scope.functions or base in ("min", "max")):
         return f"{MATH[base]}({', '.join(expression(scope, a) for a in arguments)})"
     if function in scope.functions:
-        raise refuse(scope, node, "a call to a helper function of the file (inline it into the kernel)")
+        value, bindings = returned(scope, node, function)
+        return f"({inlined(scope, function, bindings, lambda: expression(scope, value))})"
     raise refuse(scope, node, "a call to a function outside math.h and BLAS")
+
+
+def array_name(scope: Scope, name: str) -> str:
+    """The caller's array a helper's pointer parameter ``name`` is bound to (``name`` itself outside helpers)."""
+    bindings = scope.bindings
+    while name in bindings:
+        argument, bindings, _ = bindings[name]
+        name = text(scope, argument)
+    return name
+
+
+def under[T](scope: Scope, bindings: Bindings, work: Callable[[], T]) -> T:
+    """``work`` with ``bindings`` in force (a bound argument is spelled in its caller's bindings)."""
+    saved, scope.bindings = scope.bindings, bindings
+    try:
+        return work()
+    finally:
+        scope.bindings = saved
+
+
+def inlined[T](scope: Scope, function: str, bindings: Bindings, work: Callable[[], T]) -> T:
+    if function in scope.inlining:
+        raise Refused("a recursive helper function", function)
+    scope.inlining.add(function)
+    try:
+        return under(scope, bindings, work)
+    finally:
+        scope.inlining.discard(function)
+
+
+def inline(scope: Scope, node: Node, function: str) -> tuple[Node, Bindings]:
+    """The body of helper ``function`` and its parameters bound to the call's arguments: a pointer parameter to a
+    whole array of the caller, a scalar one to its argument expression (so the helper must not store to it)."""
+    definition = scope.functions[function]
+    declarator = declarator_of(definition)
+    assert declarator is not None
+    parameters = [p for p in child(scope, declarator, "parameters").named_children if p.type == "parameter_declaration"]
+    arguments = arguments_of(scope, node)
+    if len(parameters) != len(arguments):
+        raise refuse(scope, node, "a helper call whose argument count differs from its definition")
+    bindings: Bindings = {}
+    for parameter, argument in zip(parameters, arguments, strict=True):
+        name = parameter_name(parameter)
+        if name is None:
+            raise refuse(scope, parameter, "a parameter without a name")
+        pointer = child(scope, parameter, "declarator").type != "identifier"
+        inner = unwrap_cast(argument)
+        whole_array = (
+            inner is not None and inner.type == "identifier" and array_name(scope, text(scope, inner)) in scope.arrays
+        )
+        if pointer and not whole_array:
+            raise refuse(scope, node, "a helper call on part of an array (pointer arithmetic)")
+        dtype = "ptr" if pointer else c_type(scope, child(scope, parameter, "type"))
+        bindings[text(scope, name)] = (argument, scope.bindings, dtype)
+    body = child(scope, definition, "body")
+    if stored_names(scope, body) & {n for n, b in bindings.items() if b[2] != "ptr"}:
+        raise refuse(scope, node, "a helper that stores to a scalar parameter")
+    return body, bindings
+
+
+def returned(scope: Scope, node: Node, function: str) -> tuple[Node, Bindings]:
+    """The returned expression of a helper whose body is one ``return``, and its bindings for the call ``node``."""
+    body, bindings = inline(scope, node, function)
+    statements = [s for s in body.named_children if s.type != "comment"]
+    if len(statements) != 1 or statements[0].type != "return_statement" or not statements[0].named_children:
+        raise refuse(scope, node, "a helper function that computes its value in statements")
+    return statements[0].named_children[0], bindings
+
+
+def inline_statement(scope: Scope, node: Node, function: str) -> list[str]:
+    """A helper call as a statement: a ``void`` helper's body inlined, a pure value's call dropped."""
+    body, bindings = inline(scope, node, function)
+    if text(scope, child(scope, scope.functions[function], "type")) != "void":
+        call(scope, node)  # checks the helper is a single return, so dropping its value drops nothing
+        return []
+    if any(n.type == "return_statement" for n in walk(body)):
+        raise refuse(scope, node, "a return inside a helper function")
+    declared: set[str] = set()
+    for declaration_node in (n for n in walk(body) if n.type == "declaration"):
+        for item in declaration_node.children_by_field_name("declarator"):
+            while item.type != "identifier" and item.child_by_field_name("declarator") is not None:
+                item = child(scope, item, "declarator")
+            declared.add(text(scope, item))
+    if declared & (scope.scalars.keys() | scope.arrays.keys() | scope.pointers.keys()):
+        raise refuse(scope, node, "a helper whose local names are the caller's")
+    stored, scope.stored = scope.stored, scope.stored | stored_names(scope, body)
+    lines = inlined(scope, function, bindings, lambda: statement(scope, body))
+    scope.stored = stored
+    for name in declared:  # the helper's locals end with it
+        for table in (scope.scalars, scope.arrays, scope.pointers, scope.values):
+            table.pop(name, None)
+    return lines
 
 
 # ---------------------------------------------------------------------------------------------------- statements
@@ -949,7 +1069,7 @@ def call_statement(scope: Scope, node: Node) -> list[str]:
     if function in ("cblas_dgemv", "cblas_sgemv"):
         return [gemv(scope, node, arguments)]
     if function in scope.functions:
-        raise refuse(scope, node, "a call to a helper function of the file (inline it into the kernel)")
+        return inline_statement(scope, node, function)
     raise refuse(scope, node, "a call to a function outside math.h and BLAS")
 
 

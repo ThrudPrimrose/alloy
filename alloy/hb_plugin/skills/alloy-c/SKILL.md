@@ -27,6 +27,8 @@ NumPy. It never guesses: C outside the form below is refused with a reason.
 - Calls: math.h (`sqrt`, `exp`, `fmax`, `pow`, `round`, ... and their `f` forms), `memset(p, 0, n * sizeof(T))`,
   `memcpy`, `cblas_dgemm`/`sgemm`, `cblas_dgemv`/`sgemv` and `cblas_ddot` (row-major, unit stride), and the
   helpers of the bench's prelude (`int_floor`, `python_mod`, `__npb_fmax`, ...).
+- Helper functions of the same file are inlined: one whose body is `return <expression>;` into the expression,
+  a `void` one into the caller, its pointer parameters bound to whole arrays of the caller.
 - File-scope constants: `constexpr int64_t K = 4;`, `static const double D = 0.5;`, and `#define N 64`.
 
 ```c
@@ -50,7 +52,7 @@ unless both operands are provably non-negative.
 | `a type outside canonical C form (a struct, complex or library type)`, `a struct or union`, `complex arithmetic` | split a struct into one array per field, and complex numbers into real and imaginary arrays |
 | `a pointer into an array (pointer arithmetic)`, `a pointer dereference or address (pointer arithmetic)`, `a pointer to a pointer` | index the whole array: `A[(i)*(M) + j]`, not `p = A + i*M; p[j]` |
 | `a pointer read before it holds a malloc'd array` | allocate before the first use |
-| `a call to a helper function of the file (inline it into the kernel)` | inline the helper |
+| `a recursive helper function`, `a helper function that computes its value in statements`, `a helper call on part of an array (pointer arithmetic)`, `a helper that stores to a scalar parameter`, `a return inside a helper function`, `a helper whose local names are the caller's` | inline the helper by hand |
 | `a call to a function outside math.h and BLAS`, `a call through a function pointer` | inline it or use a math.h or BLAS call |
 | `a name that is no array, scalar or constant (a global or a macro)` | pass it as a parameter, or declare it `constexpr` |
 | `an assignment inside an expression`, `an expression statement without effect (or a comma expression)` | one assignment per statement: `a[i] = x; i++;` |
