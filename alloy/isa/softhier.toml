@@ -1,0 +1,334 @@
+# SoftHier v1 rows: what a kernel calls on the GVSoC model pulp.chips.soft_hier_old.flex_cluster, a mesh of clusters of
+# Snitch RISC-V cores with a Spatz vector unit (RVV through GCC 14's riscv_vector.h), an iDMA engine, and a RedMulE
+# matrix unit per cluster. A row's `code` is what the lookup answers: C that compiles alone with the build line of
+# softhier.py and runs as written. In vector rows, $t is the C element type, $b its bits, and $s its RVV suffix (f32,
+# f16). Verdicts come from running each row on GVSoC (alloy/isa/softhier_harness.py) and live in softhier_verified.toml.
+# Sources: alloy-workspace notes/isa-tensix-softhier.md (SoftHier section) and the SDK headers at the pinned commit.
+
+[target]
+title = "SoftHier v1 (GVSoC model pulp.chips.soft_hier_old.flex_cluster, simulated)"
+dtypes = ["f32", "f16"]
+note = "Every core of every cluster runs the same ELF from _start. Per cluster: 3 Snitch cores; core 0 drives the Spatz vector unit (VLEN 256) and RedMulE, the last core (flex_is_dm_core()) issues iDMA. Data a kernel computes on sits in the cluster's 1 MiB TCDM (local(offset)); HBM and other clusters' TCDM are reached only through iDMA (hbm_west(node, offset), hbm_south(node, offset), remote_cid(cid, offset)): a core's own load or store there is out of bounds. Simulated, not hardware."
+
+# The v1 configuration every row ran on: the SDK's examples/SoftHier/config/arch_spatz_check.py with a 2 x 2 mesh and
+# two HBM channels on the west and two on the south edge. `python -m alloy.isa.softhier arch` writes it as the
+# simulator's architecture file (SOFTHIER_ARCH_FILE) and the SDK's config.py turns it into flex_cluster_arch.h.
+[target.config]
+num_cluster_x = 2
+num_cluster_y = 2
+num_core_per_cluster = 3
+cluster_tcdm_bank_width = 64
+cluster_tcdm_bank_nb = 64
+cluster_tcdm_base = 0x00000000
+cluster_tcdm_size = 0x00100000
+cluster_tcdm_remote = 0x30000000
+cluster_stack_base = 0x10000000
+cluster_stack_size = 0x00020000
+cluster_zomem_base = 0x18000000
+cluster_zomem_size = 0x00020000
+cluster_reg_base = 0x20000000
+cluster_reg_size = 0x00000200
+spatz_attaced_core_list = [0]
+spatz_num_vlsu_port = 4
+spatz_num_function_unit = 4
+spatz_vlsu_port_width = 64
+redmule_ce_height = 128
+redmule_ce_width = 32
+redmule_ce_pipe = 3
+redmule_elem_size = 2
+redmule_queue_depth = 1
+redmule_reg_base = 0x20020000
+redmule_reg_size = 0x00000200
+idma_outstand_txn = 16
+idma_outstand_burst = 256
+hbm_start_base = 0xc0000000
+hbm_node_addr_space = 0x04000000
+num_node_per_ctrl = 1
+hbm_chan_placement = [2, 0, 0, 2]
+noc_outstanding = 64
+noc_link_width = 512
+instruction_mem_base = 0x80000000
+instruction_mem_size = 0x00010000
+soc_register_base = 0x90000000
+soc_register_size = 0x00010000
+soc_register_eoc = 0x90000000
+soc_register_wakeup = 0x90000004
+sync_base = 0x40000000
+sync_interleave = 0x00000080
+sync_special_mem = 0x00000040
+
+# Spatz rows: strip-mined loops over TCDM. vsetvl returns min(n - i, VLMAX), so the last strip is the tail: no mask, no
+# scalar epilogue. VLMAX at LMUL 8 is VLEN * 8 / SEW: 64 f32 or 128 f16 elements at VLEN 256.
+[[ops.load]]
+unit = "spatz"
+kind = "move"
+dtypes = ["f32", "f16"]
+call = "__riscv_vle${b}_v_${s}m8(x + i, vl)"
+code = """
+#include <riscv_vector.h>
+// y[0:n] = x[0:n] through vector registers; x and y in TCDM; run on the Spatz core (core 0)
+void alloy_load_$s($t* y, const $t* x, size_t n) {
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t v = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        __riscv_vse${b}_v_${s}m8(y + i, v, vl);
+        i += vl;
+    }
+}
+"""
+
+[[ops.store]]
+unit = "spatz"
+kind = "move"
+dtypes = ["f32", "f16"]
+call = "__riscv_vse${b}_v_${s}m8(y + i, v, vl)"
+code = """
+#include <riscv_vector.h>
+// y[0:n] = x[0:n] through vector registers; x and y in TCDM; run on the Spatz core (core 0)
+void alloy_store_$s($t* y, const $t* x, size_t n) {
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t v = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        __riscv_vse${b}_v_${s}m8(y + i, v, vl);
+        i += vl;
+    }
+}
+"""
+
+[[ops.add]]
+unit = "spatz"
+kind = "binary"
+dtypes = ["f32", "f16"]
+call = "__riscv_vfadd_vv_${s}m8(a, b, vl)"
+code = """
+#include <riscv_vector.h>
+// z[i] = x[i] + y[i] for i < n; x, y, z in TCDM; run on the Spatz core (core 0)
+void alloy_add_$s($t* z, const $t* x, const $t* y, size_t n) {
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t a = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        vfloat${b}m8_t b = __riscv_vle${b}_v_${s}m8(y + i, vl);
+        __riscv_vse${b}_v_${s}m8(z + i, __riscv_vfadd_vv_${s}m8(a, b, vl), vl);
+        i += vl;
+    }
+}
+"""
+
+[[ops.mul]]
+unit = "spatz"
+kind = "binary"
+dtypes = ["f32", "f16"]
+call = "__riscv_vfmul_vv_${s}m8(a, b, vl)"
+code = """
+#include <riscv_vector.h>
+// z[i] = x[i] * y[i] for i < n; x, y, z in TCDM; run on the Spatz core (core 0)
+void alloy_mul_$s($t* z, const $t* x, const $t* y, size_t n) {
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t a = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        vfloat${b}m8_t b = __riscv_vle${b}_v_${s}m8(y + i, vl);
+        __riscv_vse${b}_v_${s}m8(z + i, __riscv_vfmul_vv_${s}m8(a, b, vl), vl);
+        i += vl;
+    }
+}
+"""
+
+[[ops.fma]]
+unit = "spatz"
+kind = "fma"
+dtypes = ["f32", "f16"]
+call = "__riscv_vfmacc_vv_${s}m8(acc, a, b, vl)"
+code = """
+#include <riscv_vector.h>
+// d[i] = a[i] * b[i] + c[i] for i < n, one rounding (vfmacc: acc += a * b); all in TCDM; run on the Spatz core (core 0)
+void alloy_fma_$s($t* d, const $t* a, const $t* b, const $t* c, size_t n) {
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t va = __riscv_vle${b}_v_${s}m8(a + i, vl);
+        vfloat${b}m8_t vb = __riscv_vle${b}_v_${s}m8(b + i, vl);
+        vfloat${b}m8_t acc = __riscv_vle${b}_v_${s}m8(c + i, vl);
+        __riscv_vse${b}_v_${s}m8(d + i, __riscv_vfmacc_vv_${s}m8(acc, va, vb, vl), vl);
+        i += vl;
+    }
+}
+"""
+
+[[ops.reduce_add]]
+unit = "spatz"
+kind = "reduction"
+dtypes = ["f32", "f16"]
+call = "__riscv_vfredusum_vs_${s}m8_${s}m1(v, acc, vl)"
+note = "vfredusum adds in an unspecified order and accumulates in the element type: an f16 sum of many terms loses digits; sum f16 data in f32 with vfwredusum, or in blocks"
+code = """
+#include <riscv_vector.h>
+// the sum of x[0:n]; x in TCDM; run on the Spatz core (core 0)
+$t alloy_reduce_add_$s(const $t* x, size_t n) {
+    vfloat${b}m1_t acc = __riscv_vfmv_s_f_${s}m1(0, 1);
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t v = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        acc = __riscv_vfredusum_vs_${s}m8_${s}m1(v, acc, vl);
+        i += vl;
+    }
+    return __riscv_vfmv_f_s_${s}m1_${s}(acc);
+}
+"""
+
+[[ops.reduce_max]]
+unit = "spatz"
+kind = "reduction"
+dtypes = ["f32", "f16"]
+call = "__riscv_vfredmax_vs_${s}m8_${s}m1(v, acc, vl)"
+note = "starts from x[0], so n >= 1; -ffast-math (in the build line) assumes no NaN or infinity"
+code = """
+#include <riscv_vector.h>
+// the maximum of x[0:n], n >= 1; x in TCDM; run on the Spatz core (core 0)
+$t alloy_reduce_max_$s(const $t* x, size_t n) {
+    vfloat${b}m1_t acc = __riscv_vfmv_s_f_${s}m1(x[0], 1);
+    for (size_t i = 0; i < n;) {
+        size_t vl = __riscv_vsetvl_e${b}m8(n - i);
+        vfloat${b}m8_t v = __riscv_vle${b}_v_${s}m8(x + i, vl);
+        acc = __riscv_vfredmax_vs_${s}m8_${s}m1(v, acc, vl);
+        i += vl;
+    }
+    return __riscv_vfmv_f_s_${s}m1_${s}(acc);
+}
+"""
+
+# iDMA rows. Asynchronous: the copy only issues; `wait on=idma` (alloy_wait_idma) completes every transfer the DMA core
+# issued and lets the other cores read. Addresses are 64-bit: local(offset) for this cluster's TCDM, remote_cid(cid,
+# offset) for another cluster's, hbm_west(node, offset) and hbm_south(node, offset) for the HBM channels of v1.
+[[ops.copy]]
+name = "copy_1d"
+unit = "idma"
+kind = "dma_1d"
+dtypes = ["bytes"]
+call = "flex_dma_async_1d(dst, src, bytes)"
+code = """
+#include "flex_dma_pattern.h"
+// issue a copy of `bytes` contiguous bytes from src to dst; every core of the cluster calls it, the DMA core issues
+void alloy_copy_1d(uint64_t dst, uint64_t src, size_t bytes) {
+    if (flex_is_dm_core()) flex_dma_async_1d(dst, src, bytes);
+}
+// wait on=idma: every core calls it; the DMA core waits for its transfers, then the cluster's cores meet
+void alloy_wait_idma(void) {
+    if (flex_is_dm_core()) flex_dma_async_wait_all();
+    flex_intra_cluster_sync();
+}
+"""
+
+[[ops.copy]]
+name = "copy_2d"
+unit = "idma"
+kind = "dma_2d"
+dtypes = ["bytes"]
+call = "flex_dma_async_2d(dst, src, row_bytes, dst_stride, src_stride, rows)"
+note = "row_bytes is one row's bytes, not the total; the strides are bytes from one row's start to the next on each side"
+code = """
+#include "flex_dma_pattern.h"
+// issue a copy of `rows` rows of `row_bytes` bytes, row r from src + r * src_stride to dst + r * dst_stride (bytes);
+// every core of the cluster calls it, the DMA core issues
+void alloy_copy_2d(uint64_t dst, uint64_t src, size_t row_bytes, size_t dst_stride, size_t src_stride, size_t rows) {
+    if (flex_is_dm_core()) flex_dma_async_2d(dst, src, row_bytes, dst_stride, src_stride, rows);
+}
+// issue a copy of `bytes` contiguous bytes; the 2D copy's check also runs it
+void alloy_copy_1d(uint64_t dst, uint64_t src, size_t bytes) {
+    if (flex_is_dm_core()) flex_dma_async_1d(dst, src, bytes);
+}
+// wait on=idma: every core calls it; the DMA core waits for its transfers, then the cluster's cores meet
+void alloy_wait_idma(void) {
+    if (flex_is_dm_core()) flex_dma_async_wait_all();
+    flex_intra_cluster_sync();
+}
+"""
+
+# The waits are checked inside the programs of the rows that issue the work (`checked_by`), whose code holds them.
+[[ops.wait]]
+name = "wait_idma"
+unit = "idma"
+kind = "wait"
+dtypes = ["bytes"]
+checked_by = "copy_1d"
+call = "flex_dma_async_wait_all()"
+code = """
+#include "flex_dma_pattern.h"
+// wait on=idma: every core calls it; the DMA core waits for its transfers, then the cluster's cores meet
+void alloy_wait_idma(void) {
+    if (flex_is_dm_core()) flex_dma_async_wait_all();
+    flex_intra_cluster_sync();
+}
+"""
+
+# RedMulE: c (M x N) += a (M x K) b (K x N) on f16 operands, all three packed row-major in this cluster's TCDM. RedMulE
+# names the extents M, N (the inner one), K, so the config call takes (m, k, n); trigger takes TCDM offsets. Each
+# product accumulates in f32 and rounds once to f16 (the model's matmul_fp16). Asynchronous: `wait on=redmule`.
+[[ops.mma]]
+unit = "redmule"
+kind = "mma"
+dtypes = ["f16"]
+call = "flex_redmule_config(m, k, n); flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16)"
+code = """
+#include "flex_runtime.h"
+#include "flex_redmule.h"
+// issue c (m x n) += a (m x k) * b (k x n), f16, row-major, at TCDM offsets a_off, b_off, c_off; every core of the
+// cluster calls it, core 0 (the first core) drives RedMulE
+void alloy_mma_f16(uint32_t a_off, uint32_t b_off, uint32_t c_off, uint16_t m, uint16_t n, uint16_t k) {
+    if (flex_is_first_core()) {
+        flex_redmule_config(m, k, n);
+        flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16);
+    }
+}
+// wait on=redmule: every core calls it; core 0 waits for the product, then the cluster's cores meet
+void alloy_wait_redmule(void) {
+    if (flex_is_first_core()) flex_redmule_wait();
+    flex_intra_cluster_sync();
+}
+"""
+
+[[ops.wait]]
+name = "wait_redmule"
+unit = "redmule"
+kind = "wait"
+dtypes = ["f16"]
+checked_by = "mma"
+call = "flex_redmule_wait()"
+code = """
+#include "flex_runtime.h"
+#include "flex_redmule.h"
+// wait on=redmule: every core calls it; core 0 waits for the product, then the cluster's cores meet
+void alloy_wait_redmule(void) {
+    if (flex_is_first_core()) flex_redmule_wait();
+    flex_intra_cluster_sync();
+}
+"""
+
+# Barriers. A barrier is a step of the answer that needs it (isa-design 2.9); these rows say what each one orders.
+[[ops.barrier]]
+name = "barrier_cluster"
+unit = "cluster"
+kind = "sync_cluster"
+dtypes = ["none"]
+call = "flex_intra_cluster_sync()"
+code = """
+#include "flex_runtime.h"
+// the cores of one cluster meet: TCDM writes before it are seen by every core of the cluster after it
+void alloy_barrier_cluster(void) {
+    flex_intra_cluster_sync();
+}
+"""
+
+[[ops.barrier]]
+name = "barrier_global"
+unit = "cluster"
+kind = "barrier_global"
+dtypes = ["none"]
+call = "flex_global_barrier_xy()"
+note = "flex_barrier_xy_init() runs once at the start of main, before the first global barrier (the SDK's program frame)"
+code = """
+#include "flex_runtime.h"
+// every core of every cluster meets: TCDM writes before it, in any cluster, are seen after it (other clusters'
+// TCDM through iDMA from remote_cid(cid, offset))
+void alloy_barrier_global(void) {
+    flex_global_barrier_xy();
+}
+"""

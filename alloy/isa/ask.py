@@ -28,8 +28,8 @@ from typing import Literal, get_args
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-from alloy.isa import OPS, load, simt, tensix, tile
-from alloy.isa.mathkernels import cheapest, functions, kernel, render, target_of
+from alloy.isa import OPS, load, simt, softhier, tensix, tile
+from alloy.isa.mathkernels import cheapest, functions, kernel, ladder, render, target_of
 from alloy.isa.table import ALIASES, GATED, Entry, Table, gate
 from alloy.isa.validate import HEADERS, c_flags
 
@@ -68,6 +68,7 @@ UNITS: dict[str, tuple[str, ...]] = {
     "gfx942": ("thread", "wave", "mfma", "lds_dma", "lds"),
     "gfx90a": ("thread", "wave", "mfma", "lds_dma", "lds"),
     "tensix": ("sfpu", "fpu", "noc"),
+    "softhier": ("spatz", "idma", "redmule", "cluster"),
 }
 TARGETS = tuple(UNITS)
 CPU = ("avx2", "avx512", "avx512_fp16", "neon", "sve")
@@ -406,7 +407,17 @@ def spell(**operands: Operand) -> str:
 
 def ask(request: Request, verify: bool = True) -> Answer:
     """The answer to ``request``; ``verify`` runs the check the surface has (on the host, ttsim's record, a compile).
-    A pinned unit that does not run the operation is infeasible, with the unit that does."""
+    A pinned unit that does not run the operation is infeasible, with the unit that does; ``on`` and ``kind`` on an
+    operation other than ``wait`` (``on``) and ``fence`` or ``barrier`` (``kind``) are invalid, so a flag is never silently dropped."""
+    for flag, value, owners in (("on", request.on, ("wait",)), ("kind", request.kind, ("fence", "barrier"))):
+        if value and request.op not in owners:
+            return bad(
+                request,
+                Why.OPERANDS,
+                f"--{flag} applies to {' and '.join(owners)} only; {request.op} has no {flag}",
+                f"ask {request.target} {owners[0]} --{flag} ...",
+                f"ask {request.target} {request.op} without --{flag}",
+            )
     answer = answered(request, verify)
     if isinstance(answer, Feasible) and request.unit and answer.unit != request.unit:
         reason = f"{request.target} {request.op} runs on {answer.unit}, not {request.unit}"
@@ -534,6 +545,8 @@ def answered(request: Request, verify: bool) -> Answer:
     if request.unit and request.unit not in UNITS[request.target]:
         units = (f"unit {u}" for u in UNITS[request.target])
         return bad(request, Why.UNIT_NAME, f"{request.target} has no unit {request.unit!r}", *units)
+    if request.target == "softhier":
+        return softhier_op(request)
     if request.op == "wait":
         return wait_answer(request)
     if request.op == "fence":
@@ -550,10 +563,14 @@ def answered(request: Request, verify: bool) -> Answer:
         return bad(
             request, Why.OPERATION, f"no operation {request.op!r}", "an op of `python -m alloy.isa ops`, mma, or copy"
         )
-    if request.max_ulp is not None and (request.op not in functions() or request.target == "tensix"):
-        what = "a Tensix tile call has one accuracy" if request.target == "tensix" else f"{request.op} is exact"
+    if request.max_ulp is not None and request.target == "tensix":
+        return sfpi_rung(request)
+    if request.max_ulp is not None and request.op not in functions():
         return bad(
-            request, Why.BOUND, f"max_ulp selects a rung of a math kernel; {what}", "the request without max_ulp"
+            request,
+            Why.BOUND,
+            f"max_ulp selects a rung of a math kernel; {request.op} is exact",
+            "the request without max_ulp",
         )
     if request.target in CPU:
         return vector_op(request, verify)
@@ -766,7 +783,13 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
     except KeyError as exc:
         return no(request, Why.NO_RUNG, str(exc.args[0]))
     k = spelled.kernel
-    notes = (f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",)
+    others = [f"{r.level} {r.error_ulp:.4g} ulp" for r in ladder(k.fn, dtype) if r.level != k.level]
+    notes = (
+        f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",
+        # an agent whose own bound is tighter or looser sees the other rungs and asks again with --max-ulp
+        f"other rungs (a more accurate rung costs more instructions): {', '.join(others) or 'none'}; "
+        "ask again with --max-ulp to get one",
+    )
     check = Check("unverified", "not checked (verify off)")
     if verify:
         from alloy.isa.mathcheck import validate_kernel
@@ -966,9 +989,12 @@ def tile_call(request: Request) -> Answer:
     each = "one init, then one call per tile" if once else "the init before each tile's call, as the checked program"
     notes = (
         *((row.note,) if row.note else ()),
+        *((card.strip(),) if (card := tensix.card_line(row, dtype)) else ()),
         *((f"{tiles} tiles: {each}",) if tiles > 1 else ()),
         *(("the FPU reads its sources at TF32 (19 bits): about 1e-3 relative error in f32; unit sfpu keeps f32",)
           if unit == "fpu" and dtype == "f32" else ()),
+        *(f"{r.name}, an SFPI kernel of {r.op} at {r.error_ulp:.3g} ulp on the card: ask with --max-ulp "
+          f"{math.ceil(r.error_ulp)}" for r in tensix.rungs(row.op, dtype)[:1]),
     )  # fmt: skip
     steps: tuple[Step, ...] = (Step(unit, init, 1 if once else tiles), Step(unit, call, tiles))
     setup = {"header": row.header}
@@ -981,6 +1007,30 @@ def tile_call(request: Request) -> Answer:
         setup |= {"compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
                   "scaler": "one tile in CB c1: 1 in the first row of each 16x16 face"}  # fmt: skip
     return Feasible(request, unit, steps, setup, f"{init};\n{call};", check, notes)
+
+
+def sfpi_rung(request: Request) -> Answer:
+    """The most accurate Tensix math kernel on SFPU lanes (tensix.toml's rungs) within ``max_ulp``, checked on a
+    Blackhole: its full source, which the compute kernel inlines, and the calls that run it on DST tile 0."""
+    dtype = dtype_of(request)
+    found = tensix.rungs(request.op, dtype)
+    if not found:
+        reason = f"no SFPI rung for {request.op} on {dtype}; a Tensix tile call has one accuracy"
+        return bad(request, Why.BOUND, reason, "the request without max_ulp")
+    within = [r for r in found if request.max_ulp is not None and r.error_ulp <= request.max_ulp]
+    if not within:
+        best = found[0]
+        return no(request, Why.NO_RUNG, f"the most accurate {request.op} rung, {best.name}, holds "
+                  f"{best.error_ulp:.3g} ulp on the card", f"max_ulp {best.error_ulp:.3g}")  # fmt: skip
+    rung = within[-1]  # the loosest within the bound: rungs are sorted most accurate first
+    steps = (Step("sfpu", rung.init, 1), Step("sfpu", rung.call, 1))
+    setup = {
+        "header": "compute_kernel_api.h (under TRISC_MATH it brings sfpi and the llk SFPU helpers)",
+        "compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4; unpack_to_dest_mode UnpackToDestFp32 "
+        "for the CBs copied into DST",
+    }
+    notes = (f"rung {rung.name}: {rung.error_ulp:.3g} ulp, measured on the card ({rung.card})", rung.note)
+    return Feasible(request, "sfpu", steps, setup, rung.code, Check("run", f"card: {rung.card}"), notes)
 
 
 def mma_nearest(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tuple[str, ...]:
@@ -1434,3 +1484,282 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
             return no(request, Why.COMBINE, reason, *nearest, fix=fix)
         fed[i] = " or ".join(names)
     return fed
+
+
+#: Bytes of an element a SoftHier copy moves.
+SOFTHIER_BYTES = {"f64": 8, "f32": 4, "i32": 4, "f16": 2, "bf16": 2, "i16": 2, "i8": 1, "e4m3": 1, "e5m2": 1}
+#: SoftHier's completion tokens: the wait row's name and what the wait completes.
+SOFTHIER_WAITS = {"idma": ("wait_idma", "the iDMA transfers the cluster's DMA core issued have landed"),
+                  "redmule": ("wait_redmule", "RedMulE has written the product into c")}  # fmt: skip
+#: The operand names a Spatz row takes, per kind: one operand that names the type and length, or all of them.
+SOFTHIER_OPERANDS = {"move": ({"x"}, {"src", "dst"}), "binary": ({"x"}, {"a", "b"}, {"x", "y"}),
+                     "fma": ({"x"}, {"a", "b", "c"}), "reduction": ({"x"},)}  # fmt: skip
+SOFTHIER_INTO_TCDM = ("copy it into the cluster's TCDM first: ask softhier copy --src global:<type>:<shape> --dst "
+                      "shared:<type>:<shape> (iDMA), then wait on=idma")  # fmt: skip
+
+
+def softhier_row(name: str) -> softhier.Row:
+    return next(r for r in softhier.rows() if r.key() == name)
+
+
+def softhier_check(row: softhier.Row, dtype: str) -> Check | str:
+    """A SoftHier row's check from its current GVSoC record, or why it is refused: a failed run refuses it, a missing
+    or stale record leaves it unverified."""
+    verdict = softhier.verdict_of(row, dtype)
+    if verdict is None:
+        return Check("unverified", "no current GVSoC run recorded (python -m alloy.isa.softhier verify)")
+    if not verdict.ok:
+        return f"the row failed its check on GVSoC: {verdict.error or 'outside its error bound'}"
+    inside = f" inside the {row.checked_by} program" if row.checked_by else ""
+    error = f", max rel error {verdict.rel:.2g}" if verdict.rel else ""
+    return Check("run", f"GVSoC {softhier.TARGET}, SoftHier v1{inside}{error}")
+
+
+def softhier_setup() -> dict[str, str]:
+    """What every SoftHier answer needs around its code: the v1 configuration, the headers, and the lines that build
+    and run it."""
+    return {
+        "arch": f"{softhier.ARCH_HEADER}  (the SDK headers include flex_cluster_arch.h from their own folder, so the "
+        "v1 header replaces the SDK's there)",
+        "headers": "riscv_vector.h from the GCC 14 toolchain; flex_*.h from $SOFTHIER_SDK/runtime/runtime/include ("
+        f"{softhier.pins()['sdk']})",
+        "build": softhier.build_line(),
+        "program": "the SDK headers define their functions (not static): put the code in the file with main (the SDK "
+        f"frame: flex_barrier_xy_init(); flex_global_barrier_xy(); ...; flex_eoc(0)), then {softhier.link_line()}",
+        "run": softhier.run_line(),
+    }
+
+
+def softhier_feasible(request: Request, row: softhier.Row, dtype: str, steps: tuple[Step, ...],
+                      notes: tuple[str, ...] = (), completion: Completion | None = None) -> Answer:  # fmt: skip
+    check = softhier_check(row, dtype)
+    if isinstance(check, str):
+        return no(request, Why.CHECK_FAILED, check)
+    return Feasible(request, row.unit, steps, softhier_setup(), softhier.code(row, dtype), check,
+                    (*notes, *((row.note,) if row.note else ())), completion)  # fmt: skip
+
+
+def softhier_op(request: Request) -> Answer:
+    """A SoftHier v1 request, answered from softhier.toml with the GVSoC record of the row."""
+    if request.op == "wait":
+        return softhier_wait(request)
+    if request.op == "fence":
+        if request.kind not in NO_FENCE:
+            return bad(request, Why.OPERANDS, "fence names its kind", *(f"fence kind={k}" for k in NO_FENCE))
+        return no(request, Why.NO_ROW, "softhier has no fence: flex_dma_async_wait_all and flex_redmule_wait complete "
+                  "the work, and flex_intra_cluster_sync makes TCDM writes visible to the cluster's cores",
+                  "wait on=idma", "wait on=redmule", "barrier kind=cluster")  # fmt: skip
+    if request.op == "barrier":
+        return softhier_barrier(request)
+    if request.op == "mma":
+        return softhier_mma(request)
+    if request.op == "copy":
+        return softhier_copy(request)
+    return softhier_vector(request)
+
+
+def softhier_wait(request: Request) -> Answer:
+    if request.on not in SOFTHIER_WAITS:
+        reason = f"softhier has no {request.on!r} token" if request.on else "wait names the token it waits on"
+        nearest = tuple(f"wait on={t}" for t in SOFTHIER_WAITS)
+        return no(request, Why.NO_ROW, reason, *nearest) if request.on else bad(request, Why.OPERANDS, reason, *nearest)
+    name, what = SOFTHIER_WAITS[request.on]
+    row = softhier_row(name)
+    return softhier_feasible(request, row, row.dtypes[0], (Step(row.unit, row.call), Step("cluster",
+                             "flex_intra_cluster_sync()")), (what,))  # fmt: skip
+
+
+def softhier_barrier(request: Request) -> Answer:
+    kinds = {"cluster": "barrier_cluster", "global": "barrier_global"}
+    if request.kind not in kinds:
+        return bad(request, Why.OPERANDS, "barrier names its kind: the cores of one cluster, or every cluster",
+                   *(f"barrier kind={k}" for k in kinds))  # fmt: skip
+    row = softhier_row(kinds[request.kind])
+    return softhier_feasible(request, row, "none", (Step(row.unit, row.call),))
+
+
+def softhier_vector(request: Request) -> Answer:
+    """An elementwise operation, a reduction, a load, or a store on the Spatz unit: a strip-mined RVV loop over TCDM
+    whose last strip is the tail (vsetvl gives min(n - i, VLMAX))."""
+    spatz = [r for r in softhier.rows() if r.unit == "spatz"]
+    rows = [r for r in spatz if r.op == request.op]
+    if not rows:
+        if request.op not in OPS and request.op not in functions():
+            return bad(request, Why.OPERATION, f"no operation {request.op!r}",
+                       "an op of `python -m alloy.isa ops`, mma, copy, wait, or barrier")  # fmt: skip
+        related = [r.op for r in spatz if r.op.split("_")[0] == request.op.split("_")[0]]
+        return no(request, Why.NO_ROW, f"no SoftHier row for {request.op}",
+                  *(f"softhier {op}" for op in dict.fromkeys(related or [r.op for r in spatz])))  # fmt: skip
+    row = rows[0]
+    if request.max_ulp is not None:
+        return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a SoftHier row has one accuracy",
+                   "the request without max_ulp")  # fmt: skip
+    one = Operand("shared", "f32", (1024,))
+    if not request.operands:
+        return bad(request, Why.OPERANDS, f"{request.op} needs an operand: it names the element type and the length",
+                   spell(x=one))  # fmt: skip
+    taken = SOFTHIER_OPERANDS[row.kind]
+    if set(request.operands) not in taken:
+        named = ", ".join(sorted(request.operands))
+        return bad(request, Why.OPERANDS, f"softhier {request.op} takes operands {' or '.join(', '.join(sorted(t)) for t in taken)}, "
+                   f"not {named}", spell(x=one))  # fmt: skip
+    if why := mixed(request):
+        return bad(request, Why.MIXED_TYPES, why, spell(x=one))
+    dtype = dtype_of(request)
+    if dtype not in row.dtypes:
+        return no(request, Why.ELEMENT_TYPE, f"the SoftHier {request.op} row computes {', '.join(row.dtypes)}, not "
+                  f"{dtype}", *(spell(x=Operand("shared", d, (1024,))) for d in row.dtypes))  # fmt: skip
+    for operand in request.operands.values():
+        if operand.space != "shared":
+            fix = SOFTHIER_INTO_TCDM if operand.space == "global" else "name the data in TCDM: the row loops over it"
+            return no(request, Why.SPACE, f"the Spatz row loads and stores the cluster's TCDM (shared), not "
+                      f"{operand.space}", spell(x=Operand("shared", dtype, operand.shape or (1024,))), fix=fix)  # fmt: skip
+    shapes = {o.shape for o in request.operands.values()}
+    if len(shapes) > 1:
+        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+        return bad(request, Why.CHAIN, reason, spell(x=Operand("shared", dtype, (1024,))))
+    n = max(math.prod(s) for s in shapes)
+    if n < 1:
+        return bad(request, Why.MALFORMED, f"{request.op} needs at least one element", spell(x=one))
+    size = int(dtype[1:]) // 8
+    if n * size * (1 + len(request.operands)) > softhier.config()["cluster_tcdm_size"]:
+        return no(request, Why.SHAPE, f"{n} {dtype} per operand do not fit the cluster's TCDM "
+                  f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", spell(x=Operand("shared", dtype, (16384,))),
+                  fix="split the data into blocks that fit, and stream them in with iDMA")  # fmt: skip
+    lanes = softhier.vlmax(dtype)
+    strips = -(-n // lanes)
+    setvl = f"__riscv_vsetvl_e{dtype[1:]}m8(n - i)"
+    steps = (Step("spatz", setvl, strips), Step("spatz", softhier.spelled(row.call, dtype), strips))
+    tail = (f"{n} elements: {strips} strips of vl = min(n - i, {lanes}) (VLMAX of e{dtype[1:]}m8 at VLEN 256); the "
+            f"last strip, {n - (strips - 1) * lanes} elements, is the tail: no mask, no scalar epilogue")  # fmt: skip
+    return softhier_feasible(request, row, dtype, steps, (tail,))
+
+
+def softhier_copy(request: Request) -> Answer:
+    """A copy between HBM (global) and the cluster's TCDM (shared) on the iDMA: one contiguous run (1D), or a block of
+    rows of a larger row-major matrix (2D, a stride on each side). Asynchronous: wait on=idma completes it."""
+    ops = request.operands
+    if not {"src", "dst"} <= ops.keys():
+        return bad(request, Why.OPERANDS, "copy takes operands src and dst")
+    src, dst = ops["src"], ops["dst"]
+    near = spell(src=Operand("global", src.dtype, (64, 64)), dst=Operand("shared", src.dtype, (32, 64)))
+    if src.dtype != dst.dtype:
+        return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}", near)
+    if {src.space, dst.space} != {"global", "shared"}:
+        return no(request, Why.SPACE, f"the checked iDMA rows copy between HBM (global) and TCDM (shared), not "
+                  f"{src.space} to {dst.space}", near)  # fmt: skip
+    if src.dtype not in SOFTHIER_BYTES:
+        return no(request, Why.ELEMENT_TYPE, f"no element size for {src.dtype}", near)
+    if src.swizzle != "none" or dst.swizzle != "none" or src.layout != dst.layout:
+        return no(request, Why.SWIZZLE if src.swizzle != "none" or dst.swizzle != "none" else Why.LAYOUT,
+                  "iDMA copies bytes in order: no swizzle, no transpose", near)  # fmt: skip
+    size = SOFTHIER_BYTES[src.dtype]
+    tcdm = dst if dst.space == "shared" else src
+    if math.prod(tcdm.shape or (1,)) * size > softhier.config()["cluster_tcdm_size"]:
+        return no(request, Why.SHAPE, f"{tcdm.spelled()} does not fit the cluster's TCDM "
+                  f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", near)  # fmt: skip
+    hbm = "hbm_west(node, offset)"
+    where = {"global": hbm, "shared": "local(offset)"}
+    if math.prod(src.shape or (1,)) == math.prod(dst.shape or (1,)):  # the whole operand, packed on both sides: one run
+        nbytes = math.prod(src.shape or (1,)) * size
+        row = softhier_row("copy_1d")
+        call = f"alloy_copy_1d({where[dst.space]}, {where[src.space]}, {nbytes})"
+        notes: tuple[str, ...] = (f"{nbytes} bytes in one transfer",)
+    else:
+        small, large = sorted((src, dst), key=lambda o: math.prod(o.shape or (1,)))
+        block, matrix = tuple(small.shape), tuple(large.shape)
+        if len(block) != 2 or len(matrix) != 2 or block[0] > matrix[0] or block[1] > matrix[1]:
+            return no(request, Why.SHAPE, f"a copy of a part moves a block of rows of a row-major matrix, both named "
+                      f"rows x cols: {small.spelled()} is no block of {large.spelled()}", near)  # fmt: skip
+        rows_, row_bytes, strided = block[0], block[1] * size, matrix[1] * size
+        if block[1] == matrix[1]:  # whole rows: one run that starts at row row0
+            row = softhier_row("copy_1d")
+            start = f" + row0 * {strided}"
+            src_at = where[src.space] + (start if src is large else "")
+            dst_at = where[dst.space] + (start if dst is large else "")
+            call = f"alloy_copy_1d({dst_at}, {src_at}, {rows_ * row_bytes})"
+            notes = (f"{rows_} whole rows from row row0 of the {matrix[0]} x {matrix[1]} matrix: one run",)
+        else:
+            dst_stride, src_stride = (row_bytes, strided) if dst is small else (strided, row_bytes)
+            row = softhier_row("copy_2d")
+            corner = f" + (row0 * {matrix[1]} + col0) * {size}"
+            src_at = where[src.space] + (corner if src is large else "")
+            dst_at = where[dst.space] + (corner if dst is large else "")
+            call = f"alloy_copy_2d({dst_at}, {src_at}, {row_bytes}, {dst_stride}, {src_stride}, {rows_})"
+            notes = (f"{rows_} rows of {row_bytes} bytes; the block's corner (row0, col0) in the {matrix[0]} x "
+                     f"{matrix[1]} matrix",)  # fmt: skip
+    notes += (f"HBM of v1: {hbm} or hbm_south(node, offset), node 0 or 1; every core calls the function, the DMA core "
+              "(flex_is_dm_core(), the last) issues",)  # fmt: skip
+    steps = (Step("idma", call),)
+    return softhier_feasible(request, row, "bytes", steps, notes, Completion("idma", "wait on=idma"))
+
+
+def softhier_mma(request: Request) -> Answer:
+    """c (M x N) += a (M x K) b (K x N) on RedMulE: f16, all three row-major in the cluster's TCDM. Asynchronous: wait
+    on=redmule completes it."""
+    ops = request.operands
+    near = spell(a=Operand("shared", "f16", (64, 64)), b=Operand("shared", "f16", (64, 64)),
+                 c=Operand("shared", "f16", (64, 64)))  # fmt: skip
+    if not {"a", "b", "c"} <= ops.keys():
+        return bad(request, Why.OPERANDS, "mma takes operands a (M x K), b (K x N), and c (M x N)", near)
+    a, b, c = ops["a"], ops["b"], ops["c"]
+    if len(a.shape) != 2 or len(b.shape) != 2 or a.shape[1] != b.shape[0] or c.shape != (a.shape[0], b.shape[1]):
+        reason = f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}; a is M x K, b K x N, c M x N"
+        return bad(request, Why.CHAIN, reason, near)
+    if a.dtype != b.dtype:
+        return bad(request, Why.MIXED_TYPES, f"a is {a.dtype} and b is {b.dtype}; an mma multiplies inputs of one "
+                   "element type", near)  # fmt: skip
+    m, k, n = a.shape[0], a.shape[1], b.shape[1]
+    near = spell(
+        a=Operand("shared", "f16", (m, k)), b=Operand("shared", "f16", (k, n)), c=Operand("shared", "f16", (m, n))
+    )
+    if (a.dtype, c.dtype) != ("f16", "f16"):
+        return no(request, Why.ELEMENT_TYPE, f"the checked RedMulE row multiplies f16 into f16 (REDMULE_FP_16), not "
+                  f"{a.dtype} into {c.dtype}", near)  # fmt: skip
+    for name, operand in (("a", a), ("b", b), ("c", c)):
+        if operand.space != "shared":
+            return no(request, Why.SPACE, f"RedMulE reads and writes the cluster's TCDM, not {name} in {operand.space}",
+                      near, fix=SOFTHIER_INTO_TCDM)  # fmt: skip
+        if operand.layout != "row_major" or operand.swizzle != "none":
+            return no(request, Why.LAYOUT, f"RedMulE takes {name} packed row-major, without a swizzle", near,
+                      fix=f"hold {name} row_major; a 2D iDMA copy packs a block of a larger matrix")  # fmt: skip
+    if 2 * (m * k + k * n + m * n) > softhier.config()["cluster_tcdm_size"] or max(m, n, k) > 0xFFFF:
+        return no(request, Why.SHAPE, f"a, b, and c ({2 * (m * k + k * n + m * n)} bytes) must fit the cluster's TCDM "
+                  f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", spell(a=Operand("shared", "f16", (256, 256)),
+                  b=Operand("shared", "f16", (256, 256)), c=Operand("shared", "f16", (256, 256))),
+                  fix="tile the product and accumulate the tiles of K into one c")  # fmt: skip
+    row = softhier_row("mma")
+    steps = (Step("redmule", f"flex_redmule_config({m}, {k}, {n})"),
+             Step("redmule", "flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16)"))  # fmt: skip
+    notes = (f"call alloy_mma_f16(a_off, b_off, c_off, {m}, {n}, {k}) on every core of the cluster; RedMulE names the "
+             f"extents M, N (inner), K, so its config is ({m}, {k}, {n}); offsets are bytes into the TCDM",
+             "c is the accumulator and the result: load it (zero it for c = a b) before the call")  # fmt: skip
+    return softhier_feasible(request, row, "f16", steps, notes, Completion("redmule", "wait on=redmule"))
+
+
+def parsed_request(target: str, text: str) -> Request:
+    """One request of ``ask-all``: ``op name=operand ... [unit=U] [max_ulp=X]``; a malformed one raises
+    :class:`KeyError` with what is wrong."""
+    if not text.split():
+        raise KeyError("an empty request: op name=operand ...")
+    op, *fields = text.split()
+    operands: dict[str, Operand] = {}
+    unit, max_ulp, on, kind = "", None, "", ""
+    for field in fields:
+        name, sep, value = field.partition("=")
+        if not sep or not value:
+            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
+        if name == "unit":
+            unit = value.lower()
+        elif name == "on":
+            on = value.lower()
+        elif name == "kind":
+            kind = value.lower()
+        elif name == "max_ulp":
+            try:
+                max_ulp = float(value)
+            except ValueError:
+                raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
+        else:
+            operands[name] = Operand.parse(value)
+    return Request(target, op.lower(), operands, unit, max_ulp, on, kind)

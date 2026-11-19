@@ -62,6 +62,8 @@ class CodegenRequest(pydantic.BaseModel):
     running: dict[str, int]
     #: The episode's task language: ``hip`` and ``cuda`` take the GPU path.
     language: str = "c"
+    #: Scope symbol -> an edited translation unit that replaces its rendering (``alloy_sweep``).
+    sources: dict[str, str] = {}
 
 
 class CodegenAnswer(pydantic.BaseModel):
@@ -207,6 +209,8 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
     """Alloy on ``request.kernel`` in ``request.mode``: profile verifies and times every candidate here, speculative
     links the predicted pick of each scope (verified, never timed). A GPU task takes :func:`gpu_codegen`."""
     if request.language in GPU_LANGUAGES:
+        if request.sources or request.mode is Mode.REFERENCE:
+            raise api.NothingToGenerate("alloy_sweep and alloy_reference take CPU tasks; this task is GPU code")
         return gpu_codegen(request)
     spec = BenchSpec.load(request.kernel)
     matrix = configuration_matrix.load()
@@ -217,7 +221,10 @@ def codegen(request: CodegenRequest) -> CodegenAnswer:
         )
     manifest = manifest_of(spec, request.precision)
     out = pathlib.Path(request.folder)
-    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode, running=request.running)
+    sources = {symbol: pathlib.Path(path) for symbol, path in request.sources.items()}
+    result = api.generate(
+        sdfg, out, manifest=manifest, matrix=matrix, mode=request.mode, running=request.running, sources=sources
+    )
     if result.best is None or not result.winners:
         hints = "\n\n".join((result.advice or {}).values())
         raise api.NothingToGenerate(

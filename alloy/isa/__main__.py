@@ -20,7 +20,7 @@ import signal
 import sys
 from typing import Any, NoReturn
 
-from alloy.isa import ALIASES, OPS, ask, load, simt, tensix, tile
+from alloy.isa import ALIASES, OPS, ask, load, pages, simt, softhier, tensix, tile
 from alloy.isa.costs import costs
 from alloy.isa.mathcheck import validate_kernel, validate_kernels
 from alloy.isa.mathkernels import ALIASES as FUNCTION_ALIASES
@@ -56,6 +56,8 @@ from alloy.isa.validate import Verdict, emulated, host_can_run, validate, valida
 
 #: The Tenstorrent target: tile calls checked on ttsim, kept apart from the SIMD table (alloy/isa/tensix.py).
 TENSIX = "tensix"
+#: The SoftHier v1 target: rows checked on GVSoC (alloy/isa/softhier.py).
+SOFTHIER = "softhier"
 #: GPU archs: ``tile`` and ``ask`` take them; ``lookup`` takes their SIMT dialect.
 GPU_ARCHS = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: Words for a matrix instruction: those live under ``tile`` and ``ask ... mma``, not ``lookup``.
@@ -64,8 +66,52 @@ MATRIX_WORDS = ("mma", "mfma", "wmma", "wgmma", "gemm", "matmul")
 CDNA_MNEMONIC = re.compile(r"^(v_|s_|ds_|global_|buffer_|flat_|scratch_)")
 
 
+#: GPU instructions that are not SIMT rows, and the command that answers what they do.
+INSTRUCTION_HOME = {
+    **dict.fromkeys(
+        ("tma", "tma_load", "cp_async_bulk"),
+        "a global-to-shared tile copy: ask sm90 copy --src global:f16:RxC --dst shared:f16:RxC",
+    ),
+    **dict.fromkeys(
+        ("ldmatrix", "stmatrix"),
+        "a shared-to-register fragment move for mma.sync; the sm90 tile's wgmma reads A and B from shared "
+        "memory through descriptors instead: tile sm90 gemm M N K --in f16 --acc f32",
+    ),
+    **dict.fromkeys(
+        ("tma_store",),
+        "a shared-to-global tile copy, which no checked row covers yet: write it as plain per-thread stores",
+    ),
+    **dict.fromkeys(
+        (
+            "ds_read_b128",
+            "ds_write_b128",
+            "global_load_dwordx4",
+            "buffer_load_dwordx4",
+            "global_store_dwordx4",
+            "ld_global_v4",
+            "ld.global.v4",
+        ),
+        "a 16-byte load or store per lane: lookup <dialect> load_wide (or store_wide) <dtype>",
+    ),
+    **dict.fromkeys(
+        ("buffer_load", "buffer_load_dword", "global_load", "global_store", "ds_read", "ds_write"),
+        "a load or store per lane: lookup <dialect> load (or store) <dtype>",
+    ),
+    **dict.fromkeys(
+        ("s_waitcnt", "cp_async_wait", "wgmma_wait", "mbarrier", "mbarrier_wait"),
+        "a wait on an asynchronous unit: ask <target> wait --on <token>",
+    ),
+    **dict.fromkeys(
+        ("sched_barrier", "s_barrier", "bar_sync", "syncthreads", "__syncthreads", "fence_proxy"),
+        "an ordering point: ask <target> fence --kind proxy|operand",
+    ),
+}
+
+
 def matrix_note(op: str) -> str:
-    """Where a matrix instruction is answered, for an op that names one; else nothing."""
+    """Where a matrix instruction or another GPU instruction without a SIMT row is answered; else nothing."""
+    if op.lower() in INSTRUCTION_HOME:
+        return f"; {op} is {INSTRUCTION_HOME[op.lower()]}"
     if op.lower() not in MATRIX_WORDS:
         return ""
     return (
@@ -100,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
-    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, cuda, hip")
+    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, softhier, cuda, hip")
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
@@ -182,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
     ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
 
+    page_p = commands.add_parser(
+        "page", help="every checked fact of a target as one Markdown page, the lookup's text: page tensix | softhier"
+    )
+    page_p.add_argument("target", help=", ".join(pages.TARGETS))
+
     all_p = commands.add_parser(
         "ask-all",
         help="requests that run as one kernel: ask-all sm90 'copy src=global:f16:64x64 "
@@ -214,6 +265,9 @@ def dispatch(table: Table, args: argparse.Namespace) -> int:
         return ask_command(args)
     if args.command == "ask-all":
         return ask_all_command(args)
+    if args.command == "page":
+        print(pages.page(args.target))
+        return 0
     if args.command == "kernel":
         level = args.level
         table.isa(args.isa)
@@ -330,6 +384,8 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
     gate runs first, so a failed row is never printed as the answer."""
     if args.isa == TENSIX:
         return tensix_lookup(args.op, args.dtype, args.json)
+    if args.isa == SOFTHIER:
+        return softhier_lookup(args.op, args.dtype, args.json)
     if args.isa in simt.DIALECTS:
         return simt_lookup(args.isa, args.op, args.dtype, args.json)
     refuse_gpu_arch(args.isa)
@@ -391,28 +447,41 @@ def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
         print(
             json.dumps(
                 [{**dataclasses.asdict(r), "verdict": None if v is None else dataclasses.asdict(v)} for r, v in picked]
+                + [{**dataclasses.asdict(r), "kind": "sfpi_rung"} for r in tensix.rungs(op, dtype)]
             )
         )
         return 0
-    print(f"tensix/{dtype}/{op}: {OPS[op].semantics if op in OPS else op}, applied to a 32x32 tile")
-    run = tensix.recorded()
+    print(pages.tensix_title(dtype, op))
     for row, verdict in picked:
-        print(f"  {row.unit} ({row.kind}): header {row.header}")
-        for name, value in (("init", row.init), ("call", row.call)):
-            spelled = value if isinstance(value, str) else ", ".join(f"{v} [{k}]" for k, v in value.items())
-            print(f"    {name}: {spelled}")
-        if verdict is None:
-            print("    unverified: no recorded run")
-        elif verdict.ok:
-            print(
-                f"    verified on ttsim {run.get('ttsim', '').split(' ')[0]} (simulated Blackhole): max rel error {verdict.rel:.2g}"
-            )
-        else:
-            print(f"    FAILED on ttsim: {verdict.error[:200]}")
-        if row.note:
-            print(f"    note: {row.note}")
-    print(f"  note: {tensix.table()['target']['note']}")
+        print("\n".join(pages.tensix_row_lines(row, [("", verdict)], dtype)))
+    for rung in tensix.rungs(op, dtype):
+        print("\n".join(pages.tensix_rung_lines(rung)))
+    print(pages.tensix_target_note())
     return 2 if any(v is not None and not v.ok for _, v in picked) else 0
+
+
+def softhier_lookup(op: str, dtype: str, as_json: bool) -> int:
+    """Every SoftHier row of ``op`` at ``dtype`` with its code and recorded GVSoC verdict; exit 2 when a row failed its
+    run. A row of untyped data (bytes, none: a copy, its wait, a barrier) answers at any element type."""
+    found = [r for r in softhier.rows() if r.op == op]
+    if not found:
+        known = sorted({r.op for r in softhier.rows()})
+        raise KeyError(f"softhier/{dtype}/{op}: no SoftHier row{suggestion(op, known)} (rows: {', '.join(known)})")
+    typed = [r for r in found if dtype in r.dtypes or softhier.untyped(r)]
+    if not typed:
+        dtypes = ", ".join(sorted({d for r in found for d in r.dtypes}))
+        raise KeyError(f"softhier/{dtype}/{op}: the {op} rows are {dtypes}; ask with one of those")
+    picked = [(r, r.dtypes[0] if softhier.untyped(r) else dtype) for r in typed]
+    verdicts = [softhier.verdict_of(r, d) for r, d in picked]
+    if as_json:
+        print(json.dumps([{**dataclasses.asdict(r), "code": softhier.code(r, d),
+                           "verdict": None if v is None else dataclasses.asdict(v)}
+                          for (r, d), v in zip(picked, verdicts, strict=True)]))  # fmt: skip
+        return 0
+    for (row, spelled_as), verdict in zip(picked, verdicts, strict=True):
+        print("\n".join(pages.softhier_row_lines(row, f"softhier/{dtype}/{op}", spelled_as, verdict)))
+    print("\n".join(pages.softhier_tail()))
+    return 2 if any(v is not None and not v.ok for v in verdicts) else 0
 
 
 def simt_lookup(dialect: str, op: str, dtype: str, as_json: bool) -> int:
@@ -682,6 +751,9 @@ def print_isas(table: Table) -> None:
     target = tensix.table()["target"]
     print(f"{TENSIX:8} {target['title']}  [tile calls, not intrinsics; {', '.join(tensix.dtypes())}]")
     print(f"  {target['note']}")
+    target = softhier.table()["target"]
+    print(f"{SOFTHIER:8} {target['title']}  [C rows: RVV on Spatz, iDMA, RedMulE; f32, f16]")
+    print(f"  {target['note']}")
     for dialect in simt.DIALECTS:
         target = simt.table()["target"][dialect]
         print(f"{dialect:8} {target['title']}  [device code per thread or warp; f32]")
@@ -717,14 +789,15 @@ def print_skeleton(table: Table, isa: str, schedule: str, dtype: str, verify: bo
 
 
 def tile_command(args: argparse.Namespace) -> int:
-    """A tile's plan: its steps, layout, descriptors, and program, checked here unless ``--no-verify``; exit 3 when
-    the check could not run or failed, as an unverified lookup does."""
+    """A tile's plan: its steps, layout, descriptors, and program, checked here unless ``--no-verify``; exit 0 when
+    the program ran against the reference or compiled for a target this host has no device for (the check line says
+    which), 3 when it failed or no compiler here could check it."""
     found = tile.plan(args.target, args.m, args.n, args.k, args.in_type, args.acc_type)
     if not args.no_verify:
         found = tile.verify(found)
     if args.json:
         print(json.dumps(dataclasses.asdict(found)))
-        return 0 if found.verified == "run" else 3
+        return 0 if found.verified in ("run", "compiled") else 3
     print(f"{found.target}: gemm {found.m}x{found.n}x{found.k}, {found.in_type} in, {found.acc_type} accumulate")
     print(f"  check: {found.verified}" + (f" ({found.detail})" if found.detail else ""))
     print(f"  layout: {found.layout}")
@@ -735,11 +808,15 @@ def tile_command(args: argparse.Namespace) -> int:
         print(f"    {step}")
     print("  program:")
     print(found.program)
-    return 0 if found.verified == "run" else 3
+    return 0 if found.verified in ("run", "compiled") else 3
 
 
 #: The exit code of an invalid request (sysexits' EX_USAGE), apart from 2, an infeasible one.
 USAGE = 64
+
+
+def print_lines(lines: list[str]) -> None:
+    print("\n".join(lines))
 
 
 def ask_command(args: argparse.Namespace) -> int:
@@ -764,77 +841,17 @@ def ask_command(args: argparse.Namespace) -> int:
         print(json.dumps(dataclasses.asdict(answer)))
         return code
     if not isinstance(answer, ask.Feasible):
-        print_refusal(f"{args.target} {args.op}", answer)
+        print_lines(pages.refusal_lines(f"{args.target} {args.op}", answer))
         return code
-    print_feasible(f"{args.target} {args.op}", answer)
+    print_lines(pages.feasible_lines(f"{args.target} {args.op}", answer))
     return 0
-
-
-def print_refusal(title: str, answer: ask.Infeasible | ask.Invalid) -> None:
-    print(f"{title}: {answer.status} ({answer.why.value}): {answer.reason}")
-    near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
-    for line in near:
-        print(f"  {'nearest' if isinstance(answer, ask.Infeasible) else 'expected'}: {line}")
-    if isinstance(answer, ask.Infeasible) and answer.block:
-        print(f"  block: {'x'.join(map(str, answer.block))} (a shape the target takes is a whole multiple)")
-    if isinstance(answer, ask.Infeasible) and answer.fix:
-        print(f"  fix: {answer.fix}")
-
-
-def checked(check: ask.Check) -> str:
-    """The check as one phrase; a basis that starts with its status ("compiled for gfx942") is not repeated."""
-    said = check.basis.split(" ", 1)[0] in (check.status, "ran")  # "compiled for ...", "ran on ..."
-    return check.basis if said else f"{check.status} {check.basis}".rstrip()
-
-
-def print_feasible(title: str, answer: ask.Feasible) -> None:
-    print(f"{title}: feasible on {answer.unit}; check: {checked(answer.check)}")
-    for step in answer.steps:
-        print(f"  {step.count} x {step.unit}: {step.spelling}" if step.count > 1 else f"  {step.unit}: {step.spelling}")
-    for key, value in answer.setup.items():
-        print(f"  setup {key}: {value}")
-    for note in answer.notes:
-        print(f"  note: {note}")
-    if answer.completion is not None:
-        done = answer.completion
-        fences = f"; before it: {', '.join(done.fences)}" if done.fences else ""
-        print(f"  async: completes on {done.token}: {done.wait}{fences}")
-    print(answer.code)
-
-
-def parsed_request(target: str, text: str) -> ask.Request:
-    """One request of ``ask-all``: ``op name=operand ... [unit=U] [max_ulp=X]``; a malformed one raises
-    :class:`KeyError` with what is wrong."""
-    if not text.split():
-        raise KeyError("an empty request: op name=operand ...")
-    op, *fields = text.split()
-    operands: dict[str, ask.Operand] = {}
-    unit, max_ulp, on, kind = "", None, "", ""
-    for field in fields:
-        name, sep, value = field.partition("=")
-        if not sep or not value:
-            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
-        if name == "unit":
-            unit = value.lower()
-        elif name == "on":
-            on = value.lower()
-        elif name == "kind":
-            kind = value.lower()
-        elif name == "max_ulp":
-            try:
-                max_ulp = float(value)
-            except ValueError:
-                raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
-        else:
-            operands[name] = ask.Operand.parse(value)
-    return ask.Request(target, op.lower(), operands, unit, max_ulp, on, kind)
 
 
 def ask_all_command(args: argparse.Namespace) -> int:
     """Requests that run as one kernel (:func:`alloy.isa.ask.ask_all`); exit 0, 2, or 64 as ``ask``."""
     answer: ask.Combined | ask.Infeasible | ask.Invalid
     try:
-        requests = [parsed_request(args.target, text) for text in args.requests]
+        requests = [ask.parsed_request(args.target, text) for text in args.requests]
     except KeyError as exc:
         answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "op name=space:dtype[:RxC or N][:layout][:swizzle]")
     else:
@@ -844,15 +861,15 @@ def ask_all_command(args: argparse.Namespace) -> int:
         print(json.dumps(dataclasses.asdict(answer)))
         return code
     if not isinstance(answer, ask.Combined):
-        print_refusal(f"{args.target} kernel", answer)
+        print_lines(pages.refusal_lines(f"{args.target} kernel", answer))
         return code
-    print(f"{args.target} kernel: feasible; check: {checked(answer.check)}")
+    print(f"{args.target} kernel: feasible; check: {pages.checked(answer.check)}")
     for line in answer.feeds:
         print(f"  {line}")
     for line in answer.order:
         print(f"  order: {line}")
     for i, one in enumerate(answer.answers):
-        print_feasible(f"[{i}] {one.request.op}", one)
+        print_lines(pages.feasible_lines(f"[{i}] {one.request.op}", one))
     return 0
 
 

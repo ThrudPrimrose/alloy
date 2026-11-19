@@ -2,6 +2,7 @@
 """The Alloy tools on the agent side: each a thin ``POST /alloy/<mode>`` (Alloy and DaCe live in the judge)."""
 
 import json
+import os
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -24,6 +25,9 @@ MODES = {
     "timed). Answers with the folder of sources and a Makefile (run `make` to build the library, then submit it), "
     "each scope's compiler and flags, and the paths of the ranked report and of the advice for scopes Alloy left "
     "short.",
+    "reference": "The kernel's default C/C++ from DaCe, split into one translation unit per scope at the compiler's "
+    "defaults, nothing swept: the starting point to edit. Answers with the folder of sources and a Makefile (run "
+    "`make` to build the library, then submit it) and each scope's compiler and flags.",
 }
 #: Appended on a HIP task, where either mode answers with the GPU form.
 GPU_NOTE = (
@@ -102,7 +106,43 @@ for mode, description in MODES.items():
     tool(spec=spec, core=False, name=name)(poster(mode))
 
 
+#: The targets a task's ``alloy_isa`` answers for, comma-separated (a packet's env); unset: every target.
+TARGETS_ENV = "ALLOY_ISA_TARGETS"
+#: Commands whose first argument is the target; under a restriction the others answer only ``ops``.
+TARGETED = frozenset({"lookup", "kernel", "time", "schedule", "skeleton", "tile", "ask", "ask-all"})
+
+
+def outside_targets(payload: dict[str, Any], allowed: frozenset[str]) -> str:
+    """Why the query leaves the task's targets, or ``""``."""
+    command, arguments = payload.get("command"), payload.get("arguments") or []
+    if command == "ops":
+        return ""
+    if command not in TARGETED:
+        return f"alloy_isa: {command!r} is not offered on this task; ask about {', '.join(sorted(allowed))}"
+    if not arguments or str(arguments[0]) not in allowed:
+        return f"alloy_isa: this task's targets are {', '.join(sorted(allowed))}; the first argument names one"
+    return ""
+
+
+class SweepArgs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    folder: str = pydantic.Field(description="the `folder` an alloy_profile answer gave, after your edits")
+
+
+SWEEP = (
+    "Alloy's sweep over your edits: each scopes/<symbol>.c of `folder` (the `best/` folder an alloy_profile answer "
+    "gave, edited in place) is compiled with every compiler, FP level, vector library and ISA flag set Alloy tries, "
+    "verified against the kernel's own rendering, and timed. Answers like alloy_profile: a new folder with each "
+    "scope's fastest verified build, its Makefile, and the ranked report. Keep each scope's function signature."
+)
+tool(spec=Spec(SWEEP, SweepArgs, f"- `alloy_sweep` -- {SWEEP}", HINTS), core=False, name="alloy_sweep")(poster("sweep"))
+
+
 def isa_query(payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = frozenset(t for t in os.environ.get(TARGETS_ENV, "").split(",") if t)
+    if allowed and (why := outside_targets(payload, allowed)):
+        return {"ok": False, "error": why}
     return http_json.post_judge("/alloy/isa", payload)
 
 

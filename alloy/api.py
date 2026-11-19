@@ -4,6 +4,7 @@
 import importlib.util
 import numbers
 import pathlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import dace
@@ -30,6 +31,10 @@ ITERATIONS = 2
 
 class NothingToGenerate(ValueError):
     """The program has no scope Alloy can take."""
+
+
+class NotAScope(ValueError):
+    """An edited unit names no scope of the program."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,6 +126,7 @@ def generate(
     time_locally: bool = True,
     mode: Mode = Mode.PROFILE,
     running: dict[str, int] | None = None,
+    sources: Mapping[str, pathlib.Path] | None = None,
 ) -> Result:
     """Outline ``sdfg`` into scopes and build every candidate under ``out``, then verify them on the manifest's
     fuzz draws (without a manifest, on draws derived from ``sdfg`` when any value is a valid input:
@@ -129,22 +135,36 @@ def generate(
     link the ones :func:`predict.choose` picks, untimed, or each scope's default build when nothing was verified.
     ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it; the manifest's input
     ``domain`` entries are the declared ranges a ``relaxed`` rung must be proven under (:mod:`.heuristics.ranges`). ``running`` declares
-    the sizes the program will be called at: speculative mode then ranks every build, serial ones too, at those sizes."""
+    the sizes the program will be called at: speculative mode then ranks every build, serial ones too, at those sizes.
+    ``sources`` replaces scopes' renderings with edited translation units (:func:`sweep.run`)."""
     matrix = matrix or configuration_matrix.load()
     program = scopes.outline(sdfg, matrix.libm_calls)
     if not program.scopes:
         raise NothingToGenerate(f"{sdfg.name}: no top-level loop nest to outline, so Alloy has nothing to generate")
     if manifest is None and mode == Mode.PROFILE:
         raise ValueError(f"{sdfg.name}: profile mode times at declared sizes, so it needs a manifest")
+    if unknown := sorted(set(sources or {}) - {scope.symbol for scope in program.scopes}):
+        symbols = ", ".join(scope.symbol for scope in program.scopes)
+        raise NotAScope(f"{', '.join(unknown)}: no scope of {sdfg.name} has that symbol; its scopes: {symbols}")
     out.mkdir(parents=True, exist_ok=True)
     declared = ranges.declared(manifest.spec.init.domains) if manifest is not None and manifest.spec.init else {}
-    reports = sweep.run(program, matrix, out, finite_inputs=finite_inputs, ranges=declared)
+    reports = sweep.run(
+        program,
+        matrix,
+        out,
+        finite_inputs=finite_inputs,
+        ranges=declared,
+        sources=sources,
+        reference_only=mode == Mode.REFERENCE,
+    )
     timings, best, commands, predicted, picked = None, None, None, None, None
     cases = test_cases(program, manifest)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
     linker = Linker(program, matrix, out)
     winners: dict[str, Build] = {}
-    if mode == Mode.SPECULATIVE:
+    if mode == Mode.REFERENCE:  # the reference is what every other build is verified against
+        winners = {r.scope.symbol: r.builds[0] for r in reports}
+    elif mode == Mode.SPECULATIVE:
         known = known_sizes(program, running)
         sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
         predicted = predict.predictions(reports, matrix, sizes, known is not None)

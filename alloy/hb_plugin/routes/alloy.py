@@ -17,14 +17,14 @@ from hpcagent_bench import config
 from hpcagent_bench.harness.judge_wire import JudgeAnswer, JudgeError
 from hpcagent_bench.harness.native_call import grading_cpus
 from hpcagent_bench.harness.routes import Judge, RouteRequest, route
-from hpcagent_bench.harness.sandbox import agent_root
+from hpcagent_bench.harness.sandbox import agent_root, read_resolved, resolve_shared
 from hpcagent_bench.harness.service import JUDGE_FAULT_CAUSE
 from hpcagent_bench.plugins import openmp_environment
 from hpcagent_bench.precision import precision_from_datatype
 from hpcagent_bench.spec import BenchSpec
 from hpcagent_bench.support.bindings.contract import graded_datatype
 
-from alloy.api import NothingToGenerate
+from alloy.api import NotAScope, NothingToGenerate
 from alloy.hb_plugin.adapter import running_sizes
 from alloy.hb_plugin.episode import ToolCall, append_tool_call, file_hash
 from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
@@ -55,7 +55,12 @@ ISA_COMMANDS = frozenset(
 #: Exit codes that are answers, by command: ``ask`` exits 2 when the target cannot (the refusal with its block,
 #: nearest requests, and fix is the answer); the other queries exit 3 for an answer that is no row.
 ANSWER_CODES = {"ask": (0, 2), "ask-all": (0, 2)}
-MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value)
+MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value, Mode.REFERENCE.value)
+#: ``alloy_sweep``: profile mode over the agent's edited ``best/``, each ``scopes/<symbol>.<c|cpp>`` in place of the
+#: scope's rendering.
+SWEEP = "sweep"
+#: The suffixes of a scope's translation unit.
+UNIT_SUFFIXES = (".c", ".cpp")
 ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels
 #: The characters of an argument a tool record keeps.
 ARGUMENT_CHARS = 200
@@ -105,8 +110,21 @@ def generate(judge: Judge, request: RouteRequest, spelled: str) -> Outcome | Non
         # each call answers from a folder of its own: a repeat never pulls the files from under a running one
         folder = tempfile.mkdtemp(prefix="run", dir=parent)
         language = str(request.body.get("language") or "c")
+        sources: dict[str, str] = {}
+        if spelled == SWEEP:
+            try:
+                sources = copied_units(request, pathlib.Path(folder) / "edited")
+            except (OSError, ValueError) as err:
+                return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_sweep: {err}"), None
+        mode = Mode.PROFILE if spelled == SWEEP else Mode(spelled)
         call = CodegenRequest(
-            kernel=kernel, mode=Mode(spelled), precision=precision, folder=folder, running=running, language=language
+            kernel=kernel,
+            mode=mode,
+            precision=precision,
+            folder=folder,
+            running=running,
+            language=language,
+            sources=sources,
         )
         spawn = multiprocessing.get_context("spawn")
         cpus = grading_cpus(slot.index)  # the slot's cores only, as a graded child; empty = unreadable, unpinned
@@ -117,12 +135,32 @@ def generate(judge: Judge, request: RouteRequest, spelled: str) -> Outcome | Non
                 with openmp_environment("alloy"):  # the worker starts, in libomp's context, at the first submit
                     future = pool.submit(codegen, call)
                 answer = future.result()
-            except NothingToGenerate as err:
+            except (NothingToGenerate, NotAScope) as err:
                 return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_{spelled}: {err}"), None
             except Exception as err:
                 error = f"alloy_{spelled}: {type(err).__name__}: {err}"
                 return HTTPStatus.INTERNAL_SERVER_ERROR, JudgeError(error=error, cause=JUDGE_FAULT_CAUSE), None
     return HTTPStatus.OK, AlloyAnswer(result=answer), answer
+
+
+def copied_units(request: RouteRequest, into: pathlib.Path) -> dict[str, str]:
+    """Each ``scopes/<symbol>.<c|cpp>`` of the agent's folder (``body.folder``, inside the agent's root), copied
+    through one checked read each: scope symbol -> the copy."""
+    named = str(request.body.get("folder") or "")
+    if not named:
+        raise ValueError("name the edited folder (the `folder` an alloy_profile answer gave, after your edits)")
+    root = agent_root(request.episode_id)
+    scopes = resolve_shared(named, root) / "scopes"
+    units = sorted(p for p in scopes.glob("*") if p.suffix in UNIT_SUFFIXES) if scopes.is_dir() else []
+    if not units:
+        raise ValueError(f"{named}: no scopes/<symbol>.c or .cpp, the layout an alloy_profile answer has")
+    into.mkdir(parents=True, exist_ok=True)
+    copies = {}
+    for unit in units:
+        copy = into / unit.name
+        copy.write_text(read_resolved(resolve_shared(str(unit), root)))  # a symlink out of the root is refused
+        copies[unit.stem] = str(copy)
+    return copies
 
 
 def answered_units(answer: CodegenAnswer) -> dict[str, str]:
@@ -146,7 +184,7 @@ def tool_call(tool: str, body: Mapping[str, object], seconds: float, outcome: Ou
 def serve(judge: Judge, request: RouteRequest) -> None:
     started = time.monotonic()
     spelled = request.parts[1] if len(request.parts) > 1 else ""
-    if spelled not in (ISA, *MODES):
+    if spelled not in (ISA, SWEEP, *MODES):
         error = f"no Alloy mode {spelled!r}; modes: {sorted(MODES)}"
         return judge.reply(HTTPStatus.NOT_FOUND, JudgeError(error=error))
     outcome = isa_query(request.body) if spelled == ISA else generate(judge, request, spelled)

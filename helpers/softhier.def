@@ -1,0 +1,20 @@
+# The SoftHier v1 stack as an Apptainer (Singularity) image, for a machine where `apptainer build --fakeroot` works:
+#   apptainer build --fakeroot softhier-v1.sif helpers/softhier.def    (from the alloy checkout)
+# Without fakeroot (ault), helpers/build_softhier_image.sh builds the same image from a sandbox. The base must match
+# [base] image of alloy/isa/softhier_pins.toml.
+Bootstrap: docker
+From: gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea8088
+
+%files
+    alloy/isa/softhier_pins.toml /opt/alloy/alloy/isa/softhier_pins.toml
+    alloy/isa/softhier.toml /opt/alloy/alloy/isa/softhier.toml
+    alloy/isa/softhier_harness.py /opt/alloy/alloy/isa/softhier_harness.py
+    pyproject.toml /opt/alloy/pyproject.toml
+    uv.lock /opt/alloy/uv.lock
+    helpers/build_softhier.sh /opt/alloy/helpers/build_softhier.sh
+
+%post
+    /opt/alloy/helpers/build_softhier.sh /opt/alloy /opt/softhier 16
+
+%environment
+    . /opt/softhier/env.sh

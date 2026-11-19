@@ -39,6 +39,26 @@ def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path:
     assert sut == {("exp", "f32", exp.unit): current}
 
 
+def test_every_card_record_is_of_a_current_row_and_its_verdict_follows_the_rows_bound():
+    recorded = tensix.recorded(tensix.CARD_PATH)["verdicts"]
+
+    sut = tensix.card_verdicts()
+
+    assert len(sut) == len(recorded)
+    for verdict in sut.values():
+        assert verdict.ok == (verdict.rel is not None and verdict.rel < tensix.TOLERANCE[verdict.dtype]), verdict
+
+
+def test_the_lookup_prints_the_card_measurement_beside_the_ttsim_run(capsys: pytest.CaptureFixture[str]):
+    code = main(["lookup", "tensix", "log", "f32"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "verified on ttsim" in out
+    assert "measured on a Blackhole card with tt-metal 0.63, the [v06] spelling" in out
+    assert "max abs error 0.0165 (OUTSIDE the row's bound" in out
+
+
 def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32():
     verdicts = tensix.verdicts()
 
@@ -307,3 +327,60 @@ def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
 
     assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
     assert answer.nearest == ("tensix neg", "tensix reduce_max") and "negative_tile" in answer.fix
+
+
+def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(capsys: pytest.CaptureFixture[str]):
+    assert main(["lookup", "tensix", "log", "f32"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "log_tile<false>(0) [v06]" in printed and "0.012 to 0.0165" in printed
+    assert "SFPU math kernel alloy_log_f32_sfpi" in printed and "tt-metal 0.63, Blackhole p150" in printed
+    kernel = printed.split("SFPU math kernel alloy_log_f32_sfpi", 1)[1]  # the rung's text pastes in: no includes
+    assert "sfpi_inline sfpi::vFloat alloy_log_f32(sfpi::vFloat x)" in kernel and "#include" not in kernel
+
+
+@pytest.mark.parametrize("op", ["log", "exp"])
+def test_ask_with_a_bound_answers_the_sfpi_kernel_with_its_card_verdict_and_full_source(op: str):
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=8), verify=False)
+
+    assert isinstance(answer, Feasible) and answer.unit == "sfpu"
+    assert answer.check.status == "run" and answer.check.basis.startswith("card: tt-metal 0.63")
+    assert f"inline void alloy_{op}_f32_face()" in answer.code and "#include" not in answer.code
+    assert f"_llk_math_eltwise_unary_sfpu_params_<APPROX>(alloy_{op}_f32_face" in answer.steps[1].spelling
+    assert any(note.startswith("dev: ") for note in answer.notes)
+
+
+def test_ask_below_the_card_error_of_every_rung_is_refused_with_the_bound_that_holds():
+    from alloy.isa import tensix
+    from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
+
+    best = tensix.rungs("log", "f32")[0].error_ulp
+    request = Request("tensix", "log", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=best / 2)
+
+    answer = ask(request, verify=False)
+
+    assert isinstance(answer, Infeasible) and answer.why is Why.NO_RUNG
+    assert answer.nearest == (f"max_ulp {best:.3g}",)
+
+
+def test_the_plain_log_tile_answer_points_at_the_sfpi_rung():
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    answer = ask(Request("tensix", "log", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
+
+    assert isinstance(answer, Feasible) and any("alloy_log_f32_sfpi" in note for note in answer.notes)
+
+
+def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_per_version(capsys):
+    assert main(["lookup", "tensix", "sin", "f32"]) == 0
+
+    printed = capsys.readouterr().out
+    assert (
+        'includes [v06] compute: #include "compute_kernel_api/common.h"' in printed
+        and '#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"' in printed  # init_sfpu
+        and 'reader/writer: #include "dataflow_api.h"' in printed
+    )  # TensorAccessor at 0.6x, no tensor_accessor.h
+    assert 'includes [v08] compute: #include "api/compute/common.h"' in printed
+    assert '#include "compute_kernel_api/eltwise_unary/trigonometry.h"' in printed  # the row's own header

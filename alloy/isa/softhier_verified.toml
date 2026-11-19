@@ -1,0 +1,209 @@
+# Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated
+# SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.
+run = "2026-11-18"
+base = "docker://gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea8088"
+gvsoc = "https://github.com/gvsoc/gvsoc.git a453fa09fe53ff306c91072066ea3ff559a0853a (config_tree d134f4100bffdc0de196f6672e005ff3b58ad083, core 4be5293a4976eea02d224e425493b755d46b1d15, engine 16dadd30d76a0aa2a33a85d3bdc52a75558a83c3, gvrun e9030b5b9aa963dd4e820ad71676cc984cc02ddb, gvtest 12cfe2c4a2ef527edabd0368b0c04d9bf06c522a, pulp 6a00247dc3c621d5979fcd6abfa0c39d889a3f6a, pulpos f216d7b8d830620b964187738089c95a29de44ae)"
+sdk = "https://github.com/pulp-platform/softhier-sdk.git c32f3eba212e5f44e9a65610836991729c0c58ce"
+toolchain = "https://github.com/husterZC/gun_toolchain/releases/download/v2.0.0/toolchain.tar.xz sha256:f08793bf081a23da369f1c054cdff790f09d0286ba4447799c5b753cfba28717"
+systemc = "https://github.com/accellera-official/systemc.git 11ad094d282fd5330b27ab57f90f9d231a763da1"
+dramsys = "https://github.com/tukl-msd/DRAMSys.git 8565f18b869c26eab712e3bb6494c4d6ae5dd73f"
+pins = "sha256:55acae608c1b7aa4f3ab4a59054ec1a133ee08e453e4348ed3bf159b6f557df3"
+target = "pulp.chips.soft_hier_old.flex_cluster"
+image = "sha256:5447ffe9e5ea3bd5ca94c6d31eb8707b7398af2cc8aedebdf76e7b7583f5c37e"
+
+[[verdicts]]
+name = "load"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "5e163aa3b549f521"
+
+[[verdicts]]
+name = "load"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "d436709e54704b40"
+
+[[verdicts]]
+name = "store"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "ac866b8ae1b82458"
+
+[[verdicts]]
+name = "store"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "b85675c782216c64"
+
+[[verdicts]]
+name = "add"
+dtype = "f32"
+ok = true
+rel = 3.090025163928925e-08
+digest = "59649c56dd6a7eea"
+
+[[verdicts]]
+name = "add"
+dtype = "f16"
+ok = true
+rel = 0.00025316455696202533
+digest = "bbee031ea8fc681d"
+
+[[verdicts]]
+name = "mul"
+dtype = "f32"
+ok = true
+rel = 2.896295179145227e-08
+digest = "c25630f0d58bfd3e"
+
+[[verdicts]]
+name = "mul"
+dtype = "f16"
+ok = true
+rel = 0.00024849959873624364
+digest = "06089122581c14db"
+
+[[verdicts]]
+name = "fma"
+dtype = "f32"
+ok = true
+rel = 5.131930643170882e-08
+digest = "61d00cb50468759a"
+
+[[verdicts]]
+name = "fma"
+dtype = "f16"
+ok = true
+rel = 0.0003446366061054469
+digest = "ea65682a9d4eae7c"
+
+[[verdicts]]
+name = "reduce_add"
+dtype = "f32"
+ok = true
+rel = 8.001291693713697e-08
+digest = "3a39059bc143662b"
+
+[[verdicts]]
+name = "reduce_add"
+dtype = "f16"
+ok = true
+rel = 0.0005039545001079902
+digest = "9994d772e2093cf5"
+
+[[verdicts]]
+name = "reduce_max"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "64b8394477849abd"
+
+[[verdicts]]
+name = "reduce_max"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "553c6fee09b7cfd9"
+
+[[verdicts]]
+name = "copy_1d"
+dtype = "bytes"
+ok = true
+rel = 0.0
+digest = "d767ecca7ee4a91b"
+
+[[verdicts]]
+name = "copy_2d"
+dtype = "bytes"
+ok = true
+rel = 0.0
+digest = "2eef632400a05549"
+
+[[verdicts]]
+name = "mma"
+dtype = "f16"
+ok = true
+rel = 0.00022130849714876254
+digest = "b3fd6de29a7d715b"
+
+[[verdicts]]
+name = "barrier_cluster"
+dtype = "none"
+ok = true
+rel = 0.0
+digest = "c44783332caaa5c1"
+
+[[verdicts]]
+name = "barrier_global"
+dtype = "none"
+ok = true
+rel = 0.0
+digest = "d6181a3ab1746d41"
+
+[[planted]]
+name = "planted_add_is_sub"
+dtype = "f32"
+ok = false
+rel = 1.0324731362482324
+error = "max error 1.03 over max |reference| > 1e-06"
+digest = "31e2f014d3a41e6a"
+
+[[planted]]
+name = "planted_add_is_sub"
+dtype = "f16"
+ok = false
+rel = 1.0326582278481014
+error = "max error 1.03 over max |reference| > 0.001"
+digest = "c2f28874ee2da992"
+
+[[planted]]
+name = "planted_copy_2d_strides_swapped"
+dtype = "bytes"
+ok = false
+rel = 1.0
+error = "126 words differ, first at 10"
+digest = "444e6f1e76adfe4d"
+
+[[planted]]
+name = "planted_barrier_global_removed"
+dtype = "none"
+ok = false
+rel = 1.0
+error = "3 words differ, first at 1"
+digest = "3d2d1b19b27e663a"
+
+[[planted]]
+name = "planted_reduce_add_without_tail"
+dtype = "f32"
+ok = false
+rel = 0.7269195113922108
+error = "max error 0.727 over max |reference| > 1e-06"
+digest = "4364d053be4ef524"
+
+[[planted]]
+name = "planted_reduce_add_without_tail"
+dtype = "f16"
+ok = false
+rel = 0.7268799731224267
+error = "max error 0.727 over max |reference| > 0.002"
+digest = "1198f53d6286e71a"
+
+[[planted]]
+name = "planted_reduce_max_without_tail"
+dtype = "f32"
+ok = false
+rel = 0.9369479338967249
+error = "max error 0.937 over max |reference| > 0.0"
+digest = "e866b8445751bdfa"
+
+[[planted]]
+name = "planted_reduce_max_without_tail"
+dtype = "f16"
+ok = false
+rel = 0.9369455396747166
+error = "max error 0.937 over max |reference| > 0.0"
+digest = "c3487c46ea10ca84"

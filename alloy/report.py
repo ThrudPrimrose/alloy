@@ -43,6 +43,9 @@ class Mode(enum.StrEnum):
     SPECULATIVE = "speculative"
     #: Candidates verified only: a caller that times elsewhere; the rank is sweep order.
     VERIFIED = "verified"
+    #: Each scope's reference build alone (the default rendering at the compiler's defaults), verified, not swept:
+    #: the default the other modes start from, as a ``best/`` an agent can edit.
+    REFERENCE = "reference"
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)

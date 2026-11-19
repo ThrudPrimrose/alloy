@@ -1,0 +1,10 @@
+# The prompt-only configuration of the agent study: how to approach an unfamiliar accelerator, after the intro of both prompts,
+# with no fact about any target. A text "file:<path>" is relative to this file.
+agent:
+  insert:
+    - after: intro
+      block: {id: accel_guidance, text: "file:guidance.md"}
+task:
+  insert:
+    - after: intro
+      block: {id: accel_guidance, text: "file:guidance.md"}

@@ -4,10 +4,12 @@ against an f64 reference, and refuses a tile type it has no instruction for."""
 
 import shutil
 import subprocess
+from dataclasses import replace
 
 import pytest
 
 from alloy.isa import tile
+from alloy.isa.__main__ import main
 
 
 @pytest.mark.parametrize(("m", "n", "k", "in_type", "acc_type"), [(64, 64, 64, "f32", "f32"), (13, 7, 5, "f64", "f64"),
@@ -184,3 +186,13 @@ def test_a_tile_program_that_stops_before_its_comparison_reports_why_not_a_relat
 
     assert status == "failed" and "launch failed" in detail and "relative error" not in detail
     assert tile.outcome(above) == ("failed", "relative error 3.000e-01 against the f64 reference")
+
+
+@pytest.mark.parametrize(("verified", "code"), [("run", 0), ("compiled", 0), ("failed", 3), ("unverified", 3)])
+def test_the_tile_command_exits_0_for_a_program_that_compiled_for_a_device_this_host_lacks(
+    monkeypatch, capsys, verified, code
+):
+    monkeypatch.setattr(tile, "verify", lambda found: replace(found, verified=verified, detail="stub"))
+
+    assert main(["tile", "sm90", "gemm", "128", "128", "64", "--in", "f16", "--acc", "f32"]) == code
+    assert f"check: {verified} (stub)" in capsys.readouterr().out

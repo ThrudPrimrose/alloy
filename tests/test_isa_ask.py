@@ -236,7 +236,7 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,)), "b": Operand("vector", "f32", (8,))}), "mix"),
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,))}, max_ulp=1.0), "add is exact"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}), "one 32x32 tile"),
-    (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
+    (Request("tensix", "sqrt", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
     (Request("sme", "add"), "mma only"),
 ])  # fmt: skip
 def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(request_, reason):
@@ -828,6 +828,9 @@ def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[s
         (["lookup", "sm90", "add", "f32"], "lookup takes its dialect (cuda"),
         (["lookup", "hip", "mfma", "f32"], "mfma is a matrix instruction: tile"),
         (["lookup", "avx2", "wgmma", "f32"], "wgmma is a matrix instruction: tile"),
+        (["lookup", "hip", "ds_read_b128", "f32"], "lookup <dialect> load_wide"),
+        (["lookup", "hip", "s_waitcnt", "f32"], "ask <target> wait --on"),
+        (["lookup", "cuda", "ldmatrix", "f16"], "tile sm90 gemm"),
         (["reverse", "global_load_dword"], "an AMD GPU (CDNA) instruction"),
         (["reverse", "v_mfma_f32_32x32x8f16"], "gives a checked v_mfma kernel"),
     ],
@@ -910,7 +913,7 @@ WGMMA = "mma a=shared:f16:64x256:row_major:b128 b=shared:f16:256x64:col_major:b1
 
 
 def requests(target: str, *texts: str) -> list[Request]:
-    from alloy.isa.__main__ import parsed_request
+    from alloy.isa.ask import parsed_request
 
     return [parsed_request(target, text) for text in texts]
 
@@ -933,6 +936,17 @@ def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has
 
     assert isinstance(on_gpu, Infeasible) and "wait on=mbarrier" in on_gpu.nearest
     assert isinstance(on_cpu, Infeasible) and "no asynchronous work" in on_cpu.reason
+
+
+@pytest.mark.parametrize(("request_",), [
+    (Request("gfx942", "mma", kind="16x16x16"),), (Request("sme", "mma", kind="f16"),),
+    (Request("sm90", "copy", on="mbarrier"),),
+])  # fmt: skip
+def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_):
+    sut = ask(request_)
+
+    assert isinstance(sut, Invalid)
+    assert "applies to" in sut.reason
 
 
 @pytest.mark.parametrize(("target", "kind", "feasible"), [
@@ -1285,3 +1299,11 @@ def test_the_fp16_target_answers_f16_with_the_fp16_flag():
 
     assert isinstance(sut, Feasible)
     assert "-mavx512fp16" in sut.setup["build"]
+
+
+def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one():
+    sut = ask(Request("avx2", "log", {"x": Operand("register", "f32", (8,))}, max_ulp=4), verify=False)
+
+    assert isinstance(sut, Feasible)
+    assert sut.notes[0].startswith("rung fast")
+    assert "other rungs" in sut.notes[1] and "relaxed 0.9108 ulp" in sut.notes[1] and "--max-ulp" in sut.notes[1]

@@ -38,6 +38,21 @@ tools = ["alloy_profile", "alloy_speculative", "alloy_isa"]
 overlays = ["alloy:prompt/overlay-choice.yaml"]
 env = { JUDGE_INPUT_MODE = "any" }  # a mode tool hands back a library, submitted as is
 
+# The full system of the agent study: Alloy's tuned C to start from, the sweep over the agent's edits, and the
+# intrinsics reference; the agent submits the library it builds.
+[packets.alloy-full]
+name = "Alloy (start, sweep, ISA lookup)"
+skills = ["alloy", "alloy-isa"]
+tools = ["alloy_profile", "alloy_sweep", "alloy_isa"]
+overlays = ["alloy:prompt/overlay.yaml"]
+env = { JUDGE_INPUT_MODE = "any" }
+
+# The full system from DaCe's default C instead of Alloy's tuned C (the agent-study's second starting point).
+[packets.alloy-full-reference]
+extends = "alloy-full"
+name = "Alloy (default start, sweep, ISA lookup)"
+tools = ["alloy_reference", "alloy_sweep", "alloy_isa"]
+
 # The intrinsics reference alone: the agent writes its own source, so the input mode stays the benchmark's.
 [packets.alloy-isa]
 name = "Alloy (ISA lookup)"
@@ -78,3 +93,34 @@ name = "Alloy stub"
 full_name = "Alloy (stub agent)"
 optimizer = "alloy.hb_plugin.tuners:AlloyToolStub"
 extends = ["dace_cpu_canon"]
+
+# The agent-study configurations (alloy-workspace notes/design-review-2026-11-18.md, "Ablation"): one base prompt and one
+# task spec. `none` is the no-packet control "", `tool` is alloy-isa above. prompt-only adds guidance and no facts;
+# docs-md the vendor's pages by the rule in pages.py; facts-page the lookup's facts for one target as one page
+# (`python -m alloy.hb_plugin.pages` writes both kinds of page).
+[packets.accel-guidance]
+name = "Unfamiliar-accelerator guidance (no facts)"
+overlays = ["alloy:prompt/overlay-guidance.yaml"]
+
+[packets.tt-docs-md]
+name = "tt-metal v0.63.0 docs and kernel API headers"
+skills = ["tt-metal-compute-api", "tt-metal-dataflow-api", "tt-metal-docs"]
+
+# `tool` per target: alloy_isa answers only for the task's target (tools/alloy.py TARGETS_ENV).
+[packets.alloy-isa-tensix]
+extends = "alloy-isa"
+name = "Alloy (ISA lookup, Tensix)"
+env = { ALLOY_ISA_TARGETS = "tensix" }
+
+[packets.alloy-isa-softhier]
+extends = "alloy-isa"
+name = "Alloy (ISA lookup, SoftHier)"
+env = { ALLOY_ISA_TARGETS = "softhier" }
+
+[packets.alloy-facts-tensix]
+name = "Alloy facts page (Tensix)"
+skills = ["alloy-facts-tensix"]
+
+[packets.alloy-facts-softhier]
+name = "Alloy facts page (SoftHier)"
+skills = ["alloy-facts-softhier"]
