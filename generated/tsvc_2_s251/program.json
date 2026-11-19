@@ -1,0 +1,93 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "tsvc_2_s251",
+ "kind": "map",
+ "inputs": [
+  [
+   "b",
+   0.0,
+   1.0
+  ],
+  [
+   "c",
+   0.0,
+   1.0
+  ],
+  [
+   "d",
+   0.0,
+   1.0
+  ]
+ ],
+ "output": "a",
+ "program": [
+  "s = (b + (c * d))",
+  "a = (s * s)"
+ ],
+ "reduce": "",
+ "options": {
+  "dst_block": 2,
+  "cores": 0,
+  "fp32_acc": true
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2
+  ],
+  "dst_block_16bit": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ],
+  "fp32_acc": [
+   true,
+   false
+  ]
+ },
+ "circular_buffers": {
+  "0": [
+   4,
+   "float32"
+  ],
+  "1": [
+   4,
+   "float32"
+  ],
+  "2": [
+   4,
+   "float32"
+  ],
+  "16": [
+   4,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "b_addr",
+  "c_addr",
+  "d_addr"
+ ],
+ "writer_args": [
+  "num_tiles",
+  "start_tile",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "mul": "row mul SFPU (binary_sfpu), ttsim rel 5.68e-08",
+  "add": "row add SFPU (binary_sfpu), ttsim rel 5.96e-08"
+ }
+}

@@ -1,0 +1,86 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "tsvc_2_s313",
+ "kind": "reduce",
+ "inputs": [
+  [
+   "a",
+   0.0,
+   1.0
+  ],
+  [
+   "b",
+   0.0,
+   1.0
+  ]
+ ],
+ "output": "dot",
+ "program": [
+  "dot = sum((a * b))"
+ ],
+ "reduce": "add",
+ "options": {
+  "dst_block": 2,
+  "cores": 0,
+  "fp32_acc": true
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2
+  ],
+  "dst_block_16bit": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ],
+  "fp32_acc": [
+   true,
+   false
+  ]
+ },
+ "circular_buffers": {
+  "0": [
+   4,
+   "float32"
+  ],
+  "1": [
+   4,
+   "float32"
+  ],
+  "16": [
+   4,
+   "float32"
+  ],
+  "24": [
+   2,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "a_addr",
+  "b_addr"
+ ],
+ "writer_args": [
+  "1",
+  "core_index",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "mul": "row mul SFPU (binary_sfpu), ttsim rel 5.68e-08",
+  "add": "row add SFPU (binary_sfpu), ttsim rel 5.96e-08"
+ }
+}

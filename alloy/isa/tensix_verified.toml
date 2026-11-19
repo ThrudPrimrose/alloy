@@ -1,5 +1,5 @@
 # Written by `python -m alloy.isa.tensix verify`: every tensix.toml row run on ttsim (simulated Blackhole).
-run = "2026-11-16"
+run = "2026-11-19"
 image = "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64@sha256:254e24eea71325fe7c564dd8e5dd8568af1a402b6a668d6c9d9318c388a16b94"
 ttsim = "v1.16.0 sha256:74616dc119268c513725f91007736f4bfa055100f2966149892475c8353700c9"
 note = "SFPLOADMACRO disabled (ttsim does not model it); f32 SFPU rows ran with fp32_dest_acc_en and UnpackToDestFp32, every row at HiFi4"
@@ -275,6 +275,38 @@ unit = "SFPU"
 ok = true
 rel = 0.0036542338709676593
 digest = "76bdd9141097c8d3"
+
+[[verdicts]]
+op = "max"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "aa35cc88ab03860b"
+
+[[verdicts]]
+op = "max"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "796738ff1de473fc"
+
+[[verdicts]]
+op = "broadcast"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "335613084c541cc4"
+
+[[verdicts]]
+op = "broadcast"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "cc213554d5335d6a"
 
 [[verdicts]]
 op = "mma"
