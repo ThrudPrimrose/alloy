@@ -124,6 +124,21 @@ isas = ["avx512_256", "avx512", "sve"]
 isas = ["sve"]
 render = "sve"
 
+# Intrinsic tasklets: per scope, a candidate whose innermost loop body is one DaCe tasklet spelled from the ISA
+# lookup's checked rows (alloy/isa/intrinsics.toml), built and verified like every other candidate. targets: a declared
+# ISA -> the lookup target that spells it; a host without the ISA's host_flag gets none. rows: the lookup ops a tasklet
+# may use; a scope whose inner loop needs another gets no candidate, and the report says why. The candidate builds at
+# the default FP level, at contract too when a product feeds a sum (the fma row), and at reassoc when it reduces.
+[intrinsic_tasklets]
+rows = ["load", "store", "broadcast", "zero", "add", "sub", "mul", "div", "fma", "min", "max", "neg", "abs", "sqrt",
+    "reduce_add", "reduce_min", "reduce_max"]
+
+[intrinsic_tasklets.targets]
+avx2 = "avx2"
+avx512 = "avx512"
+neon = "neon"
+sve = "sve"
+
 # probe: library name the linker must find. fp_level: the level a vector-library candidate builds at.
 # private: each scope that picks the library links its own copy from the static archive, so two scopes may pick two
 # libraries that export the same _ZGV* names (A7). glibc's libmvec.a is not position-independent, so libmvec stays the

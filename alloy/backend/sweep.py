@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from alloy import machine
+from alloy.backend import intrinsics
 from alloy.backend.build import Build, compile_source, deduplicated, write_source
 from alloy.backend.candidates import Candidate, RenderKey, one_factor_at_a_time
 from alloy.configuration_matrix import Matrix
@@ -17,11 +18,13 @@ from alloy.heuristics.ranges import Interval
 
 @dataclass(slots=True, frozen=True)
 class ScopeReport:
-    """A scope's builds in candidate order, and the candidates pruned before building with their reasons."""
+    """A scope's builds in candidate order, the candidates pruned before building with their reasons, and what the
+    intrinsic-tasklet axis built for it or why nothing (:attr:`intrinsics.Offer.note`)."""
 
     scope: Scope
     builds: tuple[Build, ...]
     pruned: tuple[prune.Pruned, ...] = ()
+    intrinsics: str = ""
 
 
 def reference_first(builds: list[Build]) -> list[Build]:
@@ -89,9 +92,9 @@ def run(
             pruned = pruned + pruned_vector
             seen: dict[str, str] = {}
             ordered = [first.get(c) or later[c] for c in candidates if c in first or c in later]
-            reports.append(
-                ScopeReport(scope, tuple(deduplicated(b, seen) for b in reference_first(ordered)), tuple(pruned))
-            )
+            note = intrinsics.offer(matrix, scope.sdfg, host_isas).note
+            kept_builds = tuple(deduplicated(b, seen) for b in reference_first(ordered))
+            reports.append(ScopeReport(scope, kept_builds, tuple(pruned), note))
     return reports
 
 
@@ -110,6 +113,6 @@ def edited(
     source = folder / "agent" / "variants" / unit.name
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(unit.read_bytes())
-    own = [c for c in candidates if c.language == language]
+    own = [c for c in candidates if c.language == language and not c.intrinsic]  # a tasklet renders, not an edit
     builds = pool.map(lambda c: compile_source(source, c, matrix), own)
     return [reference, *(replace(b, name=f"agent_{b.name}") for b in builds)]

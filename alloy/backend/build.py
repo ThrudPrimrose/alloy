@@ -15,7 +15,7 @@ from dace.config import set_temporary
 from dace.sdfg import nodes
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
-from alloy.backend import runtime
+from alloy.backend import intrinsics, runtime
 from alloy.backend.candidates import Candidate, RenderKey
 from alloy.configuration_matrix import Matrix
 from alloy.frontend.scopes import Scope
@@ -56,8 +56,10 @@ class Build:
 def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
     """The scope's CPF translation unit under ``candidate``'s language and codegen knobs; under an SVE tail its
     innermost maps are explicit SVE loops, under fission its maps are cut (:func:`rendered_sdfg`); an ``approx``
-    candidate's unit starts with the inline kernels its libm calls go to (:func:`approximation.prelude`)."""
-    sdfg = rendered_sdfg(scope, candidate)
+    candidate's unit starts with the inline kernels its libm calls go to (:func:`approximation.prelude`); an
+    ``intrinsic`` candidate's innermost loop bodies are tasklets of its ISA's rows (:func:`intrinsics.rendered`) and
+    its unit starts with their header."""
+    sdfg, header = rendered_sdfg(scope, candidate, matrix)
     sdfg = sve_loops(sdfg) if candidate.render(matrix) == "sve" else sdfg
     with ExitStack() as stack:
         for knob, value in candidate.codegen_params(matrix).items():
@@ -68,15 +70,21 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
             signature=cpf.EntrySignature(order=list(scope.abi_order)),
             check_compiles=False,
         )
+    if header:
+        return f"{header}\n{rendering.code}"
     if not candidate.approx:
         return rendering.code
     called = approximation.called_functions(rendering.code)
     return approximation.prelude(candidate.approx, called) + rendering.code if called else rendering.code
 
 
-def rendered_sdfg(scope: Scope, candidate: Candidate) -> dace.SDFG:
-    """The SDFG ``candidate`` renders: the scope's, or a copy with its maps cut (:func:`fission.fissioned`)."""
-    return fission.fissioned(scope.sdfg) if candidate.fission else scope.sdfg
+def rendered_sdfg(scope: Scope, candidate: Candidate, matrix: Matrix) -> tuple[dace.SDFG, str]:
+    """The SDFG ``candidate`` renders and the header line its unit needs: the scope's, a copy with its maps cut
+    (:func:`fission.fissioned`), or a copy with intrinsic tasklets (:func:`intrinsics.rendered`)."""
+    if candidate.intrinsic:
+        axis = matrix.intrinsic_tasklets
+        return intrinsics.rendered(scope.sdfg, axis.targets[candidate.intrinsic], candidate.fused(matrix), axis.rows)
+    return (fission.fissioned(scope.sdfg) if candidate.fission else scope.sdfg), ""
 
 
 #: :attr:`Remarks.vectorized` of a compiler that reports no vectorized loop.

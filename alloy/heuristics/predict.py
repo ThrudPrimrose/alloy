@@ -21,7 +21,7 @@ from pydantic.dataclasses import dataclass
 
 from alloy import machine
 from alloy.backend import runtime
-from alloy.backend.build import Build
+from alloy.backend.build import Build, rendered_sdfg
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate import timing
@@ -622,11 +622,17 @@ def predictions(
         if any(b.candidate.fission for owner, b in jobs if owner is rep)
     }
 
+    def rendered(rep: ScopeReport, b: Build) -> dace.SDFG | None:
+        """What ``b`` rendered when not the scope's own SDFG: its cut maps or its intrinsic tasklets."""
+        if b.candidate.fission:
+            return cut[rep.scope.symbol]
+        if b.candidate.intrinsic:
+            return rendered_sdfg(rep.scope, b.candidate, matrix)[0]
+        return None
+
     def score(job: tuple[ScopeReport, Build]) -> Prediction | None:
         rep, b = job
-        return predict(
-            b, rep.scope, matrix, sizes, cut[rep.scope.symbol] if b.candidate.fission else None, running=running
-        )
+        return predict(b, rep.scope, matrix, sizes, rendered(rep, b), running=running)
 
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
         scored = list(pool.map(score, jobs))
