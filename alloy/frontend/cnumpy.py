@@ -350,6 +350,9 @@ def is_integer(scope: Scope, node: Node) -> bool:
         if name in scope.constants:
             return is_integer_dtype(scope.constants[name][1])
         return name in INTEGER_CONSTANTS or is_integer_dtype(scope.scalars.get(name, "float64"))
+    if kind == "pointer_expression":
+        name = text(scope, child(scope, node, "argument"))
+        return name in scope.arrays and is_integer_dtype(scope.arrays[name].dtype)
     if kind == "subscript_expression":
         base = node
         while base.type == "subscript_expression":
@@ -460,7 +463,7 @@ def expression(scope: Scope, node: Node) -> str:
     if kind == "gnu_asm_expression":
         raise refuse(scope, node, "inline asm")
     if kind == "pointer_expression":
-        raise refuse(scope, node, "a pointer dereference or address (pointer arithmetic)")
+        return dereference(scope, node)
     if kind in ("update_expression", "assignment_expression", "comma_expression"):
         raise refuse(scope, node, "an assignment inside an expression")
     if kind == "sizeof_expression":
@@ -468,6 +471,15 @@ def expression(scope: Scope, node: Node) -> str:
     if kind in ("field_expression", "compound_literal_expression", "initializer_list"):
         raise refuse(scope, node, "a struct or union")
     raise refuse(scope, node, f"an expression outside canonical C form ({kind})")
+
+
+def dereference(scope: Scope, node: Node) -> str:
+    """``*p`` of an array ``p`` as ``p[0]``; any other pointer expression is pointer arithmetic."""
+    argument = child(scope, node, "argument")
+    name = text(scope, argument)
+    if text(scope, child(scope, node, "operator")) != "*" or argument.type != "identifier" or name not in scope.arrays:
+        raise refuse(scope, node, "a pointer dereference or address (pointer arithmetic)")
+    return f"{python_name(scope, name)}[{', '.join('0' * len(scope.arrays[name].shape))}]"
 
 
 def binary(scope: Scope, node: Node) -> str:
@@ -669,7 +681,7 @@ def assignment(scope: Scope, node: Node) -> list[str]:
         name = text(scope, left)
         dtype = scope.arrays[name].dtype if name in scope.arrays else scope.pointers[name]
         return pointer_value(scope, node, name, dtype, right)
-    if left.type not in ("identifier", "subscript_expression"):
+    if left.type not in ("identifier", "subscript_expression", "pointer_expression"):
         raise refuse(scope, node, "a store through something other than a name or a subscript")
     target, value = expression(scope, left), expression(scope, right)
     name = text(scope, left) if left.type == "identifier" else ""
@@ -724,7 +736,7 @@ def statement(scope: Scope, node: Node) -> list[str]:
         if node.named_children:
             raise refuse(scope, node, "a returned value (the C ABI writes outputs through pointers)")
         return ["return"]
-    if kind in ("comment", "empty_statement"):
+    if kind in ("comment", "empty_statement") or kind == "preproc_call" and text(scope, node).startswith("#pragma"):
         return []
     if kind in ("goto_statement", "labeled_statement"):
         raise refuse(scope, node, "goto")

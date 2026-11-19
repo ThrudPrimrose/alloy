@@ -225,3 +225,21 @@ def test_every_refusal_reason_on_the_skill_page_is_one_the_lifter_prints():
 
     assert len(reasons) > 20
     assert [r for r in reasons if f'"{r}"' not in code] == []
+
+
+def test_a_dereference_of_an_output_pointer_is_its_first_element_and_pragmas_are_dropped():
+    source = """
+    void k(const double *restrict x, double *restrict out, const int64_t N) {
+      double s = 0.0;
+      #pragma omp simd reduction(+:s)
+      for (int64_t i = 0; i < N; i++) s += x[i];
+      *out = s;
+    }"""
+    bound = binding("k", ("x", "ptr_double", ["N"]), ("out", "ptr_double", ["1"]), ("N", "int64", []))
+    module, kernel = lifted(source, bound)
+    out = np.zeros(1)
+
+    kernel(np.arange(4.0), out, 4)
+
+    assert "out[0] = s" in module and "pragma" not in module
+    assert out[0] == 6.0
