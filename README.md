@@ -30,7 +30,9 @@ an `args` block); without one, candidates are built but not verified.
 Layout:
 
 - `alloy/frontend/`: `scopes` outlines a program, `inputs` draws its inputs from a bench manifest, `tree` prints the
-  control-flow tree the report carries.
+  control-flow tree the report carries, `cnumpy` lifts a C kernel plus the bench's binding JSON to canonical NumPy and
+  its SDFG (`python -m alloy.frontend.cnumpy kernel.c kernel_binding.json --sdfg kernel.sdfg`; the C it accepts is
+  in `alloy/hb_plugin/skills/alloy-c/SKILL.md`).
 - `alloy/backend/`: `candidates` enumerates the sweep, `build` renders, compiles and checks one candidate, `runtime`
   resolves and checks the OpenMP runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from scope archives, `verify` checks candidates on fuzzed inputs,
