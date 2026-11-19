@@ -1,7 +1,7 @@
 ---
 name: alloy-c
 description: "The C that Alloy can take as input: one kernel in canonical C form plus the bench's binding JSON. Alloy lifts it to NumPy and then to an SDFG it can tune. Lists what is accepted, what is refused (with the exact reason the lifter prints), and how to rewrite a refused kernel. Read it before handing Alloy a C kernel, or when the lifter refuses one."
-when: Before giving Alloy a C file instead of NumPy, and whenever `python -m alloy.frontend.cnumpy` answers `refused: ...`.
+when: "Before giving Alloy a C file instead of NumPy, and whenever `python -m alloy.frontend.cnumpy` answers `refused: ...`."
 ---
 
 # C input for Alloy (`alloy.frontend.cnumpy`)
