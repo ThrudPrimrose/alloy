@@ -291,3 +291,22 @@ def test_an_index_whose_stride_is_not_the_temporaries_extent_reads_the_flat_view
 
     assert "t.reshape(-1)[i * W + j]" in module
     np.testing.assert_array_equal(out, [0.0, 1.0, 10.0, 11.0])
+
+
+def test_a_const_index_local_delinearizes_through_its_value():
+    source = """
+    void k(double *restrict aa, const int64_t LEN) {
+      const int64_t n = LEN;
+      for (int64_t i = 1; i < n; ++i)
+        for (int64_t j = 1; j < n; ++j) {
+          const int64_t ij = i * n + j;
+          aa[ij] = aa[(i - 1) * n + (j - 1)] + 1.0;
+        }
+    }"""
+    module, kernel = lifted(source, binding("k", ("aa", "ptr_double", ["LEN", "LEN"]), ("LEN", "int64", [])))
+    aa = np.zeros((3, 3))
+
+    kernel(aa, 3)
+
+    assert "aa[i, j] = aa[i - 1, j - 1] + 1.0" in module
+    np.testing.assert_array_equal(aa, [[0, 0, 0], [0, 1, 1], [0, 1, 2]])

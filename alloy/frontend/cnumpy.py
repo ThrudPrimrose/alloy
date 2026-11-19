@@ -182,6 +182,12 @@ class Scope:
     nonnegative: set[str] = field(default_factory=set[str])
     #: Python spelling of opaque index terms: symbol name -> source.
     opaque: dict[str, str] = field(default_factory=dict[str, str])
+    #: Integer locals set once, whose value reads only names the kernel never stores to: C name -> value.
+    values: dict[str, Node] = field(default_factory=dict[str, Node])
+    #: Names the kernel stores to anywhere.
+    stored: set[str] = field(default_factory=set[str])
+    #: Variables of the canonical loops around the statement being lifted (only their header stores to them).
+    loops: set[str] = field(default_factory=set[str])
     #: File-scope constants: C name -> (Python literal, dtype).
     constants: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     #: The constants the kernel reads.
@@ -261,6 +267,8 @@ def symbolic(scope: Scope, node: Node) -> sympy.Expr:
         if is_integer_dtype(scope.constants[text(scope, node)][1]):
             scope.used.add(text(scope, node))  # a symbol, as the shapes name it
             return sympy.Symbol(python_identifier(text(scope, node)), integer=True)
+    elif kind == "identifier" and text(scope, node) in scope.values:
+        return symbolic(scope, scope.values[text(scope, node)])  # idx = i * N + j, then a[idx]
     elif kind == "identifier" and text(scope, node) not in CONSTANTS:
         known(scope, node)
         return sympy.Symbol(python_name(scope, text(scope, node)), integer=True)
@@ -553,7 +561,13 @@ def subscript(scope: Scope, node: Node) -> str:
     split = row_major(scope, indices[0], array.shape)
     if split is None and any(not (e.is_Symbol or e.is_Integer) for e in map(extent, array.shape[1:])):
         return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # strides split only against names
-    split = split or delinearize(array, symbolic(scope, indices[0]))
+    if split is None:
+        index = symbolic(scope, indices[0])
+        if any(str(n) in scope.opaque for n in index.free_symbols):
+            return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # an opaque term may hold any stride
+        split = delinearize(array, index)
+        if all(e == 0 for e in split[:-1]):
+            return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # no stride split off
     return f"{target}[{', '.join(printed(scope, e) for e in split)}]"
 
 
@@ -686,7 +700,17 @@ def declaration(scope: Scope, node: Node) -> list[str]:
             scope.nonnegative.discard(name)
             if value is not None:
                 out.append(f"{python_name(scope, name)} = {stored(scope, name, value, expression(scope, value))}")
+                if constant_index(scope, name, value) and is_integer_dtype(dtype):
+                    scope.values[name] = value
     return out
+
+
+def constant_index(scope: Scope, name: str, value: Node) -> bool:
+    """Whether ``name`` is set only by its declaration, to a value that reads only scalars the kernel never stores
+    to (so the name may stand for the value)."""
+    names = {text(scope, n) for n in walk(value) if n.type == "identifier"}
+    reads = {n.type for n in walk(value)} & {"subscript_expression", "call_expression", "pointer_expression"}
+    return name not in scope.stored and not reads and not names & (scope.stored - scope.loops)
 
 
 def stored(scope: Scope, name: str, value: Node, spelled: str) -> str:
@@ -834,7 +858,9 @@ def for_loop(scope: Scope, node: Node) -> list[str]:
         name, bounds, nonnegative = found
         if nonnegative:
             scope.nonnegative.add(name)
+        scope.loops.add(name)
         lines = [f"for {python_name(scope, name)} in range({bounds}):", *indented(statement(scope, body))]
+        scope.loops.discard(name)
         scope.nonnegative.discard(name)
         return lines
     if any(n.type == "continue_statement" for n in loop_body_nodes(body)):
@@ -1125,6 +1151,7 @@ def lift(source: str, binding: dict[str, Any]) -> Lifted:
         words = {w for s in array.shape for w in re.findall(r"[A-Za-z_]\w*", s)}
         scope.nonnegative |= {w for w in words if is_integer_dtype(scope.scalars.get(w, "float64"))}
         array.shape = tuple(respell(scope, s) for s in array.shape)
+    scope.stored = stored_names(scope, child(scope, node, "body"))
     body = statement(scope, child(scope, node, "body"))
     return Lifted(parameters, body, scope)
 
