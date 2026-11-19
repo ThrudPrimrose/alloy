@@ -550,7 +550,10 @@ def subscript(scope: Scope, node: Node) -> str:
         return f"{target}[{', '.join(expression(scope, i) for i in indices)}]"
     if len(array.shape) == 1:
         return f"{target}[{expression(scope, indices[0])}]"
-    split = row_major(scope, indices[0], array.shape) or delinearize(array, symbolic(scope, indices[0]))
+    split = row_major(scope, indices[0], array.shape)
+    if split is None and any(not (e.is_Symbol or e.is_Integer) for e in map(extent, array.shape[1:])):
+        return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # strides split only against names
+    split = split or delinearize(array, symbolic(scope, indices[0]))
     return f"{target}[{', '.join(printed(scope, e) for e in split)}]"
 
 

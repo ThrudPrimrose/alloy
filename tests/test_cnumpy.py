@@ -273,3 +273,21 @@ def test_a_horner_form_index_splits_against_extents_that_are_no_single_symbol():
 
     assert "t[i, j]" in module
     np.testing.assert_array_equal(t, [[0.0, 1.0], [10.0, 11.0], [20.0, 21.0]])
+
+
+def test_an_index_whose_stride_is_not_the_temporaries_extent_reads_the_flat_view():
+    source = """
+    void k(double *restrict out, const int64_t N, const int64_t W) {
+      double *t = (double *)malloc((size_t)((N) * ((N + 1))) * sizeof(double));
+      for (int64_t i = 0; i < N; ++i) for (int64_t j = 0; j < W; ++j) t[(i)*(W) + (j)] = 10.0 * i + j;
+      for (int64_t i = 0; i < N * W; ++i) out[i] = t[i];
+      free(t);
+    }"""
+    bound = binding("k", ("out", "ptr_double", ["N * W"]), ("N", "int64", []), ("W", "int64", []))
+    module, kernel = lifted(source, bound)
+    out = np.zeros(4)
+
+    kernel(out, 2, 2)
+
+    assert "t.reshape(-1)[i * W + j]" in module
+    np.testing.assert_array_equal(out, [0.0, 1.0, 10.0, 11.0])
