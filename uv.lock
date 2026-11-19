@@ -246,6 +246,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-core" },
     { name = "sympy" },
+    { name = "tree-sitter-language-pack" },
 ]
 
 [package.optional-dependencies]
@@ -367,6 +368,7 @@ requires-dist = [
     { name = "six", marker = "extra == 'softhier'", specifier = "==1.17.0" },
     { name = "sympy" },
     { name = "tabulate", marker = "extra == 'softhier'", specifier = "==0.10.0" },
+    { name = "tree-sitter-language-pack" },
 ]
 provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "softhier", "dev-nvidia", "dev-amd"]
 
