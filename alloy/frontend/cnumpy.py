@@ -301,6 +301,27 @@ def extent(value: str) -> sympy.Expr:
     return expr
 
 
+def row_major(scope: Scope, node: Node, shape: tuple[str, ...]) -> list[sympy.Expr] | None:
+    """The indices of a flat index written in Horner form, ``((i)*(E1) + (j))*(E2) + (k)`` with each ``E`` equal to
+    the extent of its axis, or None when it is not written so."""
+    while node.type == "parenthesized_expression":
+        node = node.named_children[0]
+    if len(shape) == 1:
+        return [symbolic(scope, node)]
+    if node.type != "binary_expression" or text(scope, child(scope, node, "operator")) != "+":
+        return None
+    product = child(scope, node, "left")
+    while product.type == "parenthesized_expression":
+        product = product.named_children[0]
+    if product.type != "binary_expression" or text(scope, child(scope, product, "operator")) != "*":
+        return None
+    stride = symbolic(scope, child(scope, product, "right"))
+    if sympy.simplify(stride - extent(shape[-1])) != 0:
+        return None
+    outer = row_major(scope, child(scope, product, "left"), shape[:-1])
+    return None if outer is None else [*outer, symbolic(scope, child(scope, node, "right"))]
+
+
 def delinearize(array: Array, index: sympy.Expr) -> list[sympy.Expr]:
     """``index`` into the flat row-major ``array`` as one index per dimension: the terms each stride divides go to
     its dimension, what remains to the last.
@@ -529,7 +550,7 @@ def subscript(scope: Scope, node: Node) -> str:
         return f"{target}[{', '.join(expression(scope, i) for i in indices)}]"
     if len(array.shape) == 1:
         return f"{target}[{expression(scope, indices[0])}]"
-    split = delinearize(array, symbolic(scope, indices[0]))
+    split = row_major(scope, indices[0], array.shape) or delinearize(array, symbolic(scope, indices[0]))
     return f"{target}[{', '.join(printed(scope, e) for e in split)}]"
 
 

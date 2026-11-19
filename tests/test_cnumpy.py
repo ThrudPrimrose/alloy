@@ -258,3 +258,18 @@ def test_a_constant_extent_stays_a_name_so_the_index_splits_against_it():
 
     assert "q[b, i]" in module
     np.testing.assert_array_equal(q, [[0.0] * 3, [1.0] * 3])
+
+
+def test_a_horner_form_index_splits_against_extents_that_are_no_single_symbol():
+    source = """
+    void k(double *restrict t, const int64_t N) {
+      for (int64_t i = 0; i < (N - 1); ++i)
+        for (int64_t j = 0; j < (N - 2); ++j) t[(i)*((N - 2)) + (j)] = 10.0 * i + j;
+    }"""
+    module, kernel = lifted(source, binding("k", ("t", "ptr_double", ["N - 1", "N - 2"]), ("N", "int64", [])))
+    t = np.zeros((3, 2))
+
+    kernel(t, 4)
+
+    assert "t[i, j]" in module
+    np.testing.assert_array_equal(t, [[0.0, 1.0], [10.0, 11.0], [20.0, 21.0]])
