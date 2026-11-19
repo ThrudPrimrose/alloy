@@ -134,6 +134,10 @@ jobs:
       - run: uv sync --locked --extra dev
       - name: Tensix rows on ttsim
         run: PYTHONHASHSEED=0 ALLOY_TENSIX_VERDICTS=$RUNNER_TEMP/tensix_verified.toml uv run pytest --maxfail=20 -W error -m tensix tests/test_isa_tensix.py
+      # Every eval task's generated program on ttsim, one container per task, at 1 tile and at the most tiles per DST
+      # acquire.
+      - name: Generated eval-task programs on ttsim
+        run: PYTHONHASHSEED=0 uv run pytest --maxfail=20 -W error -m tensix tests/test_tensixgen.py
       # The verdicts of every row, pending ones included, as `python -m alloy.isa.tensix verify` writes them: copy the
       # file over alloy/isa/tensix_verified.toml and clear the rows' `pending` to record them without a local docker run.
       - uses: actions/upload-artifact@v4
