@@ -27,6 +27,8 @@ from alloy.records import RECORD, Parameters, Strings, dumped_json, validated_js
 
 #: The report layout; a reader refuses any other.
 SCHEMA = 8
+#: Layouts a reader accepts: 7 lacks only ``intrinsics``, which defaults to "" (the E1 runs at bed7888 wrote 7).
+READS = (7, SCHEMA)
 #: Variants listed per scope unless the caller asks for another count.
 TOP_K = 5
 #: Missed-vectorization remarks kept per variant.
@@ -556,8 +558,8 @@ def write(
 
 
 def load(path: pathlib.Path) -> Report:
-    """The ``report.json`` at ``path``; any other schema version is refused."""
+    """The ``report.json`` at ``path``; a schema version outside :data:`READS` is refused."""
     r = validated_json(Report, path)
-    if r.schema != SCHEMA:
-        raise ValueError(f"{path}: report schema {r.schema}, this Alloy reads {SCHEMA}")
+    if r.schema not in READS:
+        raise ValueError(f"{path}: report schema {r.schema}, this Alloy reads {READS}")
     return r
