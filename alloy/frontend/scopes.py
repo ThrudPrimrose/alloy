@@ -12,7 +12,7 @@ from dace.libraries.blas import nodes as blas
 from dace.libraries.standard.nodes import ArgReduce, Reduce, Scan, external_call
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion
 from dace.transformation import passes
 
 CALL_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -67,11 +67,11 @@ def has_reduction(sdfg: dace.SDFG) -> bool:
     return accumulates(sdfg)
 
 
-def enclosing_loop_variables(block: Any) -> set[str]:
+def enclosing_loop_variables(block: ControlFlowBlock) -> set[str]:
     """The variables of the sequential loops around ``block`` inside its SDFG."""
     found: set[str] = set()
     region = block.parent_graph
-    while isinstance(region, LoopRegion) or (region is not None and not isinstance(region, dace.SDFG)):
+    while isinstance(region, LoopRegion) or (region is not None and not isinstance(region, dace.SDFG)):  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types parent_graph without None
         if isinstance(region, LoopRegion):
             found.add(region.loop_variable)
         region = region.parent_graph

@@ -10,6 +10,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
+from alloy.jsontype import Json
 from alloy.tensixgen.backend import Refused
 from alloy.tensixgen.split import INTERLEAVED, SHARDED, TILES, Options, Program, program
 
@@ -35,7 +36,7 @@ def tile_sdfg(name: str) -> tuple[dace.SDFG, dict[str, float]]:
     config = VectorizeConfig(widths=(LANES,), target_isa=ISA.SCALAR, assume_even=True)
     VectorizeCPUMultiDim(config).apply_pass(sdfg, {})
     init = spec.init.scalars if spec.init else {}
-    return sdfg, {k: float(v) for k, v in init.items() if isinstance(v, int | float) and not isinstance(v, bool)}
+    return sdfg, {k: float(v) for k, v in init.items() if not isinstance(v, bool)}
 
 
 def place(desc: dace.data.Data, kind: str, cores: int) -> placement.Placement:
@@ -56,7 +57,7 @@ def place(desc: dace.data.Data, kind: str, cores: int) -> placement.Placement:
     return placement.Placement(BANKS, placement.SymbolicLambda(lambda i, j: ((i // 32) * per_row + j // 32) % BANKS))
 
 
-def programs(tasks: list[dict], options: Options = Options(), version: str = "v06") -> list[Program]:
+def programs(tasks: list[Json], options: Options = Options(), version: str = "v06") -> list[Program]:
     """The tile program of each eval task (``agents/tasks.json``'s form), its arrays placed as ``options`` says; a
     reduction's output stays in DRAM, where each core writes its partial tile."""
     if options.placement == SHARDED and not (options.cores and TILES % options.cores == 0):

@@ -1352,7 +1352,9 @@ def whole(name: str, rank: int) -> ast.Subscript:
 class Vectorize(ast.NodeTransformer):
     """``X[v...]`` (``X`` of the nest's shape) as ``X``; anything else naming a loop variable or an array fails."""
 
-    def __init__(self, shapes: dict[str, tuple[str, ...]], variables: tuple[str, ...], extents: tuple[str, ...]):
+    def __init__(
+        self, shapes: dict[str, tuple[str, ...]], variables: tuple[str, ...], extents: tuple[str, ...]
+    ) -> None:
         self.shapes = shapes
         self.variables = variables
         self.extents = extents
@@ -1565,7 +1567,8 @@ def raise_idioms(lifted: Lifted) -> list[ast.stmt]:
         if c in scope.renamed and scope.renamed[c] in lifted.parameters
     }
     tree = Raise(shapes).visit(ast.parse("\n".join(lifted.body) or "pass"))
-    return ast.fix_missing_locations(tree).body
+    body: list[ast.stmt] = ast.fix_missing_locations(tree).body
+    return body
 
 
 # ---------------------------------------------------------------------------------------------------- module

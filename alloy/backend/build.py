@@ -70,12 +70,13 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
             signature=cpf.EntrySignature(order=list(scope.abi_order)),
             check_compiles=False,
         )
+    code: str = rendering.code
     if header:
-        return f"{header}\n{rendering.code}"
+        return f"{header}\n{code}"
     if not candidate.approx:
-        return rendering.code
-    called = approximation.called_functions(rendering.code)
-    return approximation.prelude(candidate.approx, called) + rendering.code if called else rendering.code
+        return code
+    called = approximation.called_functions(code)
+    return approximation.prelude(candidate.approx, called) + code if called else code
 
 
 def rendered_sdfg(scope: Scope, candidate: Candidate, matrix: Matrix) -> tuple[dace.SDFG, str]:

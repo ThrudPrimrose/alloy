@@ -47,7 +47,7 @@ CONTRACT_LEVEL = "contract"
 #: Element types the rows spell, by DaCe type.
 DTYPES = {dace.float64: "f64", dace.float32: "f32"}
 #: Python operators of a tasklet -> lookup ops.
-BINARY = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div"}
+BINARY: dict[type[ast.operator], str] = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div"}
 #: Calls a tasklet may make, and the ops they are: the lookup's own names (hints.CALL_NAMES) with one or two operands.
 CALLS = {name: op for name, op in CALL_NAMES.items() if op in ("abs", "sqrt", "min", "max")}
 #: Casts the frontend wraps a literal in.
@@ -597,7 +597,7 @@ def element_subset(index: tuple[str, ...]) -> str:
 
 
 def python(e: Symbolic) -> str:
-    return symbolic.symstr(e)
+    return str(symbolic.symstr(e))
 
 
 def whole_blocks(begin: Symbolic, end: Symbolic, block: int) -> tuple[str, Symbolic]:

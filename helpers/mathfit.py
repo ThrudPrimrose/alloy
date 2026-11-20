@@ -14,6 +14,7 @@ import re
 import struct
 import sys
 from collections.abc import Callable
+from typing import Any
 
 import mpmath as mp
 
@@ -21,6 +22,12 @@ from alloy.isa.mathcheck import measure, measure_exhaustive
 from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, RUNGS, Grid, Kernel
 from alloy.isa.table import DEFAULT_PATH, load
 from alloy.isa.validate import tier_error
+from alloy.jsontype import Json
+
+#: mpmath's ``mpf`` is an attribute of its default context, not a class a type can name.
+type Mpf = Any
+#: A number mpmath evaluates.
+type Real = float | Mpf
 
 mp.mp.dps = 200
 
@@ -55,7 +62,7 @@ DEGREES = {  # function -> dtype -> polynomial degree per level (strict, relaxed
 DEGREES["cos"] = DEGREES["sin"]
 
 
-def fl(value, dtype: str) -> float:
+def fl(value: Real, dtype: str) -> float:
     """``value`` rounded to the lane type, as a Python float."""
     return struct.unpack("f", struct.pack("f", float(value)))[0] if dtype == "f32" else float(value)
 
@@ -64,7 +71,7 @@ def fmt(value: float) -> str:
     return repr(float(value))
 
 
-def split(value, dtype: str, parts: int = 3) -> list[float]:
+def split(value: Real, dtype: str, parts: int = 3) -> list[float]:
     """``value`` as a sum of lane-precision terms."""
     terms, rest = [], mp.mpf(value)
     for _ in range(parts):
@@ -73,7 +80,7 @@ def split(value, dtype: str, parts: int = 3) -> list[float]:
     return terms
 
 
-def truncated(value, dtype: str) -> tuple[float, float]:
+def truncated(value: Real, dtype: str) -> tuple[float, float]:
     """``value`` as (hi, lo), hi short enough that hi*n is exact for every exponent n."""
     bits = 42 if dtype == "f64" else 16
     scale = mp.mpf(2) ** bits
@@ -87,7 +94,7 @@ FIT_POINTS = 1024
 FIT_DIGITS = 60
 
 
-def alternation(errors: list, count: int) -> list[int] | None:
+def alternation(errors: list[Mpf], count: int) -> list[int] | None:
     """The indices of ``count`` extrema of ``errors`` with alternating signs, or None when it has fewer."""
     peaks: list[int] = []
     for index, error in enumerate(errors):
@@ -101,7 +108,7 @@ def alternation(errors: list, count: int) -> list[int] | None:
     return peaks if len(peaks) == count else None
 
 
-def minimax(powers: dict[int, list], values: list, exponents: list[int], weights: list) -> list:
+def minimax(powers: dict[int, list[Mpf]], values: list[Mpf], exponents: list[int], weights: list[Mpf]) -> list[object]:
     """The coefficients of ``exponents`` whose polynomial leaves the smallest largest weighted error on ``values``
     (Remez)."""
     count = len(exponents) + 1
@@ -123,7 +130,14 @@ def minimax(powers: dict[int, list], values: list, exponents: list[int], weights
     return solved
 
 
-def fit(target, lo, hi, degree: int, dtype: str, weight=None) -> list[float]:
+def fit(
+    target: Callable[[Mpf], Mpf],
+    lo: Real,
+    hi: Real,
+    degree: int,
+    dtype: str,
+    weight: Callable[[Mpf], Mpf] | None = None,
+) -> list[float]:
     """The degree-``degree`` minimax polynomial of ``target`` on [lo, hi], in monomials rounded to the lane.
     ``weight`` is what the kernel multiplies the polynomial's error by on its way to the result's relative error."""
     with mp.workdps(FIT_DIGITS):
@@ -166,7 +180,7 @@ def sin_poly(dtype: str, level: str) -> str:
     )
 
 
-def reduce(q: str, x: str, unit, dtype: str, level: str) -> list[str]:
+def reduce(q: str, x: str, unit: Real, dtype: str, level: str) -> list[str]:
     """``r = x - q*unit``: double-word (``r`` + ``re``) when strict; else FMA steps, three unless fast."""
     a, b, c = split(unit, dtype)
     if level == "strict":
@@ -187,7 +201,7 @@ def reduce(q: str, x: str, unit, dtype: str, level: str) -> list[str]:
     return [*lines, f"r2 = fnma({q}, {fmt(b)}, r1)", f"r = fnma({q}, {fmt(c)}, r2)"]
 
 
-def strict_guard(cond: str) -> dict:
+def strict_guard(cond: str) -> Json:
     return {"guard": "ok", "pre": [f"ok = {cond}"]}
 
 
@@ -203,7 +217,7 @@ def trig_contract(dtype: str) -> str:
     return f"finite, |x| <= {TRIG_MAX[dtype]:g}"
 
 
-def program_sin(dtype: str, level: str) -> dict:
+def program_sin(dtype: str, level: str) -> Json:
     inv = fl(1 / mp.pi, dtype)
     body = [f"q = round(mul(x, {fmt(inv)}))", *reduce("q", "x", mp.pi, dtype, level), "t = mul(r, r)"]
     tail = "add(re, mul(mul(r, t), w))" if level == "strict" else "mul(mul(r, t), w)"
@@ -216,7 +230,7 @@ def program_sin(dtype: str, level: str) -> dict:
     return {**out, "body": body, "result": "f"}
 
 
-def program_cos(dtype: str, level: str) -> dict:
+def program_cos(dtype: str, level: str) -> Json:
     inv = fl(1 / mp.pi, dtype)
     body = [f"q = add(mul(2.0, round(sub(mul(x, {fmt(inv)}), 0.5))), 1.0)"]
     body += [*reduce("q", "x", mp.pi / 2, dtype, level), "t = mul(r, r)"]
@@ -230,7 +244,7 @@ def program_cos(dtype: str, level: str) -> dict:
     return {**out, "body": body, "result": "f"}
 
 
-def program_tan(dtype: str, level: str) -> dict:
+def program_tan(dtype: str, level: str) -> Json:
     inv = fl(2 / mp.pi, dtype)
     u = (mp.pi / 4) ** 2
     poly = fit(
@@ -294,14 +308,14 @@ def exp_grids(dtype: str, level: str, top: float) -> list[Grid]:
     return grids
 
 
-def program_exp(dtype: str, level: str) -> dict:
+def program_exp(dtype: str, level: str) -> Json:
     lines, result = exp_core("x", dtype, level)
     out = {"args": ("x",), "grids": exp_grids(dtype, level, EXP_MAX[dtype])}
     out |= {"contract": f"finite, |x| <= {EXP_MAX[dtype]:g}", "body": lines, "result": result}
     return {**out, **strict_guard(bounded("x", dtype))} if level == "strict" else out
 
 
-def exp_like(fn: str, base, dtype: str, level: str) -> dict:
+def exp_like(fn: str, base: float, dtype: str, level: str) -> Json:
     """2^x and 10^x: reduce on the base's log2, then 1 + r*Q(r)."""
     unit = mp.log(2) / mp.log(base)
     half = unit / 2 * mp.mpf("1.01")
@@ -328,7 +342,7 @@ def exp_like(fn: str, base, dtype: str, level: str) -> dict:
     return {**out, **strict_guard(f"le(abs(x), {fmt(fl(top, dtype))})")} if level == "strict" else out
 
 
-def program_expm1(dtype: str, level: str) -> dict:
+def program_expm1(dtype: str, level: str) -> Json:
     poly = fit(
         lambda r: (mp.exp(r) - 1 - r) / r**2,
         -mp.log(2) / 2 * 1.01,
@@ -397,7 +411,7 @@ def log_grids(dtype: str) -> list[Grid]:
     return [Grid(0.5, 2.0, "lin"), Grid(TINY[dtype], HUGE[dtype], "logp"), Grid(0.99, 1.01, "lin")]
 
 
-def program_log(dtype: str, level: str) -> dict:
+def program_log(dtype: str, level: str) -> Json:
     hi, lo = truncated(mp.log(2), dtype)
     body = log_core("x", dtype, level)
     body += [f"v = add(mul(n, {fmt(hi)}), add(f, sub(mul(n, {fmt(lo)}), lo)))"]
@@ -406,7 +420,7 @@ def program_log(dtype: str, level: str) -> dict:
     return {**out, **strict_guard(positive("x", dtype))} if level == "strict" else out
 
 
-def program_log_scaled(base, dtype: str, level: str) -> dict:
+def program_log_scaled(base: float, dtype: str, level: str) -> Json:
     inv = fl(1 / mp.log(base), dtype)
     body = log_core("x", dtype, level)
     body += [f"h = mul(f, {fmt(inv)})", f"he = fms(f, {fmt(inv)}, h)", f"lg = fnma(lo, {fmt(inv)}, he)"]
@@ -420,7 +434,7 @@ def program_log_scaled(base, dtype: str, level: str) -> dict:
     return {**out, **strict_guard(positive("x", dtype))} if level == "strict" else out
 
 
-def program_log1p(dtype: str, level: str) -> dict:
+def program_log1p(dtype: str, level: str) -> Json:
     hi, lo = truncated(mp.log(2), dtype)
     body = ["y = add(1.0, x)", "c = div(sub(x, sub(y, 1.0)), y)", *log_core("y", dtype, level)]
     body += [f"f1 = add(mul(n, {fmt(hi)}), add(f, add(c, sub(mul(n, {fmt(lo)}), lo))))"]
@@ -443,7 +457,7 @@ def inverse_grids(dtype: str, unit: bool) -> list[Grid]:
     return [Grid(-2.0, 2.0, "lin"), Grid(TINY[dtype], HUGE[dtype], "log")]
 
 
-def program_atan(dtype: str, level: str) -> dict:
+def program_atan(dtype: str, level: str) -> Json:
     poly = fit(
         lambda t: (mp.atan(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
         0,
@@ -485,7 +499,7 @@ def asin_core(x: str, dtype: str, level: str) -> list[str]:
     ]
 
 
-def program_asin(dtype: str, level: str) -> dict:
+def program_asin(dtype: str, level: str) -> Json:
     hi, lo = split(mp.pi / 2, dtype, 2)
     body = asin_core("x", dtype, level)
     body += [f"g = select(far, sub({fmt(hi)}, sub(add(w, w), {fmt(lo)})), w)", f"v = {with_sign('g', 'x')}"]
@@ -498,7 +512,7 @@ def program_asin(dtype: str, level: str) -> dict:
     }
 
 
-def program_acos(dtype: str, level: str) -> dict:
+def program_acos(dtype: str, level: str) -> Json:
     half_hi, half_lo = split(mp.pi / 2, dtype, 2)
     pi_hi, pi_lo = split(mp.pi, dtype, 2)
     body = asin_core("x", dtype, level)
@@ -517,7 +531,7 @@ def program_acos(dtype: str, level: str) -> dict:
     }
 
 
-def program_sinh(dtype: str, level: str) -> dict:
+def program_sinh(dtype: str, level: str) -> Json:
     poly = fit(
         lambda t: (mp.sinh(mp.sqrt(t)) / mp.sqrt(t) - 1) / t,
         0,
@@ -547,7 +561,7 @@ def program_sinh(dtype: str, level: str) -> dict:
     return {**out, **strict_guard(bounded("x", dtype))} if level == "strict" else out
 
 
-def program_cosh(dtype: str, level: str) -> dict:
+def program_cosh(dtype: str, level: str) -> Json:
     lines, e = exp_core("a", dtype, level)
     body = ["a = abs(x)", *lines, f"v = add(mul(0.5, {e}), div(0.5, {e}))"]
     grids = [Grid(-2.0, 2.0, "lin"), Grid(-EXP_MAX[dtype], EXP_MAX[dtype], "lin")]
@@ -561,7 +575,7 @@ def program_cosh(dtype: str, level: str) -> dict:
     return {**out, **strict_guard(bounded("x", dtype))} if level == "strict" else out
 
 
-def program_tanh(dtype: str, level: str) -> dict:
+def program_tanh(dtype: str, level: str) -> Json:
     expm1 = program_expm1(dtype, level)
     body = ["a = abs(x)", "d = add(a, a)"]
     body += [
@@ -574,7 +588,7 @@ def program_tanh(dtype: str, level: str) -> dict:
     return out
 
 
-def program_pow(dtype: str, level: str) -> dict:
+def program_pow(dtype: str, level: str) -> Json:
     hi, lo = truncated(mp.log(2), dtype)
     core = log_core("x", dtype, level)
     tail, e = exp_core("big2", dtype, level, "E")
@@ -611,7 +625,7 @@ def program_pow(dtype: str, level: str) -> dict:
     return {**out, "body": body, "result": e}
 
 
-def program_fmod(dtype: str, level: str) -> dict:
+def program_fmod(dtype: str, level: str) -> Json:
     """x - y*trunc(x/y) on magnitudes. Below 2^mantissa the lane holds the quotient's integer, which rounds up by one at
     worst, so one correction is enough, and the remainder fits the lane: a multiple of y's last place below |y|."""
     top = 2.0 ** MANTISSA[dtype]
@@ -742,16 +756,16 @@ def toml_float(value: float) -> str:
     return repr(float(value)) if "." in repr(float(value)) or "e" in repr(float(value)) else f"{value}.0"
 
 
-def sinc(t):
+def sinc(t: Mpf) -> Mpf:
     """sin(x)/x as a function of t = x*x, which the quadrant tiers' Horner runs in."""
     return mp.sin(mp.sqrt(t)) / mp.sqrt(t)
 
 
-def cos_of_root(t):
+def cos_of_root(t: Mpf) -> Mpf:
     return mp.cos(mp.sqrt(t))
 
 
-def log_ratio(t):
+def log_ratio(t: Mpf) -> Mpf:
     """log(m)/x as a function of t = x*x, for x = (m-1)/(m+1): 2*atanh(x)/x."""
     return 2 * mp.atanh(mp.sqrt(t)) / mp.sqrt(t)
 
@@ -759,7 +773,7 @@ def log_ratio(t):
 #: The square of the largest |x| a log tier sees: m stays in [sqrt(1/2), sqrt(2)].
 LOG_LIMIT = (3 - 2 * mp.sqrt(2)) ** 2
 #: The tiers named Chebyshev: what each fits, on which interval, to which degree of its Horner variable.
-CHEBYSHEV_TIERS: dict[str, tuple[Callable, mp.mpf, mp.mpf, int]] = {
+CHEBYSHEV_TIERS: dict[str, tuple[Callable[[Mpf], Mpf], Mpf, Mpf, int]] = {
     "sin-quad-cheb9": (sinc, mp.mpf(0), (mp.pi / 4) ** 2, 4),
     "sin-quad-cheb13": (sinc, mp.mpf(0), (mp.pi / 4) ** 2, 6),
     "cos-quad-cheb8": (cos_of_root, mp.mpf(0), (mp.pi / 4) ** 2, 4),

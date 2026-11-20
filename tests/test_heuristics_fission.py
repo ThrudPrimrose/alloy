@@ -45,7 +45,7 @@ def wide(folder: pathlib.Path) -> DaceProgram:
 
 
 @dace.program
-def mix(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+def mix(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         t = np.exp(x[i]) * 2.0
         y[i] = t + x[i]
@@ -85,7 +85,9 @@ def results(sdfg: dace.SDFG, outputs: tuple[str, ...]) -> dict[str, np.ndarray]:
     return out
 
 
-def test_a_body_holding_more_live_values_than_registers_is_cut_after_the_level_that_makes_them(tmp_path):
+def test_a_body_holding_more_live_values_than_registers_is_cut_after_the_level_that_makes_them(
+    tmp_path: pathlib.Path,
+) -> None:
     scope = only_scope(wide(tmp_path))
     (state,) = scope.sdfg.states()
 
@@ -95,13 +97,13 @@ def test_a_body_holding_more_live_values_than_registers_is_cut_after_the_level_t
     assert len(chosen) == WIDE and all(n.label.startswith("_Mult_") for n in chosen)
 
 
-def test_a_body_whose_live_values_fit_the_registers_is_not_cut(tmp_path):
+def test_a_body_whose_live_values_fit_the_registers_is_not_cut(tmp_path: pathlib.Path) -> None:
     assert fission.cuts(only_scope(wide(tmp_path)).sdfg, registers=WIDE) == ()
     assert fission.cuts(only_scope(mix).sdfg, registers=1) != ()
     assert fission.cuts(only_scope(mix).sdfg, registers=16) == ()
 
 
-def test_a_cut_at_one_node_isolates_it_between_the_nodes_before_and_after_it_with_the_same_results():
+def test_a_cut_at_one_node_isolates_it_between_the_nodes_before_and_after_it_with_the_same_results() -> None:
     scope = only_scope(mix)
 
     sut = fission.split(scope.sdfg, (cut_of(scope.sdfg, "_Mult_"),))
@@ -115,7 +117,7 @@ def test_a_cut_at_one_node_isolates_it_between_the_nodes_before_and_after_it_wit
     assert all(np.array_equal(results(sut, ("y", "z"))[k], v) for k, v in expected.items())
 
 
-def test_a_node_between_two_chosen_nodes_joins_their_piece():
+def test_a_node_between_two_chosen_nodes_joins_their_piece() -> None:
     scope = only_scope(mix)
 
     sut = fission.split(scope.sdfg, (cut_of(scope.sdfg, "_numpy_exp_", "_numpy_sin_"),))
@@ -128,7 +130,7 @@ def test_a_node_between_two_chosen_nodes_joins_their_piece():
     assert all(np.array_equal(results(sut, ("y", "z"))[k], v) for k, v in expected.items())
 
 
-def test_the_heuristic_cut_widens_each_value_it_cuts_into_an_array_over_the_map(tmp_path):
+def test_the_heuristic_cut_widens_each_value_it_cuts_into_an_array_over_the_map(tmp_path: pathlib.Path) -> None:
     scope = only_scope(wide(tmp_path))
 
     sut = fission.fissioned(scope.sdfg)
@@ -139,7 +141,9 @@ def test_the_heuristic_cut_widens_each_value_it_cuts_into_an_array_over_the_map(
     assert np.array_equal(results(sut, ("y",))["y"], results(scope.sdfg, ("y",))["y"])
 
 
-def test_a_scope_with_a_cut_gets_one_fissioned_rendering_per_compiler_in_a_variant_of_its_own(tmp_path):
+def test_a_scope_with_a_cut_gets_one_fissioned_rendering_per_compiler_in_a_variant_of_its_own(
+    tmp_path: pathlib.Path,
+) -> None:
     scope = only_scope(wide(tmp_path))
 
     sut = flips(MATRIX, scope, "c", "gcc", finite_inputs=False, fission=True)
@@ -152,7 +156,7 @@ def test_a_scope_with_a_cut_gets_one_fissioned_rendering_per_compiler_in_a_varia
 
 
 @pytest.mark.gcc
-def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_widens(tmp_path):
+def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_widens(tmp_path: pathlib.Path) -> None:
     scope = only_scope(wide(tmp_path))
     plain = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "plain", {})
     cut = build(scope, Candidate("c", "gcc", fission=True), MATRIX, tmp_path / "cut", {})
@@ -190,7 +194,7 @@ def cut_states(sdfg: dace.SDFG, *blocks: int) -> fission.Cut:
     return fission.Cut(index, state.node_id(entry), blocks, nested=True)
 
 
-def test_a_cut_at_a_state_of_an_expanded_body_isolates_it_between_the_states_before_and_after_it():
+def test_a_cut_at_a_state_of_an_expanded_body_isolates_it_between_the_states_before_and_after_it() -> None:
     scope = only_scope(mix)
     sdfg, blocks = expanded(scope.sdfg)
 
@@ -205,7 +209,7 @@ def test_a_cut_at_a_state_of_an_expanded_body_isolates_it_between_the_states_bef
     assert all(np.array_equal(results(sut, ("y", "z"))[k], v) for k, v in expected.items())
 
 
-def test_a_cut_at_the_first_state_of_an_expanded_body_makes_two_maps():
+def test_a_cut_at_the_first_state_of_an_expanded_body_makes_two_maps() -> None:
     sdfg, blocks = expanded(only_scope(mix).sdfg)
 
     sut = fission.split(sdfg, (cut_states(sdfg, blocks["_numpy_exp_"]),))

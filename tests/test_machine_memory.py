@@ -3,7 +3,10 @@
 ``dmidecode -t 17`` recorded beside it."""
 
 import concurrent.futures
+import pathlib
 import time
+
+import pytest
 
 from alloy import machine
 
@@ -31,17 +34,19 @@ Memory Device
 """
 
 
-def test_the_peak_sums_each_installed_modules_configured_speed_times_its_width():
+def test_the_peak_sums_each_installed_modules_configured_speed_times_its_width() -> None:
     sut = machine.theoretical_bandwidth(TWO_DDR5_MODULES_ONE_EMPTY_SLOT)
 
     assert sut == 2 * 5600e6 * 8
 
 
-def test_a_listing_without_a_module_gives_no_peak():
+def test_a_listing_without_a_module_gives_no_peak() -> None:
     assert machine.theoretical_bandwidth("# dmidecode 3.6\nNo SMBIOS nor DMI entry point found.\n") is None
 
 
-def test_a_saved_dmidecode_listing_is_read_from_the_file_the_variable_names(tmp_path, monkeypatch):
+def test_a_saved_dmidecode_listing_is_read_from_the_file_the_variable_names(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     saved = tmp_path / "dmidecode-17.txt"
     saved.write_text(TWO_DDR5_MODULES_ONE_EMPTY_SLOT)
     monkeypatch.setenv(machine.MEMORY_DEVICES_VARIABLE, str(saved))
@@ -49,11 +54,11 @@ def test_a_saved_dmidecode_listing_is_read_from_the_file_the_variable_names(tmp_
     assert machine.memory_devices_text() == TWO_DDR5_MODULES_ONE_EMPTY_SLOT
 
 
-def test_a_measured_copy_moves_bytes_at_a_positive_rate():
+def test_a_measured_copy_moves_bytes_at_a_positive_rate() -> None:
     assert machine.stream_bandwidth(threads=1, rounds=1) > 0
 
 
-def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch):
+def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cache does not serialize a miss: each thread's own measurement would run against the others and read low."""
     measured = []
 
@@ -73,7 +78,7 @@ def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch):
     assert len(measured) == 1
 
 
-def test_the_bandwidth_is_measured_even_where_the_firmware_lists_a_peak(monkeypatch):
+def test_the_bandwidth_is_measured_even_where_the_firmware_lists_a_peak(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: a readable DMI table replaced the measured copy by the modules' theoretical peak, so the speculative
     model's memory cap meant a peak on one host and a sustained rate on another."""
     monkeypatch.setattr(machine, "memory_devices_text", lambda: TWO_DDR5_MODULES_ONE_EMPTY_SLOT)

@@ -16,6 +16,7 @@ from typing import Any
 import dace
 import numpy as np
 import pydantic.dataclasses
+from dace.codegen.compiled_sdfg import CompiledSDFG
 
 from alloy import machine
 from alloy.backend.build import Build
@@ -161,8 +162,8 @@ def stage_sizes(
     return inputs.constrained(manifest, sized(sdfg, program, base, target, cap)) or base
 
 
-def clock(program: Any, symbol: str) -> Callable[[], float]:
-    fn = program.get_exported_function(f"alloy_seconds_{symbol}", ctypes.c_double)
+def clock(program: CompiledSDFG, symbol: str) -> Callable[[], float]:
+    fn: Callable[[], float] | None = program.get_exported_function(f"alloy_seconds_{symbol}", ctypes.c_double)
     if fn is None:
         raise RuntimeError(f"{program.filename} has no timer for {symbol}")
     return fn
@@ -228,7 +229,10 @@ def timed(
 ) -> list[list[float]] | str:
     """``names`` timed together in the one running child: the whole memory, and one call's budget per timed call."""
     timeout = CALL_TIMEOUT_S * (reps + 1) * len(names)
-    return in_child(time_arms, ([str(arms.folders[n]) for n in names], arms.symbol, args, reps), cpus, 1.0, timeout)
+    timed: list[list[float]] | str = in_child(
+        time_arms, ([str(arms.folders[n]) for n in names], arms.symbol, args, reps), cpus, 1.0, timeout
+    )
+    return timed
 
 
 def band_compared(program: Program, verification: Verification, outputs: tuple[str, ...]) -> frozenset[str]:

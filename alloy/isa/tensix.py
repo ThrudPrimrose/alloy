@@ -25,6 +25,8 @@ import tomllib
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
+from alloy.jsontype import Json
+
 __all__ = [
     "CARD_PATH",
     "IMAGE",
@@ -94,7 +96,7 @@ class Verdict:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def table(path: pathlib.Path = ROWS_PATH) -> dict:
+def table(path: pathlib.Path = ROWS_PATH) -> Json:
     return tomllib.loads(path.read_text())
 
 
@@ -132,7 +134,7 @@ def dtypes() -> tuple[str, ...]:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
+def recorded(path: pathlib.Path = VERDICTS_PATH) -> Json:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
@@ -178,7 +180,7 @@ def spelled(value: str | dict[str, str], version: str) -> str:
     return value if isinstance(value, str) else value[version]
 
 
-def harness_rows() -> list[dict]:
+def harness_rows() -> list[Json]:
     """Every row at every dtype, as the harness reads them."""
     return [
         {"op": r.op, "dtype": d, "kind": r.kind, "unit": r.unit, "header": r.header, "init": r.init, "call": r.call,

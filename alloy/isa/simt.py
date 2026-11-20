@@ -25,6 +25,7 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
 from alloy import gpu
+from alloy.jsontype import Json
 
 __all__ = ["DIALECTS", "Row", "Verdict", "digest", "merged", "program", "rows", "verdicts", "verify"]
 
@@ -95,7 +96,7 @@ class Verdict:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def table(path: pathlib.Path = ROWS_PATH) -> dict:
+def table(path: pathlib.Path = ROWS_PATH) -> Json:
     return tomllib.loads(path.read_text())
 
 
@@ -104,7 +105,7 @@ def rows() -> tuple[Row, ...]:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
+def recorded(path: pathlib.Path = VERDICTS_PATH) -> Json:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 

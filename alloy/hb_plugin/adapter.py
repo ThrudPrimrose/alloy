@@ -258,7 +258,7 @@ def stub_time(answer: ProfileAnswer) -> float:
     """A stub's time: device time per repetition from a trace, else the graded linuxperf configuration's elapsed."""
     report = answer.root
     if isinstance(report, DeviceTraceReport):
-        return report.device_ns_per_rep
+        return float(report.device_ns_per_rep)
     if isinstance(report, LinuxperfReport) and report.configs:
         return float(max(report.configs, key=lambda c: c["threads"])["elapsed_ns"])
     raise ValueError(f"no stub time in a {type(report).__name__} profile")
@@ -356,7 +356,7 @@ def optimize(
         return 2 * max(stub_costs, default=0.0)
 
     def affordable_stub() -> bool:
-        return deadline - time.monotonic() > max(stub_costs, default=0.0) + score_reserve()
+        return bool(deadline - time.monotonic() > max(stub_costs, default=0.0) + score_reserve())
 
     def time_stub(selection: dict[str, Build], symbol: str) -> float:
         start = time.monotonic()
@@ -660,7 +660,7 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep, folder: pathlib.Path | No
 
     def affordable() -> bool:
         # one more profile, then the pick's and the default's grades and the harness's own
-        return deadline - time.monotonic() > 4 * max(costs, default=0.0)
+        return bool(deadline - time.monotonic() > 4 * max(costs, default=0.0))
 
     shapes = gpu.descend(run, picks, timed, affordable)
     print(f"alloy: {spec.short_name}: threadblocks {shapes} after {len(costs)} profiles", file=sys.stderr, flush=True)

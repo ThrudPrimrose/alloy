@@ -13,8 +13,8 @@ N, T = dace.symbol("N"), dace.symbol("T")
 
 
 @dace.program
-def stepped(a: dace.float64[N], b: dace.float64[N], flag: dace.int64):
-    for t in range(T):
+def stepped(a: dace.float64[N], b: dace.float64[N], flag: dace.int64) -> None:
+    for _ in range(T):  # pyright: ignore[reportArgumentType] -- test double
         b[:] = a + 1.0
         a[:] = b * 2.0
     if flag > 0:
@@ -32,7 +32,7 @@ def labels(node: CfgNode, kind: Kind) -> list[str]:
     return [node.label] * (node.kind == kind) + [label for child in node.children for label in labels(child, kind)]
 
 
-def test_each_outlined_scope_is_a_row_named_by_its_entry_symbol():
+def test_each_outlined_scope_is_a_row_named_by_its_entry_symbol() -> None:
     program = scopes.outline(stepped.to_sdfg(), MATRIX.libm_calls)
 
     sut = tree.cfg_tree(program.sdfg)
@@ -41,7 +41,7 @@ def test_each_outlined_scope_is_a_row_named_by_its_entry_symbol():
     assert Kind.MAP not in kinds(sut), "every top-level nest is outlined"
 
 
-def test_the_time_loop_and_the_branches_keep_their_domain_and_conditions():
+def test_the_time_loop_and_the_branches_keep_their_domain_and_conditions() -> None:
     sut = tree.cfg_tree(stepped.to_sdfg())
 
     (loop,) = [child for child in sut.children if child.kind == Kind.LOOP]
@@ -51,7 +51,7 @@ def test_the_time_loop_and_the_branches_keep_their_domain_and_conditions():
     assert sum(kind == Kind.MAP for kind in kinds(loop)) == 2
 
 
-def test_the_text_tree_has_one_row_per_node_under_the_sdfg_header():
+def test_the_text_tree_has_one_row_per_node_under_the_sdfg_header() -> None:
     sdfg = stepped.to_sdfg()
     sut = tree.cfg_tree(sdfg)
 
@@ -63,15 +63,15 @@ def test_the_text_tree_has_one_row_per_node_under_the_sdfg_header():
 
 
 @dace.program
-def first_negative(a: dace.float64[N], out: dace.int64[1]):
+def first_negative(a: dace.float64[N], out: dace.int64[1]) -> None:
     out[0] = -1
-    for i in range(N):
+    for i in range(N):  # pyright: ignore[reportArgumentType] -- test double
         if a[i] < 0:
             out[0] = i
             break
 
 
-def test_a_break_is_a_jump_row_under_its_branch():
+def test_a_break_is_a_jump_row_under_its_branch() -> None:
     sut = tree.cfg_tree(first_negative.to_sdfg(simplify=False))
 
     assert kinds(sut).count(Kind.JUMP) == 1

@@ -185,7 +185,11 @@ def code(op: str, connectors: tuple[str, ...], value: float = 0.0, version: str 
 
 
 #: The DST tile connectors of each node's call.
-CONNECTORS = {TileBinop: ("_a", "_b", "_c"), TileUnop: ("_c",), TileReduce: ("_dst", "_src", "_dst")}
+CONNECTORS: dict[type[nodes.LibraryNode], tuple[str, ...]] = {
+    TileBinop: ("_a", "_b", "_c"),
+    TileUnop: ("_c",),
+    TileReduce: ("_dst", "_src", "_dst"),
+}
 
 
 #: The compute tile nodes Tensix runs.

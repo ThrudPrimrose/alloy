@@ -4,6 +4,7 @@ recipe, and speculative mode's ranking of them by the compilers' resource report
 
 import pathlib
 import shutil
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +26,7 @@ from alloy.hb_plugin import adapter
 COMPILERS = gpu_build.load()
 
 
-def test_the_default_is_the_dialects_first_compiler_and_every_other_candidate_changes_one_factor():
+def test_the_default_is_the_dialects_first_compiler_and_every_other_candidate_changes_one_factor() -> None:
     sut = gpu_build.candidates(COMPILERS, "hip", accumulates=True)
 
     assert sut[0] == GpuCandidate("hipcc")
@@ -39,7 +40,9 @@ def test_the_default_is_the_dialects_first_compiler_and_every_other_candidate_ch
     ]  # fmt: skip
 
 
-def test_a_compiler_without_a_bench_recipe_builds_with_its_own_flags_and_the_target_filled_in(tmp_path):
+def test_a_compiler_without_a_bench_recipe_builds_with_its_own_flags_and_the_target_filled_in(
+    tmp_path: pathlib.Path,
+) -> None:
     device, host, library = tmp_path / "k.cu", tmp_path / "k_host.cpp", tmp_path / "libk.so"
 
     sut = gpu_build.commands(
@@ -51,7 +54,9 @@ def test_a_compiler_without_a_bench_recipe_builds_with_its_own_flags_and_the_tar
     assert [argv[argv.index("-c") + 1] for argv in sut[:2]] == [str(device), str(host)]
 
 
-def test_speculative_mode_leaves_the_default_build_only_for_one_the_reports_rank_strictly_ahead(monkeypatch):
+def test_speculative_mode_leaves_the_default_build_only_for_one_the_reports_rank_strictly_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def built(name: str, registers: int, spills: int) -> tuple[GpuBuild, Submission]:
         log = (f"ptxas info    : Compiling entry function '_Z1kv' for 'sm_89'\n"
                f"ptxas info    : Function properties for _Z1kv\n"
@@ -66,15 +71,17 @@ def test_speculative_mode_leaves_the_default_build_only_for_one_the_reports_rank
     spec = BenchSpec.load("tsvc_2_vpv")
 
     monkeypatch.setattr(adapter, "gpu_libraries", lambda *args: [built("nvcc", 40, 0), built("nvcc_fast", 32, 0)])
-    assert adapter.speculated_library(task, spec, None)[1] == "nvcc_fast"  # type: ignore[arg-type]
+    assert adapter.speculated_library(task, spec, None)[1] == "nvcc_fast"  # pyright: ignore[reportArgumentType] -- test double
     monkeypatch.setattr(adapter, "gpu_libraries", lambda *args: [built("nvcc", 32, 0), built("nvcc_fast", 32, 0)])
-    assert adapter.speculated_library(task, spec, None) == (source, "default")  # type: ignore[arg-type]
+    assert adapter.speculated_library(task, spec, None) == (source, "default")  # pyright: ignore[reportArgumentType] -- test double
     monkeypatch.setattr(adapter, "gpu_libraries", lambda *args: [built("nvcc", 40, 0), built("nvcc_fast", 8, 16)])
-    assert adapter.speculated_library(task, spec, None)[1] == "default", "a spill ranks behind any register count"  # type: ignore[arg-type]
+    assert adapter.speculated_library(task, spec, None)[1] == "default", "a spill ranks behind any register count"  # pyright: ignore[reportArgumentType] -- test double
 
 
 @pytest.mark.cuda
-def test_nvcc_builds_each_floating_point_level_of_a_bench_kernel_into_its_own_device_code(tmp_path):
+def test_nvcc_builds_each_floating_point_level_of_a_bench_kernel_into_its_own_device_code(
+    tmp_path: pathlib.Path,
+) -> None:
     assert shutil.which("nvcc"), "the cuda mark needs nvcc"
     spec = BenchSpec.load("tsvc_2_vpv")
     sdfg = adapter.pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU)
@@ -92,7 +99,9 @@ def test_nvcc_builds_each_floating_point_level_of_a_bench_kernel_into_its_own_de
 
 
 @pytest.mark.cuda
-def test_the_scalar_declaration_axis_reaches_the_device_code_of_a_kernel_with_scope_scalars(tmp_path, monkeypatch):
+def test_the_scalar_declaration_axis_reaches_the_device_code_of_a_kernel_with_scope_scalars(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A10 emission axis: where scalars are declared changes the device unit (cloudsc_saturation has scope scalars)."""
     spec = BenchSpec.load("cloudsc_saturation")
     sdfg = adapter.pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU)
@@ -106,7 +115,9 @@ def test_the_scalar_declaration_axis_reaches_the_device_code_of_a_kernel_with_sc
     assert sut["nvcc"].device_hash != sut["nvcc_decl-late"].device_hash
 
 
-def test_a_hip_build_names_its_host_unit_hip_so_amdclang_compiles_it_as_hip(tmp_path, monkeypatch):
+def test_a_hip_build_names_its_host_unit_hip_so_amdclang_compiles_it_as_hip(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """amdclang++ is clang called directly: it compiles a .cpp host unit as C++, where every hip_runtime.h include
     fails (S2 on MI200: 18 and 20 errors, the candidate dropped on every kernel); a .hip unit is HIP to clang and to
     hipcc alike."""
@@ -119,7 +130,7 @@ def test_a_hip_build_names_its_host_unit_hip_so_amdclang_compiles_it_as_hip(tmp_
         ran.append(argv)
         return SimpleNamespace(returncode=1, stdout="", stderr="stopped after the first command")
 
-    monkeypatch.setattr(gpu_build.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
 
     gpu_build.build(compilers, candidate, "host code", "device code", tmp_path, "gfx90a")
 

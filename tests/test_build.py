@@ -18,12 +18,12 @@ N = dace.symbol("N")
 
 
 @dace.program
-def scale(x: dace.float64[N], y: dace.float64[N], a: dace.float64):
+def scale(x: dace.float64[N], y: dace.float64[N], a: dace.float64) -> None:
     y[:] = a * x
 
 
 @dace.program
-def thirds(x: dace.float64[N], y: dace.float64[N]):
+def thirds(x: dace.float64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = x[i] / 3.0
 
@@ -33,7 +33,7 @@ def scale_scope() -> scopes.Scope:
     return scope
 
 
-def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
+def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path: pathlib.Path) -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
 
     sut = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
@@ -46,7 +46,7 @@ def test_a_built_candidate_archives_an_entry_with_the_recorded_c_abi(tmp_path):
     assert f" T {scope.symbol}" in symbols.stdout
 
 
-def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate(tmp_path):
+def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate(tmp_path: pathlib.Path) -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
     seen: dict[str, str] = {}
     first = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "a", seen)
@@ -60,7 +60,7 @@ def test_a_candidate_whose_object_matches_an_earlier_one_is_marked_its_duplicate
 
 @pytest.mark.clang
 @pytest.mark.sleef
-def test_an_object_linked_against_another_vector_library_is_not_a_duplicate(tmp_path):
+def test_an_object_linked_against_another_vector_library_is_not_a_duplicate(tmp_path: pathlib.Path) -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
     seen: dict[str, str] = {}
     level = MATRIX.veclibs["libmvec"].fp_level
@@ -72,7 +72,9 @@ def test_an_object_linked_against_another_vector_library_is_not_a_duplicate(tmp_
     assert sut.duplicate_of == ""
 
 
-def test_a_parallel_sweep_marks_each_duplicate_against_the_first_candidate_in_candidate_order(tmp_path):
+def test_a_parallel_sweep_marks_each_duplicate_against_the_first_candidate_in_candidate_order(
+    tmp_path: pathlib.Path,
+) -> None:
     sut = sweep.run(outlined(), gcc_only(tmp_path), tmp_path / "out")
 
     duplicates = 0
@@ -93,15 +95,19 @@ def test_a_parallel_sweep_marks_each_duplicate_against_the_first_candidate_in_ca
         ("k.c:29:21: optimized: loop vectorized using 64 byte vectors", 1, ()),
         ("k.c:29:21: missed: couldn't vectorize loop", 0, ("couldn't vectorize loop",)),
         (
-            "k.c:30:23: remark: loop not vectorized: library call cannot be vectorized"
-            " [-Rpass-analysis=loop-vectorize]",
+            (
+                "k.c:30:23: remark: loop not vectorized: library call cannot be vectorized"
+                " [-Rpass-analysis=loop-vectorize]"
+            ),
             0,
             ("loop not vectorized: library call cannot be vectorized",),
         ),
         ("other.c:3:1: missed: couldn't vectorize loop", 0, ()),
     ],
 )
-def test_compiler_remarks_about_the_source_are_counted_and_their_tags_dropped(line, vectorized, missed):
+def test_compiler_remarks_about_the_source_are_counted_and_their_tags_dropped(
+    line: str, vectorized: int, missed: tuple[()] | tuple[str]
+) -> None:
     sut = parse_remarks(line, pathlib.Path("/x/k.c"))
 
     assert (sut.vectorized, sut.missed) == (vectorized, missed)
@@ -115,7 +121,9 @@ def avx512_matrix(tmp_path: pathlib.Path) -> configuration_matrix.Matrix:
 @pytest.mark.parametrize(
     "compiler", [pytest.param("gcc", marks=pytest.mark.gcc), pytest.param("clang", marks=pytest.mark.clang)]
 )
-def test_a_full_mask_tail_runs_its_loop_under_masks_and_a_scalar_remainder_does_not(tmp_path, compiler):
+def test_a_full_mask_tail_runs_its_loop_under_masks_and_a_scalar_remainder_does_not(
+    tmp_path: pathlib.Path, compiler: str
+) -> None:
     matrix = avx512_matrix(tmp_path)
     scope = scale_scope()
 
@@ -161,7 +169,9 @@ def divisions(archive: pathlib.Path | None) -> int:
         pytest.param("icx", marks=pytest.mark.icx),
     ],
 )
-def test_the_reciprocal_level_turns_a_division_by_a_constant_into_a_multiply(tmp_path, compiler):
+def test_the_reciprocal_level_turns_a_division_by_a_constant_into_a_multiply(
+    tmp_path: pathlib.Path, compiler: str
+) -> None:
     (scope,) = scopes.outline(thirds.to_sdfg(), MATRIX.libm_calls).scopes
     strict = build(scope, Candidate("c", compiler), MATRIX, tmp_path / "strict", {})
 
@@ -178,7 +188,9 @@ def test_the_reciprocal_level_turns_a_division_by_a_constant_into_a_multiply(tmp
         pytest.param("clang", "__kmpc_fork_call", marks=pytest.mark.clang),
     ],
 )
-def test_a_serial_build_of_a_parallel_scope_has_no_openmp_call_in_its_object(tmp_path, compiler, region):
+def test_a_serial_build_of_a_parallel_scope_has_no_openmp_call_in_its_object(
+    tmp_path: pathlib.Path, compiler: str, region: str
+) -> None:
     scope = scale_scope()
     default = build(scope, Candidate("c", compiler), MATRIX, tmp_path / "default", {})
 
@@ -198,7 +210,7 @@ def sequential(scope: scopes.Scope) -> scopes.Scope:
 
 
 @pytest.mark.gcc
-def test_a_serial_build_survives_only_where_its_object_differs(tmp_path):
+def test_a_serial_build_survives_only_where_its_object_differs(tmp_path: pathlib.Path) -> None:
     parallel, plain = scale_scope(), sequential(scale_scope())
     default, serial = Candidate("c", "gcc"), Candidate("c", "gcc", serial=True)
     seen: dict[str, str] = {}
@@ -214,7 +226,9 @@ def test_a_serial_build_survives_only_where_its_object_differs(tmp_path):
 
 
 @pytest.mark.gcc
-def test_a_serial_build_that_still_asks_the_runtime_about_its_team_fails_naming_the_call(tmp_path):
+def test_a_serial_build_that_still_asks_the_runtime_about_its_team_fails_naming_the_call(
+    tmp_path: pathlib.Path,
+) -> None:
     source = tmp_path / "variants" / "v0.c"
     source.parent.mkdir()
     source.write_text("#include <omp.h>\nint team(void) { return omp_get_max_threads(); }\n")
@@ -225,12 +239,12 @@ def test_a_serial_build_that_still_asks_the_runtime_about_its_team_fails_naming_
     assert sut.error == "a serial build still calls omp_get_max_threads"
 
 
-def test_an_sve_loop_under_an_all_true_predicate_is_not_masked_and_one_under_whilelo_is():
+def test_an_sve_loop_under_an_all_true_predicate_is_not_masked_and_one_under_whilelo_is() -> None:
     assert masked_lines(SVE_SCALAR_REMAINDER) == 0
     assert masked_lines(SVE_FULL_MASK) == 2
 
 
-def test_an_sve_tail_renders_the_scopes_maps_as_explicit_sve_loops(tmp_path):
+def test_an_sve_tail_renders_the_scopes_maps_as_explicit_sve_loops(tmp_path: pathlib.Path) -> None:
     scope = scale_scope()
 
     sut = build(scope, Candidate("cpp", "gcc", isa="sve", tail="sve_intrinsics"), MATRIX, tmp_path, {})
@@ -238,7 +252,7 @@ def test_an_sve_tail_renders_the_scopes_maps_as_explicit_sve_loops(tmp_path):
     assert "svwhilele" in sut.source.read_text() and "#include <arm_sve.h>" in sut.source.read_text()
 
 
-def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_path):
+def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_path: pathlib.Path) -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
     candidate = Candidate("cpp", "gcc", isa="sve", tail="sve_intrinsics", note="tail sve_intrinsics on sve")
 
@@ -249,7 +263,7 @@ def test_a_scope_the_sve_loop_cannot_express_is_a_failed_build_naming_why(tmp_pa
     assert "inside an SVE map" in sut.source.read_text()
 
 
-def compiled_asm(tmp_path, source: str, compiler: str, level: str) -> str:
+def compiled_asm(tmp_path: pathlib.Path, source: str, compiler: str, level: str) -> str:
     unit = tmp_path / f"{level}.c"
     unit.write_text(source)
     flags = [*MATRIX.compilers[compiler].fp[level], "-O3", "-mavx2", "-mfma", "-S", "-o", "-", str(unit)]
@@ -262,7 +276,9 @@ COMPILERS = [pytest.param("gcc", marks=pytest.mark.gcc), pytest.param("clang", m
 
 @pytest.mark.parametrize("compiler", COMPILERS)
 @pytest.mark.parametrize(("level", "fused"), [("strict", False), ("contract", True)])
-def test_only_a_contracting_level_fuses_a_product_into_its_sum(compiler, level, fused, tmp_path):
+def test_only_a_contracting_level_fuses_a_product_into_its_sum(
+    compiler: str, level: str, fused: bool, tmp_path: pathlib.Path
+) -> None:
     source = "void f(int n, double *a, double *b, double *c) { for (int i = 0; i < n; i++) c[i] += a[i] * b[i]; }"
 
     assert ("vfmadd" in compiled_asm(tmp_path, source, compiler, level)) is fused
@@ -270,7 +286,9 @@ def test_only_a_contracting_level_fuses_a_product_into_its_sum(compiler, level, 
 
 @pytest.mark.parametrize("compiler", COMPILERS)
 @pytest.mark.parametrize(("level", "packed"), [("strict", False), ("reassoc", True)])
-def test_only_a_reassociating_level_vectorizes_a_sum(compiler, level, packed, tmp_path):
+def test_only_a_reassociating_level_vectorizes_a_sum(
+    compiler: str, level: str, packed: bool, tmp_path: pathlib.Path
+) -> None:
     source = "double f(int n, double *a) { double s = 0; for (int i = 0; i < n; i++) s += a[i]; return s; }"
 
     assert ("vaddpd" in compiled_asm(tmp_path, source, compiler, level)) is packed

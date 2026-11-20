@@ -432,12 +432,12 @@ WAITS: dict[str, dict[str, tuple[str, str]]] = {
         "mbarrier": ("alloy_mbar_wait(&bar, phase); phase ^= 1;  // mbarrier.try_wait.parity in a loop",
                      "a TMA load's bytes have arrived; the barrier's phase flips with each use"),
         "bulk_group": ('asm volatile("cp.async.bulk.commit_group;"); asm volatile("cp.async.bulk.wait_group.read 0;");',
-                       "a TMA store has read its shared tile, so the tile may be overwritten (without .read: the global "
-                       "write is done)"),
-        "cp_async_group": ('asm volatile("cp.async.commit_group;"); asm volatile("cp.async.wait_group 0;"); '
-                           "__syncthreads();", "the group's cp.async copies have landed in shared memory"),
-        "wgmma_group": ('asm volatile("wgmma.commit_group.sync.aligned;"); asm volatile("wgmma.wait_group.sync.aligned '
-                        '0;");', "the group's wgmma have written their accumulators; reading them earlier is undefined"),
+                       ("a TMA store has read its shared tile, so the tile may be overwritten (without .read: the global "
+                       "write is done)")),
+        "cp_async_group": (('asm volatile("cp.async.commit_group;"); asm volatile("cp.async.wait_group 0;"); '
+                           "__syncthreads();"), "the group's cp.async copies have landed in shared memory"),
+        "wgmma_group": (('asm volatile("wgmma.commit_group.sync.aligned;"); asm volatile("wgmma.wait_group.sync.aligned '
+                        '0;");'), "the group's wgmma have written their accumulators; reading them earlier is undefined"),
     },
     "tensix": {
         "noc": ("noc_async_read_barrier();", "the NoC reads issued so far have landed in L1"),
@@ -454,11 +454,11 @@ WAITS: dict[str, dict[str, tuple[str, str]]] = {
 FENCES: dict[str, dict[str, tuple[str, str]]] = {
     "sm90": {
         "proxy": ('asm volatile("fence.proxy.async.shared::cta;" ::: "memory");',
-                  "generic-proxy writes to shared memory (thread stores, an mbarrier's init) become visible to the "
-                  "async proxy (TMA, wgmma)"),
+                  ("generic-proxy writes to shared memory (thread stores, an mbarrier's init) become visible to the "
+                  "async proxy (TMA, wgmma)")),
         "operand": ('asm volatile("wgmma.fence.sync.aligned;" ::: "memory");',
-                    "register accesses to a wgmma's accumulators or A fragment come before the next wgmma; none is "
-                    "needed between back-to-back wgmma of one shape"),
+                    ("register accesses to a wgmma's accumulators or A fragment come before the next wgmma; none is "
+                    "needed between back-to-back wgmma of one shape")),
     },
 }  # fmt: skip
 #: Why a target needs no fence of a kind.
@@ -787,8 +787,10 @@ def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
     notes = (
         f"rung {k.level}: {k.error_ulp:.4g} ulp, {spelled.intrinsics} intrinsics, contract: {k.contract}",
         # an agent whose own bound is tighter or looser sees the other rungs and asks again with --max-ulp
-        f"other rungs (a more accurate rung costs more instructions): {', '.join(others) or 'none'}; "
-        "ask again with --max-ulp to get one",
+        (
+            f"other rungs (a more accurate rung costs more instructions): {', '.join(others) or 'none'}; "
+            "ask again with --max-ulp to get one"
+        ),
     )
     check = Check("unverified", "not checked (verify off)")
     if verify:
@@ -1182,8 +1184,8 @@ def tensix_mma(request: Request, m: int, n: int, k: int, nearest: tuple[str, ...
     setup = {"header": row.header, "compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
              "reader": "per output tile (mt, nt), for kt: A tile mt*Kt+kt into CB 0, B tile kt*Nt+nt into CB 1"}  # fmt: skip
     code = f"{tensix.spelled(row.init, 'v08')};\n// per output tile: tile_regs_acquire(); for kt: {tensix.spelled(row.call, 'v08')}; ..."
-    notes = ("f32 operands reach the FPU as TF32 (A 10 mantissa bits, B 9 at HiFi4); 0.6x spells "
-             f"{tensix.spelled(row.init, 'v06')} and {tensix.spelled(row.call, 'v06')}",)  # fmt: skip
+    notes = (("f32 operands reach the FPU as TF32 (A 10 mantissa bits, B 9 at HiFi4); 0.6x spells "
+             f"{tensix.spelled(row.init, 'v06')} and {tensix.spelled(row.call, 'v06')}"),)  # fmt: skip
     return Feasible(request, "fpu", steps, setup, code, check, notes)
 
 
@@ -1686,10 +1688,10 @@ def softhier_copy(request: Request) -> Answer:
             src_at = where[src.space] + (corner if src is large else "")
             dst_at = where[dst.space] + (corner if dst is large else "")
             call = f"alloy_copy_2d({dst_at}, {src_at}, {row_bytes}, {dst_stride}, {src_stride}, {rows_})"
-            notes = (f"{rows_} rows of {row_bytes} bytes; the block's corner (row0, col0) in the {matrix[0]} x "
-                     f"{matrix[1]} matrix",)  # fmt: skip
-    notes += (f"HBM of v1: {hbm} or hbm_south(node, offset), node 0 or 1; every core calls the function, the DMA core "
-              "(flex_is_dm_core(), the last) issues",)  # fmt: skip
+            notes = ((f"{rows_} rows of {row_bytes} bytes; the block's corner (row0, col0) in the {matrix[0]} x "
+                     f"{matrix[1]} matrix"),)  # fmt: skip
+    notes += ((f"HBM of v1: {hbm} or hbm_south(node, offset), node 0 or 1; every core calls the function, the DMA core "
+              "(flex_is_dm_core(), the last) issues"),)  # fmt: skip
     steps = (Step("idma", call),)
     return softhier_feasible(request, row, "bytes", steps, notes, Completion("idma", "wait on=idma"))
 
@@ -1731,8 +1733,8 @@ def softhier_mma(request: Request) -> Answer:
     row = softhier_row("mma")
     steps = (Step("redmule", f"flex_redmule_config({m}, {k}, {n})"),
              Step("redmule", "flex_redmule_trigger(a_off, b_off, c_off, REDMULE_FP_16)"))  # fmt: skip
-    notes = (f"call alloy_mma_f16(a_off, b_off, c_off, {m}, {n}, {k}) on every core of the cluster; RedMulE names the "
-             f"extents M, N (inner), K, so its config is ({m}, {k}, {n}); offsets are bytes into the TCDM",
+    notes = ((f"call alloy_mma_f16(a_off, b_off, c_off, {m}, {n}, {k}) on every core of the cluster; RedMulE names the "
+             f"extents M, N (inner), K, so its config is ({m}, {k}, {n}); offsets are bytes into the TCDM"),
              "c is the accumulator and the result: load it (zero it for c = a b) before the call")  # fmt: skip
     return softhier_feasible(request, row, "f16", steps, notes, Completion("redmule", "wait on=redmule"))
 

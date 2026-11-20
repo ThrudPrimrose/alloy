@@ -166,8 +166,10 @@ def cpu_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     a_type, c_type = CPU_TYPES[in_type, acc_type]
     steps = (
         f"no matrix unit on this CPU: alloy_mma_{in_type}_{acc_type} is the fallback, an FMA loop",
-        f"for each block of {CPU_MR} rows of C, for each k: broadcast A[i][k] of the {CPU_MR} rows and multiply-add "
-        "row k of B into the block (the compiler vectorizes along n)",
+        (
+            f"for each block of {CPU_MR} rows of C, for each k: broadcast A[i][k] of the {CPU_MR} rows and multiply-add "
+            "row k of B into the block (the compiler vectorizes along n)"
+        ),
     )
     layout = "row-major A, B, and C with leading dimensions lda, ldb, ldc; no swizzle on a CPU"
     program = cpu_program(m, n, k, a_type, c_type, in_type, acc_type)
@@ -276,14 +278,20 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
             f"every thread: load its {bn // 2} accumulators from C (D = A x B + C), in the layout of the store",
             "thread 0: mbarrier.init (count 1), then fence.proxy.async.shared::cta; __syncthreads",
             f"for each of the {blocks} K blocks of {kb} ({in_type}, 128 bytes of a row):",
-            f"  thread 0: mbarrier.arrive.expect_tx with {(bm + bn) * 128} bytes, then two "
-            f"cp.async.bulk.tensor.2d loads (A box {{{kb}, BM}}, B box {{{kb}, BN}}) into 1024-byte-aligned shared "
-            "memory",
+            (
+                f"  thread 0: mbarrier.arrive.expect_tx with {(bm + bn) * 128} bytes, then two "
+                f"cp.async.bulk.tensor.2d loads (A box {{{kb}, BM}}, B box {{{kb}, BN}}) into 1024-byte-aligned shared "
+                "memory"
+            ),
             "  every thread: mbarrier.try_wait.parity on the phase, then flips it",
-            f"  wgmma.fence; 4 x wgmma.mma_async.{shape}.f32.{in_type}.{in_type} per warpgroup (each descriptor "
-            "advanced by 32 bytes); wgmma.commit_group; wgmma.wait_group 0; __syncthreads",
-            f"store: each thread writes its {bn // 2} accumulators as float2 pairs (rows lane/4 and lane/4 + 8 of its "
-            "warp's 16)",
+            (
+                f"  wgmma.fence; 4 x wgmma.mma_async.{shape}.f32.{in_type}.{in_type} per warpgroup (each descriptor "
+                "advanced by 32 bytes); wgmma.commit_group; wgmma.wait_group 0; __syncthreads"
+            ),
+            (
+                f"store: each thread writes its {bn // 2} accumulators as float2 pairs (rows lane/4 and lane/4 + 8 of its "
+                "warp's 16)"
+            ),
         )
         layout = (
             f"shared tiles of {kb} {in_type} (128 bytes) per row, 128B swizzle, 1024-byte aligned; wgmma descriptor: "
@@ -303,10 +311,14 @@ def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tupl
     steps = (
         "every lane: load its 16 accumulators from C (D = A x B + C), in the layout of the store",
         f"for each of the {blocks} K blocks of {kb} ({in_type}, 128 bytes of a row):",
-        "  each of 256 threads: two global_load_dwordx4 per operand (16 bytes) and ds_write_b128 into LDS, "
-        "chunk c of row r at slot c ^ (r % 8); __syncthreads",
-        f"  each wave64 owns a 32 x 32 sub-tile: 4 ds_read_b128 per operand and 8 x {mnemonic} "
-        f"({builtin}(a, b, acc, 0, 0, 0), K = {per} each) cover the block; __syncthreads",
+        (
+            "  each of 256 threads: two global_load_dwordx4 per operand (16 bytes) and ds_write_b128 into LDS, "
+            "chunk c of row r at slot c ^ (r % 8); __syncthreads"
+        ),
+        (
+            f"  each wave64 owns a 32 x 32 sub-tile: 4 ds_read_b128 per operand and 8 x {mnemonic} "
+            f"({builtin}(a, b, acc, 0, 0, 0), K = {per} each) cover the block; __syncthreads"
+        ),
         "store: accumulator g of a lane is D[8 * (g / 4) + 4 * (lane / 32) + g % 4][lane % 32], 16 per lane",
     )
     layout = "LDS: 64 rows x 8 chunks of 16 bytes per operand, XOR swizzle slot = chunk ^ (row % 8), no padding"

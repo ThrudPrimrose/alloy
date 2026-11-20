@@ -2,6 +2,7 @@
 """The CUDA and HIP rows: recorded checks, the dialect differences the lookup must keep, and the device runs."""
 
 import dataclasses
+import pathlib
 from collections.abc import Callable
 
 import pytest
@@ -10,7 +11,7 @@ from alloy.isa import simt
 from alloy.isa.__main__ import main
 
 
-def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip():
+def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip() -> None:
     verdicts = simt.verdicts()
 
     for row in simt.rows():
@@ -18,7 +19,7 @@ def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip():
         assert verdicts[(row.op, "hip")].ok is not False, verdicts[(row.op, "hip")]
 
 
-def test_a_warp_reduction_takes_a_mask_on_cuda_and_none_on_a_64_lane_hip_wavefront():
+def test_a_warp_reduction_takes_a_mask_on_cuda_and_none_on_a_64_lane_hip_wavefront() -> None:
     row = next(r for r in simt.rows() if r.op == "reduce_add")
 
     cuda, hip = simt.program(row, "cuda"), simt.program(row, "hip")
@@ -28,7 +29,7 @@ def test_a_warp_reduction_takes_a_mask_on_cuda_and_none_on_a_64_lane_hip_wavefro
     assert "#include <hip/hip_runtime.h>" in hip and "hipMalloc" in hip
 
 
-def test_a_warp_scan_adds_the_lane_d_below_only_where_one_exists_and_checks_every_lane():
+def test_a_warp_scan_adds_the_lane_d_below_only_where_one_exists_and_checks_every_lane() -> None:
     row = next(r for r in simt.rows() if r.op == "scan_add")
 
     cuda, hip = simt.program(row, "cuda"), simt.program(row, "hip")
@@ -39,7 +40,7 @@ def test_a_warp_scan_adds_the_lane_d_below_only_where_one_exists_and_checks_ever
 
 
 @pytest.mark.parametrize(("op", "pick"), [("reduce_min", "fminf"), ("reduce_max", "fmaxf")])
-def test_a_warp_min_or_max_takes_the_c_function_and_is_exact_in_lane_0(op: str, pick: str):
+def test_a_warp_min_or_max_takes_the_c_function_and_is_exact_in_lane_0(op: str, pick: str) -> None:
     row = next(r for r in simt.rows() if r.op == op)
 
     sut = simt.program(row, "cuda")
@@ -51,7 +52,7 @@ def test_a_warp_min_or_max_takes_the_c_function_and_is_exact_in_lane_0(op: str, 
 @pytest.mark.parametrize(("op", "pick"), [("reduce_min", min), ("reduce_max", max)])
 def test_a_warp_min_or_max_finds_its_extreme_in_the_last_lane_so_it_crosses_the_whole_tree(
     op: str, pick: Callable[[list[float]], float]
-):
+) -> None:
     row = next(r for r in simt.rows() if r.op == op)
     lo, hi = row.domain
 
@@ -60,7 +61,7 @@ def test_a_warp_min_or_max_finds_its_extreme_in_the_last_lane_so_it_crosses_the_
         assert values.index(pick(values)) == lanes - 1
 
 
-def test_a_packed_half_addition_is_checked_in_both_halves():
+def test_a_packed_half_addition_is_checked_in_both_halves() -> None:
     row = next(r for r in simt.rows() if r.op == "add_half2")
 
     for dialect in simt.DIALECTS:
@@ -69,7 +70,7 @@ def test_a_packed_half_addition_is_checked_in_both_halves():
     assert row.ref == "(a + c) + 2.0f * (b + a)", "the halves add different operands, so a swap shows"
 
 
-def test_a_nan_on_any_lane_stays_the_programs_worst_error():
+def test_a_nan_on_any_lane_stays_the_programs_worst_error() -> None:
     row = next(r for r in simt.rows() if r.op == "rsqrt")
 
     sut = simt.program(row, "cuda")
@@ -78,7 +79,7 @@ def test_a_nan_on_any_lane_stays_the_programs_worst_error():
 
 
 @pytest.mark.parametrize("op", ["reduce_add", "reduce_min", "reduce_max", "scan_add", "atomic_add", "ballot_count"])
-def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: str):
+def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: str) -> None:
     row = next(r for r in simt.rows() if r.op == op)
     lo, hi = row.domain
 
@@ -98,14 +99,16 @@ def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: s
         ["lookup", "avx2", "foo", "f64", "--json", "--no-verify"],
     ],
 )
-def test_a_request_the_tool_cannot_answer_prints_nothing_to_stdout(argv: list[str], capsys: pytest.CaptureFixture[str]):
+def test_a_request_the_tool_cannot_answer_prints_nothing_to_stdout(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main(argv) == 2
 
     printed = capsys.readouterr()
     assert printed.out == "" and printed.err.startswith("alloy.isa: ")
 
 
-def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.CaptureFixture[str]):
+def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "hip", "ballot_count", "f32"]) == 0
 
     printed = capsys.readouterr().out
@@ -117,7 +120,7 @@ def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.Ca
 
 @pytest.mark.nvidia
 @pytest.mark.parametrize("row", simt.rows(), ids=lambda r: r.op)
-def test_each_row_runs_correct_on_an_nvidia_gpu(row: simt.Row):
+def test_each_row_runs_correct_on_an_nvidia_gpu(row: simt.Row) -> None:
     sut = simt.check(row, "cuda", runs=True)
 
     assert sut.ok is True, sut
@@ -125,13 +128,13 @@ def test_each_row_runs_correct_on_an_nvidia_gpu(row: simt.Row):
 
 @pytest.mark.hip
 @pytest.mark.parametrize("row", simt.rows(), ids=lambda r: r.op)
-def test_each_row_compiles_for_cdna(row: simt.Row):
+def test_each_row_compiles_for_cdna(row: simt.Row) -> None:
     sut = simt.check(row, "hip", runs=False)
 
     assert sut.ok is None and "compiled" in sut.basis, sut
 
 
-def test_a_row_run_on_a_second_gpu_keeps_the_first_gpus_run_and_the_worse_error():
+def test_a_row_run_on_a_second_gpu_keeps_the_first_gpus_run_and_the_worse_error() -> None:
     mi250x = simt.Verdict("fma", "hip", "ran on gfx90a", ok=True, rel=1e-7)
     mi300a = simt.Verdict("fma", "hip", "ran on gfx942", ok=True, rel=2e-7)
 
@@ -145,7 +148,7 @@ def test_a_row_run_on_a_second_gpu_keeps_the_first_gpus_run_and_the_worse_error(
     assert simt.merged(mi300a, compiled) == mi300a, "a compile-only record adds no run"
 
 
-def test_a_record_of_a_row_changed_since_its_check_is_stale_and_left_out(tmp_path):
+def test_a_record_of_a_row_changed_since_its_check_is_stale_and_left_out(tmp_path: pathlib.Path) -> None:
     fma, rsqrt = (next(r for r in simt.rows() if r.op == op) for op in ("fma", "rsqrt"))
     current = simt.Verdict("fma", "cuda", "ran on a GPU", ok=True, rel=0.0, digest=simt.digest(fma, "cuda"))
     changed = simt.Verdict("rsqrt", "cuda", "ran on a GPU", ok=True, rel=0.0, digest="0123456789abcdef")
@@ -158,7 +161,7 @@ def test_a_record_of_a_row_changed_since_its_check_is_stale_and_left_out(tmp_pat
     assert simt.digest(rsqrt, "cuda") != changed.digest
 
 
-def test_a_rows_digest_changes_with_its_spelling_and_its_check_but_not_its_note():
+def test_a_rows_digest_changes_with_its_spelling_and_its_check_but_not_its_note() -> None:
     row = next(r for r in simt.rows() if r.op == "reduce_add")
     respelled = dataclasses.replace(row, cuda=row.cuda.replace("+=", "-="))
     rechecked = dataclasses.replace(row, check="all")
@@ -171,7 +174,7 @@ def test_a_rows_digest_changes_with_its_spelling_and_its_check_but_not_its_note(
 
 
 @pytest.mark.parametrize("dtype", ["f16", "bf16"])
-def test_each_half_type_has_a_scalar_a_pair_and_a_16_byte_load_and_store(dtype: str):
+def test_each_half_type_has_a_scalar_a_pair_and_a_16_byte_load_and_store(dtype: str) -> None:
     sut = {row.answers() for row in simt.rows() if row.dtype == dtype}
 
     assert {"load", "store", "load_x2", "store_x2", "load_wide", "store_wide"} <= sut
@@ -183,13 +186,13 @@ def test_each_half_type_has_a_scalar_a_pair_and_a_16_byte_load_and_store(dtype: 
     ("store_f16", "__float2half_rn(a)", "__float2half_rn(a)"),
     ("load_x2_f16", "__half22float2(", "__half22float2("),
 ])  # fmt: skip
-def test_a_half_row_spells_each_dialects_conversion(op: str, cuda: str, hip: str):
+def test_a_half_row_spells_each_dialects_conversion(op: str, cuda: str, hip: str) -> None:
     row = next(r for r in simt.rows() if r.op == op)
 
     assert cuda in row.cuda and hip in row.hip
 
 
-def test_a_half_rows_check_moves_the_rows_element_type_through_its_arrays():
+def test_a_half_rows_check_moves_the_rows_element_type_through_its_arrays() -> None:
     row = next(r for r in simt.rows() if r.op == "load_wide_bf16")
 
     sut = simt.program(row, "hip")
@@ -203,13 +206,15 @@ def test_a_half_rows_check_moves_the_rows_element_type_through_its_arrays():
     (["lookup", "cuda", "add_half2", "f16"], "__hadd2("),
     (["lookup", "hip", "store", "bf16"], "y[i] = __float2bfloat16(a);"),
 ])  # fmt: skip
-def test_the_lookup_answers_a_row_at_its_own_element_type(argv: list[str], spelled: str, capsys):
+def test_the_lookup_answers_a_row_at_its_own_element_type(
+    argv: list[str], spelled: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main(argv) == 0
 
     assert spelled in capsys.readouterr().out
 
 
-def test_the_lookup_names_the_element_types_a_row_has(capsys: pytest.CaptureFixture[str]):
+def test_the_lookup_names_the_element_types_a_row_has(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "cuda", "fma", "f16"]) == 2
 
     assert "the fma rows are f32" in capsys.readouterr().err

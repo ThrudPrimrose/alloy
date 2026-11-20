@@ -11,7 +11,7 @@ from alloy.evaluate.verify import Verdict
 from alloy.guidance import advisable_isa, guidance, scope_dtype, scope_reason
 
 
-def wave_sdfg(dtype=dace.float64) -> dace.SDFG:
+def wave_sdfg(dtype: dace.typeclass = dace.float64) -> dace.SDFG:  # pyright: ignore[reportArgumentType] -- test double
     sdfg = dace.SDFG("wave")
     sdfg.add_array("a", [8], dtype)
     sdfg.add_array("b", [8], dtype)
@@ -27,39 +27,41 @@ def wave_sdfg(dtype=dace.float64) -> dace.SDFG:
     return sdfg
 
 
-def scope(calls_libm=True, sdfg=None) -> Any:
+def scope(calls_libm: bool = True, sdfg: dace.SDFG | None = None) -> Any:
     return SimpleNamespace(symbol="s0", calls_libm=calls_libm, sdfg=sdfg or wave_sdfg())
 
 
-def build(name="good", error="", vectorized=1, missed=(), fp_level="") -> Any:
+def build(
+    name: str = "good", error: str = "", vectorized: int = 1, missed: tuple[str, ...] = (), fp_level: str = ""
+) -> Any:
     remarks = SimpleNamespace(vectorized=vectorized, missed=missed)
     return SimpleNamespace(name=name, error=error, remarks=remarks, candidate=SimpleNamespace(fp_level=fp_level))
 
 
-def report(*builds, calls_libm=False) -> Any:
+def report(*builds: object, calls_libm: bool = False) -> Any:
     return SimpleNamespace(scope=scope(calls_libm), builds=builds)
 
 
 GOOD, BAD = Verdict("exact"), Verdict("fail")
 
 
-def test_a_clean_scope_needs_no_hand():
+def test_a_clean_scope_needs_no_hand() -> None:
     rep = report(build())
 
     assert scope_reason(rep, {"good": GOOD}, rep.builds[0]) == ""
 
 
-def test_every_failed_build_is_the_reason():
+def test_every_failed_build_is_the_reason() -> None:
     rep = report(build(error="#error no SVE call\nmore"))
 
     assert scope_reason(rep, {}, None) == "every candidate failed to build: #error no SVE call"
 
 
-def test_no_verified_candidate_is_the_reason():
+def test_no_verified_candidate_is_the_reason() -> None:
     assert "no candidate passed verification" in scope_reason(report(build()), {"good": BAD}, None)
 
 
-def test_a_scalar_winner_names_what_the_compiler_missed():
+def test_a_scalar_winner_names_what_the_compiler_missed() -> None:
     rep = report(build(vectorized=0, missed=("a loop-carried dependence",)))
 
     assert scope_reason(rep, {"good": GOOD}, rep.builds[0]) == (
@@ -67,23 +69,23 @@ def test_a_scalar_winner_names_what_the_compiler_missed():
     )
 
 
-def test_a_libm_scope_points_at_kernels():
+def test_a_libm_scope_points_at_kernels() -> None:
     rep = report(build(), calls_libm=True)
 
     assert "inlined kernel" in scope_reason(rep, {"good": GOOD}, rep.builds[0])
 
 
-def test_the_lane_follows_the_scope():
-    assert scope_dtype(scope(sdfg=wave_sdfg(dace.float32))) == "f32"
+def test_the_lane_follows_the_scope() -> None:
+    assert scope_dtype(scope(sdfg=wave_sdfg(dace.float32))) == "f32"  # pyright: ignore[reportArgumentType] -- test double
     assert scope_dtype(scope()) == "f64"
 
 
-def test_the_widest_covered_isa_is_advised():
+def test_the_widest_covered_isa_is_advised() -> None:
     assert advisable_isa(("avx2", "avx512_256", "avx512")) == "avx512"
     assert advisable_isa(("avx512_256",)) is None
 
 
-def test_the_advice_carries_the_reason_and_the_scopes_kernels():
+def test_the_advice_carries_the_reason_and_the_scopes_kernels() -> None:
     rep = report(build(), calls_libm=True)
 
     texts = guidance([rep], {"s0": {"good": GOOD}}, {"s0": rep.builds[0]}, ("avx2",))
@@ -92,13 +94,13 @@ def test_the_advice_carries_the_reason_and_the_scopes_kernels():
     assert "`kernel avx2 sin f64`" in texts["s0"]
 
 
-def test_a_clean_program_has_no_advice():
+def test_a_clean_program_has_no_advice() -> None:
     rep = report(build())
 
     assert guidance([rep], {"s0": {"good": GOOD}}, {"s0": rep.builds[0]}, ("avx2",)) == {}
 
 
-def test_a_host_outside_the_table_has_no_advice():
+def test_a_host_outside_the_table_has_no_advice() -> None:
     assert guidance([report(build(error="x"))], {}, {}, ()) == {}
 
 
@@ -113,7 +115,7 @@ def test_a_host_outside_the_table_has_no_advice():
         ("reassoc", False, "relaxed"),
     ],
 )
-def test_the_build_and_its_inputs_pick_the_kernel(fp_level, finite, level):
+def test_the_build_and_its_inputs_pick_the_kernel(fp_level: str, finite: bool, level: str) -> None:
     rep = report(build(fp_level=fp_level), calls_libm=True)
 
     texts = guidance([rep], {"s0": {"good": GOOD}}, {"s0": rep.builds[0]}, ("avx2",), finite_inputs=finite)

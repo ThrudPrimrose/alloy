@@ -15,23 +15,34 @@ import math
 import pathlib
 import sys
 import traceback
+from collections.abc import Callable
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import torch
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
 TILES = 1024
 OUT_CB = 16
 FP32_EPS = 2.0**-23
+#: A JSON object as program.json and config.json hold it.
+Json = dict[str, Any]
 CALLS = ("exp", "log", "sqrt", "sin", "cos", "tanh", "abs")
 
 
-def evaluate(program: list, arrays: dict, calls: dict):
-    scope = dict(calls) | dict(arrays)
+def evaluate(
+    program: list[str], arrays: dict[str, "torch.Tensor"], calls: dict[str, Callable[..., "torch.Tensor"]]
+) -> "torch.Tensor":
+    scope: dict[str, object] = {**calls, **arrays}
     target = ""
     for line in program:
         target, expression = line.split(" = ", 1)
         scope[target] = eval(expression, {"__builtins__": {}}, scope)
-    return scope[target]
+    return cast("torch.Tensor", scope[target])
 
 
-def operands(task: dict):
+def operands(task: Json) -> tuple[list["torch.Tensor"], "torch.Tensor"]:
     """host.py's ``task_operands``: the same seed, draw and float64 reference."""
     import torch
 
@@ -43,7 +54,7 @@ def operands(task: dict):
     return xs, evaluate(task["program"], {n: x for (n, *_), x in zip(task["inputs"], xs)}, calls)
 
 
-def verdict_of(task: dict, got, want) -> dict:
+def verdict_of(task: Json, got: "torch.Tensor", want: "torch.Tensor") -> Json:
     """host.py's ``verdict_of``."""
     import torch
 
@@ -58,27 +69,27 @@ def verdict_of(task: dict, got, want) -> dict:
     return {"ok": bool(math.isfinite(excess) and excess <= 0), "err": err, "abs": diff.max().item()}
 
 
-def unpack_mode(ttnn):
+def unpack_mode(module: ModuleType) -> "type[ttnn.UnpackToDestMode]":
     """``UnpackToDestMode``: tt-metal 0.6x binds it only in the program-descriptor module (tensix_harness.py)."""
     try:
-        return ttnn.UnpackToDestMode
+        return cast("type[ttnn.UnpackToDestMode]", module.UnpackToDestMode)
     except AttributeError:
-        return ttnn._ttnn.program_descriptor.UnpackToDestMode
+        return cast("type[ttnn.UnpackToDestMode]", module._ttnn.program_descriptor.UnpackToDestMode)
 
 
-def source_code(ttnn):
+def source_code(module: ModuleType) -> "ttnn.SourceType":
     """The inline-source kernel type: nested in ``KernelDescriptor`` in 0.8x, a module enum in 0.6x."""
     try:
-        return ttnn.KernelDescriptor.SourceType.SOURCE_CODE
+        return cast("ttnn.SourceType", module.KernelDescriptor.SourceType.SOURCE_CODE)
     except AttributeError:
-        return ttnn._ttnn.program_descriptor.SourceType.SOURCE_CODE
+        return cast("ttnn.SourceType", module._ttnn.program_descriptor.SourceType.SOURCE_CODE)
 
 
-def per_core(ttnn, values: dict):
+def per_core(module: ModuleType, values: dict[tuple[int, int], list[int]]) -> object:
     """Runtime arguments per core (x, y): ``RuntimeArgs`` in tt-metal 0.8x, nested lists ``[x][y]`` in 0.6x."""
     gx, gy = max(x for x, _ in values) + 1, max(y for _, y in values) + 1
     try:
-        args = ttnn.RuntimeArgs()
+        args = module.RuntimeArgs()
     except AttributeError:
         return [[values.get((x, y), []) for y in range(gy)] for x in range(gx)]
     for (x, y), v in values.items():
@@ -86,7 +97,7 @@ def per_core(ttnn, values: dict):
     return args
 
 
-def run(dev, folder: pathlib.Path) -> dict:
+def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
     import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
     task = json.loads((folder / "program.json").read_text())
@@ -99,7 +110,7 @@ def run(dev, folder: pathlib.Path) -> dict:
     core = ttnn.CoreRangeSet([ttnn.CoreRange(ttnn.CoreCoord(x, y), ttnn.CoreCoord(x, y)) for x, y in cores])
     placed = task["placement"]
 
-    def memory(name: str):
+    def memory(name: str) -> "ttnn.MemoryConfig":
         """DRAM interleaved, or L1 height sharded: ``tiles`` tile rows on each core, shard k on core k."""
         if placed[name]["kind"] == "interleaved":
             return ttnn.DRAM_MEMORY_CONFIG

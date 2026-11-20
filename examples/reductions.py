@@ -11,35 +11,35 @@ K = dace.symbol("K", dace.int64)
 
 
 @dace.program
-def square_free_matmul(a: dace.float64[M, K], b: dace.float64[K, N], c: dace.float64[M, N]):
+def square_free_matmul(a: dace.float64[M, K], b: dace.float64[K, N], c: dace.float64[M, N]) -> None:
     for i, j, k in dace.map[0:M, 0:N, 0:K]:
         c[i, j] += a[i, k] * b[k, j]
 
 
 @dace.program
-def square_matmul(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]):
+def square_matmul(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]) -> None:
     for i, j, k in dace.map[0:N, 0:N, 0:N]:
         c[i, j] += a[i, k] * b[k, j]
 
 
 @dace.program
-def row_sum(a: dace.float64[M, N], out: dace.float64[M]):
+def row_sum(a: dace.float64[M, N], out: dace.float64[M]) -> None:
     out[:] = np.sum(a, axis=1)
 
 
 @dace.program
-def running_sum(a: dace.float64[N], out: dace.float64[N]):
+def running_sum(a: dace.float64[N], out: dace.float64[N]) -> None:
     out[:] = np.cumsum(a)
 
 
 @dace.program
-def scale(a: dace.float64[N], out: dace.float64[N]):
+def scale(a: dace.float64[N], out: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         out[i] = 2.0 * a[i]
 
 
 @dace.program
-def scale_prefix(a: dace.float64[N], out: dace.float64[N], count: dace.int64[1]):
+def scale_prefix(a: dace.float64[N], out: dace.float64[N], count: dace.int64[1]) -> None:
     for i in dace.map[0:N]:
         out[i] = 2.0 * a[i]
     count[0] = N // 2

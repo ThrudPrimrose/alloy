@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 from alloy.isa import pages
+from alloy.jsontype import Json
 
 __all__ = ["COMPUTE_API", "DATAFLOW_API", "DOCS", "MANIFEST", "RULE", "SKILLS", "docs_pages", "facts_page", "main"]
 
@@ -46,22 +47,30 @@ GUIDE = "METALIUM_GUIDE.md"
 
 FACTS = {
     "tensix": (
-        "Alloy's checked facts for Tenstorrent Tensix (Blackhole): every compute-kernel tile call with its includes, "
-        "init and call per tt-metal version, the platform each verdict ran on and its measured error, and the SFPU "
-        "math kernels (SFPI) measured on a Blackhole card, with their code.",
-        "before writing a Tensix compute, reader or writer kernel, and before calling a tile operation or a math "
-        "function on Tensix.",
+        (
+            "Alloy's checked facts for Tenstorrent Tensix (Blackhole): every compute-kernel tile call with its includes, "
+            "init and call per tt-metal version, the platform each verdict ran on and its measured error, and the SFPU "
+            "math kernels (SFPI) measured on a Blackhole card, with their code."
+        ),
+        (
+            "before writing a Tensix compute, reader or writer kernel, and before calling a tile operation or a math "
+            "function on Tensix."
+        ),
     ),
     "softhier": (
-        "Alloy's checked facts for SoftHier v1: the C code of every vector (Spatz RVV), copy (iDMA), matrix (RedMulE) "
-        "and barrier row with its GVSoC verdict, and the build line.",
+        (
+            "Alloy's checked facts for SoftHier v1: the C code of every vector (Spatz RVV), copy (iDMA), matrix (RedMulE) "
+            "and barrier row with its GVSoC verdict, and the build line."
+        ),
         "before writing a SoftHier kernel.",
     ),
 }
 DOCS_PAGES = {
     "tt-metal-compute-api": (
-        "The tt-metal v0.63.0 compute kernel API headers (compute_kernel_api.h and compute_kernel_api/), verbatim with "
-        "their doc comments.",
+        (
+            "The tt-metal v0.63.0 compute kernel API headers (compute_kernel_api.h and compute_kernel_api/), verbatim with "
+            "their doc comments."
+        ),
         "before writing a Tensix compute kernel or calling a compute API function.",
     ),
     "tt-metal-dataflow-api": (
@@ -69,8 +78,10 @@ DOCS_PAGES = {
         "before writing a Tensix reader or writer kernel.",
     ),
     "tt-metal-docs": (
-        "The tt-metal v0.63.0 documentation on writing kernels: METALIUM_GUIDE.md and the tt-metalium pages on the "
-        "programming model, tiles, memory, compute engines, the examples and the kernel APIs.",
+        (
+            "The tt-metal v0.63.0 documentation on writing kernels: METALIUM_GUIDE.md and the tt-metalium pages on the "
+            "programming model, tiles, memory, compute engines, the examples and the kernel APIs."
+        ),
         "before writing any Tensix kernel, to learn the programming model and the kernel APIs.",
     ),
 }
@@ -143,7 +154,7 @@ def tree_commit(tree: pathlib.Path) -> str:
     return done.stdout.strip()
 
 
-def docs_pages(tree: pathlib.Path) -> tuple[dict[str, str], dict]:
+def docs_pages(tree: pathlib.Path) -> tuple[dict[str, str], Json]:
     """The three docs-md pages and their manifest."""
     sources = {
         "tt-metal-compute-api": files(tree, COMPUTE_API),

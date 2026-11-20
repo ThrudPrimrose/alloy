@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """The approximation axis: a C scope's libm calls answered by an inline ladder rung, rendered as scalar C."""
 
+import pathlib
 import subprocess
 
 import pytest
@@ -15,7 +16,7 @@ from helpers import MATRIX, build, outlined, scope_with
 @pytest.mark.parametrize("fn", functions())
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 @pytest.mark.parametrize("level", approximation.LEVELS)
-def test_every_scalar_rung_holds_the_error_its_vector_kernel_recorded(fn: str, dtype: str, level: str):
+def test_every_scalar_rung_holds_the_error_its_vector_kernel_recorded(fn: str, dtype: str, level: str) -> None:
     k = kernel(fn, dtype, level)
 
     seen = measure(k, "scalar", samples=1 << 12)
@@ -25,7 +26,7 @@ def test_every_scalar_rung_holds_the_error_its_vector_kernel_recorded(fn: str, d
 
 
 @pytest.mark.parametrize("finite", [False, True])
-def test_a_c_scope_that_calls_libm_tries_every_rung_and_the_proof_prunes_relaxed(finite: bool):
+def test_a_c_scope_that_calls_libm_tries_every_rung_and_the_proof_prunes_relaxed(finite: bool) -> None:
     """Declaring finite inputs no longer opens ``relaxed``: the range proof prunes it (tests/test_heuristics_ranges)."""
     scope = scope_with(outlined(), libm=True, reduction=False)
 
@@ -36,7 +37,7 @@ def test_a_c_scope_that_calls_libm_tries_every_rung_and_the_proof_prunes_relaxed
 
 
 @pytest.mark.parametrize(("language", "libm"), [("cpp", True), ("c", False)])
-def test_no_rung_is_tried_for_cpp_or_for_a_scope_without_libm_calls(language: str, libm: bool):
+def test_no_rung_is_tried_for_cpp_or_for_a_scope_without_libm_calls(language: str, libm: bool) -> None:
     scope = scope_with(outlined(), libm=libm, reduction=not libm)
 
     sut = flips(MATRIX, scope, language, "gcc", finite_inputs=True)
@@ -44,7 +45,7 @@ def test_no_rung_is_tried_for_cpp_or_for_a_scope_without_libm_calls(language: st
     assert not [c for c in sut if c.approx]
 
 
-def test_a_rung_build_calls_its_kernel_and_a_relaxed_one_calls_no_libm(tmp_path):
+def test_a_rung_build_calls_its_kernel_and_a_relaxed_one_calls_no_libm(tmp_path: pathlib.Path) -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
 
     strict = build(scope, Candidate("c", "gcc", approx="strict"), MATRIX, tmp_path / "s", {})
@@ -58,7 +59,7 @@ def test_a_rung_build_calls_its_kernel_and_a_relaxed_one_calls_no_libm(tmp_path)
     assert "sin" not in undefined.split(), undefined
 
 
-def test_only_the_ladder_functions_a_unit_calls_get_a_kernel():
+def test_only_the_ladder_functions_a_unit_calls_get_a_kernel() -> None:
     sut = approximation.prelude("strict", approximation.called_functions("y[i] = sinf(x[i]) + atan2(x[i], 1.0);"))
 
     assert "alloy_sin_f32_strict" in sut and "alloy_sin_f64_strict" in sut

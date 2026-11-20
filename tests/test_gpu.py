@@ -5,6 +5,7 @@ map of a bench kernel gets a shape the report ranks first, and a tie keeps the p
 import pathlib
 import shutil
 import sys
+from collections.abc import Callable
 
 import dace
 import pytest
@@ -73,7 +74,9 @@ def recorded_compiler(tmp_path: pathlib.Path, name: str, report: str, spill_at: 
     script.chmod(0o755)
 
 
-def test_a_cuda_map_leaves_a_block_that_spills_for_one_the_compiler_reports_clean(tmp_path, monkeypatch):
+def test_a_cuda_map_leaves_a_block_that_spills_for_one_the_compiler_reports_clean(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     recorded_compiler(tmp_path, "nvcc", NVCC_RECORDED.replace("8 bytes spill stores", "SPILL bytes spill stores"), 64)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
 
@@ -84,7 +87,9 @@ def test_a_cuda_map_leaves_a_block_that_spills_for_one_the_compiler_reports_clea
     assert [tuple(entry.map.gpu_block_size) for entry in gpu.device_maps(program)] == [pick.shape]
 
 
-def test_a_hip_map_takes_the_block_the_compiler_reports_the_most_waves_for(tmp_path, monkeypatch):
+def test_a_hip_map_takes_the_block_the_compiler_reports_the_most_waves_for(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     report = HIP_REPORT.replace("_Z12kernel_map_1Pdi", "KERNEL").replace("[waves/SIMD]: 8", "[waves/SIMD]: WAVES")
     recorded_compiler(tmp_path, "hipcc", report.replace("VGPRs Spill: 3", "VGPRs Spill: 0"), 64)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
@@ -97,7 +102,7 @@ def test_a_hip_map_takes_the_block_the_compiler_reports_the_most_waves_for(tmp_p
     assert [tuple(entry.map.gpu_block_size) for entry in gpu.device_maps(program)] == [pick.shape]
 
 
-def test_the_nvcc_report_gives_each_kernel_its_registers_spills_and_shared_memory():
+def test_the_nvcc_report_gives_each_kernel_its_registers_spills_and_shared_memory() -> None:
     sut = gpu.nvcc_usage(NVCC_REPORT)
 
     assert sut == {
@@ -106,13 +111,13 @@ def test_the_nvcc_report_gives_each_kernel_its_registers_spills_and_shared_memor
     }
 
 
-def test_the_hip_report_gives_each_kernel_its_registers_spills_lds_and_waves():
+def test_the_hip_report_gives_each_kernel_its_registers_spills_lds_and_waves() -> None:
     sut = gpu.hip_usage(HIP_REPORT)
 
     assert sut == {"_Z12kernel_map_1Pdi": gpu.Usage(registers=24, spill_bytes=12, shared_bytes=512, waves=8)}
 
 
-def test_a_kernel_is_found_by_its_plain_name_in_a_mangled_report():
+def test_a_kernel_is_found_by_its_plain_name_in_a_mangled_report() -> None:
     usages = gpu.nvcc_usage(NVCC_REPORT)
 
     assert gpu.kernel_usage(usages, "kernel_map_2") == gpu.Usage(registers=12, spill_bytes=0, shared_bytes=0)
@@ -127,27 +132,29 @@ def test_a_kernel_is_found_by_its_plain_name_in_a_mangled_report():
         (32, 32, 0.5),  # 24 blocks of 1 warp: the block limit binds
     ],
 )
-def test_cuda_occupancy_is_bounded_by_registers_blocks_and_threads(registers: int, threads: int, expected: float):
+def test_cuda_occupancy_is_bounded_by_registers_blocks_and_threads(
+    registers: int, threads: int, expected: float
+) -> None:
     usage = gpu.Usage(registers=registers, spill_bytes=0, shared_bytes=0)
 
     assert gpu.cuda_occupancy(usage, threads, gpu.SM_LIMITS["8.9"]) == pytest.approx(expected)
 
 
-def test_a_spilling_shape_ranks_below_any_shape_that_does_not_spill():
+def test_a_spilling_shape_ranks_below_any_shape_that_does_not_spill() -> None:
     clean = ((256, 1, 1), gpu.Usage(64, 0, 0), 0.25)
     spilling = ((128, 1, 1), gpu.Usage(255, 8, 0), 1.0)
 
     assert sorted([spilling, clean], key=lambda row: gpu.rank_key(*row)) == [clean, spilling]
 
 
-def test_occupancy_past_saturation_does_not_reorder_shapes():
+def test_occupancy_past_saturation_does_not_reorder_shapes() -> None:
     first = ((64, 4, 1), gpu.Usage(40, 0, 0), 0.75)
     second = ((32, 8, 1), gpu.Usage(40, 0, 0), 1.0)
 
     assert gpu.rank_key(*first) == gpu.rank_key(*second)[:3] + (False, 40)
 
 
-def test_a_row_of_half_a_wavefront_ranks_below_a_full_one_on_hip_only():
+def test_a_row_of_half_a_wavefront_ranks_below_a_full_one_on_hip_only() -> None:
     half = ((32, 8, 1), gpu.Usage(40, 0, 0), 0.5)
     full = ((64, 4, 1), gpu.Usage(40, 0, 0), 0.5)
 
@@ -155,7 +162,7 @@ def test_a_row_of_half_a_wavefront_ranks_below_a_full_one_on_hip_only():
     assert gpu.rank_key(*full, gpu.LANES["hip"]) < gpu.rank_key(*half, gpu.LANES["hip"])
 
 
-def test_the_gpu_form_follows_the_task_language_and_else_the_image():
+def test_the_gpu_form_follows_the_task_language_and_else_the_image() -> None:
     from hpcagent_bench.categories import Language, SourceMode
     from hpcagent_bench.harness.task import Task
 
@@ -166,7 +173,7 @@ def test_the_gpu_form_follows_the_task_language_and_else_the_image():
     assert form_dialect(Task("jacobi_2d", SourceMode.ANY, Language.C, image="amd")) == "hip"
 
 
-def bench_pipeline(kernel: str):
+def bench_pipeline(kernel: str) -> Callable[[dict[int, gpu.Shape]], dace.SDFG]:
     from hpcagent_bench.cpf.cache import Target
     from hpcagent_bench.precision import Precision
     from hpcagent_bench.spec import BenchSpec
@@ -175,7 +182,7 @@ def bench_pipeline(kernel: str):
 
     spec = BenchSpec.load(kernel)
 
-    def run(shapes):
+    def run(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
         return pipeline_sdfg(spec, "canon_gpu", Precision.FP64, Target.GPU, offloaded=gpu.blocks(shapes))
 
     return run
@@ -183,7 +190,7 @@ def bench_pipeline(kernel: str):
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("kernel", ["jacobi_2d", "tsvc_2_vpv"])
-def test_every_device_map_takes_a_shape_without_spills_and_the_program_carries_it(kernel: str):
+def test_every_device_map_takes_a_shape_without_spills_and_the_program_carries_it(kernel: str) -> None:
     assert shutil.which("nvcc"), "the cuda mark needs nvcc"
 
     program, picks = gpu.speculate(bench_pipeline(kernel), "cuda", "8.9")
@@ -197,7 +204,7 @@ def test_every_device_map_takes_a_shape_without_spills_and_the_program_carries_i
 
 
 @pytest.mark.cuda
-def test_a_tie_keeps_the_block_the_pipeline_picks():
+def test_a_tie_keeps_the_block_the_pipeline_picks() -> None:
     run = bench_pipeline("tsvc_2_vpv")
     (default,) = [tuple(entry.map.gpu_block_size) for entry in gpu.device_maps(run({}))]
 
@@ -207,7 +214,7 @@ def test_a_tie_keeps_the_block_the_pipeline_picks():
 
 
 @pytest.mark.hip
-def test_a_hip_device_map_takes_a_shape_ranked_by_the_compilers_waves():
+def test_a_hip_device_map_takes_a_shape_ranked_by_the_compilers_waves() -> None:
     assert shutil.which("hipcc"), "the hip mark needs hipcc with hipcub"
 
     _, picks = gpu.speculate(bench_pipeline("tsvc_2_vpv"), "hip", "gfx90a")
@@ -217,7 +224,7 @@ def test_a_hip_device_map_takes_a_shape_ranked_by_the_compilers_waves():
 
 
 @pytest.mark.cuda
-def test_the_submitted_hip_form_launches_every_kernel_with_its_picked_block():
+def test_the_submitted_hip_form_launches_every_kernel_with_its_picked_block() -> None:
     from hpcagent_bench.categories import Language, SourceMode
     from hpcagent_bench.harness.task import Task
     from hpcagent_bench.spec import BenchSpec
@@ -243,56 +250,59 @@ def ranked_pick(*shapes: gpu.Shape) -> gpu.Pick:
 A, B, C = (128, 1, 1), (256, 1, 1), (64, 1, 1)
 
 
-def test_the_descent_keeps_a_maps_next_shape_only_when_the_program_runs_faster():
+def test_the_descent_keeps_a_maps_next_shape_only_when_the_program_runs_faster() -> None:
     seconds = {(A, A): 3.0, (B, A): 2.0, (C, A): 2.5, (B, B): 2.5, (B, C): 2.0}
 
     sut = gpu.descend(
-        lambda shapes: (shapes[0], shapes[1]),
+        lambda shapes: (shapes[0], shapes[1]),  # pyright: ignore[reportArgumentType] -- test double
         {0: ranked_pick(A, B, C), 1: ranked_pick(A, B, C)},
-        lambda program: seconds[program],
+        lambda program: seconds[program],  # pyright: ignore[reportArgumentType] -- test double
         lambda: True,
     )
 
     assert sut == {0: B, 1: A}  # (B, C) ties (B, A): a tie keeps the shape already held
 
 
-def test_a_shape_that_fails_to_run_is_never_taken_and_a_running_one_replaces_a_failed_pick():
+def test_a_shape_that_fails_to_run_is_never_taken_and_a_running_one_replaces_a_failed_pick() -> None:
     seconds = {A: None, B: 4.0, C: None}
 
     sut = gpu.descend(
-        lambda shapes: shapes[0], {0: ranked_pick(A, B, C)}, lambda program: seconds[program], lambda: True
+        lambda shapes: shapes[0],  # pyright: ignore[reportArgumentType] -- test double
+        {0: ranked_pick(A, B, C)},
+        lambda program: seconds[program],  # pyright: ignore[reportArgumentType] -- test double
+        lambda: True,  # pyright: ignore[reportArgumentType] -- test double
     )
 
     assert sut == {0: B}
 
 
-def test_the_descent_keeps_the_speculated_shapes_when_no_time_is_left():
+def test_the_descent_keeps_the_speculated_shapes_when_no_time_is_left() -> None:
     timed: list[gpu.Shape] = []
 
     def time_it(program: gpu.Shape) -> float:
         timed.append(program)
         return 1.0
 
-    sut = gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C)}, time_it, lambda: False)
+    sut = gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C)}, time_it, lambda: False)  # pyright: ignore[reportArgumentType] -- test double
 
     assert sut == {0: A}
     assert timed == [A]
 
 
-def test_the_descent_tries_no_more_shapes_of_a_map_than_its_width():
+def test_the_descent_tries_no_more_shapes_of_a_map_than_its_width() -> None:
     timed: list[gpu.Shape] = []
 
     def time_it(program: gpu.Shape) -> float:
         timed.append(program)
         return 1.0
 
-    gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C, (512, 1, 1))}, time_it, lambda: True, width=2)
+    gpu.descend(lambda shapes: shapes[0], {0: ranked_pick(A, B, C, (512, 1, 1))}, time_it, lambda: True, width=2)  # pyright: ignore[reportArgumentType] -- test double
 
     assert timed == [A, B]
 
 
 @pytest.mark.hip
-def test_the_gpu_tool_answers_the_ranked_hip_form_the_bench_builds(tmp_path):
+def test_the_gpu_tool_answers_the_ranked_hip_form_the_bench_builds(tmp_path: pathlib.Path) -> None:
     from hpcagent_bench.precision import Precision
 
     from alloy.hb_plugin.workbench import CodegenRequest, codegen

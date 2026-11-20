@@ -1,4 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+import pathlib
 import re
 
 import dace
@@ -11,7 +12,7 @@ from alloy.frontend import inputs
 from helpers import REDUCTIONS, SCALE_MANIFEST
 
 
-def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_declares():
+def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_declares() -> None:
     """OMEN's initialize() builds complex128 arrays the float64 run precision would not: a draw that skipped it
     handed DaCe half-sized buffers."""
     spec = BenchSpec.load("scattering_self_energies")
@@ -31,7 +32,7 @@ def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_d
     assert sut.values["G"].shape == (2, 4, 6, 10, 10)
 
 
-def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_the_file(tmp_path):
+def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_the_file(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "scale.yaml"
     path.write_text(SCALE_MANIFEST)
 
@@ -42,7 +43,7 @@ def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_t
         inputs.load(path, f"{REDUCTIONS}:scale", datatype=64)  # type: ignore[arg-type]
 
 
-def test_a_derived_boolean_argument_takes_both_truth_values():
+def test_a_derived_boolean_argument_takes_both_truth_values() -> None:
     sdfg = dace.SDFG("flags")
     sdfg.add_array("mask", [1000], dace.bool_)
 
@@ -51,7 +52,7 @@ def test_a_derived_boolean_argument_takes_both_truth_values():
     assert 0 < np.count_nonzero(sut.values["mask"]) < 1000
 
 
-def test_a_derived_complex_argument_has_an_imaginary_part():
+def test_a_derived_complex_argument_has_an_imaginary_part() -> None:
     sdfg = dace.SDFG("waves")
     sdfg.add_array("z", [8], dace.complex128)
 
@@ -60,7 +61,7 @@ def test_a_derived_complex_argument_has_an_imaginary_part():
     assert np.all(sut.values["z"].imag != 0)
 
 
-def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap():
+def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap() -> None:
     sdfg = dace.SDFG("indexed")
     sdfg.add_array("a", ["N"], dace.float64)
     sdfg.add_symbol("K", dace.int64)
@@ -71,7 +72,7 @@ def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap():
     assert "K" in sut
 
 
-def test_a_size_padded_by_one_is_still_an_array_extent():
+def test_a_size_padded_by_one_is_still_an_array_extent() -> None:
     sdfg = dace.SDFG("padded")
     sdfg.add_array("a", ["N + 1"], dace.float64)
 
@@ -80,7 +81,7 @@ def test_a_size_padded_by_one_is_still_an_array_extent():
     assert sut == ""
 
 
-def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant():
+def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant() -> None:
     sdfg = dace.SDFG("specialized")
     sdfg.add_array("a", ["N"], dace.float64)
     sdfg.add_array("b", [4], dace.float64)

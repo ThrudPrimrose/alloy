@@ -294,8 +294,8 @@ def scope_ranges(
                     continue
                 calls += [(node, fn, args) for fn, args in ev.calls]
                 for e in state.out_edges(node):
-                    if (target := state.memlet_path(e)[-1].data.data) is not None:
-                        put(target, None if e.src_conn is None else ev.names.get(e.src_conn))
+                    if (target := state.memlet_path(e)[-1].data.data) is not None:  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
+                        put(target, None if e.src_conn is None else ev.names.get(e.src_conn))  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
         if known == before:
             return known, calls + [c for t in skipped for c in unread_calls(t)]
     unsettled = {name: None for name, value in known.items() if before.get(name, value) != value}

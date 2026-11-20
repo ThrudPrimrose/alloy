@@ -10,20 +10,20 @@ from helpers import MATRIX, outlined, scope_with
 
 
 @pytest.mark.parametrize("finite_inputs", [False, True])
-def test_a_reducing_scope_keeps_its_summation_order_whether_or_not_the_inputs_are_finite(finite_inputs):
+def test_a_reducing_scope_keeps_its_summation_order_whether_or_not_the_inputs_are_finite(finite_inputs: bool) -> None:
     scope = scope_with(outlined(), libm=False, reduction=True)
 
     assert fp.default_level(MATRIX, scope, finite_inputs=finite_inputs) == "contract"
 
 
-def test_a_non_reducing_scope_gets_fast_math_only_with_finite_inputs():
+def test_a_non_reducing_scope_gets_fast_math_only_with_finite_inputs() -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
 
     assert fp.default_level(MATRIX, scope, finite_inputs=True) == "fast"
     assert fp.default_level(MATRIX, scope, finite_inputs=False) == "noerrno"
 
 
-def test_the_reference_fp_matrix_has_no_fast_math_so_finite_inputs_get_the_level_without_errno():
+def test_the_reference_fp_matrix_has_no_fast_math_so_finite_inputs_get_the_level_without_errno() -> None:
     scope = scope_with(outlined(), libm=True, reduction=False)
 
     sut = fp.default_level(configuration_matrix.at_reference_fp(MATRIX), scope, finite_inputs=True)

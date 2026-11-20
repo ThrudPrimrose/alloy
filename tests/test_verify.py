@@ -15,6 +15,7 @@ from hpcagent_bench.spec import BenchSpec
 
 from alloy import api, machine
 from alloy.backend import runtime
+from alloy.backend.build import Build
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate import link, timing, verify
@@ -35,7 +36,9 @@ from helpers import (
 )
 
 
-def reference_run(tmp: pathlib.Path, program: scopes.Program, cases: verify.Cases) -> tuple:
+def reference_run(
+    tmp: pathlib.Path, program: scopes.Program, cases: verify.Cases
+) -> tuple[scopes.Scope, Build, link.Linker, verify.Reference]:
     (scope,) = program.scopes
     ref = build(scope, Candidate("c", "gcc"), MATRIX, tmp / "ref", {})
     assert ref.archive is not None
@@ -44,7 +47,7 @@ def reference_run(tmp: pathlib.Path, program: scopes.Program, cases: verify.Case
     return scope, ref, linker, verify.reference_outputs(compiled, cases)
 
 
-def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_path):
+def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "scale.yaml"
     path.write_text(SCALE_MANIFEST)
 
@@ -54,9 +57,10 @@ def test_fuzzed_draws_stay_inside_the_manifest_range_and_shape_every_input(tmp_p
     assert all(d.values["a"].shape == (d.sizes["N"],) for d in sut)
 
 
-def test_the_reference_program_reproduces_itself_bit_for_bit(tmp_path):
+def test_the_reference_program_reproduces_itself_bit_for_bit(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     scope, ref, linker, refs = reference_run(tmp_path, program, cases)
+    assert ref.archive is not None
     again = linker.compile({scope.symbol: ref.archive}, "again")
 
     sut = verify.judge("exact", refs, [verify.run(again, d, cases.outputs) for d in cases.draws], [1, 1])
@@ -66,7 +70,7 @@ def test_the_reference_program_reproduces_itself_bit_for_bit(tmp_path):
     assert refs.nondeterministic == frozenset()
 
 
-def test_a_wrong_archive_at_the_same_fixed_path_fails_so_no_stale_binary_is_reused(tmp_path):
+def test_a_wrong_archive_at_the_same_fixed_path_fails_so_no_stale_binary_is_reused(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     scope, _, linker, refs = reference_run(tmp_path, program, cases)
     wrong = handwritten_archive(tmp_path, scope, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
@@ -77,7 +81,7 @@ def test_a_wrong_archive_at_the_same_fixed_path_fails_so_no_stale_binary_is_reus
     assert sut.status == "fail"
 
 
-def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path):
+def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     scope, _, linker, refs = reference_run(tmp_path, program, cases)
     compiled = linker.compile({scope.symbol: handwritten_archive(tmp_path, scope, "abort();")}, "abort")
@@ -87,7 +91,9 @@ def test_a_crashing_candidate_is_a_verdict_not_a_crash_of_the_sweep(tmp_path):
     assert sut.status == "crashed"
 
 
-def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_server_started(tmp_path, monkeypatch):
+def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_server_started(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     scope, _, linker, _ = reference_run(tmp_path, program, cases)  # the fork server is running from here on
     probe = "out[0] = omp_get_max_threads(); out[1] = omp_get_num_places();"
@@ -101,7 +107,7 @@ def test_a_child_runs_on_its_own_cores_whatever_the_parent_set_after_the_fork_se
     assert threads == places == len(machine.core_slots()[0])  # the slot's team, not the parent's 1
 
 
-def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
+def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     init, reduce_scope = program.scopes
     builds = [
@@ -122,7 +128,7 @@ def test_a_reassociated_reduction_passes_the_accumulation_band(tmp_path):
 
 
 @pytest.mark.gcc
-def test_a_serial_build_of_a_parallel_map_reproduces_the_reference_outputs_bit_for_bit(tmp_path):
+def test_a_serial_build_of_a_parallel_map_reproduces_the_reference_outputs_bit_for_bit(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     scope, _, linker, refs = reference_run(tmp_path, program, cases)
     serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
@@ -138,7 +144,7 @@ def test_a_serial_build_of_a_parallel_map_reproduces_the_reference_outputs_bit_f
 
 
 @pytest.mark.gcc
-def test_a_serial_build_of_a_reduction_stays_correct_through_the_whole_verification(tmp_path):
+def test_a_serial_build_of_a_reduction_stays_correct_through_the_whole_verification(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     init, reduce_scope = program.scopes
     serial = build(reduce_scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "s", {})
@@ -168,7 +174,9 @@ def parallel_scan() -> scopes.Program:
 
 
 @pytest.mark.gcc
-def test_a_serial_build_of_a_parallel_scan_runs_with_no_openmp_call_and_folds_the_running_sum(tmp_path):
+def test_a_serial_build_of_a_parallel_scan_runs_with_no_openmp_call_and_folds_the_running_sum(
+    tmp_path: pathlib.Path,
+) -> None:
     program = parallel_scan()
     (scope,) = program.scopes
     manifest = write_manifest(tmp_path, "running_sum", SCALE_MANIFEST)
@@ -187,7 +195,7 @@ def test_a_serial_build_of_a_parallel_scan_runs_with_no_openmp_call_and_folds_th
         np.testing.assert_allclose(outputs["out"], np.cumsum(draw.values["a"]), rtol=0, atol=1e-10)
 
 
-def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
+def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass() -> None:
     ref = np.linspace(1.0, 2.0, 16)
 
     sut = verify.compare("band", ref, ref.copy(), 10**20, "float64")
@@ -195,7 +203,7 @@ def test_a_floor_that_eats_the_whole_band_is_ungradeable_not_a_pass():
     assert sut.status == "ungradeable"
 
 
-def test_a_complex_output_is_judged_under_the_band_of_its_component_precision():
+def test_a_complex_output_is_judged_under_the_band_of_its_component_precision() -> None:
     expected = np.linspace(1.0, 2.0, 16) * (1 + 1j)
     reference = verify.Reference([{"Sigma": expected}], frozenset())
 
@@ -208,13 +216,13 @@ def reserve(count: int) -> int:
     return np.empty(count).nbytes  # reserves without touching, so even an uncapped child stays harmless
 
 
-def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine():
+def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine() -> None:
     sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0], verify.slot_share())
 
-    assert sut.startswith("raised:") and "Unable to allocate" in sut
+    assert isinstance(sut, str) and sut.startswith("raised:") and "Unable to allocate" in sut
 
 
-def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path):
+def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     builds = [
         ScopeReport(r, (build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}),)) for r in program.scopes
@@ -228,12 +236,12 @@ def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(
         assert sut.verdicts[rep.scope.symbol][rep.builds[0].name].status == "exact"
 
 
-def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size():
+def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size() -> None:
     with pytest.raises(ValueError, match="N"):
         verify.accumulation_length(outlined(), {})
 
 
-def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(tmp_path):
+def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(tmp_path: pathlib.Path) -> None:
     text = ROW_SUM_MANIFEST.replace("args:", 'constraints: ["N % 64 == 0", "M <= N"]\nargs:')
     manifest = write_manifest(tmp_path, "row_sum", text)
 
@@ -241,7 +249,7 @@ def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(
     assert inputs.constrained(manifest, {"M": 4096, "N": 1024}) is None
 
 
-def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatype():
+def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatype() -> None:
     """An integer kernel (``int64``) has no rounding band: its outputs match exactly or fail, and an integer kernel's
     float output takes the band of its own dtype."""
     index = np.arange(8, dtype=np.int64)
@@ -253,7 +261,7 @@ def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatyp
     assert same.status == "exact" and off.status == "fail" and value.status == "pass"
 
 
-def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_buffer():
+def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_buffer() -> None:
     args = {"out": np.zeros(3)}
     returned = np.array([1.0, 2.0, 3.0])
 
@@ -262,12 +270,12 @@ def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_b
     np.testing.assert_array_equal(sut["out"], returned)
 
 
-def test_an_output_nothing_supplies_is_refused():
+def test_an_output_nothing_supplies_is_refused() -> None:
     with pytest.raises(ValueError, match="out"):
         verify.bound_outputs(("out",), {"out": np.zeros(3)}, None, {"a": None})
 
 
-def test_exact_tells_a_signed_zero_apart_but_not_two_nans():
+def test_exact_tells_a_signed_zero_apart_but_not_two_nans() -> None:
     plus, minus = np.array([0.0, np.nan]), np.array([-0.0, -np.nan])
 
     assert verify.compare("exact", plus, minus, 1, "float64").status == "fail"
@@ -275,7 +283,7 @@ def test_exact_tells_a_signed_zero_apart_but_not_two_nans():
     assert verify.compare("exact", np.array([np.nan]), np.array([-np.nan]), 1, "float64").status == "exact"
 
 
-def test_exact_tells_a_nan_apart_from_a_zero():
+def test_exact_tells_a_nan_apart_from_a_zero() -> None:
     assert verify.compare("exact", np.array([np.nan]), np.array([0.0]), 1, "float64").status == "fail"
     assert (
         verify.compare("exact", np.array([0.0], np.float32), np.array([np.nan], np.float32), 1, "float32").status
@@ -283,12 +291,12 @@ def test_exact_tells_a_nan_apart_from_a_zero():
     )
 
 
-def test_verification_refuses_an_empty_draw_list():
+def test_verification_refuses_an_empty_draw_list() -> None:
     with pytest.raises(ValueError, match="at least one draw"):
         verify.verify(outlined(), MATRIX, [], verify.Cases([], ("a",)), pathlib.Path("."))
 
 
-def test_a_wrong_candidate_fails_through_the_whole_verification(tmp_path):
+def test_a_wrong_candidate_fails_through_the_whole_verification(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     (scope,) = program.scopes
     good = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "good", {})
@@ -314,7 +322,7 @@ def candidate_writing(tmp: pathlib.Path, scope: scopes.Scope, body: str, fp_leve
 WRONG_TAIL = "for (int64_t i = 0; i < N; ++i) out[i] = i < N / 2 ? 2.0 * a[i] : -1.0;"
 
 
-def test_a_candidate_is_only_judged_on_the_prefix_the_manifest_grades(tmp_path):
+def test_a_candidate_is_only_judged_on_the_prefix_the_manifest_grades(tmp_path: pathlib.Path) -> None:
     """``output_extent``: past ``count`` the answer is untouched buffer, so a candidate may leave anything there."""
     program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
     (scope,) = program.scopes
@@ -325,7 +333,7 @@ def test_a_candidate_is_only_judged_on_the_prefix_the_manifest_grades(tmp_path):
     assert sut.verdicts[scope.symbol]["hand"].status == "exact"
 
 
-def test_a_wrong_value_inside_the_graded_prefix_still_fails(tmp_path):
+def test_a_wrong_value_inside_the_graded_prefix_still_fails(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
     (scope,) = program.scopes
     wrong = "for (int64_t i = 0; i < N; ++i) out[i] = i == N / 2 - 1 ? -1.0 : 2.0 * a[i];"
@@ -336,7 +344,7 @@ def test_a_wrong_value_inside_the_graded_prefix_still_fails(tmp_path):
     assert sut.verdicts[scope.symbol]["hand"].status == "fail"
 
 
-def test_the_grading_of_a_manifest_reaches_the_timing_stage(tmp_path):
+def test_the_grading_of_a_manifest_reaches_the_timing_stage(tmp_path: pathlib.Path) -> None:
     """The sizes a scope is timed at are checked again: the same prefix is graded there."""
     program, cases = program_and_cases(tmp_path, "scale_prefix", PREFIX_MANIFEST)
     manifest = inputs.load(tmp_path / "scale_prefix.yaml", f"{REDUCTIONS}:scale_prefix")
@@ -349,7 +357,7 @@ def test_the_grading_of_a_manifest_reaches_the_timing_stage(tmp_path):
     assert sut.screen["hand"].verdict.status == "exact"
 
 
-def test_a_band_candidate_may_miss_the_fraction_of_elements_the_manifest_forgives(tmp_path):
+def test_a_band_candidate_may_miss_the_fraction_of_elements_the_manifest_forgives(tmp_path: pathlib.Path) -> None:
     forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
     program, cases = program_and_cases(tmp_path, "scale", forgiving)
     (scope,) = program.scopes
@@ -361,7 +369,7 @@ def test_a_band_candidate_may_miss_the_fraction_of_elements_the_manifest_forgive
     assert sut.verdicts[scope.symbol]["hand"].status == "pass"
 
 
-def test_a_candidate_past_the_forgiven_fraction_fails(tmp_path):
+def test_a_candidate_past_the_forgiven_fraction_fails(tmp_path: pathlib.Path) -> None:
     forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
     program, cases = program_and_cases(tmp_path, "scale", forgiving)
     (scope,) = program.scopes
@@ -373,7 +381,7 @@ def test_a_candidate_past_the_forgiven_fraction_fails(tmp_path):
     assert sut.verdicts[scope.symbol]["hand"].status == "fail"
 
 
-def test_an_exact_candidate_gets_no_forgiven_fraction(tmp_path):
+def test_an_exact_candidate_gets_no_forgiven_fraction(tmp_path: pathlib.Path) -> None:
     """Bit-identity is the strict level's promise, stronger than what the judge grades."""
     forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
     program, cases = program_and_cases(tmp_path, "scale", forgiving)
@@ -403,7 +411,7 @@ def judged(grading: inputs.Grading, level: str, expected: np.ndarray, value: np.
 
 
 @pytest.mark.parametrize("kernel", CONDITIONED_KERNELS)
-def test_a_conditioned_corpus_kernel_is_graded_at_the_tolerances_of_the_judge(kernel):
+def test_a_conditioned_corpus_kernel_is_graded_at_the_tolerances_of_the_judge(kernel: str) -> None:
     spec = BenchSpec.load(kernel)
     sut = inputs.grading(inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml"))
     rtol, atol = kernel_tolerances(spec, "float64")
@@ -417,7 +425,7 @@ def test_a_conditioned_corpus_kernel_is_graded_at_the_tolerances_of_the_judge(ke
     assert (off_relative.status, off_absolute.status) == ("fail", "fail")
 
 
-def test_a_conditioning_floor_under_the_band_of_the_precision_leaves_that_band():
+def test_a_conditioning_floor_under_the_band_of_the_precision_leaves_that_band() -> None:
     """``float32``'s band is wider than this floor, as ``kernel_tolerances`` takes the larger of the two."""
     expected = np.ones(4, dtype=np.float32)
 
@@ -426,7 +434,7 @@ def test_a_conditioning_floor_under_the_band_of_the_precision_leaves_that_band()
     assert sut.status == "pass"
 
 
-def test_an_exact_candidate_gets_no_conditioning_band():
+def test_an_exact_candidate_gets_no_conditioning_band() -> None:
     """Bit-identity is the strict level's promise, stronger than what the judge grades."""
     expected = np.ones(4)
 
@@ -450,7 +458,9 @@ ROW_SUM = (
 
 
 @pytest.mark.parametrize(("factor", "status"), [("1.0 + 1e-7", "pass"), ("1.0 + 1e-5", "fail")])
-def test_a_reduction_is_graded_inside_the_conditioned_band_at_every_team_size(tmp_path, factor, status):
+def test_a_reduction_is_graded_inside_the_conditioned_band_at_every_team_size(
+    tmp_path: pathlib.Path, factor: str, status: str
+) -> None:
     conditioned = ROW_SUM_MANIFEST.replace("level: 1", "level: 1\nconditioning_rtol: 1.0e-6")
     program, cases = program_and_cases(tmp_path, "row_sum", conditioned)
     report = candidate_writing(tmp_path, program.scopes[1], ROW_SUM.format(factor=factor), fp_level="reassoc")
@@ -460,7 +470,7 @@ def test_a_reduction_is_graded_inside_the_conditioned_band_at_every_team_size(tm
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == status
 
 
-def test_a_reduction_keeps_the_forgiven_fraction_at_every_team_size(tmp_path):
+def test_a_reduction_keeps_the_forgiven_fraction_at_every_team_size(tmp_path: pathlib.Path) -> None:
     forgiving = ROW_SUM_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.1")
     program, cases = program_and_cases(tmp_path, "row_sum", forgiving)
     flipped = ROW_SUM.format(factor="1.0") + "\nout[0] += 1.0;"
@@ -471,7 +481,7 @@ def test_a_reduction_keeps_the_forgiven_fraction_at_every_team_size(tmp_path):
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
 
 
-def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other():
+def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other() -> None:
     """mandelbrot2's escape counts are integers: the judge forgives its boundary pixels there too."""
     expected = np.arange(100, dtype=np.int64)
     flipped = expected.copy()
@@ -482,7 +492,7 @@ def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other():
     assert sut.status == "pass"
 
 
-def test_an_integer_output_past_the_forgiven_fraction_fails():
+def test_an_integer_output_past_the_forgiven_fraction_fails() -> None:
     expected = np.arange(100, dtype=np.int64)
 
     sut = verify.compare("band", expected, expected + 1, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
@@ -490,7 +500,7 @@ def test_an_integer_output_past_the_forgiven_fraction_fails():
     assert sut.status == "fail"
 
 
-def test_a_scalar_output_needs_no_extent():
+def test_a_scalar_output_needs_no_extent() -> None:
     reference = verify.Reference([{"s": np.array(2.0)}], frozenset())
 
     sut = verify.judge("exact", reference, [[{"s": np.array(2.0)}]], [1])
@@ -498,11 +508,11 @@ def test_a_scalar_output_needs_no_extent():
     assert sut.status == "exact"
 
 
-def test_an_ungradeable_verdict_is_not_correct():
+def test_an_ungradeable_verdict_is_not_correct() -> None:
     assert not verify.Verdict("ungradeable").ok
 
 
-def test_a_nondeterministic_output_is_compared_by_band_even_at_exact():
+def test_a_nondeterministic_output_is_compared_by_band_even_at_exact() -> None:
     ref = verify.Reference([{"x": np.array([1.0])}], frozenset({"x"}))
 
     sut = verify.judge("exact", ref, [[{"x": np.array([1.0 + 1e-15])}]], [1])
@@ -510,7 +520,7 @@ def test_a_nondeterministic_output_is_compared_by_band_even_at_exact():
     assert sut.ok
 
 
-def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
+def test_an_output_that_changes_between_runs_is_marked_nondeterministic() -> None:
     cases = verify.Cases([inputs.Draw({}, {})], ("x",))
     runs: list[list[verify.Outcome]] = [[[{"x": np.array([1.0])}], [{"x": np.array([2.0])}], [{"x": np.array([1.0])}]]]
 
@@ -519,7 +529,7 @@ def test_an_output_that_changes_between_runs_is_marked_nondeterministic():
     assert sut.nondeterministic == frozenset({"x"})
 
 
-def test_an_output_that_changes_between_the_calls_of_one_child_is_marked_nondeterministic():
+def test_an_output_that_changes_between_the_calls_of_one_child_is_marked_nondeterministic() -> None:
     cases = verify.Cases([inputs.Draw({}, {})], ("x",))
     runs: list[list[verify.Outcome]] = [[[{"x": np.array([1.0])}, {"x": np.array([2.0])}]]]
 
@@ -533,7 +543,7 @@ def team_runs(values: dict[int, dict[str, np.ndarray]]) -> list[list[verify.Outc
     return [[[outputs] for _ in range(verify.REFERENCE_RUNS)] for outputs in values.values()]
 
 
-def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team_reproduces_it():
+def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team_reproduces_it() -> None:
     cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("sum", "scaled")))
     runs = team_runs(
         {team: {"sum": np.array([team * 1.0]), "scaled": np.array([2.0])} for team in verify.REDUCTION_TEAMS}
@@ -544,7 +554,7 @@ def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team
     assert sut.nondeterministic == frozenset({"sum"})
 
 
-def test_two_draws_differing_from_each_other_are_no_nondeterminism():
+def test_two_draws_differing_from_each_other_are_no_nondeterminism() -> None:
     draws = [inputs.Draw({}, {}), inputs.Draw({}, {})]
     cases = verify.at_team_sizes(outlined(), verify.Cases(draws, ("x",)))
     per_draw = [{"x": np.array([float(draw)])} for draw in range(len(draws)) for _ in verify.REDUCTION_TEAMS]
@@ -554,7 +564,7 @@ def test_two_draws_differing_from_each_other_are_no_nondeterminism():
     assert sut.nondeterministic == frozenset()
 
 
-def test_a_team_size_changing_only_the_ungraded_tail_leaves_an_output_exact():
+def test_a_team_size_changing_only_the_ungraded_tail_leaves_an_output_exact() -> None:
     grading = inputs.Grading({"x": "count"})
     cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("x", "count"), grading))
     count = np.array([1], dtype=np.int64)
@@ -588,7 +598,9 @@ TEAM_CHUNKS = CHUNKED.format(chunks="omp_get_max_threads()")
 
 
 @pytest.mark.gcc
-def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follows_the_team_size(tmp_path):
+def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follows_the_team_size(
+    tmp_path: pathlib.Path,
+) -> None:
     """The reference never shows two values at one size, so nothing but the sizes tells its rounding is thread order."""
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     reports = row_sum_reference(tmp_path, program, TEAM_CHUNKS, ROW_SUM.format(factor="1.0"))
@@ -600,7 +612,7 @@ def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follo
 
 
 @pytest.mark.gcc
-def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread(tmp_path):
+def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread(tmp_path: pathlib.Path) -> None:
     """Two chunks at every size above 1: only the one-thread run has the left-to-right sum a serial build computes."""
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     two_chunks = CHUNKED.format(chunks="omp_get_max_threads() > 1 ? 2 : 1")
@@ -620,7 +632,9 @@ def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread
     ],
     ids=["a lost term", "ten times the band"],
 )
-def test_a_wrong_sum_fails_against_a_reference_whose_value_follows_the_team_size(tmp_path, wrong):
+def test_a_wrong_sum_fails_against_a_reference_whose_value_follows_the_team_size(
+    tmp_path: pathlib.Path, wrong: str
+) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     reports = row_sum_reference(tmp_path, program, TEAM_CHUNKS, wrong)
 
@@ -631,7 +645,7 @@ def test_a_wrong_sum_fails_against_a_reference_whose_value_follows_the_team_size
 
 
 @pytest.mark.gcc
-def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tmp_path):
+def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tmp_path: pathlib.Path) -> None:
     program = outlined()
     manifest = inputs.load(EXAMPLE.with_suffix(".yaml"), f"{EXAMPLE}:two_scopes")
     cases = api.test_cases(program, manifest)
@@ -646,7 +660,9 @@ def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tm
 
 
 @pytest.mark.gcc
-def test_a_rounding_difference_fails_a_reduction_whose_reference_reproduces_at_every_team_size(tmp_path):
+def test_a_rounding_difference_fails_a_reduction_whose_reference_reproduces_at_every_team_size(
+    tmp_path: pathlib.Path,
+) -> None:
     """Every row is one thread's sum, whatever the team: this reference is exact, so a strict candidate must match."""
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     backwards = "for (int64_t i = 0; i < M; ++i) for (int64_t j = N - 1; j >= 0; --j) out[i] += a[i * N + j];"
@@ -658,7 +674,7 @@ def test_a_rounding_difference_fails_a_reduction_whose_reference_reproduces_at_e
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "fail"
 
 
-def test_one_wrong_result_among_the_calls_of_a_child_fails_the_candidate():
+def test_one_wrong_result_among_the_calls_of_a_child_fails_the_candidate() -> None:
     ref = verify.Reference([{"x": np.array([1.0])}], frozenset())
     distinct: list[verify.Outcome] = [[{"x": np.array([1.0])}, {"x": np.array([2.0])}]]
 
@@ -667,7 +683,7 @@ def test_one_wrong_result_among_the_calls_of_a_child_fails_the_candidate():
     assert sut.status == "fail"
 
 
-def test_a_build_wrong_only_after_its_first_call_fails_verification(tmp_path):
+def test_a_build_wrong_only_after_its_first_call_fails_verification(tmp_path: pathlib.Path) -> None:
     """The shape of a reduction that loses updates only once its OpenMP team is awake."""
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     (scope,) = program.scopes
@@ -682,7 +698,7 @@ def test_a_build_wrong_only_after_its_first_call_fails_verification(tmp_path):
 
 
 @pytest.mark.parametrize("team", [2, 3, 5])
-def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path, team):
+def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path: pathlib.Path, team: int) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     init, reduce_scope = program.scopes
     wrong_factor = f"double f = omp_get_max_threads() == {team} ? 3.0 : 1.0;"
@@ -700,7 +716,7 @@ def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path, te
     assert sut.verdicts[reduce_scope.symbol]["wrong"].status == "fail"
 
 
-def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path):
+def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path: pathlib.Path) -> None:
     """The reference sums each row with an ``omp simd`` reduction; the serial sum reassociates it, so it is graded
     at ``reassoc``."""
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
@@ -720,7 +736,7 @@ def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path):
     assert sut.verdicts[reduce_scope.symbol]["hand"].ok
 
 
-def test_a_child_starts_under_any_data_limit_of_its_parent():
+def test_a_child_starts_under_any_data_limit_of_its_parent() -> None:
     """``limit_memory`` runs first in every child: with no limit set at all it must still set one."""
     assert verify.in_child(int, (), machine.core_slots()[0], 1.0) == 0
 
@@ -736,7 +752,7 @@ np.ones(16 << 20)  # 128 MiB, inside the share
 """
 
 
-def test_the_cap_counts_from_what_the_child_already_holds():
+def test_the_cap_counts_from_what_the_child_already_holds() -> None:
     """A child whose data segment already exceeds its share (4 GiB reserved, never touched) still allocates within
     the share: a cap at the share alone made every later ``dlopen`` fail to map its data segment."""
     done = subprocess.run([sys.executable, "-c", RESERVED_THEN_CAPPED], capture_output=True, text=True, check=False)
@@ -765,7 +781,7 @@ def team():
 """
 
 
-def test_a_child_gets_its_team_from_a_runtime_the_fork_server_already_started(tmp_path):
+def test_a_child_gets_its_team_from_a_runtime_the_fork_server_already_started(tmp_path: pathlib.Path) -> None:
     """``OMP_NUM_THREADS`` set in the child reaches no runtime started before it; the child still runs on its own
     team, and the runtime binds no thread, so a thread stays on the cores of its child."""
     executables = [exe for comp in MATRIX.compilers.values() for exe in comp.executables.values()]
@@ -785,7 +801,7 @@ def read_setting(*key: str) -> object:
     return dace.config.Config.get(*key)
 
 
-def test_a_builder_has_the_dace_settings_its_parent_made_in_memory():
+def test_a_builder_has_the_dace_settings_its_parent_made_in_memory() -> None:
     """A builder is a fork-server child, which starts from the configuration files: a setting an embedding caller
     made in memory reached the reference, built in this process, but not the candidates built in the builders."""
     key = ("compiler", "cpu", "args")

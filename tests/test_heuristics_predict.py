@@ -28,13 +28,13 @@ N, M, K = dace.symbol("N"), dace.symbol("M"), dace.symbol("K")
 
 
 @dace.program
-def roots(x: dace.float64[N], y: dace.float64[N]):
+def roots(x: dace.float64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = np.sqrt(x[i]) / x[i]
 
 
 @dace.program
-def two_rows(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K], d: dace.float64[M, K]):
+def two_rows(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K], d: dace.float64[M, K]) -> None:
     for i in dace.map[0:M]:
         for j in dace.map[0:N]:
             b[i, j] = a[i, j] * 2.0
@@ -45,7 +45,7 @@ def two_rows(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K]
 @dace.program
 def two_sums(
     a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, K], d: dace.float64[M, K], e: dace.float64[M, K]
-):
+) -> None:
     for i in dace.map[0:M]:
         for j in dace.map[0:N]:
             b[i, j] = a[i, j] + 1.0
@@ -57,7 +57,7 @@ def listing(*lines: tuple[int, str, str]) -> list[Instruction]:
     return [Instruction(address, mnemonic, operands) for address, mnemonic, operands in lines]
 
 
-def test_only_a_loop_holding_no_other_loop_is_innermost_and_a_forward_branch_spans_none():
+def test_only_a_loop_holding_no_other_loop_is_innermost_and_a_forward_branch_spans_none() -> None:
     code = listing(
         (0x00, "xorl", "%eax, %eax"),
         (0x04, "vmovupd", "(%rdi,%rax,8), %zmm0"),
@@ -73,7 +73,7 @@ def test_only_a_loop_holding_no_other_loop_is_innermost_and_a_forward_branch_spa
     assert [i.address for i in sut.body] == [0x04, 0x0C]
 
 
-def test_a_jump_back_to_the_epilogue_is_no_loop_so_the_errno_fallback_past_the_return_never_counts_as_one():
+def test_a_jump_back_to_the_epilogue_is_no_loop_so_the_errno_fallback_past_the_return_never_counts_as_one() -> None:
     code = listing(  # gcc's scalar sqrt: the hot loop, the return, then the out-of-line call for a negative input
         (0x40, "vmovsd", "(%rdi,%rax,8), %xmm1"),
         (0x45, "vucomisd", "%xmm1, %xmm2"),
@@ -96,7 +96,7 @@ def test_a_jump_back_to_the_epilogue_is_no_loop_so_the_errno_fallback_past_the_r
     assert [i.address for i in sut.body] == [0x40, 0x45, 0x4B, 0x53]
 
 
-def test_a_latch_laid_out_past_the_return_still_closes_its_loop():
+def test_a_latch_laid_out_past_the_return_still_closes_its_loop() -> None:
     code = listing(  # gcc on a triangular nest: the trip test leaves through the return, the latch follows it
         (0x10, "vmovupd", "(%rdi,%rax,8), %ymm0"),
         (0x16, "cmpq", "%rax, %rdx"),
@@ -121,7 +121,9 @@ def test_a_latch_laid_out_past_the_return_still_closes_its_loop():
         ("vaddpd", "%zmm1, %zmm2, %zmm0", 0),
     ],
 )
-def test_an_x86_memory_operation_moves_its_vector_width_or_one_element(mnemonic, operands, moved):
+def test_an_x86_memory_operation_moves_its_vector_width_or_one_element(
+    mnemonic: str, operands: str, moved: int
+) -> None:
     assert predict.x86_bytes(Instruction(0, mnemonic, operands)) == moved
 
 
@@ -129,11 +131,13 @@ def test_an_x86_memory_operation_moves_its_vector_width_or_one_element(mnemonic,
     ("mnemonic", "operands", "moved"),
     [("ldp", "q0, q1, [x0]", 32), ("ldr", "d0, [x1, x8, lsl #3]", 8), ("st1", "{v0.2d, v1.2d}, [x2]", 32)],
 )
-def test_an_aarch64_memory_operation_moves_its_register_width_twice_for_a_pair(mnemonic, operands, moved):
+def test_an_aarch64_memory_operation_moves_its_register_width_twice_for_a_pair(
+    mnemonic: str, operands: str, moved: int
+) -> None:
     assert predict.arm_bytes(Instruction(0, mnemonic, operands)) == moved
 
 
-def test_stack_spills_do_not_count_as_data_the_loop_moves():
+def test_stack_spills_do_not_count_as_data_the_loop_moves() -> None:
     loop = predict.Loop(
         tuple(listing((0, "vmovupd", "(%rdi,%rax,8), %zmm0"), (6, "vmovupd", "%zmm0, -0x40(%rsp)"))), ()
     )
@@ -141,14 +145,14 @@ def test_stack_spills_do_not_count_as_data_the_loop_moves():
     assert predict.data_bytes(loop) == 64
 
 
-def test_a_vector_loop_pays_for_its_vector_math_calls_and_a_scalar_loop_for_every_call():
+def test_a_vector_loop_pays_for_its_vector_math_calls_and_a_scalar_loop_for_every_call() -> None:
     loop = predict.Loop((), ("_ZGVeN8v_sin", "sin"))
 
     assert predict.hot_calls(loop, elements=8.0) == 1
     assert predict.hot_calls(loop, elements=1.0) == 2
 
 
-def test_a_load_of_what_the_loop_stored_keeps_its_chain_where_llvm_mca_can_see_it():
+def test_a_load_of_what_the_loop_stored_keeps_its_chain_where_llvm_mca_can_see_it() -> None:
     body = listing(  # nvhpc on y[j] = c[j] * y[j-1] + x[j]: two elements per iteration, y[j-1] read back from memory
         (0x00, "vmovsd", "-0x10(%rdx,%r9), %xmm0"),
         (0x06, "vmulsd", "-0x8(%rdi,%r9), %xmm0, %xmm0"),
@@ -167,7 +171,7 @@ def test_a_load_of_what_the_loop_stored_keeps_its_chain_where_llvm_mca_can_see_i
     assert predict.data_bytes(predict.Loop(sut, ())) == 48
 
 
-def test_a_load_of_another_array_or_of_a_later_element_stays_a_load():
+def test_a_load_of_another_array_or_of_a_later_element_stays_a_load() -> None:
     body = listing(
         (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"),
         (0x06, "vmovsd", "0x8(%rdx,%rax,8), %xmm1"),
@@ -189,18 +193,18 @@ def scan_scope() -> scopes.Scope:
     return scopes.Scope("scan", (), "", sdfg, False, False, sympy.Integer(1))
 
 
-def test_a_library_node_touches_each_array_it_runs_over_per_element_and_a_seed_only_once():
+def test_a_library_node_touches_each_array_it_runs_over_per_element_and_a_seed_only_once() -> None:
     assert predict.accesses_per_element(scan_scope()) == 3
 
 
-def only_scope(program: dace.program) -> scopes.Scope:
+def only_scope(program: dace.program) -> scopes.Scope:  # pyright: ignore[reportGeneralTypeIssues] -- test double
     (scope,) = scopes.outline(program.to_sdfg(), MATRIX.libm_calls).scopes
     return scope
 
 
 @pytest.mark.gcc
 @pytest.mark.avx512
-def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path):
+def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path: pathlib.Path) -> None:
     scope = only_scope(load_program(f"{REDUCTIONS}:scale"))
     builds = (build(scope, Candidate("c", "gcc", isa=isa), MATRIX, tmp_path, {}) for isa in ("avx512", "avx2"))
 
@@ -213,7 +217,7 @@ def test_a_wider_vector_build_is_predicted_cheaper_per_element(tmp_path):
 
 
 @pytest.mark.gcc
-def test_an_errno_bound_scalar_sqrt_is_predicted_dearer_than_its_fast_math_vector_form(tmp_path):
+def test_an_errno_bound_scalar_sqrt_is_predicted_dearer_than_its_fast_math_vector_form(tmp_path: pathlib.Path) -> None:
     scope = only_scope(roots)
     strict = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
     fast = build(scope, Candidate("c", "gcc", fp_level="fast"), MATRIX, tmp_path, {})
@@ -232,7 +236,9 @@ printf '  -march=                     \\t\\tznver4\\n  -mcpu=                   
 """
 
 
-def test_llvm_mca_models_every_build_on_the_cpu_its_flags_name_else_on_the_host_gcc_resolves(tmp_path, monkeypatch):
+def test_llvm_mca_models_every_build_on_the_cpu_its_flags_name_else_on_the_host_gcc_resolves(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """LLVM's host guess can be an older core than gcc's (znver3 without AVX-512 for gcc's znver4), so a native build
     of any compiler is costed on gcc's host CPU, and a build whose flags name another CPU llvm-mca knows on that one."""
     gcc = tmp_path / "gcc"
@@ -258,7 +264,7 @@ def scored(cost: float) -> Prediction:
     return Prediction(cost, cost, 0.0, (), 1)
 
 
-def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_the_default_fp_level():
+def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_the_default_fp_level() -> None:
     scope = only_scope(roots)
     builds = (a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", fp_level="noerrno")))
     wrong = a_build(Candidate("c", "gcc", fp_level="fast"))
@@ -272,7 +278,7 @@ def test_the_pick_is_the_correct_build_with_the_fewest_cycles_and_a_tie_goes_to_
     assert predict.choose(rep, verdicts, cheaper, MATRIX, finite_inputs=False) is builds[0]
 
 
-def test_a_reduction_takes_a_verified_reassociated_build_predicted_cheapest_and_a_tie_its_default_level():
+def test_a_reduction_takes_a_verified_reassociated_build_predicted_cheapest_and_a_tie_its_default_level() -> None:
     """Only reassociation vectorizes an FP sum: capped at ``contract``, a reduction never took the build that does."""
     sdfg = load_program(f"{REDUCTIONS}:row_sum").to_sdfg()
     scope = next(s for s in scopes.outline(sdfg, MATRIX.libm_calls).scopes if s.has_reduction)
@@ -288,7 +294,7 @@ def test_a_reduction_takes_a_verified_reassociated_build_predicted_cheapest_and_
     assert predict.choose(rep, rejected, cheaper, MATRIX, finite_inputs=False) is contract
 
 
-def test_a_serial_build_never_wins_a_speculative_pick_however_cheap_it_looks():
+def test_a_serial_build_never_wins_a_speculative_pick_however_cheap_it_looks() -> None:
     scope = only_scope(roots)
     default, serial = a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", serial=True))
     rep = ScopeReport(scope, (default, serial))
@@ -299,7 +305,7 @@ def test_a_serial_build_never_wins_a_speculative_pick_however_cheap_it_looks():
 
 
 @pytest.mark.gcc
-def test_the_model_scores_openmp_builds_only_because_it_spreads_loops_over_the_cores(tmp_path):
+def test_the_model_scores_openmp_builds_only_because_it_spreads_loops_over_the_cores(tmp_path: pathlib.Path) -> None:
     scope = only_scope(roots)
     default = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path / "default", {})
     serial = build(scope, Candidate("c", "gcc", serial=True), MATRIX, tmp_path / "serial", {})
@@ -318,7 +324,9 @@ def parallel_and_serial(scope: scopes.Scope, folder: pathlib.Path) -> ScopeRepor
 
 @pytest.mark.gcc
 @pytest.mark.parametrize(("size", "serial"), [(16, True), (10**9, False)])
-def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(tmp_path, monkeypatch, size, serial):
+def test_a_scope_runs_serial_below_the_crossover_and_stays_parallel_above_it(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, size: int, serial: bool
+) -> None:
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
@@ -333,7 +341,9 @@ def ten_cycle_loop(archive: pathlib.Path, source: pathlib.Path) -> dict[str, lis
 
 
 @pytest.mark.gcc
-def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core(tmp_path, monkeypatch):
+def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 2, 4, 6))
     monkeypatch.setattr(machine, "max_frequency_hz", lambda: 3.0e9)
     monkeypatch.setattr(predict, "region_ns", lambda matrix: 470.0)
@@ -352,7 +362,7 @@ def test_a_parallel_build_pays_for_its_region_and_a_serial_one_for_its_lone_core
 
 
 @pytest.mark.gcc
-def test_a_size_the_sdfg_does_not_decide_leaves_the_serial_build_unranked(tmp_path):
+def test_a_size_the_sdfg_does_not_decide_leaves_the_serial_build_unranked(tmp_path: pathlib.Path) -> None:
     rep = parallel_and_serial(only_scope(roots), tmp_path)
 
     sut = predict.predictions([rep], MATRIX, {}, running=True)[rep.scope.symbol]
@@ -361,7 +371,7 @@ def test_a_size_the_sdfg_does_not_decide_leaves_the_serial_build_unranked(tmp_pa
 
 
 @pytest.mark.gcc
-def test_the_object_decides_whether_a_build_pays_for_a_team(tmp_path):
+def test_the_object_decides_whether_a_build_pays_for_a_team(tmp_path: pathlib.Path) -> None:
     rep = parallel_and_serial(only_scope(roots), tmp_path)
     load = Load(1.0, 1000.0, 250.0)
     parallel, serial = rep.builds[0].archive, rep.builds[1].archive
@@ -372,7 +382,7 @@ def test_the_object_decides_whether_a_build_pays_for_a_team(tmp_path):
 
 
 @pytest.mark.gcc
-def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
+def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path: pathlib.Path) -> None:
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
 
@@ -386,7 +396,7 @@ def test_a_speculative_run_verifies_times_nothing_and_links_its_picks(tmp_path):
 
 
 @dace.program
-def fixed(a: dace.float64[256], out: dace.float64[256]):
+def fixed(a: dace.float64[256], out: dace.float64[256]) -> None:
     for i in dace.map[0:256]:
         out[i] = a[i] * 2.0
 
@@ -394,8 +404,8 @@ def fixed(a: dace.float64[256], out: dace.float64[256]):
 @pytest.mark.gcc
 @pytest.mark.parametrize(("running", "serial"), [({"N": 16}, True), ({"N": 10**9}, False), (None, False), ({}, False)])
 def test_a_declared_size_decides_the_picks_thread_count_and_an_open_one_keeps_the_parallel_pick(
-    tmp_path, monkeypatch, running, serial
-):
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, running: dict[str, int] | None, serial: bool
+) -> None:
     monkeypatch.setattr(machine, "physical_cores", lambda: (0, 1, 2, 3))  # a team pays off on any host
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     matrix = gcc_only(tmp_path)
@@ -407,7 +417,7 @@ def test_a_declared_size_decides_the_picks_thread_count_and_an_open_one_keeps_th
 
 
 @pytest.mark.gcc
-def test_a_size_the_sdfg_fixes_needs_no_declaration(tmp_path):
+def test_a_size_the_sdfg_fixes_needs_no_declaration(tmp_path: pathlib.Path) -> None:
     matrix = gcc_only(tmp_path)
 
     sut = api.generate(fixed.to_sdfg(), tmp_path / "out", matrix=matrix, mode=Mode.SPECULATIVE)
@@ -416,7 +426,7 @@ def test_a_size_the_sdfg_fixes_needs_no_declaration(tmp_path):
     assert winner.candidate.serial
 
 
-def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path):
+def test_a_rendered_statement_names_its_tasklet_in_its_trailing_comment(tmp_path: pathlib.Path) -> None:
     source = tmp_path / "v0.c"
     source.write_text("for (i = 0; i < N; i += 1) {\n    t = (a * x);  // _Mult_\n    y[i] = t;  // assign_3\n}\n")
 
@@ -435,7 +445,7 @@ BLOCK_TASKLET = """for (i = 0; i < N; i += 1) {
 """
 
 
-def test_every_statement_of_a_tasklet_rendered_as_a_block_names_that_tasklet(tmp_path):
+def test_every_statement_of_a_tasklet_rendered_as_a_block_names_that_tasklet(tmp_path: pathlib.Path) -> None:
     """A12: the write of a WCR tasklet sits inside its block, without a comment of its own; a contracted build puts
     the fused multiply-add on that line, so the loop named no tasklet and a scope's other loops dropped it."""
     source = tmp_path / "v0.c"
@@ -463,7 +473,9 @@ void k(double *restrict a, const double *restrict b, long n) {
 
 
 @pytest.mark.clang
-def test_a_loop_names_only_the_tasklets_of_its_own_source_and_not_an_inlined_header_line_of_the_same_number(tmp_path):
+def test_a_loop_names_only_the_tasklets_of_its_own_source_and_not_an_inlined_header_line_of_the_same_number(
+    tmp_path: pathlib.Path,
+) -> None:
     """clang's line table gives inlined code its header's lines: a header line must not name the scope source's
     statement that has the same number."""
     (tmp_path / "twice.h").write_text(HEADER)
@@ -482,7 +494,9 @@ def test_a_loop_names_only_the_tasklets_of_its_own_source_and_not_an_inlined_hea
 
 
 @pytest.mark.gcc
-def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(tmp_path, monkeypatch):
+def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_iterations(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
     maps = predict.innermost_maps(scope.sdfg)
@@ -505,7 +519,9 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
 
 
 @pytest.mark.gcc
-def test_a_build_with_a_source_loop_llvm_mca_rejects_every_copy_of_is_unranked(tmp_path, monkeypatch):
+def test_a_build_with_a_source_loop_llvm_mca_rejects_every_copy_of_is_unranked(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Costed on the loops llvm-mca accepts, a build whose heavy loop it rejects (zmm on a model without AVX-512)
     would look ten times cheaper and win the pick; it gets no prediction instead."""
     scope = only_scope(two_rows)
@@ -529,7 +545,7 @@ def test_a_build_with_a_source_loop_llvm_mca_rejects_every_copy_of_is_unranked(t
 
 
 @pytest.mark.gcc
-def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path):
+def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path: pathlib.Path) -> None:
     scope = only_scope(two_sums)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
@@ -540,7 +556,7 @@ def test_two_loops_of_one_operator_each_weigh_their_own_iterations(tmp_path):
 
 
 @pytest.mark.gcc
-def test_two_loops_of_one_operator_each_count_their_own_array_accesses(tmp_path):
+def test_two_loops_of_one_operator_each_count_their_own_array_accesses(tmp_path: pathlib.Path) -> None:
     scope = only_scope(two_sums)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
@@ -551,7 +567,7 @@ def test_two_loops_of_one_operator_each_count_their_own_array_accesses(tmp_path)
 
 
 @pytest.mark.gcc
-def test_without_sizes_every_source_loop_weighs_the_same(tmp_path):
+def test_without_sizes_every_source_loop_weighs_the_same(tmp_path: pathlib.Path) -> None:
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
 
@@ -560,7 +576,9 @@ def test_without_sizes_every_source_loop_weighs_the_same(tmp_path):
     assert sut is not None and [loop.weight for loop in sut.loops] == [1.0, 1.0]
 
 
-def test_a_build_on_the_bandwidth_floor_is_predicted_by_its_memory_term_only_beyond_the_cache(tmp_path):
+def test_a_build_on_the_bandwidth_floor_is_predicted_by_its_memory_term_only_beyond_the_cache(
+    tmp_path: pathlib.Path,
+) -> None:
     scope = only_scope(load_program(f"{REDUCTIONS}:scale"))
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
     elements = 64 * machine.largest_cache_bytes() // 8  # x and y: 16x the cache
@@ -574,7 +592,7 @@ def test_a_build_on_the_bandwidth_floor_is_predicted_by_its_memory_term_only_bey
     assert beyond.cycles_per_element == beyond.memory
 
 
-def test_builds_within_the_tie_band_go_to_the_default_fp_level():
+def test_builds_within_the_tie_band_go_to_the_default_fp_level() -> None:
     scope = only_scope(roots)
     builds = (a_build(Candidate("c", "gcc")), a_build(Candidate("c", "gcc", fp_level="noerrno")))
     rep = ScopeReport(scope, builds)
@@ -585,7 +603,7 @@ def test_builds_within_the_tie_band_go_to_the_default_fp_level():
     assert predict.choose(rep, {}, far, MATRIX, finite_inputs=False) is builds[0]
 
 
-def test_the_default_stays_unless_a_build_is_predicted_beyond_the_margin_ahead_of_it():
+def test_the_default_stays_unless_a_build_is_predicted_beyond_the_margin_ahead_of_it() -> None:
     """A12: a wrong prediction can only replace the default when it claims more than the margin."""
     scope = only_scope(roots)
     default, other = a_build(Candidate("c", "gcc", fp_level="noerrno")), a_build(Candidate("c", "gcc"))
@@ -599,7 +617,7 @@ def test_the_default_stays_unless_a_build_is_predicted_beyond_the_margin_ahead_o
     assert predict.choose(rep, {}, beyond, MATRIX, finite_inputs=False) is other
 
 
-def test_an_unpredicted_default_stays_however_cheap_another_build_is_predicted():
+def test_an_unpredicted_default_stays_however_cheap_another_build_is_predicted() -> None:
     scope = only_scope(roots)
     default, other = a_build(Candidate("c", "gcc", fp_level="noerrno")), a_build(Candidate("c", "gcc"))
     rep = ScopeReport(scope, (other, default))
@@ -609,23 +627,23 @@ def test_an_unpredicted_default_stays_however_cheap_another_build_is_predicted()
 
 
 @dace.program
-def atomic_total(a: dace.float64[N], s: dace.float64[1]):
+def atomic_total(a: dace.float64[N], s: dace.float64[1]) -> None:
     for i in dace.map[0:N]:
         s[0] += a[i]
 
 
 @pytest.mark.parametrize("mnemonic", ["lock", "ldadd", "ldaddal", "casal", "swpl", "ldaxr", "stlxr"])
-def test_an_atomic_read_modify_write_is_recognized_on_x86_and_aarch64(mnemonic):
+def test_an_atomic_read_modify_write_is_recognized_on_x86_and_aarch64(mnemonic: str) -> None:
     assert predict.ATOMIC.match(mnemonic)
 
 
 @pytest.mark.parametrize("mnemonic", ["ldr", "ldp", "add", "addsd", "cmpxchg", "vmovq", "str", "stp"])
-def test_a_plain_access_is_no_atomic(mnemonic):
+def test_a_plain_access_is_no_atomic(mnemonic: str) -> None:
     assert not predict.ATOMIC.match(mnemonic)
 
 
 @pytest.mark.gcc
-def test_a_parallel_sum_through_an_atomic_per_element_is_predicted_at_a_team_of_one(tmp_path):
+def test_a_parallel_sum_through_an_atomic_per_element_is_predicted_at_a_team_of_one(tmp_path: pathlib.Path) -> None:
     """A12: CPF renders a map's WCR as ``omp atomic update``; every thread takes its turn on one address, so the
     prediction never spreads that loop over the cores (it rated the atomic build three times cheaper than serial)."""
     scope = only_scope(atomic_total)
@@ -641,8 +659,8 @@ def test_a_parallel_sum_through_an_atomic_per_element_is_predicted_at_a_team_of_
 
 @pytest.mark.gcc
 def test_an_atomic_update_per_element_handles_one_element_per_iteration_whatever_its_read_modify_write_moves(
-    tmp_path,
-):
+    tmp_path: pathlib.Path,
+) -> None:
     """A12: an atomic add of a double is a load, a compare-and-swap and the array's own load, three 8-byte accesses
     of which only the array's is per element; counted by bytes, the loop took three elements an iteration and was
     predicted three times too cheap. Each atomic update is one element."""
@@ -657,12 +675,12 @@ def test_an_atomic_update_per_element_handles_one_element_per_iteration_whatever
 
 
 @dace.program
-def axpy_in_place(a: dace.float64[N], b: dace.float64[N]):
+def axpy_in_place(a: dace.float64[N], b: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         a[i] += 2.0 * b[i]
 
 
-def test_an_update_in_place_counts_as_a_read_and_a_write_of_its_element():
+def test_an_update_in_place_counts_as_a_read_and_a_write_of_its_element() -> None:
     """A12: ``a[i] += 2 * b[i]`` is one WCR memlet on ``a``, and the element is read and written: three accesses per
     element. Counted as two, a vector loop moving 3 x 64 bytes took 12 elements an iteration instead of 8, and the
     memory term saw a third less traffic."""
@@ -672,12 +690,12 @@ def test_an_update_in_place_counts_as_a_read_and_a_write_of_its_element():
 
 
 @dace.program
-def first_order_recurrence(a: dace.float64[N], b: dace.float64[N]):
-    for i in range(1, N):
+def first_order_recurrence(a: dace.float64[N], b: dace.float64[N]) -> None:
+    for i in range(1, N):  # pyright: ignore[reportArgumentType] -- test double
         a[i] = a[i - 1] + b[i]
 
 
-def test_a_sequential_loop_counts_its_own_accesses_and_iterations_like_a_map():
+def test_a_sequential_loop_counts_its_own_accesses_and_iterations_like_a_map() -> None:
     """A12: a scope whose innermost loop is sequential (a recurrence, an expanded scan) had no map facts: its loop
     fell back to one access per element, so a scalar loop moving three elements' bytes took three elements an
     iteration, and it weighed as much as a map of any size beside it."""

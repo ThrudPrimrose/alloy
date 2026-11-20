@@ -21,6 +21,7 @@ from alloy.evaluate.verify import Verdict, Verification
 from alloy.frontend import scopes
 from alloy.frontend.tree import Kind
 from alloy.heuristics import prune
+from alloy.jsontype import Json
 from alloy.records import dumped_json
 from helpers import MATRIX, build, outlined
 
@@ -76,7 +77,7 @@ def verdicts(rep: sweep.ScopeReport) -> dict[str, Verdict]:
     return {b.name: FAILED if b is rep.builds[5] else PASSED for b in rep.builds}
 
 
-def test_a_scope_lists_its_k_fastest_correct_variants_against_its_baseline(tmp_path):
+def test_a_scope_lists_its_k_fastest_correct_variants_against_its_baseline(tmp_path: pathlib.Path) -> None:
     _, rep = scope_and_builds(tmp_path)
 
     sut = report.scope_record(rep, verdicts(rep), timed(rep), MATRIX, k=3)
@@ -89,8 +90,8 @@ def test_a_scope_lists_its_k_fastest_correct_variants_against_its_baseline(tmp_p
     assert sut.tree.kind == Kind.SDFG
 
 
-def test_the_verdict_matrix_has_each_configs_fastest_variant_and_the_chosen_one(tmp_path):
-    program, rep = scope_and_builds(tmp_path)
+def test_the_verdict_matrix_has_each_configs_fastest_variant_and_the_chosen_one(tmp_path: pathlib.Path) -> None:
+    _, rep = scope_and_builds(tmp_path)
     timing = Timings(
         scopes={rep.scope.symbol: timed(rep)},
         program=ProgramTiming(arms={"dace_default": ms(6e-3), "alloy_full": ms(2e-3)}, sizes={"N": 128}),
@@ -107,7 +108,7 @@ def test_the_verdict_matrix_has_each_configs_fastest_variant_and_the_chosen_one(
     assert sut.program is not None and sut.program.speedup == pytest.approx(3.0)
 
 
-def test_without_timing_every_built_variant_is_listed_in_sweep_order_up_to_k(tmp_path):
+def test_without_timing_every_built_variant_is_listed_in_sweep_order_up_to_k(tmp_path: pathlib.Path) -> None:
     _, rep = scope_and_builds(tmp_path)
 
     sut = report.scope_record(rep, {}, None, MATRIX, k=report.TOP_K)
@@ -136,7 +137,7 @@ def a_report(tmp_path: pathlib.Path) -> report.Report:
     return report.assemble(program, [rep], MATRIX, verification, timing, commands)
 
 
-def test_a_written_report_carries_the_trees_and_renders_every_scope_and_the_verdict(tmp_path):
+def test_a_written_report_carries_the_trees_and_renders_every_scope_and_the_verdict(tmp_path: pathlib.Path) -> None:
     program = outlined()
     reports = [
         sweep.ScopeReport(s, (build(s, Candidate("c", "gcc"), MATRIX, tmp_path / s.symbol, {}),))
@@ -154,14 +155,14 @@ def test_a_written_report_carries_the_trees_and_renders_every_scope_and_the_verd
     assert (tmp_path / "configuration_matrix.toml").read_bytes() == MATRIX.path.read_bytes()
 
 
-def test_the_verdict_renders_the_full_compile_and_link_argv(tmp_path):
+def test_the_verdict_renders_the_full_compile_and_link_argv(tmp_path: pathlib.Path) -> None:
     sut = report.markdown(a_report(tmp_path))
 
     assert "gcc -O3 -c scopes/s.c -o s.o" in sut
     assert "gcc -std=c23 program.c -o libp.so libs.a" in sut
 
 
-def test_a_written_report_loads_back_unchanged_including_nan_times(tmp_path):
+def test_a_written_report_loads_back_unchanged_including_nan_times(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "report.json"
     text = dumped_json(a_report(tmp_path))
     path.write_text(text)
@@ -173,7 +174,7 @@ def test_a_written_report_loads_back_unchanged_including_nan_times(tmp_path):
     assert sut.verdict.program is not None and type(sut.verdict.program.sizes["f"]) is bool
 
 
-def edited(tmp_path: pathlib.Path, edit: Callable[[dict], None]) -> pathlib.Path:
+def edited(tmp_path: pathlib.Path, edit: Callable[[Json], None]) -> pathlib.Path:
     data = json.loads(dumped_json(a_report(tmp_path)))
     edit(data)
     path = tmp_path / "edited.json"
@@ -197,7 +198,9 @@ def edited(tmp_path: pathlib.Path, edit: Callable[[dict], None]) -> pathlib.Path
         (lambda d: d["scopes"][0].pop("symbol"), "scopes.0.symbol: Field required"),
     ],
 )
-def test_a_report_with_an_unknown_key_or_a_wrong_type_is_refused_naming_the_file(tmp_path, edit, error):
+def test_a_report_with_an_unknown_key_or_a_wrong_type_is_refused_naming_the_file(
+    tmp_path: pathlib.Path, edit: Callable[[Json], None], error: str
+) -> None:
     path = edited(tmp_path, edit)
 
     with pytest.raises(ValueError, match=re.escape(error)) as raised:
@@ -206,27 +209,27 @@ def test_a_report_with_an_unknown_key_or_a_wrong_type_is_refused_naming_the_file
     assert str(raised.value).startswith(f"{path}: not a valid Report:"), raised.value
 
 
-def test_a_report_of_another_schema_is_refused(tmp_path):
+def test_a_report_of_another_schema_is_refused(tmp_path: pathlib.Path) -> None:
     path = edited(tmp_path, lambda d: d.update(schema=1))
 
     with pytest.raises(ValueError, match="report schema 1"):
         report.load(path)
 
 
-def schema_7(data: dict) -> None:
+def schema_7(data: Json) -> None:
     data["schema"] = 7
     for scope in data["scopes"]:
         del scope["intrinsics"]
 
 
-def test_a_schema_7_report_loads_without_the_intrinsics_line(tmp_path):
+def test_a_schema_7_report_loads_without_the_intrinsics_line(tmp_path: pathlib.Path) -> None:
     loaded = report.load(edited(tmp_path, schema_7))
 
     assert loaded.schema == 7
     assert all(s.intrinsics == "" for s in loaded.scopes)
 
 
-def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_path):
+def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_path: pathlib.Path) -> None:
     program = outlined()
     builds = (
         a_build(tmp_path),
@@ -248,14 +251,14 @@ def test_a_masked_tail_without_masked_instructions_is_marked_not_honored(tmp_pat
     assert sut.cells["gcc_strict_default_none_avx512_masked_remainder"] == "1.000 (2.00x)"
 
 
-def test_the_report_lists_every_isa_and_tail_with_its_compilers_or_the_reason(tmp_path):
+def test_the_report_lists_every_isa_and_tail_with_its_compilers_or_the_reason(tmp_path: pathlib.Path) -> None:
     sut = report.markdown(a_report(tmp_path))
 
     assert "## Vectorization options" in sut
     assert "| avx2 |" in sut and "avx2 has no masks" in sut
 
 
-def test_a_pruned_candidate_shows_its_reason_in_the_scope_and_in_the_verdict_matrix(tmp_path):
+def test_a_pruned_candidate_shows_its_reason_in_the_scope_and_in_the_verdict_matrix(tmp_path: pathlib.Path) -> None:
     program = outlined()
     builds = (a_build(tmp_path),)
     skipped = Candidate("c", "gcc", isa="avx512", note="isa avx512")

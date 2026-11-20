@@ -21,30 +21,30 @@ HOST_ISAS = ("avx2", "avx512_256", "avx512", "sve")
 
 
 @dace.program
-def axpy(x: dace.float64[N], y: dace.float64[N], a: dace.float64):
+def axpy(x: dace.float64[N], y: dace.float64[N], a: dace.float64) -> None:
     for i in dace.map[0:N]:
         y[i] = a * x[i] + y[i]
 
 
 @dace.program
-def scale64(x: dace.float64[64], y: dace.float64[64], a: dace.float64):
+def scale64(x: dace.float64[64], y: dace.float64[64], a: dace.float64) -> None:
     for i in dace.map[0:64]:
         y[i] = a * x[i]
 
 
 @dace.program
-def roots(x: dace.float64[N], y: dace.float64[N]):
+def roots(x: dace.float64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = np.sqrt(x[i]) / x[i]
 
 
 @dace.program
-def divides(x: dace.float64[N], y: dace.float64[N]):
+def divides(x: dace.float64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = x[i] / 3.0
 
 
-def only_scope(program: dace.program) -> scopes.Scope:
+def only_scope(program: dace.program) -> scopes.Scope:  # pyright: ignore[reportGeneralTypeIssues] -- test double
     (scope,) = scopes.outline(program.to_sdfg(), MATRIX.libm_calls).scopes
     return scope
 
@@ -63,7 +63,7 @@ def pruned_reasons(
     return {p.candidate.note: p.reason for p in pruned}
 
 
-def test_a_multiply_feeding_an_add_is_contractible_and_a_lone_multiply_is_not():
+def test_a_multiply_feeding_an_add_is_contractible_and_a_lone_multiply_is_not() -> None:
     assert prune.facts(only_scope(axpy)).contracts
     assert not prune.facts(only_scope(scale64)).contracts
 
@@ -77,7 +77,7 @@ def canonical_dot() -> dace.SDFG:
     sdfg.add_scalar("product", dace.float64, transient=True)
     state = sdfg.add_state()
     entry, leave = state.add_map("dot", {"i": "0:N"})
-    multiply = state.add_tasklet("multiply", {"x": dace.float64, "y": dace.float64}, {"z": dace.float64}, "z = x * y")
+    multiply = state.add_tasklet("multiply", {"x": dace.float64, "y": dace.float64}, {"z": dace.float64}, "z = x * y")  # pyright: ignore[reportArgumentType] -- test double
     product = state.add_access("product")
     state.add_memlet_path(state.add_read("a"), entry, multiply, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(state.add_read("b"), entry, multiply, dst_conn="y", memlet=dace.Memlet("b[i]"))
@@ -88,26 +88,26 @@ def canonical_dot() -> dace.SDFG:
     return sdfg
 
 
-def test_a_product_summed_through_a_private_scalar_is_contractible():
+def test_a_product_summed_through_a_private_scalar_is_contractible() -> None:
     (scope,) = scopes.outline(canonical_dot(), MATRIX.libm_calls).scopes
 
     assert prune.facts(scope).contracts
     assert "fp contract" not in pruned_reasons(scope, vectorized=1)
 
 
-def test_sqrt_sets_errno_and_a_division_is_a_fast_math_approximation():
+def test_sqrt_sets_errno_and_a_division_is_a_fast_math_approximation() -> None:
     sut = prune.facts(only_scope(roots))
 
     assert sut.sets_errno and sut.approximates
     assert not sut.reduces
 
 
-def test_a_constant_innermost_extent_is_a_known_trip_count_and_a_symbolic_one_is_not():
+def test_a_constant_innermost_extent_is_a_known_trip_count_and_a_symbolic_one_is_not() -> None:
     assert prune.facts(only_scope(scale64)).trip_counts == (64,)
     assert prune.facts(only_scope(axpy)).trip_counts == (None,)
 
 
-def test_a_map_around_a_nested_sdfg_counts_the_nested_innermost_map_not_itself():
+def test_a_map_around_a_nested_sdfg_counts_the_nested_innermost_map_not_itself() -> None:
     inner = dace.SDFG("inner")
     inner.add_array("x", [64], dace.float64)
     inner.add_state().add_mapped_tasklet(
@@ -124,7 +124,7 @@ def test_a_map_around_a_nested_sdfg_counts_the_nested_innermost_map_not_itself()
     assert prune.trip_counts(sdfg) == (64,)
 
 
-def test_when_no_compiler_vectorizes_every_vector_cell_but_explicit_sve_loops_is_pruned():
+def test_when_no_compiler_vectorizes_every_vector_cell_but_explicit_sve_loops_is_pruned() -> None:
     sut = pruned_reasons(only_scope(axpy), vectorized=0)
 
     assert sut["isa avx512"] == "nothing vectorizes"
@@ -132,7 +132,7 @@ def test_when_no_compiler_vectorizes_every_vector_cell_but_explicit_sve_loops_is
     assert "tail sve_intrinsics on sve" not in sut
 
 
-def test_tails_are_pruned_only_where_the_vector_length_divides_every_trip_count():
+def test_tails_are_pruned_only_where_the_vector_length_divides_every_trip_count() -> None:
     exact = pruned_reasons(only_scope(scale64), vectorized=1)
     exact_x86 = pruned_reasons(only_scope(scale64), vectorized=1, host=("avx2", "avx512_256", "avx512"))
     symbolic = pruned_reasons(only_scope(axpy), vectorized=1)
@@ -144,7 +144,7 @@ def test_tails_are_pruned_only_where_the_vector_length_divides_every_trip_count(
     assert not any(note.startswith("tail") for note in symbolic)
 
 
-def test_fp_levels_are_pruned_where_they_have_nothing_to_rewrite():
+def test_fp_levels_are_pruned_where_they_have_nothing_to_rewrite() -> None:
     lone_multiply = pruned_reasons(only_scope(scale64), vectorized=1, finite_inputs=True)
     multiply_add = pruned_reasons(only_scope(axpy), vectorized=1, finite_inputs=True)
 
@@ -155,13 +155,13 @@ def test_fp_levels_are_pruned_where_they_have_nothing_to_rewrite():
     assert "fp contract" not in multiply_add and "fp fast" not in multiply_add
 
 
-def test_a_division_keeps_the_reciprocal_level_with_and_without_a_region():
+def test_a_division_keeps_the_reciprocal_level_with_and_without_a_region() -> None:
     sut = pruned_reasons(only_scope(divides), vectorized=1)
 
     assert "fp reciprocal" not in sut and "serial, fp reciprocal" not in sut
 
 
-def test_a_compilers_default_build_is_never_pruned():
+def test_a_compilers_default_build_is_never_pruned() -> None:
     candidates = flips(MATRIX, only_scope(axpy), "c", "gcc", finite_inputs=False, isas=HOST_ISAS)
 
     keep, _ = prune.prune(candidates, MATRIX, prune.facts(only_scope(axpy)), [native("gcc", 0)], HOST_ISAS)
@@ -170,7 +170,7 @@ def test_a_compilers_default_build_is_never_pruned():
 
 
 @pytest.mark.gcc
-def test_the_sweep_builds_the_defaults_first_and_skips_the_pruned_cells(tmp_path):
+def test_the_sweep_builds_the_defaults_first_and_skips_the_pruned_cells(tmp_path: pathlib.Path) -> None:
     matrix = gcc_only(tmp_path)
     program = scopes.outline(scale64.to_sdfg(), matrix.libm_calls)
 
@@ -182,7 +182,9 @@ def test_the_sweep_builds_the_defaults_first_and_skips_the_pruned_cells(tmp_path
     assert not built & {p.candidate.name(matrix) for p in sut.pruned}
 
 
-def test_a_scope_that_vectorizes_only_in_a_non_default_cell_keeps_its_vector_cells(tmp_path, monkeypatch):
+def test_a_scope_that_vectorizes_only_in_a_non_default_cell_keeps_its_vector_cells(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Regression: "nothing vectorizes" read only each compiler's default build, so a loop that vectorizes once an
     emission form or an FP level allows it lost its width and tail cells before they were built."""
     matrix = gcc_only(tmp_path)

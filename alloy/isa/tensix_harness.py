@@ -17,11 +17,20 @@ import pathlib
 import re
 import sys
 import traceback
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import torch
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
 TILE = 1024
 TILES = 2
 #: Output circular buffer; inputs take CBs 0 and 1.
 OUT_CB = 16
+
+#: A JSON object as the row files and verdicts hold it.
+Json = dict[str, Any]
 
 
 def compute_include(header: str, new: bool) -> str:
@@ -31,7 +40,7 @@ def compute_include(header: str, new: bool) -> str:
     return header if header == "compute_kernel_api.h" else f"compute_kernel_api/{header}"
 
 
-def compute_headers(row: dict, new: bool) -> list[str]:
+def compute_headers(row: Json, new: bool) -> list[str]:
     """Every header the compute kernel of ``row`` includes, as include paths of tt-metal 0.8x (``new``) or 0.6x: the
     harness programs include exactly these, and the lookup prints them."""
     if row["kind"] == "matmul":
@@ -98,12 +107,12 @@ void kernel_main() {{
 """
 
 
-def spelled(value: "str | dict", new: bool) -> str:
+def spelled(value: "str | Json", new: bool) -> str:
     """A row's ``init`` or ``call``: one spelling, or the one of this tt-metal version (``v06``, ``v08``)."""
     return value if isinstance(value, str) else value["v08" if new else "v06"]
 
 
-def body(row: dict, new: bool) -> "tuple[str, str, str]":
+def body(row: Json, new: bool) -> "tuple[str, str, str]":
     """The start-up, the per-tile body and the pops of ``row``'s kind: a unary row copies its tile to DST for the
     SFPU; a binary SFPU row copies both operands to DST; a binary FPU row reads both from their CBs."""
     init, call = spelled(row["init"], new), spelled(row["call"], new)
@@ -134,7 +143,7 @@ def body(row: dict, new: bool) -> "tuple[str, str, str]":
     return start, steps, pops
 
 
-def matmul_compute(row: dict, new: bool) -> str:
+def matmul_compute(row: Json, new: bool) -> str:
     """The compute kernel of a ``matmul`` row: one output tile accumulated in DST over ``num_tiles`` K tiles (tile
     ``kt`` of A from CB 0 and of B from CB 1), as tt-metal's single-core matmul example does. 0.8x starts the hardware
     with ``SrcOrder::Reverse`` (matmul sends in0 to SrcB) and inits with ``matmul_init``; 0.6x's ``mm_init`` does
@@ -170,7 +179,7 @@ def matmul_compute(row: dict, new: bool) -> str:
 """
 
 
-def reduction_compute(row: dict, new: bool) -> str:
+def reduction_compute(row: Json, new: bool) -> str:
     """The compute kernel of a ``reduction`` row: every data tile (CB 0) reduced into one DST tile against the scaler
     tile (CB 1), packed once, as tt-metal's ``reduce_w.cpp`` test kernel does. 0.6x's templates default to the
     ``REDUCE_OP`` and ``REDUCE_DIM`` macros, which its host defines; the kernel defines them from the row's init."""
@@ -213,7 +222,7 @@ def reduction_compute(row: dict, new: bool) -> str:
 """
 
 
-def compute(row: dict, new: bool) -> str:
+def compute(row: Json, new: bool) -> str:
     """The compute kernel of ``row`` for tt-metal 0.8x (``new``) or 0.6x."""
     if row["kind"] == "matmul":
         return matmul_compute(row, new)
@@ -259,34 +268,34 @@ def new_api() -> bool:
     return any((root / "hw/inc/api/compute").is_dir() for root in roots)
 
 
-def unpack_mode(ttnn):
+def unpack_mode(module: ModuleType) -> "type[ttnn.UnpackToDestMode]":
     """``UnpackToDestMode``: tt-metal 0.6x binds it only in the program-descriptor module, 0.8x at the top too."""
     try:
-        return ttnn.UnpackToDestMode
+        return cast("type[ttnn.UnpackToDestMode]", module.UnpackToDestMode)
     except AttributeError:
-        return ttnn._ttnn.program_descriptor.UnpackToDestMode
+        return cast("type[ttnn.UnpackToDestMode]", module._ttnn.program_descriptor.UnpackToDestMode)
 
 
-def source_code(ttnn):
+def source_code(module: ModuleType) -> "ttnn.SourceType":
     """The inline-source kernel type: nested in ``KernelDescriptor`` in tt-metal 0.8x, a module enum in 0.6x."""
     try:
-        return ttnn.KernelDescriptor.SourceType.SOURCE_CODE
+        return cast("ttnn.SourceType", module.KernelDescriptor.SourceType.SOURCE_CODE)
     except AttributeError:
-        return ttnn._ttnn.program_descriptor.SourceType.SOURCE_CODE
+        return cast("ttnn.SourceType", module._ttnn.program_descriptor.SourceType.SOURCE_CODE)
 
 
-def runtime_args(ttnn, values: list):
+def runtime_args(module: ModuleType, values: list[int]) -> object:
     """``values`` as the runtime arguments of core (0, 0): a ``RuntimeArgs`` in tt-metal 0.8x, nested lists
     indexed ``[x][y]`` in 0.6x."""
     try:
-        args = ttnn.RuntimeArgs()
+        args = module.RuntimeArgs()
     except AttributeError:
         return [[values]]
     args[0][0] = values
     return args
 
 
-def inputs(row: dict) -> list:
+def inputs(row: Json) -> list["torch.Tensor"]:
     """Operands drawn from the row's domain ``[lo, hi]``, every element distinct, shaped as TILES tiles."""
     import torch
 
@@ -302,7 +311,7 @@ def inputs(row: dict) -> list:
     return [base.roll(k * 97).reshape(TILES * 32, 32) for k in range(count)]
 
 
-def dest_fp32(row: dict) -> bool:
+def dest_fp32(row: Json) -> bool:
     """Whether DST accumulates in fp32: for f32 rows, and for every matrix product and reduction, whose sum over
     tiles loses digits in a 16-bit accumulator (bf16 mma measured 7% on ttsim without it). ``ask`` hands out the
     same setting."""
@@ -317,7 +326,7 @@ def filled(call: str) -> float:
     return float(found.group(1))
 
 
-def reference(op: str, xs: list, call: str = ""):
+def reference(op: str, xs: list["torch.Tensor"], call: str = "") -> "torch.Tensor":
     import torch
 
     x = xs[0].double()
@@ -339,7 +348,7 @@ def reference(op: str, xs: list, call: str = ""):
     return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y, "max": torch.maximum(x, y)}[op]
 
 
-def run(dev, row: dict, new: bool) -> dict:
+def run(dev: "ttnn.MeshDevice", row: Json, new: bool) -> Json:
     import torch
     import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 

@@ -6,6 +6,7 @@ import dataclasses
 import importlib
 import json
 import math
+import pathlib
 import shutil
 import subprocess
 from typing import Any
@@ -63,7 +64,7 @@ BAD = FakeTier(
     ("op", "dtype"),
     [("mul", "f64"), ("min", "f64"), ("max", "f32"), ("mod", "f64"), ("mod", "f32"), ("load", "f64")],
 )
-def test_a_float_row_of_an_op_with_integer_gaps_validates(op, dtype):
+def test_a_float_row_of_an_op_with_integer_gaps_validates(op: str, dtype: str) -> None:
     """The whole-gate test lets these ops stay unchecked, for their integer rows; their float rows must run."""
     verdict = validate("avx2", op, dtype, TABLE)
 
@@ -73,21 +74,21 @@ def test_a_float_row_of_an_op_with_integer_gaps_validates(op, dtype):
 
 @pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
 @pytest.mark.parametrize("op", ["add", "div", "fma", "sqrt", "min", "max", "abs", "neg", "select"])
-def test_the_avx2_f16_emulation_recipes_validate(op):
+def test_the_avx2_f16_emulation_recipes_validate(op: str) -> None:
     verdict = validate("avx2", op, "f16", TABLE)
 
     assert verdict.ok is True, verdict.detail
 
 
 @pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
-def test_the_avx512_fmod_recipe_validates():
+def test_the_avx512_fmod_recipe_validates() -> None:
     verdict = validate("avx512", "mod", "f64", TABLE)
 
     assert verdict.ok is True, verdict.detail
 
 
 @pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
-def test_every_avx512_kernel_builds_whatever_the_host_can_run(dtype, tmp_path):
+def test_every_avx512_kernel_builds_whatever_the_host_can_run(dtype: str, tmp_path: pathlib.Path) -> None:
     """Every runner checks the spellings and their operand types; only an AVX-512 runner gets to execute them."""
     assert CC, "the gate needs a C compiler"
     kernels = {op: kernel_c("avx512", dtype, op, TABLE) for op in TABLE.isas["avx512"].entries(dtype)}
@@ -106,7 +107,7 @@ def test_every_avx512_kernel_builds_whatever_the_host_can_run(dtype, tmp_path):
         assert sut.returncode == 0, f"{op}: {sut.stderr}"
 
 
-def test_an_isa_the_host_cannot_run_is_unverified_not_wrong(monkeypatch):
+def test_an_isa_the_host_cannot_run_is_unverified_not_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
 
     verdict = validate("neon", "add", "f64", TABLE)
@@ -115,7 +116,7 @@ def test_an_isa_the_host_cannot_run_is_unverified_not_wrong(monkeypatch):
     assert "cannot execute" in verdict.basis
 
 
-def test_the_avx512_f16_entries_are_unverified_without_fp16_hardware():
+def test_the_avx512_f16_entries_are_unverified_without_fp16_hardware() -> None:
     if host_can_run("avx512", "f16"):
         pytest.skip("this host has AVX512-FP16")
     verdict = validate("avx512", "fma", "f16", TABLE)
@@ -123,7 +124,7 @@ def test_the_avx512_f16_entries_are_unverified_without_fp16_hardware():
     assert verdict.ok is None
 
 
-def test_an_avx2_f16_recipe_composes_with_the_rows_full_width_load():
+def test_an_avx2_f16_recipe_composes_with_the_rows_full_width_load() -> None:
     """A half-width ``code`` would not take what the f16 ``load`` row returns."""
     sut = str(kernel_c("avx2", "f16", "add", TABLE))
 
@@ -134,7 +135,7 @@ def test_an_avx2_f16_recipe_composes_with_the_rows_full_width_load():
 @pytest.mark.parametrize(
     "name", ["sin-taylor7", "sin-quad-cheb13", "cos-quad-cheb12", "exp-cheb11", "log-taylor7", "log-cheb13"]
 )
-def test_every_recorded_tier_error_reproduces_within_slack(name):
+def test_every_recorded_tier_error_reproduces_within_slack(name: str) -> None:
     verdict = validate_tier(name, TABLE)
 
     assert verdict.ok is True, verdict.detail
@@ -150,13 +151,13 @@ def test_every_recorded_tier_error_reproduces_within_slack(name):
         ("log-cheb13", 3e-16),
     ],
 )
-def test_a_chebyshev_tier_reaches_what_its_degree_allows(name, bound):
+def test_a_chebyshev_tier_reaches_what_its_degree_allows(name: str, bound: float) -> None:
     """A degree n interpolant errs by about h^(n+1) / (n+1)! / 2^n on half-width h, plus Horner's rounding: the old
     coefficients sat 3 to 90 times above that."""
     assert TABLE.approx[name].error_abs < bound
 
 
-def test_a_log_tier_and_its_exponent_add_up_to_the_logarithm():
+def test_a_log_tier_and_its_exponent_add_up_to_the_logarithm() -> None:
     """log(10) = 3*ln2 + log(1.25): the reduction the tier's domain states, with x = (m-1)/(m+1) = 1/9."""
     sut = 3 * math.log(2) + float(run_tier(TABLE.approx["log-cheb13"], np.array(1 / 9)))
 
@@ -173,13 +174,13 @@ def test_a_log_tier_and_its_exponent_add_up_to_the_logarithm():
         "s = (lambda: 0)()",
     ],
 )
-def test_a_tier_step_cannot_reach_past_the_table_s_names(step):
+def test_a_tier_step_cannot_reach_past_the_table_s_names(step: str) -> None:
     """A blank ``__builtins__`` alone does not stop an attribute walk."""
     with pytest.raises(ValueError, match="only calls on names"):
         evaluate_tier(FakeTier(GOOD.op, GOOD.domain, GOOD.error_ulp, (step,)))
 
 
-def test_a_tampered_tier_fails_the_gate():
+def test_a_tampered_tier_fails_the_gate() -> None:
     """A transcription error in a coefficient must not reproduce the recorded error."""
     held = TABLE.approx["sin-quad-cheb13"]
     TABLE.approx["sin-quad-cheb13"] = BAD  # type: ignore[assignment]
@@ -192,7 +193,7 @@ def test_a_tampered_tier_fails_the_gate():
     assert "measured" in verdict.detail
 
 
-def test_a_failed_validation_lists_potentially_relevant_spellings():
+def test_a_failed_validation_lists_potentially_relevant_spellings() -> None:
     candidates = candidates_for("avx2", "fma", "f64", TABLE)
 
     names = {(hit.isa, hit.dtype, hit.op) for hit in candidates}
@@ -201,7 +202,7 @@ def test_a_failed_validation_lists_potentially_relevant_spellings():
     assert any(hit.via in ("intrinsic", "mnemonic") for hit in candidates)  # the family
 
 
-def test_the_libmvec_calls_validate_against_libm():
+def test_the_libmvec_calls_validate_against_libm() -> None:
     if not (AVX2 and shutil.which("nm")):
         pytest.skip("no AVX2 host or no libmvec")
     verdict = validate("avx2", "sin", "f64", TABLE)
@@ -210,7 +211,7 @@ def test_the_libmvec_calls_validate_against_libm():
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
-def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
+def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing() -> None:
     """The whole gate end to end: no failure and no entry the kernels leave unexercised."""
     results = validate_all(TABLE, jobs=2)
     expected = {
@@ -235,7 +236,7 @@ def test_the_gate_passes_over_everything_the_host_runs_and_skips_nothing():
         ("mul", "f64", "_mm256_add_pd"),
     ],
 )
-def test_a_wrong_spelling_in_the_table_fails_the_gate(op, dtype, wrong):
+def test_a_wrong_spelling_in_the_table_fails_the_gate(op: str, dtype: str, wrong: str) -> None:
     """The kernel runs the table's own spelling, so a mapping that compiles but computes otherwise is caught."""
     target = TABLE.isas["avx2"]
     entries = {**target.entries(dtype), op: dataclasses.replace(target.entries(dtype)[op], intrinsic=wrong)}
@@ -270,7 +271,7 @@ def with_row(isa: str, dtype: str, op: str, **fields: Any) -> Table:
         ("store", "f16", "_mm256_store_si256"),
     ],
 )
-def test_an_aligned_spelling_of_an_unaligned_row_fails_on_any_stack(op, dtype, aligned):
+def test_an_aligned_spelling_of_an_unaligned_row_fails_on_any_stack(op: str, dtype: str, aligned: str) -> None:
     """Kernel buffers sit one element past a 64-byte boundary, so an aligned access always faults."""
     sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, intrinsic=aligned))
 
@@ -282,7 +283,7 @@ def test_an_aligned_spelling_of_an_unaligned_row_fails_on_any_stack(op, dtype, a
     "op, dtype, aligned",
     [("load", "f64", "_mm512_load_pd"), ("store", "f32", "_mm512_store_ps"), ("store", "i64", "_mm512_store_si512")],
 )
-def test_an_aligned_avx512_spelling_of_an_unaligned_row_fails(op, dtype, aligned):
+def test_an_aligned_avx512_spelling_of_an_unaligned_row_fails(op: str, dtype: str, aligned: str) -> None:
     sut = validate("avx512", op, dtype, with_row("avx512", dtype, op, intrinsic=aligned))
 
     assert sut.ok is False, sut.basis
@@ -302,7 +303,7 @@ def test_an_aligned_avx512_spelling_of_an_unaligned_row_fails(op, dtype, aligned
         ("gather", "f64", "(idx, base, scale) -> v"),
     ],
 )
-def test_a_signature_in_the_wrong_order_fails_the_gate(op, dtype, swapped):
+def test_a_signature_in_the_wrong_order_fails_the_gate(op: str, dtype: str, swapped: str) -> None:
     """The kernel calls the row's intrinsic in the order its signature states, not one written beside it."""
     sut = validate("avx2", op, dtype, with_row("avx2", dtype, op, signature=swapped))
 
@@ -318,7 +319,7 @@ def test_a_signature_in_the_wrong_order_fails_the_gate(op, dtype, swapped):
         ("scatter", "f64", "(idx, base, v, scale) -> void"),
     ],
 )
-def test_an_avx512_signature_in_the_wrong_order_fails_the_gate(op, dtype, swapped):
+def test_an_avx512_signature_in_the_wrong_order_fails_the_gate(op: str, dtype: str, swapped: str) -> None:
     sut = validate("avx512", op, dtype, with_row("avx512", dtype, op, signature=swapped))
 
     assert sut.ok is False, sut.basis
@@ -326,7 +327,7 @@ def test_an_avx512_signature_in_the_wrong_order_fails_the_gate(op, dtype, swappe
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
 @pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
-def test_an_avx2_compare_spells_less_than_in_the_order_of_its_signature(dtype):
+def test_an_avx2_compare_spells_less_than_in_the_order_of_its_signature(dtype: str) -> None:
     """The float rows hid their predicate in a note, the integer rows passed (a, b) to a greater-than."""
     sut = validate("avx2", "lt", dtype, TABLE)
 
@@ -335,7 +336,7 @@ def test_an_avx2_compare_spells_less_than_in_the_order_of_its_signature(dtype):
 
 @pytest.mark.skipif(not AVX512, reason="host cannot execute AVX-512 kernels")
 @pytest.mark.parametrize("dtype", ["f64", "f32", "i64", "i32"])
-def test_an_avx512_compare_spells_less_than_in_the_order_of_its_signature(dtype):
+def test_an_avx512_compare_spells_less_than_in_the_order_of_its_signature(dtype: str) -> None:
     sut = validate("avx512", "lt", dtype, TABLE)
 
     assert sut.ok is True, sut.detail
@@ -361,7 +362,9 @@ def test_an_avx512_compare_spells_less_than_in_the_order_of_its_signature(dtype)
         ),
     ],
 )
-def test_a_recipe_written_in_the_wrong_order_fails_the_gate(op, dtype, code):
+def test_a_recipe_written_in_the_wrong_order_fails_the_gate(
+    op: str, dtype: str, code: tuple[str, str, str] | tuple[str, str] | tuple[str]
+) -> None:
     """The kernel runs the row's ``code``, the text a reader copies, so its order is what is checked. The recipe keeps
     the steps the wrong code still calls, as the table's own check demands."""
     called = " ".join(code)
@@ -375,27 +378,27 @@ def test_a_recipe_written_in_the_wrong_order_fails_the_gate(op, dtype, code):
 @pytest.mark.parametrize(
     "op, dtype", [("mul", "i64"), ("min", "i64"), ("max", "i64"), ("mod", "i64"), ("mod", "i32"), ("land", "i32")]
 )
-def test_a_recipe_with_no_hand_written_kernel_runs_all_the_same(op, dtype):
+def test_a_recipe_with_no_hand_written_kernel_runs_all_the_same(op: str, dtype: str) -> None:
     """These rows had no kernel, so they stayed unverified: their ``code`` is the kernel now."""
     sut = validate("avx2", op, dtype, TABLE)
 
     assert sut.ok is True, sut.detail
 
 
-def test_a_kernel_runs_the_recipe_as_the_table_writes_it():
+def test_a_kernel_runs_the_recipe_as_the_table_writes_it() -> None:
     sut = str(kernel_c("avx2", "f64", "mod", TABLE))
 
     assert "_mm256_fnmadd_pd(q, vb, va);" in sut
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
-def test_a_signature_naming_an_operand_the_op_does_not_have_fails_the_gate():
+def test_a_signature_naming_an_operand_the_op_does_not_have_fails_the_gate() -> None:
     sut = validate("avx2", "add", "f64", with_row("avx2", "f64", "add", signature="(x, y) -> v"))
 
     assert sut.ok is False
 
 
-def test_the_fma_kernel_tells_all_three_operands_apart():
+def test_the_fma_kernel_tells_all_three_operands_apart() -> None:
     sut = str(kernel_c("avx2", "f64", "fma", TABLE))
 
     assert "_mm256_fmadd_pd(va, vb, vc)" in sut
@@ -403,19 +406,19 @@ def test_the_fma_kernel_tells_all_three_operands_apart():
 
 
 @pytest.mark.skipif(not AVX2, reason="needs AVX2")
-def test_a_nan_result_fails_the_gate_rather_than_comparing_false():
+def test_a_nan_result_fails_the_gate_rather_than_comparing_false() -> None:
     source = str(kernel_c("avx2", "f64", "add", TABLE)).replace(
         "__m256d vr = _mm256_add_pd(va, vb);", "__m256d vr = _mm256_div_pd(_mm256_setzero_pd(), _mm256_setzero_pd());"
     )
     assert math.isnan(compile_run(source, c_flags("avx2", "f64")))
 
 
-def test_a_kernel_that_skips_a_spelling_verifies_nothing():
+def test_a_kernel_that_skips_a_spelling_verifies_nothing() -> None:
     assert unexercised(TABLE.entry("avx2", "add", "f64"), "_mm256_mul_pd(a, b)") == ["_mm256_add_pd"]
     assert unexercised(TABLE.entry("avx2", "scatter", "f64"), "_mm256_storeu_pd(p, v)") == []
 
 
-def test_no_x86_kernel_is_built_for_an_arm_isa():
+def test_no_x86_kernel_is_built_for_an_arm_isa() -> None:
     assert "#include <arm_neon.h>" in str(kernel_c("neon", "f64", "add", TABLE))
     assert "#include <arm_sve.h>" in str(kernel_c("sve", "f64", "add", TABLE))
     assert "immintrin" not in str(kernel_c("neon", "f64", "add", TABLE))
@@ -423,14 +426,14 @@ def test_no_x86_kernel_is_built_for_an_arm_isa():
 
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize("dtype", ["f64", "f32", "f16", "i64", "i32"])
-def test_every_arm_row_holds_under_qemu_or_at_least_compiles(isa, dtype):
+def test_every_arm_row_holds_under_qemu_or_at_least_compiles(isa: str, dtype: str) -> None:
     """A cross compile catches a wrong name or operand type; only a run under qemu earns a verified row."""
     verdicts = {op: validate(isa, op, dtype, TABLE) for op in TABLE.isas[isa].entries(dtype)}
 
     assert {op: verdict.detail for op, verdict in verdicts.items() if verdict.ok is False} == {}
 
 
-def test_an_arm_row_that_only_compiled_is_not_verified(monkeypatch):
+def test_an_arm_row_that_only_compiled_is_not_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
 
     sut = validate("sve", "add", "f64", TABLE)
@@ -447,7 +450,9 @@ def test_an_arm_row_that_only_compiled_is_not_verified(monkeypatch):
         ("neon", "f64", "add", "vadd_not_an_intrinsic"),
     ],
 )
-def test_a_row_that_does_not_compile_for_its_target_is_wrong(monkeypatch, isa, dtype, op, wrong):
+def test_a_row_that_does_not_compile_for_its_target_is_wrong(
+    monkeypatch: pytest.MonkeyPatch, isa: str, dtype: str, op: str, wrong: str
+) -> None:
     monkeypatch.setattr(validate_module, "emulated", lambda isa: None)
 
     sut = validate(isa, op, dtype, with_row(isa, dtype, op, intrinsic=wrong))
@@ -472,7 +477,7 @@ def test_a_row_that_does_not_compile_for_its_target_is_wrong(monkeypatch, isa, d
         ),
     ],
 )
-def test_a_wrong_arm_row_fails_under_qemu(isa, dtype, op, fields):
+def test_a_wrong_arm_row_fails_under_qemu(isa: str, dtype: str, op: str, fields: dict[str, object]) -> None:
     sut = validate(isa, op, dtype, with_row(isa, dtype, op, **fields))
 
     assert sut.ok is False, sut.basis
@@ -481,31 +486,31 @@ def test_a_wrong_arm_row_fails_under_qemu(isa, dtype, op, fields):
 @pytest.mark.skipif(validate_module.emulated("neon") is None, reason="needs qemu-aarch64 and the cross compiler")
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize("op", ["sin", "cos", "exp"])
-def test_the_arm_libmvec_calls_validate_under_qemu(isa, op):
+def test_the_arm_libmvec_calls_validate_under_qemu(isa: str, op: str) -> None:
     sut = validate(isa, op, "f64", TABLE)
 
     assert sut.ok is True, sut.basis
     assert "qemu" in sut.basis
 
 
-def test_an_isa_the_host_lacks_is_unverified_and_not_failed(monkeypatch):
+def test_an_isa_the_host_lacks_is_unverified_and_not_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(validate_module, "host_can_run", lambda isa, dtype: False)
     assert validate("avx512", "add", "f64", TABLE).ok is None
     assert validate("avx512", "sin", "f32", TABLE).ok is None  # the tier stands, the library call did not run
 
 
-def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch):
+def test_a_missing_compiler_is_unverified_and_not_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(validate_module, "host_can_run", lambda isa, dtype: True)
     monkeypatch.setattr(validate_module, "c_compiler", lambda: None)
     assert validate("avx2", "add", "f64", TABLE).ok is None
 
 
-def test_the_alias_runs_the_same_kernels():
+def test_the_alias_runs_the_same_kernels() -> None:
     assert host_can_run("avx512_256", "f64") == host_can_run("avx512", "f64")
     assert kernel_c("avx512_256", "f64", "add", TABLE) == kernel_c("avx512", "f64", "add", TABLE)
 
 
-def test_a_lookup_prints_a_recipes_operand_order(capsys):
+def test_a_lookup_prints_a_recipes_operand_order(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "avx2", "mod", "f64", "--no-verify"]) == 0
 
     sut = capsys.readouterr().out
@@ -513,7 +518,7 @@ def test_a_lookup_prints_a_recipes_operand_order(capsys):
     assert "_mm256_fnmadd_pd(q, b, a)" in sut
 
 
-def test_a_lookup_as_json_carries_a_recipes_code(capsys):
+def test_a_lookup_as_json_carries_a_recipes_code(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "neon", "mod", "f64", "--no-verify", "--json"]) == 0
 
     sut = json.loads(capsys.readouterr().out)
@@ -540,7 +545,7 @@ MNEMONIC_ROWS = [
 
 @pytest.mark.avx512
 @pytest.mark.parametrize(("isa", "dtype", "op"), MASKED_ROWS)
-def test_a_masked_form_keeps_its_inactive_lanes_and_computes_its_active_ones(isa, dtype, op):
+def test_a_masked_form_keeps_its_inactive_lanes_and_computes_its_active_ones(isa: str, dtype: str, op: str) -> None:
     sut = validate(isa, op, dtype, TABLE)
 
     assert sut.ok is True, sut.detail
@@ -548,7 +553,7 @@ def test_a_masked_form_keeps_its_inactive_lanes_and_computes_its_active_ones(isa
 
 
 @pytest.mark.avx512
-def test_a_masked_form_that_keeps_the_wrong_lanes_fails_its_row():
+def test_a_masked_form_that_keeps_the_wrong_lanes_fails_its_row() -> None:
     rows = TABLE.isas["avx512"].f64
     held = rows["fma"]
     rows["fma"] = dataclasses.replace(held, masked="_mm512_mask3_fmadd_pd(a, b, c, k)")
@@ -563,7 +568,9 @@ def test_a_masked_form_that_keeps_the_wrong_lanes_fails_its_row():
 
 @pytest.mark.gcc
 @pytest.mark.parametrize(("isa", "dtype", "op"), MNEMONIC_ROWS)
-def test_a_rows_mnemonic_is_what_gcc_prints_for_it(isa, dtype, op, monkeypatch):
+def test_a_rows_mnemonic_is_what_gcc_prints_for_it(
+    isa: str, dtype: str, op: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(validate_module, "c_compiler", lambda: "gcc")
 
     sut = validate_mnemonic(isa, op, dtype, TABLE)
@@ -572,7 +579,7 @@ def test_a_rows_mnemonic_is_what_gcc_prints_for_it(isa, dtype, op, monkeypatch):
 
 
 @pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
-def test_a_one_intrinsic_row_whose_mnemonic_the_compiler_did_not_print_fails():
+def test_a_one_intrinsic_row_whose_mnemonic_the_compiler_did_not_print_fails() -> None:
     sut = validate("avx2", "add", "f64", with_row("avx2", "f64", "add", mnemonic="vdivpd"))
 
     assert sut.ok is False
@@ -580,7 +587,7 @@ def test_a_one_intrinsic_row_whose_mnemonic_the_compiler_did_not_print_fails():
 
 
 @pytest.mark.skipif(not AVX2, reason="host cannot execute AVX2 kernels")
-def test_a_recipe_row_whose_mnemonic_the_compiler_did_not_print_is_reported_and_stays_verified():
+def test_a_recipe_row_whose_mnemonic_the_compiler_did_not_print_is_reported_and_stays_verified() -> None:
     """A recipe is several intrinsics, and a compiler may fuse or replace any of them."""
     sut = validate("avx2", "min", "i64", with_row("avx2", "i64", "min", mnemonic="vdivpd"))
 
@@ -598,7 +605,7 @@ def test_a_recipe_row_whose_mnemonic_the_compiler_did_not_print_is_reported_and_
         ("avx512", "max", "_mm512_max_epi64", "_mm512_max_epi32"),
     ],
 )
-def test_an_i64_row_spelled_on_32_bit_lanes_fails(isa, op, right, wrong):
+def test_an_i64_row_spelled_on_32_bit_lanes_fails(isa: str, op: str, right: str, wrong: str) -> None:
     """The i64 inputs carry and borrow across bit 32 and hold INT64_MIN, so 32-bit lanes compute other values."""
     if isa == "avx512" and not AVX512:
         pytest.skip("host cannot execute AVX-512 kernels")
@@ -610,7 +617,7 @@ def test_an_i64_row_spelled_on_32_bit_lanes_fails(isa, op, right, wrong):
     assert "max rel err 1.000e+00" in sut.detail
 
 
-def test_every_i64_kernel_feeds_int64_min_and_compares_without_rounding():
+def test_every_i64_kernel_feeds_int64_min_and_compares_without_rounding() -> None:
     for op in TABLE.isas["avx2"].i64:
         sut = str(kernel_c("avx2", "i64", op, TABLE))
 
@@ -643,7 +650,9 @@ def test_every_i64_kernel_feeds_int64_min_and_compares_without_rounding():
         ),
     ],
 )
-def test_a_row_that_differs_only_on_nan_or_signed_zero_fails(isa, dtype, op, fields):
+def test_a_row_that_differs_only_on_nan_or_signed_zero_fails(
+    isa: str, dtype: str, op: str, fields: dict[str, object]
+) -> None:
     """lt, min, max, select, abs, and neg see NaN, both zeros, and infinities, and compare bits."""
     if isa == "avx512" and not AVX512:
         pytest.skip("host cannot execute AVX-512 kernels")
@@ -654,7 +663,7 @@ def test_a_row_that_differs_only_on_nan_or_signed_zero_fails(isa, dtype, op, fie
 
 
 @pytest.mark.parametrize("isa, dtype", [("neon", "f64"), ("sve", "f32"), ("avx2", "f16")])
-def test_the_special_lanes_reach_every_vector_and_arm_min_propagates_nan(isa, dtype):
+def test_the_special_lanes_reach_every_vector_and_arm_min_propagates_nan(isa: str, dtype: str) -> None:
     sut = str(kernel_c(isa, dtype, "min", TABLE))
 
     assert "NAN, " in sut and "-0.0" in sut
@@ -689,7 +698,7 @@ def test_the_special_lanes_reach_every_vector_and_arm_min_propagates_nan(isa, dt
         ("avx2", "f64", "reduce_min", {"code": ("_mm256_cvtsd_f64(v)",), "recipe": ("_mm256_cvtsd_f64",)}),
     ],
 )
-def test_a_reduction_that_skips_a_lane_fails(isa, dtype, op, fields):
+def test_a_reduction_that_skips_a_lane_fails(isa: str, dtype: str, op: str, fields: dict[str, object]) -> None:
     """The extreme sits in every lane in turn, the last one included."""
     if isa == "avx512" and not AVX512:
         pytest.skip("host cannot execute AVX-512 kernels")
@@ -700,7 +709,7 @@ def test_a_reduction_that_skips_a_lane_fails(isa, dtype, op, fields):
 
 
 @pytest.mark.parametrize("isa", ["neon", "sve", "avx2"])
-def test_a_min_reduction_kernel_plants_the_extreme_in_every_lane_and_compares_every_lane(isa):
+def test_a_min_reduction_kernel_plants_the_extreme_in_every_lane_and_compares_every_lane(isa: str) -> None:
     """A one-lane NEON f64 min returns lane 0; with -1024 in lane 1 its run compares lane 1 and fails."""
     sut = str(kernel_c(isa, "f64", "reduce_min", TABLE))
 
@@ -708,7 +717,7 @@ def test_a_min_reduction_kernel_plants_the_extreme_in_every_lane_and_compares_ev
     assert "a[p] = -1024;" in sut and "out[p] = r;" in sut
 
 
-def test_a_verdict_says_a_note_stays_unchecked():
+def test_a_verdict_says_a_note_stays_unchecked() -> None:
     sut = validate("avx2", "add", "f64", TABLE)
 
     assert "note unchecked" in sut.detail
@@ -723,9 +732,11 @@ def test_a_verdict_says_a_note_stays_unchecked():
             "store_bf16",  # truncates instead of rounding to nearest even
             {
                 "code": (
-                    "_mm_storeu_si128((__m128i*)p, _mm_packus_epi32(_mm256_castsi256_si128(_mm256_srli_epi32("
-                    "_mm256_castps_si256(v), 16)), _mm256_extracti128_si256(_mm256_srli_epi32("
-                    "_mm256_castps_si256(v), 16), 1)))",
+                    (
+                        "_mm_storeu_si128((__m128i*)p, _mm_packus_epi32(_mm256_castsi256_si128(_mm256_srli_epi32("
+                        "_mm256_castps_si256(v), 16)), _mm256_extracti128_si256(_mm256_srli_epi32("
+                        "_mm256_castps_si256(v), 16), 1)))"
+                    ),
                 ),  # fmt: skip
                 "recipe": (
                     "_mm256_castps_si256",
@@ -741,14 +752,16 @@ def test_a_verdict_says_a_note_stays_unchecked():
             "load_bf16",  # shifts by 8, not 16
             {
                 "code": (
-                    "_mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128("
-                    "(const __m128i*)p)), 8))",
+                    (
+                        "_mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128("
+                        "(const __m128i*)p)), 8))"
+                    ),
                 )
             },  # fmt: skip
         ),
     ],
 )
-def test_a_half_storage_row_that_converts_wrongly_fails(op, fields):
+def test_a_half_storage_row_that_converts_wrongly_fails(op: str, fields: dict[str, object]) -> None:
     """f16 and bf16 storage: a load is compared with C's widening, a store with nearest-even narrowing."""
     sut = validate("avx2", op, "f32", with_row("avx2", "f32", op, **dict(fields)))
 
@@ -757,7 +770,7 @@ def test_a_half_storage_row_that_converts_wrongly_fails(op, fields):
 
 @pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
 @pytest.mark.parametrize("op", ["load_f16", "store_f16", "load_bf16", "store_bf16"])
-def test_every_cpu_target_converts_f16_and_bf16_storage_on_f32_lanes(isa, op):
+def test_every_cpu_target_converts_f16_and_bf16_storage_on_f32_lanes(isa: str, op: str) -> None:
     assert TABLE.entry(isa, op, "f32").code
     with pytest.raises(KeyError, match="look under f32"):
         TABLE.entry(isa, op, "f64")

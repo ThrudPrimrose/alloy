@@ -19,6 +19,8 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
+from multiprocessing.connection import Connection
+from multiprocessing.context import ForkServerContext
 from typing import Any, Literal, Self
 
 import numpy as np
@@ -113,7 +115,12 @@ def set_team(threads: int) -> None:
 
 
 def child_main(
-    target: Callable[..., Any], args: tuple, cpus: tuple[int, ...], threads: int, share: float, conn: Any
+    target: Callable[..., object],
+    args: tuple[object, ...],
+    cpus: tuple[int, ...],
+    threads: int,
+    share: float,
+    conn: Connection,
 ) -> None:
     # A runtime the program library brings in reads this child's settings; one the fork server's numpy already
     # started read the fork server's, and takes the team from set_team.
@@ -137,7 +144,7 @@ def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) ->
     declared = program.sdfg.arglist()
     distinct: dict[bytes, Outputs] = {}
     deadline = time.monotonic() + CHILD_CALLS_S
-    for unused in range(CHILD_CALLS):
+    for _ in range(CHILD_CALLS):
         result = bound_outputs(outputs, buffers, program(**buffers), declared)
         distinct.setdefault(b"".join(value.tobytes() for value in result.values()), result)
         if time.monotonic() > deadline:
@@ -148,7 +155,9 @@ def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) ->
     return list(distinct.values())
 
 
-def bound_outputs(outputs: tuple[str, ...], args: dict[str, Any], returned: Any, declared: dict[str, Any]) -> Outputs:
+def bound_outputs(
+    outputs: tuple[str, ...], args: dict[str, Any], returned: object, declared: dict[str, Any]
+) -> Outputs:
     """Each output's value: the argument the program writes, or, for a name it does not declare, its next return
     value in order. A manifest may name a returned output, and its buffer in the draw is then never written."""
     values = iter(returned if isinstance(returned, tuple | list) else () if returned is None else (returned,))
@@ -165,7 +174,7 @@ def bound_outputs(outputs: tuple[str, ...], args: dict[str, Any], returned: Any,
 FORK_SERVER_PRELOAD = ("alloy.evaluate.fork_server",)
 
 
-def child_context() -> Any:
+def child_context() -> ForkServerContext:
     """Children come from a fork server that imported dace once, never from this (threaded) process: a fork of a
     threaded parent can deadlock the child."""
     ctx = multiprocessing.get_context("forkserver")
@@ -195,14 +204,14 @@ def slot_share() -> float:
     return 1 / len(machine.core_slots())
 
 
-def in_child(
-    target: Callable[..., Any],
-    args: tuple,
+def in_child[T](
+    target: Callable[..., T],
+    args: tuple[object, ...],
     cpus: tuple[int, ...],
     share: float,
     timeout: float = CALL_TIMEOUT_S,
     threads: int | None = None,
-) -> Any:
+) -> T | str:
     """``target(*args)`` in a fork-server child bound to ``cpus`` with an OpenMP team of ``threads`` (default one per
     CPU), capped at ``share`` of the available memory and killed after ``timeout`` seconds, so a crash is a value: a
     string describing it."""
@@ -212,7 +221,7 @@ def in_child(
     child = ctx.Process(target=child_main, args=(target, args, cpus, team, share, send))
     child.start()
     send.close()
-    result = None
+    result: T | None = None
     if receive.poll(timeout):
         try:
             result = receive.recv()

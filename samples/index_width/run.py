@@ -13,11 +13,14 @@ import platform
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import dace
 import kernels
 import numpy as np
+from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.config import Config, set_temporary
+from dace.frontend.python.parser import DaceProgram
 
 HERE = pathlib.Path(__file__).parent
 COMPILERS = {"gcc": "g++", "clang": "clang++"}
@@ -94,7 +97,7 @@ KERNELS: dict[str, tuple[dace.frontend.python.parser.DaceProgram, list[tuple[str
 }
 
 
-def configured(compiler: str, index_ctype: str, loop_index_type: str):
+def configured(compiler: str, index_ctype: str, loop_index_type: str) -> tuple[AbstractContextManager[None], ...]:
     return (
         set_temporary("compiler", "cpu", "implementation", value="experimental_readable"),
         set_temporary("compiler", "cpu", "codegen_params", "index_ctype", value=index_ctype),
@@ -104,7 +107,7 @@ def configured(compiler: str, index_ctype: str, loop_index_type: str):
     )
 
 
-def build(program, compiler: str, kernel: str, arm: str):
+def build(program: DaceProgram, compiler: str, kernel: str, arm: str) -> CompiledSDFG:
     """Compile one arm and write its kernel translation unit to code/<kernel>/<arm>.cpp (compiler independent)."""
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = f"{kernel}_{arm}"

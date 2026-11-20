@@ -124,7 +124,8 @@ def bench_entry(linker: Linker, plan: Best, winners: dict[str, Build], spec: Ben
     (best / "program.c").write_text(form.code)
     link = tuple(token.removeprefix(f"{best}/") for token in form.link)  # make runs in best/
     (best / "Makefile").write_text(linker.makefile(Best(plan.scopes, plan.arguments, link)))
-    return form.workspace_bytes
+    workspace: str = form.workspace_bytes
+    return workspace
 
 
 def gpu_report(picks: dict[int, gpu.Pick], dialect: str, arch: str, mode: Mode) -> str:

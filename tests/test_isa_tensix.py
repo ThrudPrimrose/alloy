@@ -12,7 +12,7 @@ from alloy.isa import tensix, tensix_harness
 from alloy.isa.__main__ import main
 
 
-def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image():
+def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image() -> None:
     verdicts = tensix.verdicts()
 
     for row in tensix.rows():
@@ -25,7 +25,7 @@ def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image():
     assert tensix.recorded()["image"] == tensix.IMAGE
 
 
-def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path: pathlib.Path):
+def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path: pathlib.Path) -> None:
     exp = next(r for r in tensix.rows() if r.op == "exp")
     current = tensix.Verdict("exp", "f32", exp.unit, ok=True, rel=1e-7, digest=tensix.digest(exp, "f32"))
     changed = tensix.Verdict("exp", "bf16", exp.unit, ok=False, rel=0.5, digest="0123456789abcdef")
@@ -39,7 +39,7 @@ def test_a_record_of_a_row_changed_since_its_run_is_stale_and_left_out(tmp_path:
     assert sut == {("exp", "f32", exp.unit): current}
 
 
-def test_every_card_record_is_of_a_current_row_and_its_verdict_follows_the_rows_bound():
+def test_every_card_record_is_of_a_current_row_and_its_verdict_follows_the_rows_bound() -> None:
     recorded = tensix.recorded(tensix.CARD_PATH)["verdicts"]
 
     sut = tensix.card_verdicts()
@@ -49,7 +49,7 @@ def test_every_card_record_is_of_a_current_row_and_its_verdict_follows_the_rows_
         assert verdict.ok == (verdict.rel is not None and verdict.rel < tensix.TOLERANCE[verdict.dtype]), verdict
 
 
-def test_the_lookup_prints_the_card_measurement_beside_the_ttsim_run(capsys: pytest.CaptureFixture[str]):
+def test_the_lookup_prints_the_card_measurement_beside_the_ttsim_run(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["lookup", "tensix", "log", "f32"])
 
     out = capsys.readouterr().out
@@ -59,7 +59,7 @@ def test_the_lookup_prints_the_card_measurement_beside_the_ttsim_run(capsys: pyt
     assert "max abs error 0.0165 (OUTSIDE the row's bound" in out
 
 
-def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32():
+def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32() -> None:
     verdicts = tensix.verdicts()
 
     fpu, sfpu = verdicts[("add", "f32", "FPU")], verdicts[("add", "f32", "SFPU")]
@@ -68,7 +68,7 @@ def test_an_fpu_add_reads_tf32_operands_and_an_sfpu_add_keeps_f32():
     assert fpu.rel > 1e-5 > 1e-6 > sfpu.rel
 
 
-def test_the_lookup_offers_both_units_of_an_op_with_their_recorded_errors(capsys: pytest.CaptureFixture[str]):
+def test_the_lookup_offers_both_units_of_an_op_with_their_recorded_errors(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "tensix", "add", "f32"]) == 0
 
     printed = capsys.readouterr().out
@@ -82,7 +82,7 @@ def test_the_lookup_offers_both_units_of_an_op_with_their_recorded_errors(capsys
 )
 def test_the_lookup_exits_2_only_for_a_failed_run_not_for_a_missing_one(
     ok: bool | None, code: int, said: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     row = next(r for r in tensix.rows() if r.op == "exp")
     found = {} if ok is None else {("exp", "f32", row.unit): tensix.Verdict("exp", "f32", row.unit, ok, 0.5, "off")}
     monkeypatch.setattr(tensix, "verdicts", lambda: found)
@@ -92,7 +92,7 @@ def test_the_lookup_exits_2_only_for_a_failed_run_not_for_a_missing_one(
     assert said in capsys.readouterr().out
 
 
-def test_the_lookup_refuses_f64_because_tensix_has_none(capsys: pytest.CaptureFixture[str]):
+def test_the_lookup_refuses_f64_because_tensix_has_none(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "tensix", "exp", "f64"]) != 0
 
     assert "no f64" in capsys.readouterr().err
@@ -113,7 +113,7 @@ def test_the_lookup_refuses_f64_because_tensix_has_none(capsys: pytest.CaptureFi
         ),
     ],
 )
-def test_the_compute_kernel_is_spelled_for_its_tt_metal_version(new: bool, spelled: list[str], absent: str):
+def test_the_compute_kernel_is_spelled_for_its_tt_metal_version(new: bool, spelled: list[str], absent: str) -> None:
     row = next(r for r in tensix.harness_rows() if (r["op"], r["unit"]) == ("add", "FPU"))
 
     sut = tensix_harness.compute(row, new)
@@ -122,13 +122,13 @@ def test_the_compute_kernel_is_spelled_for_its_tt_metal_version(new: bool, spell
     assert absent not in sut
 
 
-def test_the_root_header_of_tt_metal_06_is_not_under_compute_kernel_api():
+def test_the_root_header_of_tt_metal_06_is_not_under_compute_kernel_api() -> None:
     assert tensix_harness.compute_include("compute_kernel_api.h", new=False) == "compute_kernel_api.h"
     assert tensix_harness.compute_include("eltwise_unary/exp.h", new=False) == "compute_kernel_api/eltwise_unary/exp.h"
 
 
 @pytest.mark.tensix
-def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactory):
+def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactory) -> None:
     if shutil.which("docker") is None:
         pytest.fail("the tensix mark needs docker")
     library = tensix.ttsim(tmp_path_factory.mktemp("ttsim"))
@@ -146,7 +146,7 @@ def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactor
             "matmul_tiles(c0, c1, 0, 0, 0);", '#include "api/compute/src_order.h"']),
     (False, ["mm_init(c0, c1, c16);", "matmul_tiles(c0, c1, 0, 0, 0, false);"]),
 ])  # fmt: skip
-def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool, spelled: list[str]):
+def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool, spelled: list[str]) -> None:
     row = next(r for r in tensix.harness_rows() if r["op"] == "mma")
 
     sut = tensix_harness.compute(row, new)
@@ -156,7 +156,7 @@ def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool,
 
 
 @pytest.mark.parametrize("op", ["add", "sub", "mul", "div"])
-def test_the_reference_of_an_elementwise_row_takes_tiles_that_do_not_chain_as_a_product(op: str):
+def test_the_reference_of_an_elementwise_row_takes_tiles_that_do_not_chain_as_a_product(op: str) -> None:
     import torch
 
     x, y = torch.full((64, 32), 6.0), torch.full((64, 32), 3.0)
@@ -167,7 +167,7 @@ def test_the_reference_of_an_elementwise_row_takes_tiles_that_do_not_chain_as_a_
     assert sut[0, 0].item() == {"add": 9.0, "sub": 3.0, "mul": 18.0, "div": 2.0}[op]
 
 
-def test_the_reference_of_an_mma_row_is_the_matrix_product():
+def test_the_reference_of_an_mma_row_is_the_matrix_product() -> None:
     import torch
 
     sut = tensix_harness.reference("mma", [torch.ones(32, 64), torch.ones(64, 32)])
@@ -182,7 +182,9 @@ def test_the_reference_of_an_mma_row_is_the_matrix_product():
     ({"dtype": "bf16", "kind": "unary"}, False),
     ({"dtype": "bf16", "kind": "binary"}, False),
 ])  # fmt: skip
-def test_a_matrix_product_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(row, expected):
+def test_a_matrix_product_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(
+    row: dict[str, str], expected: bool
+) -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     assert tensix_harness.dest_fp32(row) is expected
@@ -199,7 +201,7 @@ def test_a_matrix_product_accumulates_in_fp32_for_every_element_type_as_ask_tell
 ])  # fmt: skip
 def test_the_reduction_kernel_reduces_every_tile_into_one_dst_tile_against_one_scaler_tile(
     new: bool, spelled: list[str]
-):
+) -> None:
     row = next(r for r in tensix.harness_rows() if r["op"] == "reduce_add")
 
     sut = tensix_harness.compute(row, new)
@@ -211,7 +213,7 @@ def test_the_reduction_kernel_reduces_every_tile_into_one_dst_tile_against_one_s
     assert sut.index("reduce_tile<") < sut.index("pack_tile(0, c16)") < sut.index("reduce_uninit()")
 
 
-def test_the_reader_of_a_reduction_reads_the_scaler_tile_once():
+def test_the_reader_of_a_reduction_reads_the_scaler_tile_once() -> None:
     sut = tensix_harness.reader([0, 3], new=True, once=1)
 
     assert sut.count("if (i == 0) {") == 1
@@ -219,7 +221,7 @@ def test_the_reader_of_a_reduction_reads_the_scaler_tile_once():
     assert sut.index("cb_reserve_back(0, 1)") < sut.index("if (i == 0) {")
 
 
-def test_the_scan_kernel_inits_once_and_marks_only_the_first_tile_of_a_column():
+def test_the_scan_kernel_inits_once_and_marks_only_the_first_tile_of_a_column() -> None:
     row = next(r for r in tensix.harness_rows() if r["op"] == "scan_add")
 
     sut = tensix_harness.compute(row, new=True)
@@ -229,7 +231,7 @@ def test_the_scan_kernel_inits_once_and_marks_only_the_first_tile_of_a_column():
     assert sut.index("copy_tile(c0, 0, 0)") < sut.index("cumsum_tile(0, i == 0)")
 
 
-def test_the_scaler_tile_holds_one_in_the_first_row_of_each_face():
+def test_the_scaler_tile_holds_one_in_the_first_row_of_each_face() -> None:
     row = next(r for r in tensix.harness_rows() if r["op"] == "reduce_max")
 
     data, scaler = tensix_harness.inputs(row)
@@ -239,7 +241,7 @@ def test_the_scaler_tile_holds_one_in_the_first_row_of_each_face():
 
 
 @pytest.mark.parametrize(("op", "expected"), [("reduce_add", 2048.0), ("reduce_max", 1.0)])
-def test_the_reference_of_a_reduction_is_one_value_over_every_tile(op: str, expected: float):
+def test_the_reference_of_a_reduction_is_one_value_over_every_tile(op: str, expected: float) -> None:
     import torch
 
     sut = tensix_harness.reference(op, [torch.ones(64, 32), torch.zeros(32, 32)])
@@ -247,7 +249,7 @@ def test_the_reference_of_a_reduction_is_one_value_over_every_tile(op: str, expe
     assert sut.numel() == 1 and sut.item() == expected
 
 
-def test_the_reference_of_the_scan_runs_down_each_column_across_tiles():
+def test_the_reference_of_the_scan_runs_down_each_column_across_tiles() -> None:
     import torch
 
     sut = tensix_harness.reference("scan_add", [torch.ones(64, 32)])
@@ -257,7 +259,7 @@ def test_the_reference_of_the_scan_runs_down_each_column_across_tiles():
 
 
 @pytest.mark.parametrize("kind", ["reduction", "matmul"])
-def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(kind: str):
+def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the_caller(kind: str) -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     assert tensix_harness.dest_fp32({"dtype": "bf16", "kind": kind}) is True
@@ -270,7 +272,9 @@ def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the
 
 @pytest.mark.parametrize(("op", "shape", "tiles"), [("reduce_add", (64, 64), 4), ("reduce_max", (64, 64), 4),
                                                      ("scan_add", (64, 32), 2)])  # fmt: skip
-def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_init_and_one_call_per_tile(op, shape, tiles):
+def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_init_and_one_call_per_tile(
+    op: str, shape: tuple[int, int], tiles: int
+) -> None:
     from alloy.isa.ask import Check, Feasible, Operand, Request, ask
 
     answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", shape)}), verify=False)
@@ -281,7 +285,7 @@ def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_init_and_o
     assert [s.spelling for s in answer.steps].count("pack_tile(0, c16)") == (op != "scan_add")
 
 
-def test_a_scan_over_more_than_one_column_of_tiles_is_refused_with_one_column_as_nearest():
+def test_a_scan_over_more_than_one_column_of_tiles_is_refused_with_one_column_as_nearest() -> None:
     """cumsum_tile's first flag restarts the total at the top of one column; the check ran one column (reviewer C)."""
     from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
 
@@ -291,7 +295,7 @@ def test_a_scan_over_more_than_one_column_of_tiles_is_refused_with_one_column_as
     assert answer.nearest == ("x tile_register:f32:64x32",)
 
 
-def test_an_f32_tile_answer_carries_the_compute_config_its_check_ran_with_and_prefers_the_sfpu():
+def test_an_f32_tile_answer_carries_the_compute_config_its_check_ran_with_and_prefers_the_sfpu() -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     sfpu = ask(Request("tensix", "add", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
@@ -304,15 +308,14 @@ def test_an_f32_tile_answer_carries_the_compute_config_its_check_ran_with_and_pr
     assert isinstance(fpu, Feasible) and any("TF32" in note for note in fpu.notes)
 
 
-def test_a_pending_row_is_offered_unverified_until_its_ttsim_run_is_recorded(monkeypatch: pytest.MonkeyPatch):
+def test_a_pending_row_is_offered_unverified_until_its_ttsim_run_is_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
     import dataclasses
 
-    from alloy.isa import ask as ask_module
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     pending = tuple(dataclasses.replace(r, pending=True) if r.op == "scan_add" else r for r in tensix.rows())
-    monkeypatch.setattr(ask_module.tensix, "rows", lambda: pending)
-    monkeypatch.setattr(ask_module.tensix, "verdicts", dict)
+    monkeypatch.setattr(tensix, "rows", lambda: pending)
+    monkeypatch.setattr(tensix, "verdicts", dict)
 
     answer = ask(Request("tensix", "scan_add", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
 
@@ -320,7 +323,7 @@ def test_a_pending_row_is_offered_unverified_until_its_ttsim_run_is_recorded(mon
     assert answer.check.status == "unverified" and "pending" in answer.check.basis
 
 
-def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
+def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation() -> None:
     from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
 
     answer = ask(Request("tensix", "reduce_min", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
@@ -329,7 +332,9 @@ def test_a_tensix_minimum_is_refused_with_the_maximum_of_the_negation():
     assert answer.nearest == ("tensix neg", "tensix reduce_max") and "negative_tile" in answer.fix
 
 
-def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(capsys: pytest.CaptureFixture[str]):
+def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert main(["lookup", "tensix", "log", "f32"]) == 0
 
     printed = capsys.readouterr().out
@@ -340,7 +345,7 @@ def test_the_log_lookup_gives_the_card_checked_sfpi_kernel_beside_the_tile_call(
 
 
 @pytest.mark.parametrize("op", ["log", "exp"])
-def test_ask_with_a_bound_answers_the_sfpi_kernel_with_its_card_verdict_and_full_source(op: str):
+def test_ask_with_a_bound_answers_the_sfpi_kernel_with_its_card_verdict_and_full_source(op: str) -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=8), verify=False)
@@ -352,7 +357,7 @@ def test_ask_with_a_bound_answers_the_sfpi_kernel_with_its_card_verdict_and_full
     assert any(note.startswith("dev: ") for note in answer.notes)
 
 
-def test_ask_below_the_card_error_of_every_rung_is_refused_with_the_bound_that_holds():
+def test_ask_below_the_card_error_of_every_rung_is_refused_with_the_bound_that_holds() -> None:
     from alloy.isa import tensix
     from alloy.isa.ask import Infeasible, Operand, Request, Why, ask
 
@@ -365,7 +370,7 @@ def test_ask_below_the_card_error_of_every_rung_is_refused_with_the_bound_that_h
     assert answer.nearest == (f"max_ulp {best:.3g}",)
 
 
-def test_the_plain_log_tile_answer_points_at_the_sfpi_rung():
+def test_the_plain_log_tile_answer_points_at_the_sfpi_rung() -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 
     answer = ask(Request("tensix", "log", {"x": Operand("tile_register", "f32", (32, 32))}), verify=False)
@@ -373,7 +378,9 @@ def test_the_plain_log_tile_answer_points_at_the_sfpi_rung():
     assert isinstance(answer, Feasible) and any("alloy_log_f32_sfpi" in note for note in answer.notes)
 
 
-def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_at_the_cards_version(capsys):
+def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_at_the_cards_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert main(["lookup", "tensix", "sin", "f32"]) == 0
 
     printed = capsys.readouterr().out

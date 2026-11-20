@@ -17,6 +17,8 @@ import pathlib
 import re
 import tomllib
 
+from alloy.jsontype import Json
+
 __all__ = [
     "ALIASES",
     "LADDER",
@@ -143,9 +145,10 @@ def load_kernels() -> dict[tuple[str, str, str], Kernel]:
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def load_prims() -> dict:
+def load_prims() -> Json:
     with PRIMS_PATH.open("rb") as handle:
-        return tomllib.load(handle)["prims"]
+        prims: Json = tomllib.load(handle)["prims"]
+    return prims
 
 
 def functions() -> tuple[str, ...]:
@@ -240,7 +243,8 @@ class Renderer:
 
     def type_of(self, node: ast.expr) -> str:
         name = ast.unparse(node.func) if isinstance(node, ast.Call) else ""
-        return self.fields["ivec" if name in INT_OPS else "mask" if name in MASK_OPS else "vec"]
+        kind: str = self.fields["ivec" if name in INT_OPS else "mask" if name in MASK_OPS else "vec"]
+        return kind
 
     def statement(self, line: str) -> str:
         target, _, expression = line.partition(" = ")

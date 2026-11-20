@@ -11,7 +11,7 @@ from alloy.isa.hints import advice, expression_ops, op_uses, tasklet_hints
 TABLE = load()
 
 
-def test_every_tasklet_is_collected_and_classified():
+def test_every_tasklet_is_collected_and_classified() -> None:
     hints = tasklet_hints(example_sdfg(), "avx2", "f64", TABLE)
     by_tasklet = {hint.use.tasklet: hint for hint in hints}
 
@@ -24,7 +24,7 @@ def test_every_tasklet_is_collected_and_classified():
     assert "reduce_add" in {spelling.op for spelling in acc.spellings}
 
 
-def test_the_hints_name_the_relevant_spellings():
+def test_the_hints_name_the_relevant_spellings() -> None:
     hints = tasklet_hints(example_sdfg(), "avx2", "f64", TABLE)
     by_tasklet = {hint.use.tasklet: hint for hint in hints}
 
@@ -39,7 +39,7 @@ def test_the_hints_name_the_relevant_spellings():
     assert "recipe" in reduce_spellings["reduce_add"].spelling
 
 
-def test_a_libm_tasklet_points_at_tiers_and_the_library():
+def test_a_libm_tasklet_points_at_tiers_and_the_library() -> None:
     sdfg = elementwise_sdfg("wave", "import math\ny = math.sin(x)")
     (hint,) = tasklet_hints(sdfg, "avx2", "f64", TABLE)
 
@@ -50,7 +50,7 @@ def test_a_libm_tasklet_points_at_tiers_and_the_library():
     assert "`kernel avx2 sin f64`" in spelling.spelling
 
 
-def test_advice_carries_the_reason_the_instruction_and_the_hints():
+def test_advice_carries_the_reason_the_instruction_and_the_hints() -> None:
     text = advice("the masked tail is not expressible", example_sdfg(), "avx2", "f64", TABLE)
 
     assert "Reason: the masked tail is not expressible" in text
@@ -61,20 +61,20 @@ def test_advice_carries_the_reason_the_instruction_and_the_hints():
     assert "reduce_add" in text
 
 
-def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default():
+def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default() -> None:
     (hint,) = tasklet_hints(integer_sdfg(), "avx2", "f64", TABLE)
 
     assert hint.use.dtype == "i64"
     assert {s.op: s.spelling for s in hint.spellings}["and"] == "_mm256_and_si256"
 
 
-def test_min_max_logic_and_conditionals_are_recognized():
+def test_min_max_logic_and_conditionals_are_recognized() -> None:
     sdfg = elementwise_sdfg("clip", "y = min(x, 1.0) if x > 0.0 else max(x, -1.0)")
     (hint,) = tasklet_hints(sdfg, "avx512", "f64", TABLE)
     assert {"min", "max", "select"} <= set(hint.use.ops)
 
 
-def example_sdfg():
+def example_sdfg() -> dace.SDFG:
     """Two scopes' worth of tasklets: a contractable elementwise map and a sum reduction."""
     sdfg = dace.SDFG("hints_example")
     sdfg.add_array("a", [8], dace.float64)
@@ -108,7 +108,7 @@ def elementwise_sdfg(label: str, code: str) -> dace.SDFG:
     return sdfg
 
 
-def integer_sdfg():
+def integer_sdfg() -> dace.SDFG:
     sdfg = dace.SDFG("hints_int")
     sdfg.add_array("a", [8], dace.int64)
     sdfg.add_array("b", [8], dace.int64)
@@ -123,39 +123,39 @@ def integer_sdfg():
     return sdfg
 
 
-def test_the_shapes_the_frontend_emits_are_recognized():
+def test_the_shapes_the_frontend_emits_are_recognized() -> None:
     assert "select" in expression_ops("y = ITE(c, a, b)")[0]
     assert "mod" in expression_ops("y = CMod(a, b)")[0]
     assert "pow" in expression_ops("y = a ** b")[0]
     assert "add" in expression_ops("t += x")[0]
 
 
-def test_an_operation_without_a_row_is_named_not_dropped():
+def test_an_operation_without_a_row_is_named_not_dropped() -> None:
     assert "lt" in expression_ops("y = a > b")[0]
     assert expression_ops("y = floor(a)")[1] == {"floor"}
 
 
-def test_floored_modulo_has_no_truncated_mod_row():
+def test_floored_modulo_has_no_truncated_mod_row() -> None:
     assert expression_ops("y = py_mod(a, b)") == (set(), {"py_mod"})
     assert expression_ops("y = PyMod(a, b)") == (set(), {"PyMod"})
 
 
-def test_only_ordering_compares_map_to_lt():
+def test_only_ordering_compares_map_to_lt() -> None:
     assert expression_ops("y = a == b") == (set(), {"Eq"})
     assert expression_ops("y = a <= b") == (set(), {"LtE"})
     assert expression_ops("y = a < b < c") == ({"lt"}, set())
 
 
-def test_a_product_fuses_only_inside_its_sum():
+def test_a_product_fuses_only_inside_its_sum() -> None:
     assert "fma" in expression_ops("y = a * b + c")[0]
     assert "fma" not in expression_ops("y = (a + 1.0) * 2.0")[0]
 
 
-def test_a_negative_literal_is_no_negation():
+def test_a_negative_literal_is_no_negation() -> None:
     assert "neg" not in expression_ops("y = -1.5")[0]
 
 
-def test_a_canonical_reduction_past_its_private_node_counts():
+def test_a_canonical_reduction_past_its_private_node_counts() -> None:
     sdfg = dace.SDFG("wcr_past_private")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("s", [1], dace.float64)
@@ -179,7 +179,7 @@ import pytest
 @pytest.mark.parametrize(
     ("wcr", "op"), [("lambda a, b: max(a, b)", "reduce_max"), ("lambda a, b: min(a, b)", "reduce_min")]
 )
-def test_a_min_or_max_reduction_is_spelled_by_its_row_and_no_longer_reported_as_missing(wcr, op):
+def test_a_min_or_max_reduction_is_spelled_by_its_row_and_no_longer_reported_as_missing(wcr: str, op: str) -> None:
     sdfg = dace.SDFG(f"wcr_{op}")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("s", [1], dace.float64)

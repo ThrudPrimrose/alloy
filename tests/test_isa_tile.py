@@ -14,7 +14,9 @@ from alloy.isa.__main__ import main
 
 @pytest.mark.parametrize(("m", "n", "k", "in_type", "acc_type"), [(64, 64, 64, "f32", "f32"), (13, 7, 5, "f64", "f64"),
                                                                     (64, 32, 64, "f32", "f64")])  # fmt: skip
-def test_a_cpu_tile_runs_the_fallback_and_matches_the_reference(m, n, k, in_type, acc_type):
+def test_a_cpu_tile_runs_the_fallback_and_matches_the_reference(
+    m: int, n: int, k: int, in_type: str, acc_type: str
+) -> None:
     sut = tile.verify(tile.plan("cpu", m, n, k, in_type, acc_type))
 
     assert sut.verified == "run", sut.detail
@@ -25,19 +27,19 @@ def test_a_cpu_tile_runs_the_fallback_and_matches_the_reference(m, n, k, in_type
     assert '#include "alloy' not in sut.program and f"ALLOY_MMA(alloy_mma_{in_type}_{acc_type}," in sut.program
 
 
-def test_a_cpu_tile_of_half_precision_is_refused_with_the_types_it_takes():
+def test_a_cpu_tile_of_half_precision_is_refused_with_the_types_it_takes() -> None:
     with pytest.raises(KeyError, match="--in f32 --acc f32.*no AMX or SME"):
         tile.plan("cpu", 64, 64, 64, "f16", "f32")
 
 
-def test_an_unknown_target_and_an_empty_extent_are_refused():
+def test_an_unknown_target_and_an_empty_extent_are_refused() -> None:
     with pytest.raises(KeyError, match="tile targets"):
         tile.plan("sm80", 64, 64, 64, "f16", "f32")
     with pytest.raises(KeyError, match="positive extents"):
         tile.plan("cpu", 0, 64, 64, "f32", "f32")
 
 
-def test_an_sm90_plan_loads_with_tma_into_128b_swizzled_tiles_and_runs_four_wgmma_per_k_block():
+def test_an_sm90_plan_loads_with_tma_into_128b_swizzled_tiles_and_runs_four_wgmma_per_k_block() -> None:
     sut = tile.plan("sm90", 128, 128, 128, "f16", "f32")
 
     assert sut.descriptors["tile"].startswith("alloy_gemm_128x128<ALLOY_F16>")
@@ -47,7 +49,7 @@ def test_an_sm90_plan_loads_with_tma_into_128b_swizzled_tiles_and_runs_four_wgmm
 
 
 @pytest.mark.parametrize("target", tile.CDNA)
-def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its_own_arch(target):
+def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its_own_arch(target: str) -> None:
     sut = tile.plan(target, 64, 128, 64, "f16", "f32")
 
     assert sut.target == target and sut.descriptors["build"] == f"hipcc --offload-arch={target} -O2 tile.hip -o tile"
@@ -62,14 +64,16 @@ def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its
     ("gfx942", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
     ("gfx90a", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
 ])  # fmt: skip
-def test_a_gpu_tile_the_kernels_do_not_cover_is_refused_with_what_they_take(target, shape, types, reason):
+def test_a_gpu_tile_the_kernels_do_not_cover_is_refused_with_what_they_take(
+    target: str, shape: tuple[int, int, int], types: tuple[str, str], reason: str
+) -> None:
     with pytest.raises(KeyError, match=reason):
         tile.plan(target, *shape, *types)
 
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("in_type", [t for t, _ in tile.TYPES["sm90"]])
-def test_the_sm90_program_of_each_input_type_compiles_for_sm90a(in_type):
+def test_the_sm90_program_of_each_input_type_compiles_for_sm90a(in_type: str) -> None:
     sut = tile.verify(tile.plan("sm90", 128, 128, 2 * tile.k_block(in_type), in_type, "f32"))
 
     assert sut.verified in ("compiled", "run"), sut.detail
@@ -77,7 +81,7 @@ def test_the_sm90_program_of_each_input_type_compiles_for_sm90a(in_type):
 
 @pytest.mark.hip
 @pytest.mark.parametrize(("target", "in_type"), [(t, i) for t in tile.CDNA for i, _ in tile.TYPES[t]])
-def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target, in_type):
+def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target: str, in_type: str) -> None:
     sut = tile.verify(tile.plan(target, 64, 64, 2 * tile.k_block(in_type), in_type, "f32"))
 
     assert sut.verified in ("compiled", "run"), sut.detail
@@ -88,7 +92,7 @@ def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target, in_ty
     not (shutil.which("aarch64-linux-gnu-gcc") and shutil.which("clang")),
     reason="needs clang and the aarch64 cross compiler",
 )
-def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else():
+def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else() -> None:
     """No evaluated CPU has SME: CI runs the FMOPA tile under qemu (-cpu max,sme=on), a box without qemu compiles it."""
     sut = tile.verify(tile.plan("sme", 70, 33, 9, "f32", "f32"))
 
@@ -98,7 +102,9 @@ def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else()
 
 
 @pytest.mark.parametrize("arch", tile.CDNA)
-def test_an_amd_gpu_is_the_tile_target_of_its_own_arch_and_its_program_builds_for_it(arch, monkeypatch):
+def test_an_amd_gpu_is_the_tile_target_of_its_own_arch_and_its_program_builds_for_it(
+    arch: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[list[str]] = []
 
     def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
@@ -108,7 +114,7 @@ def test_an_amd_gpu_is_the_tile_target_of_its_own_arch_and_its_program_builds_fo
             raise FileNotFoundError(argv[0])
         return subprocess.CompletedProcess(argv, 1 if argv[0] == "hipcc" else 0, out, "stopped after the build line")
 
-    monkeypatch.setattr(tile.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
 
     assert tile.native_gpu() == arch
     sut = tile.verify(tile.plan(arch, 64, 64, 64, "f16", "f32"))
@@ -128,8 +134,8 @@ def test_an_amd_gpu_is_the_tile_target_of_its_own_arch_and_its_program_builds_fo
     ("sm90", "e5m2", "4 x wgmma.mma_async.m64n64k32.f32.e5m2.e5m2", 128),
 ])  # fmt: skip
 def test_a_gpu_tile_of_each_input_type_runs_its_instruction_over_a_k_block_of_128_bytes(
-    target, in_type, instruction, k_per_block
-):
+    target: str, in_type: str, instruction: str, k_per_block: int
+) -> None:
     sut = tile.plan(target, 64, 64, 2 * k_per_block, in_type, "f32")
 
     assert tile.k_block(in_type) == k_per_block
@@ -144,7 +150,9 @@ def test_a_gpu_tile_of_each_input_type_runs_its_instruction_over_a_k_block_of_12
     ("sm90", "e4m3", "OCP E4M3 (__nv_fp8_e4m3): 4 exponent bits, 3 mantissa bits, bias 7"),
     ("sm90", "e5m2", "OCP E5M2 (__nv_fp8_e5m2): 5 exponent bits, 2 mantissa bits, bias 15"),
 ])  # fmt: skip
-def test_an_fp8_tile_names_the_encoding_its_target_reads_and_its_program_encodes_by_it(target, in_type, encoding):
+def test_an_fp8_tile_names_the_encoding_its_target_reads_and_its_program_encodes_by_it(
+    target: str, in_type: str, encoding: str
+) -> None:
     sut = tile.plan(target, 64, 64, 128, in_type, "f32")
 
     assert sut.descriptors["type"] == f"{in_type} is {encoding}"
@@ -153,13 +161,13 @@ def test_an_fp8_tile_names_the_encoding_its_target_reads_and_its_program_encodes
     assert "BYTES = 1" in sut.program
 
 
-def test_gfx90a_takes_f16_and_bf16_and_refuses_fp8_with_what_it_takes():
+def test_gfx90a_takes_f16_and_bf16_and_refuses_fp8_with_what_it_takes() -> None:
     assert tile.TYPES["gfx90a"] == (("f16", "f32"), ("bf16", "f32"))
     with pytest.raises(KeyError, match="gfx90a tiles take --in f16 --acc f32, --in bf16 --acc f32"):
         tile.plan("gfx90a", 64, 64, 128, "e4m3", "f32")
 
 
-def test_an_fp8_tile_needs_k_in_blocks_of_128():
+def test_an_fp8_tile_needs_k_in_blocks_of_128() -> None:
     with pytest.raises(KeyError, match="K a multiple of 128 for e4m3; got 64x64x64"):
         tile.plan("gfx942", 64, 64, 64, "e4m3", "f32")
 
@@ -168,7 +176,7 @@ def test_an_fp8_tile_needs_k_in_blocks_of_128():
     ("sm90", "d[4 * i + 0] = C[r * N + c]"),
     ("gfx942", "acc[g] = C[(m0 + 32 * wm"),
 ])  # fmt: skip
-def test_a_gpu_tile_program_feeds_a_nonzero_c_and_checks_a_times_b_plus_c(target, starts_as_c):
+def test_a_gpu_tile_program_feeds_a_nonzero_c_and_checks_a_times_b_plus_c(target: str, starts_as_c: str) -> None:
     sut = tile.plan(target, 64, 64, 64, "f16", "f32")
 
     assert "hC[i] = fC[i] = (float)((i % 5) - 2);" in sut.program
@@ -178,7 +186,7 @@ def test_a_gpu_tile_program_feeds_a_nonzero_c_and_checks_a_times_b_plus_c(target
     assert "load its" in sut.steps[0] and "D = A x B + C" in sut.steps[0]
 
 
-def test_a_tile_program_that_stops_before_its_comparison_reports_why_not_a_relative_error():
+def test_a_tile_program_that_stops_before_its_comparison_reports_why_not_a_relative_error() -> None:
     launch = subprocess.CompletedProcess(["tile"], 2, "launch failed\n", "")
     above = subprocess.CompletedProcess(["tile"], 1, "3.000e-01\n", "")
 
@@ -190,8 +198,8 @@ def test_a_tile_program_that_stops_before_its_comparison_reports_why_not_a_relat
 
 @pytest.mark.parametrize(("verified", "code"), [("run", 0), ("compiled", 0), ("failed", 3), ("unverified", 3)])
 def test_the_tile_command_exits_0_for_a_program_that_compiled_for_a_device_this_host_lacks(
-    monkeypatch, capsys, verified, code
-):
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], verified: str, code: int
+) -> None:
     monkeypatch.setattr(tile, "verify", lambda found: replace(found, verified=verified, detail="stub"))
 
     assert main(["tile", "sm90", "gemm", "128", "128", "64", "--in", "f16", "--acc", "f32"]) == code

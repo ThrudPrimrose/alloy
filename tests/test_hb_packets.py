@@ -8,7 +8,7 @@ import json
 import pathlib
 import subprocess
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from http import HTTPMethod, HTTPStatus
 
 import pytest
@@ -27,6 +27,8 @@ from hpcagent_bench.harness.routes import ROUTES, RouteRequest
 from hpcagent_bench.harness.sandbox import AGENT_FOLDERS_LOG, AgentFolderLine
 from hpcagent_bench.harness.service import ServiceConfig, make_server
 
+from alloy.jsontype import Json
+
 KERNEL = "tsvc_2_vpv"
 
 
@@ -42,7 +44,7 @@ class FakeJudge:
         self.code, self.answer = code, payload.to_json()
 
     @contextlib.contextmanager
-    def device_slot(self) -> Iterator[DeviceSlot]:
+    def device_slot(self) -> Generator[DeviceSlot]:
         yield DeviceSlot("cpu", 0)
 
 
@@ -51,7 +53,7 @@ def call(mode: str, shared: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Fa
     monkeypatch.setenv("HPCAGENT_BENCH_SHARED_DIR", str(shared))
     plugins.load()
     judge = FakeJudge()
-    ROUTES["alloy"].handler(judge, RouteRequest(HTTPMethod.POST, ["alloy", mode], {}, {"kernel": KERNEL}, "e1"))
+    ROUTES["alloy"].handler(judge, RouteRequest(HTTPMethod.POST, ["alloy", mode], {}, {"kernel": KERNEL}, "e1"))  # pyright: ignore[reportArgumentType] -- test double
     return judge
 
 
@@ -146,7 +148,7 @@ def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_it_makes_fro
 def recorded_calls(folder: pathlib.Path) -> list[dict[str, object]]:
     data = plugin_records.found(folder)["alloy"].data
     assert isinstance(data, dict) and isinstance(data["tools"], list)
-    return [c for c in data["tools"] if isinstance(c, dict)]
+    return [c for c in data["tools"] if isinstance(c, dict)]  # pyright: ignore[reportReturnType] -- test double
 
 
 def test_the_profile_tool_answers_sources_whose_library_the_judge_grades_correct(
@@ -211,18 +213,18 @@ def isa_call(command: str, arguments: list[str]) -> FakeJudge:
     plugins.load()
     judge = FakeJudge()
     body = {"command": command, "arguments": arguments}
-    ROUTES["alloy"].handler(judge, RouteRequest(HTTPMethod.POST, ["alloy", "isa"], {}, body, "e1"))
+    ROUTES["alloy"].handler(judge, RouteRequest(HTTPMethod.POST, ["alloy", "isa"], {}, body, "e1"))  # pyright: ignore[reportArgumentType] -- test double
     return judge
 
 
-def test_the_isa_tool_answers_a_lookup():
+def test_the_isa_tool_answers_a_lookup() -> None:
     sut = isa_call("lookup", ["avx2", "add", "f64"])
 
     assert sut.code == HTTPStatus.OK
     assert "_mm256_add_pd" in str(sut.answer)
 
 
-def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy():
+def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy() -> None:
     sut = isa_call("lookup", ["avx2", "mod", "f64", "--no-verify"])
 
     assert sut.code == HTTPStatus.OK
@@ -238,21 +240,23 @@ def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy():
         ("reverse", ["fmla z0.d, p0/m, z1.d, z2.d"], "sve/f64"),
     ],
 )
-def test_the_isa_tool_answers_what_an_agent_reads_off_its_loop(command, arguments, expected):
+def test_the_isa_tool_answers_what_an_agent_reads_off_its_loop(
+    command: str, arguments: list[str], expected: str
+) -> None:
     sut = isa_call(command, arguments)
 
     assert sut.code == HTTPStatus.OK
     assert expected in str(sut.answer)
 
 
-def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop():
+def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop() -> None:
     sut = isa_call("lookup", ["neon", "gen_mask", "f64"])
 
     assert sut.code == HTTPStatus.BAD_REQUEST
     assert "skeleton neon scalar_remainder f64" in str(sut.answer)
 
 
-def test_an_infeasible_ask_reaches_the_agent_as_an_answer_with_its_block_and_nearest_requests():
+def test_an_infeasible_ask_reaches_the_agent_as_an_answer_with_its_block_and_nearest_requests() -> None:
     sut = isa_call("ask", ["avx512", "add", "--x", "vector:f32:100", "--no-verify"])
 
     assert sut.code == HTTPStatus.OK, sut.answer
@@ -260,18 +264,20 @@ def test_an_infeasible_ask_reaches_the_agent_as_an_answer_with_its_block_and_nea
     assert "nearest: x vector:f32:96" in str(sut.answer)
 
 
-def test_an_invalid_ask_reaches_the_agent_with_its_reason():
+def test_an_invalid_ask_reaches_the_agent_with_its_reason() -> None:
     sut = isa_call("ask", ["avx512", "frobnicate", "--x", "vector:f32:16", "--no-verify"])
 
     assert sut.code == HTTPStatus.BAD_REQUEST
     assert "no operation 'frobnicate'" in str(sut.answer)
 
 
-def test_the_isa_tool_refuses_a_query_it_does_not_serve():
+def test_the_isa_tool_refuses_a_query_it_does_not_serve() -> None:
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
 
 
-def test_each_isa_query_of_an_episode_appends_one_tool_line(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+def test_each_isa_query_of_an_episode_appends_one_tool_line(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HPCAGENT_BENCH_SHARED_DIR", str(tmp_path))
 
     isa_call("lookup", ["avx2", "fma", "f64"])
@@ -285,24 +291,26 @@ def test_each_isa_query_of_an_episode_appends_one_tool_line(tmp_path: pathlib.Pa
     assert sut[0]["arguments"] == {"command": "lookup", "arguments": "['avx2', 'fma', 'f64']"}
 
 
-def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake():
+def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake() -> None:
     sut = isa_call("lookup", ["avx2", "fmadd", "f64"])
 
     assert sut.code == HTTPStatus.BAD_REQUEST
     assert "did you mean fma" in str(sut.answer)
 
 
-def test_the_alloy_tools_send_the_task_language_that_selects_the_gpu_path(monkeypatch: pytest.MonkeyPatch):
+def test_the_alloy_tools_send_the_task_language_that_selects_the_gpu_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hpcagent_agent.tools import http_json
+
     from alloy.hb_plugin.tools import alloy as alloy_tools
 
-    sent: list[dict] = []
+    sent: list[Json] = []
     monkeypatch.setenv("LANGUAGE", "hip")
 
-    def recorded(url: str, data: bytes, timeout: float) -> dict:
+    def recorded(url: str, data: bytes, timeout: float) -> Json:
         sent.append(json.loads(data))
         return {"result": {}}
 
-    monkeypatch.setattr(alloy_tools.http_json, "call_json", recorded)
+    monkeypatch.setattr(http_json, "call_json", recorded)
 
     alloy_tools.poster("speculative")({"kernel": KERNEL})
 

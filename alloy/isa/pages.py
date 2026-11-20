@@ -165,10 +165,12 @@ def tensix_page() -> str:
     out = [
         f"# {target['title']}: Alloy's checked facts",
         "",
-        "Every row is a compute-kernel call on a 32x32 tile in DST, spelled for tt-metal 0.63 (the card's version). "
-        "Each row lists its includes and its init and call, the platform each verdict ran on with "
-        "the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its "
-        "error measured on a Blackhole card.",
+        (
+            "Every row is a compute-kernel call on a 32x32 tile in DST, spelled for tt-metal 0.63 (the card's version). "
+            "Each row lists its includes and its init and call, the platform each verdict ran on with "
+            "the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its "
+            "error measured on a Blackhole card."
+        ),
         "",
         "## Target",
         "",
@@ -193,8 +195,10 @@ def softhier_page() -> str:
     out = [
         f"# {target['title']}: Alloy's checked facts",
         "",
-        "Every row is C code for one operation on a SoftHier v1 cluster, with its GVSoC verdict and its note. A row "
-        "that moves bytes or no data (a copy, its wait, a barrier) holds for any element type.",
+        (
+            "Every row is C code for one operation on a SoftHier v1 cluster, with its GVSoC verdict and its note. A row "
+            "that moves bytes or no data (a copy, its wait, a barrier) holds for any element type."
+        ),
         "",
         "## Target",
         "",

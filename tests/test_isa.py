@@ -47,7 +47,7 @@ PINNED = {
 
 
 @pytest.mark.parametrize(("isa", "op", "dtype"), PINNED)
-def test_pinned_rows(isa, op, dtype):
+def test_pinned_rows(isa: str, op: str, dtype: str) -> None:
     spelling, fact = PINNED[(isa, op, dtype)]
     entry = lookup(isa, op, dtype, TABLE)
 
@@ -55,7 +55,7 @@ def test_pinned_rows(isa, op, dtype):
     assert fact in entry.semantics
 
 
-def test_the_abstract_isa_covers_the_core_math():
+def test_the_abstract_isa_covers_the_core_math() -> None:
     for name in ("load", "store", "broadcast", "add", "sub", "mul", "div", "fma", "reduce_add"):
         assert name in OPS
     kinds = {
@@ -75,18 +75,18 @@ def test_the_abstract_isa_covers_the_core_math():
     assert OPS["gen_mask"].result == "mask"
 
 
-def test_the_matrix_and_the_table_agree_on_isa_widths():
+def test_the_matrix_and_the_table_agree_on_isa_widths() -> None:
     for name in TABLE.isas:
         assert TABLE.isa(name).vector_bytes == MATRIX.isas[name].vector_bytes
 
 
 @pytest.mark.parametrize("isa", ["avx2", "neon"])
-def test_a_maskless_isa_has_no_gen_mask(isa):
+def test_a_maskless_isa_has_no_gen_mask(isa: str) -> None:
     with pytest.raises(KeyError, match="no predication"):
         lookup(isa, "gen_mask", "f64", TABLE)
 
 
-def test_unknown_names_raise_with_the_choices():
+def test_unknown_names_raise_with_the_choices() -> None:
     with pytest.raises(KeyError, match="unknown ISA"):
         lookup("mmx", "add", "f64", TABLE)
     with pytest.raises(KeyError, match="unknown op"):
@@ -95,14 +95,14 @@ def test_unknown_names_raise_with_the_choices():
         lookup("avx2", "add", "bf16", TABLE)
 
 
-def test_an_isa_alias_resolves_to_its_base_isa():
+def test_an_isa_alias_resolves_to_its_base_isa() -> None:
     entry = lookup("avx512_256", "add", "f64", TABLE)
 
     assert entry is lookup("avx512", "add", "f64", TABLE)
     assert ALIASES["avx512_256"] == "avx512"
 
 
-def test_reverse_maps_an_intrinsic_back_to_the_math():
+def test_reverse_maps_an_intrinsic_back_to_the_math() -> None:
     hit, *steps = reverse("_mm256_add_pd", TABLE)
 
     assert (hit.isa, hit.op, hit.dtype) == ("avx2", "add", "f64")
@@ -110,7 +110,7 @@ def test_reverse_maps_an_intrinsic_back_to_the_math():
     assert [(h.op, h.via) for h in steps] == [("scan_add", "recipe")]  # the scan's recipe lists its add
 
 
-def test_reverse_maps_a_mnemonic_to_every_isa_that_uses_it():
+def test_reverse_maps_a_mnemonic_to_every_isa_that_uses_it() -> None:
     hits = reverse("vaddpd", TABLE)
 
     assert {(h.isa, h.dtype, h.op) for h in hits if h.via == "mnemonic"} == {
@@ -119,13 +119,13 @@ def test_reverse_maps_a_mnemonic_to_every_isa_that_uses_it():
     }
 
 
-def test_reverse_normalizes_an_fma_family_form():
+def test_reverse_normalizes_an_fma_family_form() -> None:
     hits = reverse("vfmadd231pd", TABLE)
 
     assert {(h.isa, h.dtype, h.op) for h in hits} == {("avx2", "f64", "fma"), ("avx512", "f64", "fma")}
 
 
-def test_reverse_strips_an_evex_dot_suffix():
+def test_reverse_strips_an_evex_dot_suffix() -> None:
     assert {h.isa for h in reverse("vaddpd.z", TABLE)} == {"avx2", "avx512"}
 
 
@@ -140,12 +140,12 @@ def test_reverse_strips_an_evex_dot_suffix():
         ("_mm512_maskz_loadu_pd", "avx512", "load", "f64"),
     ],
 )
-def test_reverse_reads_disassembly_spellings(name, isa, op, dtype):
+def test_reverse_reads_disassembly_spellings(name: str, isa: str, op: str, dtype: str) -> None:
     assert (isa, op, dtype) in {(h.isa, h.op, h.dtype) for h in reverse(name, TABLE)}
 
 
 @pytest.mark.parametrize("name", ["svadd_f64_m", "svadd_f64_z", "_mm512_maskz_add_pd", "_mm512_mask3_fmadd_pd"])
-def test_reverse_of_a_policy_variant_is_not_duplicated(name):
+def test_reverse_of_a_policy_variant_is_not_duplicated(name: str) -> None:
     found = reverse(name, TABLE)
     hits = [(h.isa, h.op, h.dtype) for h in found]
 
@@ -154,39 +154,39 @@ def test_reverse_of_a_policy_variant_is_not_duplicated(name):
 
 
 @pytest.mark.parametrize("dtype", ["i64", "i32"])
-def test_sve_integer_mod_is_zero_for_a_zero_divisor_like_the_other_targets(dtype):
+def test_sve_integer_mod_is_zero_for_a_zero_divisor_like_the_other_targets(dtype: str) -> None:
     code = " ".join(TABLE.entry("sve", "mod", dtype).code)
 
     assert f"svcmpeq_n_s{dtype[1:]}(pg, b, 0)" in code
 
 
 @pytest.mark.parametrize(("isa", "dtype", "op"), [("avx512", "f32", "abs"), ("avx512", "f32", "neg")])
-def test_a_note_names_intrinsics_of_its_own_lane_type(isa, dtype, op):
+def test_a_note_names_intrinsics_of_its_own_lane_type(isa: str, dtype: str, op: str) -> None:
     assert "_pd" not in TABLE.entry(isa, op, dtype).note
 
 
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
-def test_the_avx2_max_note_describes_max(dtype):
+def test_the_avx2_max_note_describes_max(dtype: str) -> None:
     assert "min(" not in TABLE.entry("avx2", "max", dtype).note
 
 
-def test_the_avx2_f16_note_matches_its_256_bit_code():
+def test_the_avx2_f16_note_matches_its_256_bit_code() -> None:
     note = TABLE.entry("avx2", "add", "f16").note
 
     assert "_mm_loadu_si128" not in note and "-mf16c" in note
 
 
-def test_the_kernel_page_does_not_claim_strict_is_never_more_accurate():
+def test_the_kernel_page_does_not_claim_strict_is_never_more_accurate() -> None:
     from alloy.isa.render import render_kernels
 
     assert "not lower than" not in render_kernels()
 
 
-def test_reverse_of_an_unknown_name_is_empty():
+def test_reverse_of_an_unknown_name_is_empty() -> None:
     assert reverse("_mm512_wibbel_pd", TABLE) == ()
 
 
-def test_every_intrinsic_reverses_to_its_own_row():
+def test_every_intrinsic_reverses_to_its_own_row() -> None:
     for isa_name, isa in TABLE.isas.items():
         for dtype in ALL_DTYPES:
             for op, entry in isa.entries(dtype).items():
@@ -195,7 +195,7 @@ def test_every_intrinsic_reverses_to_its_own_row():
                 assert (isa_name, op, dtype) in {(h.isa, h.op, h.dtype) for h in reverse(entry.intrinsic, TABLE)}
 
 
-def test_every_recipe_step_reverses_to_its_own_row():
+def test_every_recipe_step_reverses_to_its_own_row() -> None:
     for isa_name, isa in TABLE.isas.items():
         for dtype in ALL_DTYPES:
             for op, entry in isa.entries(dtype).items():
@@ -235,7 +235,7 @@ IDENTIFIER = re.compile(r"^[A-Za-z_]\w*$")
 
 
 @pytest.mark.skipif(clang_include() is None, reason="no clang resource headers on this host")
-def test_every_spelling_exists_in_the_clang_headers():
+def test_every_spelling_exists_in_the_clang_headers() -> None:
     blob = header_blob()
     names = [
         name
@@ -252,17 +252,17 @@ def test_every_spelling_exists_in_the_clang_headers():
     assert not missing
 
 
-def test_an_integer_op_is_refused_on_a_float_dtype():
+def test_an_integer_op_is_refused_on_a_float_dtype() -> None:
     with pytest.raises(KeyError, match="integer op"):
         lookup("avx512", "and", "f64", TABLE)
 
 
-def test_a_float_op_is_refused_on_an_integer_dtype():
+def test_a_float_op_is_refused_on_an_integer_dtype() -> None:
     with pytest.raises(KeyError, match="float rows are not valid"):
         lookup("avx512", "exp", "i64", TABLE)
 
 
-def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere():
+def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere() -> None:
     assert lookup("avx512_fp16", "fma", "f16", TABLE).intrinsic == "_mm512_fmadd_ph"
     assert lookup("neon", "add", "f16", TABLE).intrinsic == "vaddq_f16"
     assert lookup("sve", "add", "f16", TABLE).intrinsic == "svadd_f16_x"
@@ -279,7 +279,7 @@ def test_f16_is_native_where_the_hardware_has_it_and_a_recipe_elsewhere():
     assert lookup("avx2", "abs", "f16", TABLE).recipe == ("_mm256_set1_epi16", "_mm256_and_si256")
 
 
-def test_embedded_broadcast_marks_only_avx512():
+def test_embedded_broadcast_marks_only_avx512() -> None:
     assert TABLE.isas["avx512"].embedded_broadcast
     assert not any(TABLE.isas[name].embedded_broadcast for name in ("avx2", "neon", "sve"))
 
@@ -302,7 +302,7 @@ def test_embedded_broadcast_marks_only_avx512():
         ("_mm512_add_ph", "avx512", "f16", "add"),
     ],
 )
-def test_reverse_reads_the_new_spellings(name, isa, dtype, op):
+def test_reverse_reads_the_new_spellings(name: str, isa: str, dtype: str, op: str) -> None:
     assert (isa, dtype, op) in {(h.isa, h.dtype, h.op) for h in reverse(name, TABLE)}
 
 
@@ -312,7 +312,7 @@ TRANSCENDENTALS = ("exp", "sin", "cos")
 @pytest.mark.parametrize("op", TRANSCENDENTALS)
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 @pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
-def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa, op, dtype):
+def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa: str, op: str, dtype: str) -> None:
     entry = lookup(isa, op, dtype, TABLE)
 
     assert not entry.intrinsic and not entry.recipe and not entry.mnemonic
@@ -320,7 +320,7 @@ def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa, op, dtype
     assert entry.libraries
 
 
-def test_the_taylor_ladder_improves_and_minimax_beats_taylor():
+def test_the_taylor_ladder_improves_and_minimax_beats_taylor() -> None:
     ulp = {key: TABLE.approx[key].error_ulp for key in TABLE.approx}
 
     assert ulp["sin-taylor7"] > ulp["sin-taylor9"] > ulp["sin-taylor11"] > ulp["sin-quad-cheb9"]
@@ -340,7 +340,7 @@ def test_the_taylor_ladder_improves_and_minimax_beats_taylor():
         ("Sleef_sinf16_u10avx512f", "avx512", "sin", "f32"),
     ],
 )
-def test_library_calls_reverse_to_the_math(call, isa, op, dtype):
+def test_library_calls_reverse_to_the_math(call: str, isa: str, op: str, dtype: str) -> None:
     (hit,) = (h for h in reverse(call, TABLE) if (h.isa, h.dtype) == (isa, dtype))
 
     assert (hit.op, hit.via) == (op, "library")
@@ -357,7 +357,7 @@ def libmvec_symbols() -> frozenset[str] | None:
 
 
 @pytest.mark.skipif(libmvec_symbols() is None, reason="no libmvec on this host")
-def test_the_committed_libmvec_names_exist_in_the_host_library():
+def test_the_committed_libmvec_names_exist_in_the_host_library() -> None:
     for isa in ("avx2", "avx512"):
         for dtype in DTYPES:
             for op in TRANSCENDENTALS:
@@ -367,7 +367,7 @@ def test_the_committed_libmvec_names_exist_in_the_host_library():
                 assert call in symbols, f"{call} not in this host's libmvec"
 
 
-def cli(*args: str) -> subprocess.CompletedProcess:
+def cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, "-m", "alloy.isa", *args], capture_output=True, text=True, check=False)
 
 
@@ -387,7 +387,10 @@ def cli(*args: str) -> subprocess.CompletedProcess:
         (("tiers", "ln"), ("log-cheb13",)),
     ],
 )
-def test_the_cli_answers(args, expected):
+def test_the_cli_answers(
+    args: tuple[str, ...] | tuple[str, str] | tuple[str],
+    expected: tuple[str, ...] | tuple[str, str, str] | tuple[str, str] | tuple[str],
+) -> None:
     run = cli(*args)
 
     assert run.returncode == 0
@@ -395,32 +398,32 @@ def test_the_cli_answers(args, expected):
         assert text in run.stdout
 
 
-def test_the_cli_refuses_a_maskless_gen_mask():
+def test_the_cli_refuses_a_maskless_gen_mask() -> None:
     run = cli("lookup", "avx2", "gen_mask", "f64")
 
     assert run.returncode == 2
     assert "no predication" in run.stderr
 
 
-def test_every_predicated_target_with_f16_lanes_masks_them():
+def test_every_predicated_target_with_f16_lanes_masks_them() -> None:
     assert lookup("avx512_fp16", "gen_mask", "f16", TABLE).intrinsic == "_mm512_cmplt_epu16_mask"
     assert lookup("sve", "gen_mask", "f16", TABLE).intrinsic == "svwhilelt_b16_s64"
 
 
 @pytest.mark.parametrize("op", ["add", "fma", "load", "gen_mask"])
-def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op):
+def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op: str) -> None:
     """Zen 4 runs AVX-512 without AVX512-FP16, so an f16 row of plain avx512 would not run there."""
     with pytest.raises(KeyError, match="use target avx512_fp16"):
         lookup("avx512", op, "f16", TABLE)
     assert lookup("avx512_fp16", "add", "f64", TABLE) is lookup("avx512", "add", "f64", TABLE)
 
 
-def test_the_lookup_command_refuses_plain_avx512_f16(capsys):
+def test_the_lookup_command_refuses_plain_avx512_f16(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "avx512", "add", "f16", "--no-verify"]) == 2
     assert "avx512_fp16" in capsys.readouterr().err
 
 
-def test_the_skill_pages_render_from_the_table(tmp_path):
+def test_the_skill_pages_render_from_the_table(tmp_path: pathlib.Path) -> None:
     from alloy.isa.render import render
 
     written = render(TABLE, tmp_path)
@@ -440,14 +443,14 @@ def test_the_skill_pages_render_from_the_table(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["_mm512_getexp_pd", "_mm512_getmant_pd", "svlogb_f64_x"])
-def test_the_exponent_and_mantissa_assists_help_log(name):
+def test_the_exponent_and_mantissa_assists_help_log(name: str) -> None:
     """frexp's split is the range reduction of log; exp scales by 2^k instead (scalef, fexpa)."""
     (hit,) = TABLE.assist(name)
 
     assert hit.assist.helps == "log"
 
 
-def test_the_assists_reverse_by_name_and_mnemonic():
+def test_the_assists_reverse_by_name_and_mnemonic() -> None:
     (hit,) = TABLE.assist("svexpa_f64")
 
     assert hit.isa == "sve" and hit.assist.helps == "exp"
@@ -457,7 +460,7 @@ def test_the_assists_reverse_by_name_and_mnemonic():
     assert {h.isa for h in TABLE.assist("frecps")} == {"sve", "neon"}
 
 
-def test_every_assist_spelling_exists_in_the_clang_headers():
+def test_every_assist_spelling_exists_in_the_clang_headers() -> None:
     include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
@@ -471,14 +474,14 @@ def test_every_assist_spelling_exists_in_the_clang_headers():
     assert not missing
 
 
-def test_masked_variant_names_reverse_without_their_notes():
+def test_masked_variant_names_reverse_without_their_notes() -> None:
     """The f16 masked variants carry a cast note after the name; the index must key the bare name."""
     (hit,) = reverse("_mm512_maskz_loadu_epi16", TABLE)
 
     assert (hit.isa, hit.dtype, hit.op, hit.via) == ("avx512", "f16", "load", "masked")
 
 
-def test_masked_variant_names_exist_in_the_clang_headers():
+def test_masked_variant_names_exist_in_the_clang_headers() -> None:
     include = clang_include()
     if include is None:
         pytest.skip("no clang resource headers on this host")
@@ -510,23 +513,23 @@ def test_masked_variant_names_exist_in_the_clang_headers():
         ("_mm512_castsi512_ph", "avx512", "load", "f16"),  # cited in a masked note
     ],
 )
-def test_reverse_reads_what_a_disassembly_or_a_recipe_spells(name, isa, op, dtype):
+def test_reverse_reads_what_a_disassembly_or_a_recipe_spells(name: str, isa: str, op: str, dtype: str) -> None:
     assert (isa, op, dtype) in {(hit.isa, hit.op, hit.dtype) for hit in TABLE.reverse(name)}
 
 
 @pytest.mark.parametrize("name", ["", "   "])
-def test_an_empty_name_matches_nothing(name):
+def test_an_empty_name_matches_nothing(name: str) -> None:
     assert TABLE.reverse(name) == ()
     assert TABLE.assist(name) == ()
 
 
-def test_fmod_truncates_on_every_isa_with_a_float_recipe():
+def test_fmod_truncates_on_every_isa_with_a_float_recipe() -> None:
     """fmod needs a toward-zero quotient and the final a - q*b; the nearest-rounding step is remainder()."""
     assert TABLE.entry("neon", "mod", "f64").recipe == ("vdivq_f64", "vrndq_f64", "vfmsq_f64")
     assert TABLE.entry("sve", "mod", "f32").recipe == ("svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x")
 
 
-def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
+def test_a_masked_fma_takes_the_four_arguments_the_header_declares() -> None:
     masked = TABLE.entry("avx512", "fma", "f64").masked
     assert masked.count(",") == 3, masked
 
@@ -550,7 +553,7 @@ def test_a_masked_fma_takes_the_four_arguments_the_header_declares():
         ('"vmlal_u32", "vreinterpretq_u64_s64", ', '"vmlal_u32", ', "the recipe does not list"),
     ],
 )
-def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):
+def test_the_table_refuses_a_broken_row(tmp_path: pathlib.Path, old: str, new: str, refusal: str) -> None:
     text = DEFAULT_PATH.read_text(encoding="utf-8")
     assert old in text
     broken = tmp_path / "intrinsics.toml"
@@ -570,7 +573,7 @@ def test_the_table_refuses_a_broken_row(tmp_path, old, new, refusal):
         ("vmovsd", "load", "f64"),
     ],
 )
-def test_a_scalar_instruction_reverses_to_its_op_on_one_lane(name, op, dtype):
+def test_a_scalar_instruction_reverses_to_its_op_on_one_lane(name: str, op: str, dtype: str) -> None:
     sut = TABLE.reverse(name)[0]
 
     assert (sut.op, sut.dtype, sut.via) == (op, dtype, "scalar")
@@ -585,7 +588,9 @@ def test_a_scalar_instruction_reverses_to_its_op_on_one_lane(name, op, dtype):
         (("reverse", "kmovb"), ("moves a mask",)),
     ],
 )
-def test_the_instructions_of_a_real_loop_get_an_answer(args, expected):
+def test_the_instructions_of_a_real_loop_get_an_answer(
+    args: tuple[str, str], expected: tuple[str, str] | tuple[str]
+) -> None:
     run = cli(*args)
 
     assert run.returncode == 0, run.stderr
@@ -602,14 +607,14 @@ def test_the_instructions_of_a_real_loop_get_an_answer(args, expected):
         ("vaddpd %ymm1, %ymm2, %ymm0", "avx2/f64", "avx512/"),
     ],
 )
-def test_the_registers_of_a_pasted_line_narrow_its_answer(line, isa, absent):
+def test_the_registers_of_a_pasted_line_narrow_its_answer(line: str, isa: str, absent: str) -> None:
     run = cli("reverse", line)
 
     assert isa in run.stdout
     assert absent not in run.stdout
 
 
-def test_a_pasted_line_is_answered_by_its_mnemonic_and_not_echoed():
+def test_a_pasted_line_is_answered_by_its_mnemonic_and_not_echoed() -> None:
     run = cli("reverse", "vaddpd %zmm1, %zmm2, %zmm0")
 
     assert "%zmm" not in run.stdout
@@ -618,14 +623,14 @@ def test_a_pasted_line_is_answered_by_its_mnemonic_and_not_echoed():
 @pytest.mark.parametrize(
     ("word", "meant"), [("sum", "reduce_add"), ("hsum", "reduce_add"), ("blend", "select"), ("tail", "gen_mask")]
 )
-def test_the_word_an_agent_tries_suggests_the_op_it_means(word, meant):
+def test_the_word_an_agent_tries_suggests_the_op_it_means(word: str, meant: str) -> None:
     run = cli("lookup", "avx2", word, "f64", "--no-verify")
 
     assert run.returncode == 2
     assert f"did you mean {meant}?" in run.stderr
 
 
-def test_a_reduction_without_a_row_says_which_reductions_the_table_holds():
+def test_a_reduction_without_a_row_says_which_reductions_the_table_holds() -> None:
     run = cli("lookup", "avx512", "reduce_mul", "f64")
 
     assert run.returncode == 2
@@ -634,7 +639,7 @@ def test_a_reduction_without_a_row_says_which_reductions_the_table_holds():
 
 
 @pytest.mark.parametrize("isa", ["avx2", "neon"])
-def test_a_tail_on_a_maskless_isa_points_at_its_remainder_loop(isa):
+def test_a_tail_on_a_maskless_isa_points_at_its_remainder_loop(isa: str) -> None:
     run = cli("lookup", isa, "gen_mask", "f64")
 
     assert run.returncode == 2
@@ -642,20 +647,20 @@ def test_a_tail_on_a_maskless_isa_points_at_its_remainder_loop(isa):
     assert "integer lanes" not in run.stderr
 
 
-def test_a_function_without_tiers_points_at_its_kernel():
+def test_a_function_without_tiers_points_at_its_kernel() -> None:
     run = cli("tiers", "tan")
 
     assert run.returncode == 2
     assert "kernel" in run.stderr
 
 
-def test_every_sve_dtype_has_a_tail_predicate():
+def test_every_sve_dtype_has_a_tail_predicate() -> None:
     sut = TABLE.entry("sve", "gen_mask", "f16")
 
     assert sut.intrinsic == "svwhilelt_b16_s64"
 
 
-def test_a_scalar_fma_reverses_to_the_packed_math_on_one_lane_once():
+def test_a_scalar_fma_reverses_to_the_packed_math_on_one_lane_once() -> None:
     """A9.5: vfmadd231sd is vfmadd231pd's math on one lane, said once, never claimed as a packed row."""
     from alloy.isa.table import load as load_table
 
@@ -665,7 +670,7 @@ def test_a_scalar_fma_reverses_to_the_packed_math_on_one_lane_once():
     assert all(h.via != "scalar" for h in load_table().reverse("vfmadd231pd"))
 
 
-def test_a_function_with_only_kernels_answers_lookup_json_with_its_rungs(capsys):
+def test_a_function_with_only_kernels_answers_lookup_json_with_its_rungs(capsys: pytest.CaptureFixture[str]) -> None:
     """A9.6: the JSON form answers as the text form does, one record per rung, where it used to refuse."""
     from alloy.isa.__main__ import main
 

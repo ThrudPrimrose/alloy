@@ -475,8 +475,10 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         "",
         f"`{s.signature}`",
         "",
-        f"libm calls: {s.calls_libm}; reduction: {s.has_reduction}; accumulation length: {s.accumulation_length}; "
-        f"{s.candidates} candidates, dropped: {dropped}. Baseline (matrix default): {time_text(s.baseline)} ms.",
+        (
+            f"libm calls: {s.calls_libm}; reduction: {s.has_reduction}; accumulation length: {s.accumulation_length}; "
+            f"{s.candidates} candidates, dropped: {dropped}. Baseline (matrix default): {time_text(s.baseline)} ms."
+        ),
         "",
         f"Intrinsic tasklets: {s.intrinsics or 'not swept'}",
         "",
@@ -485,8 +487,10 @@ def scope_lines(s: ScopeRecord) -> list[str]:
         tree.render(s.tree),
         "```",
         "",
-        "| rank | candidate | config | verified | screen ms | final ms | speedup | predicted cycles/elem | vectorized "
-        "| masked ops | first missed |",
+        (
+            "| rank | candidate | config | verified | screen ms | final ms | speedup | predicted cycles/elem | vectorized "
+            "| masked ops | first missed |"
+        ),
         "|---|---|---|---|---|---|---|---|---|---|---|",
         *(variant_row(v) for v in s.top),
         "",
@@ -509,8 +513,10 @@ def verdict_lines(v: Final) -> list[str]:
     if v.program is not None:
         p = v.program
         lines += [
-            f"Program at {dict(p.sizes)}: DaCe default {time_text(p.baseline)} ms, Alloy {time_text(p.alloy)} ms "
-            f"({p.correctness.status}), speedup {p.speedup:.2f}x.",
+            (
+                f"Program at {dict(p.sizes)}: DaCe default {time_text(p.baseline)} ms, Alloy {time_text(p.alloy)} ms "
+                f"({p.correctness.status}), speedup {p.speedup:.2f}x."
+            ),
             "",
         ]
     if v.commands is not None:

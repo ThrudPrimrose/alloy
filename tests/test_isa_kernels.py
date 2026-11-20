@@ -15,7 +15,7 @@ from alloy import configuration_matrix
 from alloy.isa import load
 from alloy.isa.__main__ import main
 from alloy.isa.hints import kernel_summary
-from alloy.isa.mathcheck import HEADERS, Measured, emulated, inside, judged, measure, validate_kernel
+from alloy.isa.mathcheck import Measured, inside, judged, measure, validate_kernel
 from alloy.isa.mathkernels import (
     LEVELS,
     NO_LIBRARY,
@@ -32,20 +32,20 @@ from alloy.isa.mathkernels import (
     spelled,
 )
 from alloy.isa.mathtime import time_function
-from alloy.isa.validate import c_compiler, c_flags, host_can_run
+from alloy.isa.validate import HEADERS, c_compiler, c_flags, emulated, host_can_run
 
 ALL = [(fn, dtype, k.level) for fn in functions() for dtype in ("f64", "f32") for k in ladder(fn, dtype)]
 FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow fmod atan asin acos sinh cosh tanh".split()
 
 
-def test_the_functions_an_agent_asks_for_all_have_kernels():
+def test_the_functions_an_agent_asks_for_all_have_kernels() -> None:
     assert set(FUNCTIONS) <= set(functions())
     assert kernel("ln", "f64", "strict") is kernel("log", "f64", "strict")
 
 
 @pytest.mark.parametrize("isa", ["avx2", "avx512"])
 @pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
-def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn, dtype, level, isa):
+def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn: str, dtype: str, level: str, isa: str) -> None:
     verdict = validate_kernel(fn, dtype, level, isa)
 
     assert verdict.ok is not False, verdict.detail
@@ -53,7 +53,9 @@ def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn, dtype, level, i
 
 
 @pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
-def test_an_avx512_kernel_builds_whatever_the_host_can_run(fn, dtype, level, tmp_path):
+def test_an_avx512_kernel_builds_whatever_the_host_can_run(
+    fn: str, dtype: str, level: str, tmp_path: pathlib.Path
+) -> None:
     """A runner without AVX-512 cannot execute these rows above; it can still refuse one that does not compile."""
     cc = c_compiler()
     assert cc is not None, "the gate needs a C compiler"
@@ -73,7 +75,7 @@ def test_an_avx512_kernel_builds_whatever_the_host_can_run(fn, dtype, level, tmp
 
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
-def test_a_kernel_holds_on_the_arm_targets_or_at_least_builds(fn, dtype, level, isa):
+def test_a_kernel_holds_on_the_arm_targets_or_at_least_builds(fn: str, dtype: str, level: str, isa: str) -> None:
     """Under qemu it reproduces its recorded error; without it, the cross compiler must take it."""
     verdict = validate_kernel(fn, dtype, level, isa)
 
@@ -94,7 +96,7 @@ def host_isa() -> str:
     pytest.skip("host runs no x86 vector kernels")
 
 
-def test_a_wrong_coefficient_fails_the_gate():
+def test_a_wrong_coefficient_fails_the_gate() -> None:
     k = kernel("exp", "f64", "relaxed")
     body = tuple(line.replace("0.5", "0.51") if line.startswith("p = ") else line for line in k.body)
     assert body != k.body
@@ -105,7 +107,7 @@ def test_a_wrong_coefficient_fails_the_gate():
 
 
 @pytest.mark.parametrize("fn", ["sin", "exp", "log", "pow", "fmod"])
-def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn):
+def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn: str) -> None:
     k = kernel(fn, "f64", "strict")
 
     seen = measured(dataclasses.replace(k, guard=""), 1 << 10)
@@ -114,35 +116,35 @@ def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn):
 
 
 @pytest.mark.parametrize("fn", functions())
-def test_relaxed_and_fast_have_no_branch_and_strict_at_most_one(fn):
+def test_relaxed_and_fast_have_no_branch_and_strict_at_most_one(fn: str) -> None:
     for level in ("relaxed", "fast"):
         assert "if (" not in spelled(fn, "f64", level, "avx2").source
     assert spelled(fn, "f64", "strict", "avx2").source.count("if (__builtin_expect") <= 1
 
 
-def test_the_strict_cold_path_calls_scalar_libm():
+def test_the_strict_cold_path_calls_scalar_libm() -> None:
     source = spelled("log", "f32", "strict", "avx2").source
 
     assert "vs[j] = logf(xs[j]);" in source
 
 
-def test_the_levels_get_cheaper():
+def test_the_levels_get_cheaper() -> None:
     for fn in functions():
         counts = [s.intrinsics for s in kernels_for(fn, "f64", "avx512")]
         assert counts[0] >= counts[1] >= counts[2], fn
 
 
-def test_strict_refuses_fast_math_at_compile_time():
+def test_strict_refuses_fast_math_at_compile_time() -> None:
     with pytest.raises(RuntimeError, match="strict math kernels need IEEE semantics"):
         measure(kernel("sin", "f64", "strict"), host_isa(), 1 << 10, ("-ffast-math",))
 
 
-def test_log1p_refuses_fast_math_at_every_level():
+def test_log1p_refuses_fast_math_at_every_level() -> None:
     with pytest.raises(RuntimeError, match="IEEE semantics"):
         measure(kernel("log1p", "f64", "relaxed"), host_isa(), 1 << 10, ("-ffast-math",))
 
 
-def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives():
+def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives() -> None:
     below = next(k for k in ladder("pow", "f64") if not needs_ieee(k))
 
     with pytest.raises(RuntimeError, match="IEEE semantics.*use the next rung down"):
@@ -151,7 +153,7 @@ def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives():
 
 
 @pytest.mark.parametrize("fn", ["sin", "exp", "log", "atan"])
-def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn):
+def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn: str) -> None:
     k = kernel(fn, "f64", "relaxed")
 
     seen = measured(k, 1 << 14, ("-ffast-math",))
@@ -159,7 +161,7 @@ def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn):
     assert seen.ulp <= 3 * k.error_ulp
 
 
-def test_every_spelled_identifier_exists_in_the_x86_headers():
+def test_every_spelled_identifier_exists_in_the_x86_headers() -> None:
     include = subprocess.run(["clang", "-print-resource-dir"], capture_output=True, text=True, check=False).stdout
     folder = pathlib.Path(include.strip()) / "include"
     if not folder.exists():
@@ -172,16 +174,16 @@ def test_every_spelled_identifier_exists_in_the_x86_headers():
     assert sorted(name for name in names if name not in text) == []
 
 
-def test_avx512_at_256_bits_gets_the_256_bit_spelling():
+def test_avx512_at_256_bits_gets_the_256_bit_spelling() -> None:
     assert "_mm256_" in spelled("sin", "f64", "relaxed", "avx512_256").source
 
 
-def test_an_unknown_function_names_what_exists():
+def test_an_unknown_function_names_what_exists() -> None:
     with pytest.raises(KeyError, match="sin, cos"):
         kernel("gamma", "f64", "strict")
 
 
-def test_libmvec_has_every_listed_call():
+def test_libmvec_has_every_listed_call() -> None:
     candidates = list(pathlib.Path("/lib").glob("*/libmvec.so.1"))
     if not candidates:
         pytest.skip("no glibc libmvec here")
@@ -193,14 +195,14 @@ def test_libmvec_has_every_listed_call():
             assert call in symbols, call
 
 
-def test_the_library_call_follows_the_level():
+def test_the_library_call_follows_the_level() -> None:
     assert libraries("sin", "f64", "avx512", "strict")["svml"] == "__svml_sin8_ha"
     assert libraries("sin", "f64", "avx512", "relaxed")["sleef"] == "Sleef_sind8_u35avx512f"
     assert libraries("sin", "f32", "avx2", "fast")["svml"] == "__svml_sinf8_ep"
     assert libraries("sin", "f64", "neon", "strict") == {}
 
 
-def test_the_cli_returns_all_three_levels_as_c(capsys):
+def test_the_cli_returns_all_three_levels_as_c(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["kernel", "avx2", "ln", "f64", "--no-verify"]) == 0
 
     out = capsys.readouterr().out
@@ -211,7 +213,7 @@ def test_the_cli_returns_all_three_levels_as_c(capsys):
     assert "or call libmvec: _ZGVdN4v_log" in out
 
 
-def test_a_lookup_of_a_function_returns_its_kernels(capsys):
+def test_a_lookup_of_a_function_returns_its_kernels(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "avx512", "sin", "f64", "--no-verify"]) == 0
 
     out = capsys.readouterr().out
@@ -219,17 +221,17 @@ def test_a_lookup_of_a_function_returns_its_kernels(capsys):
     assert "alloy_sin_f64_strict" in out
 
 
-def test_a_lookup_of_a_function_outside_the_ops_returns_its_kernels(capsys):
+def test_a_lookup_of_a_function_outside_the_ops_returns_its_kernels(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "avx2", "tanh", "f32", "--no-verify"]) == 0
 
     assert "alloy_tanh_f32_fast" in capsys.readouterr().out
 
 
-def test_a_lookup_of_an_unknown_name_fails(capsys):
+def test_a_lookup_of_an_unknown_name_fails(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["lookup", "avx2", "gamma", "f64", "--no-verify"]) != 0
 
 
-def test_hints_quote_the_levels_and_the_call():
+def test_hints_quote_the_levels_and_the_call() -> None:
     line = kernel_summary("avx2", "f64", "log")
 
     assert "strict" in line and "relaxed" in line and "fast" in line
@@ -260,7 +262,7 @@ int main(void) {
 
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
-def test_the_arm_fmod_recipes_compute_fmod(isa, dtype, tmp_path):
+def test_the_arm_fmod_recipes_compute_fmod(isa: str, dtype: str, tmp_path: pathlib.Path) -> None:
     """The table's own recipe steps run: divide, truncate, subtract the multiple."""
     arm = emulated(isa)
     if arm is None:
@@ -293,19 +295,19 @@ def test_the_arm_fmod_recipes_compute_fmod(isa, dtype, tmp_path):
     assert run.returncode == 0, run.stdout
 
 
-def test_a_kernel_past_its_recorded_error_fails_its_verdict():
+def test_a_kernel_past_its_recorded_error_fails_its_verdict() -> None:
     k = kernel("exp", "f64", "relaxed")
 
     assert judged(k, Measured(k.error_ulp * 100, 0.0, 0.0, 0.0, 0), "gate").ok is False
 
 
-def test_a_special_value_off_libm_fails_the_verdict():
+def test_a_special_value_off_libm_fails_the_verdict() -> None:
     k = kernel("exp", "f64", "strict")
 
     assert judged(k, Measured(k.error_ulp, 0.0, 0.0, 0.0, 1), "gate").ok is False
 
 
-def test_a_kernel_at_its_record_passes_the_verdict():
+def test_a_kernel_at_its_record_passes_the_verdict() -> None:
     k = kernel("exp", "f64", "strict")
 
     assert judged(k, Measured(k.error_ulp, 0.0, 0.0, 0.0, 0), "gate").ok is True
@@ -313,7 +315,7 @@ def test_a_kernel_at_its_record_passes_the_verdict():
 
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 @pytest.mark.parametrize("fn", ["log", "log2", "log10", "pow"])
-def test_an_avx2_kernel_survives_the_matrixs_reassoc_flags(compiler, fn, tmp_path):
+def test_an_avx2_kernel_survives_the_matrixs_reassoc_flags(compiler: str, fn: str, tmp_path: pathlib.Path) -> None:
     """The f64 float conversion was an FP subtraction, which reassociation cancelled."""
     k = next(k for k in ladder(fn, "f64") if not needs_ieee(k))
     args = ", ".join(f"_mm256_set1_pd({v})" for v in (8.0, 2.0)[: len(k.args)])
@@ -332,7 +334,7 @@ def test_an_avx2_kernel_survives_the_matrixs_reassoc_flags(compiler, fn, tmp_pat
     assert sut == pytest.approx(expected, rel=1e-13)
 
 
-def test_clang_keeps_a_strict_kernel_exact_under_associative_math():
+def test_clang_keeps_a_strict_kernel_exact_under_associative_math() -> None:
     k = kernel("sin", "f64", "strict")
 
     assert "#pragma clang fp reassociate(off)" in render(k, "avx2").source
@@ -375,7 +377,9 @@ def strict_value(fn: str, dtype: str, args: tuple[float, ...], tmp_path: pathlib
         ("fmod", "f32", (0.7, 0.1), 0.09999997913837433),
     ],
 )
-def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dtype, args, exact, tmp_path):
+def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(
+    fn: str, dtype: str, args: tuple[float, float] | tuple[float], exact: float, tmp_path: pathlib.Path
+) -> None:
     """One ulp below 1 or 3 casts to 0 or 2, and 0.7/0.1 rounds up to 7: the listed bound excuses none of these."""
     sut = strict_value(fn, dtype, args, tmp_path)
 
@@ -384,7 +388,7 @@ def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(fn, dty
 
 @pytest.mark.parametrize("fn", functions())
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
-def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn, dtype):
+def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn: str, dtype: str) -> None:
     sut = [k for k in ladder(fn, dtype) if k.level != "strict"]
 
     errors = [k.error_ulp for k in sut]
@@ -393,7 +397,7 @@ def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn, dtype):
     assert costs == sorted(costs, reverse=True)
 
 
-def test_a_tolerance_picks_the_cheapest_kernel_that_holds_it():
+def test_a_tolerance_picks_the_cheapest_kernel_that_holds_it() -> None:
     sut = cheapest("sin", "f64", "avx2", max_ulp=10.0)
 
     assert sut.kernel.error_ulp <= 10.0
@@ -402,26 +406,26 @@ def test_a_tolerance_picks_the_cheapest_kernel_that_holds_it():
     assert cheaper and all(k.error_ulp > 10.0 for k in cheaper)
 
 
-def test_an_absolute_tolerance_picks_by_the_absolute_error():
+def test_an_absolute_tolerance_picks_by_the_absolute_error() -> None:
     sut = cheapest("sin", "f64", "avx512", max_abs=1e-9)
 
     assert sut.kernel.error_abs <= 1e-9
     assert sut.kernel.level not in ("strict", "relaxed")
 
 
-def test_a_tolerance_no_kernel_holds_names_the_most_accurate_one():
+def test_a_tolerance_no_kernel_holds_names_the_most_accurate_one() -> None:
     with pytest.raises(
         KeyError, match="pow f64: no kernel within the bound; the most accurate is (strict|relaxed) at 1"
     ):
         cheapest("pow", "f64", "avx2", max_ulp=0.1)
 
 
-def test_a_rung_a_function_lacks_names_the_ones_it_has():
+def test_a_rung_a_function_lacks_names_the_ones_it_has() -> None:
     with pytest.raises(KeyError, match="log f32 has no mid1 rung \\(it has: strict, relaxed, fast\\)"):
         kernel("log", "f32", "mid1")
 
 
-def test_the_cli_lists_the_ladder_and_answers_a_bound_with_one_kernel(capsys):
+def test_the_cli_lists_the_ladder_and_answers_a_bound_with_one_kernel(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["kernel", "avx2", "sin", "f64", "--no-verify"]) == 0
     listing = capsys.readouterr().out
     assert main(["kernel", "avx2", "sin", "f64", "--max-ulp", "10", "--no-verify"]) == 0
@@ -434,7 +438,9 @@ def test_the_cli_lists_the_ladder_and_answers_a_bound_with_one_kernel(capsys):
 
 
 @pytest.mark.parametrize(("function", "absolute"), [("sin", True), ("exp", False), ("log", False)])
-def test_the_ladder_states_an_absolute_error_only_for_a_bounded_function(capsys, function, absolute):
+def test_the_ladder_states_an_absolute_error_only_for_a_bounded_function(
+    capsys: pytest.CaptureFixture[str], function: str, absolute: bool
+) -> None:
     assert main(["kernel", "avx2", function, "f32", "--no-verify"]) == 0
     ladder_line = capsys.readouterr().out.splitlines()[0]
 
@@ -442,14 +448,14 @@ def test_the_ladder_states_an_absolute_error_only_for_a_bounded_function(capsys,
     assert (" abs," in ladder_line) is absolute
 
 
-def test_a_strict_sve_kernel_spills_into_arrays_of_constant_size():
+def test_a_strict_sve_kernel_spills_into_arrays_of_constant_size() -> None:
     sut = spelled("sin", "f64", "strict", "sve").source
 
     assert "double xs[32], vs[32], bads[32];" in sut
     assert "[svcntd()]" not in sut
 
 
-def test_a_relaxed_pow_carries_its_logarithm_as_a_double_word():
+def test_a_relaxed_pow_carries_its_logarithm_as_a_double_word() -> None:
     sut = kernel("pow", "f64", "relaxed")
 
     assert sut.error_ulp < 2.0
@@ -457,19 +463,21 @@ def test_a_relaxed_pow_carries_its_logarithm_as_a_double_word():
 
 
 @pytest.mark.parametrize("fn", [fn for fn in functions() if len(kernel(fn, "f32", "relaxed").args) == 1])
-def test_a_one_argument_f32_kernel_is_measured_on_every_input_of_its_range(fn):
+def test_a_one_argument_f32_kernel_is_measured_on_every_input_of_its_range(fn: str) -> None:
     assert all(k.exhaustive for k in ladder(fn, "f32"))
 
 
 @pytest.mark.parametrize("key", [("pow", "f32"), ("fmod", "f32"), ("sin", "f64")])
-def test_a_kernel_with_too_many_inputs_stays_sampled_and_says_so(key, capsys):
+def test_a_kernel_with_too_many_inputs_stays_sampled_and_says_so(
+    key: tuple[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
     assert not any(k.exhaustive for k in ladder(*key))
 
     assert main(["kernel", "avx2", key[0], key[1], "--level", "relaxed", "--no-verify"]) == 0
     assert "ulp sampled;" in capsys.readouterr().out
 
 
-def test_an_unguarded_kernel_is_checked_inside_its_grids_and_a_guarded_one_everywhere():
+def test_an_unguarded_kernel_is_checked_inside_its_grids_and_a_guarded_one_everywhere() -> None:
     assert inside(kernel("sin", "f32", "strict")) == "1"
     assert inside(kernel("exp", "f32", "relaxed")).startswith("(-1.0 <= x && x <= 1.0) || (-87.0 <= x && x <= 87.0)")
 
@@ -478,7 +486,7 @@ needs_avx2 = pytest.mark.skipif(not host_can_run("avx2", "f64"), reason="host do
 
 
 @needs_avx2
-def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls():
+def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls() -> None:
     sut = time_function("exp", "f64", "avx2")
 
     names = [row.name for row in sut]
@@ -490,7 +498,7 @@ def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls():
 
 
 @needs_avx2
-def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys):
+def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["time", "avx2", "exp", "f64", "--json"]) == 0
 
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
@@ -498,7 +506,7 @@ def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys):
     assert all(r["function"] == "exp" and r["ns"] > 0 for r in records)
 
 
-def test_the_advice_for_pow_says_its_recommended_kernel_steps_down_under_reassociation():
+def test_the_advice_for_pow_says_its_recommended_kernel_steps_down_under_reassociation() -> None:
     sut = kernel_summary("avx2", "f64", "pow", "relaxed")
 
     assert "take relaxed where the inputs hold its contract" in sut

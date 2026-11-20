@@ -94,7 +94,8 @@ def poster(mode: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
             "tokens": http_json.transcript_tokens(),
         }
         data = json.dumps(body).encode("utf-8")
-        return http_json.call_json(f"{http_json.judge_base()}/alloy/{mode}", data, SWEEP_TIMEOUT_S)
+        answer: dict[str, Any] = http_json.call_json(f"{http_json.judge_base()}/alloy/{mode}", data, SWEEP_TIMEOUT_S)
+        return answer
 
     return run
 
@@ -143,7 +144,8 @@ def isa_query(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = frozenset(t for t in os.environ.get(TARGETS_ENV, "").split(",") if t)
     if allowed and (why := outside_targets(payload, allowed)):
         return {"ok": False, "error": why}
-    return http_json.post_judge("/alloy/isa", payload)
+    answer: dict[str, Any] = http_json.post_judge("/alloy/isa", payload)
+    return answer
 
 
 #: A query writes nothing and a repeat gives the same answer.

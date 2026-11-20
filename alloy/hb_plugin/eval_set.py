@@ -34,7 +34,7 @@ DEV = frozenset({"fuse_diamond", "tsvc_2_s451", "transc_log_wide"})
 #: Calls an element expression may make, by the name the task program spells (the Tensix table's unary ops).
 CALLS = {"exp": "exp", "log": "log", "sqrt": "sqrt", "sin": "sin", "cos": "cos", "tanh": "tanh", "abs": "abs",
          "fabs": "abs"}  # fmt: skip
-BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
+BINOPS: dict[type[ast.operator], str] = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
 #: The bench's default input range when a kernel declares none (its fuzz default).
 DEFAULT_DOMAIN = (0.0, 1.0)
 MAX_INPUTS = 3
@@ -279,7 +279,7 @@ def admit(name: str) -> Task:
         raise Refused(f"no function {spec.func_name} in the NumPy form")
     init = spec.init
     scalars = module_constants(module)
-    scalars |= {k: float(v) for k, v in (init.scalars if init else {}).items() if isinstance(v, int | float)}
+    scalars |= {k: float(v) for k, v in (init.scalars if init else {}).items()}
     program, written, read, reduces = [], set[str](), set[str](), False
     for target, expression, arrays, reduced in statements(fn, scalars):
         read |= arrays - written  # an array read before this program writes it is an input

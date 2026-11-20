@@ -33,7 +33,7 @@ def lookup(capsys: pytest.CaptureFixture[str], *argv: str) -> str:
 
 def test_the_tensix_page_holds_every_line_the_lookup_prints_for_every_row_rung_and_dtype(
     capsys: pytest.CaptureFixture[str],
-):
+) -> None:
     page = pages.tensix_page()
     by_op = sections(page)
     target_note = pages.tensix_target_note().strip()
@@ -47,7 +47,7 @@ def test_the_tensix_page_holds_every_line_the_lookup_prints_for_every_row_rung_a
 
 def test_the_softhier_page_holds_every_line_the_lookup_prints_for_every_row_and_dtype(
     capsys: pytest.CaptureFixture[str],
-):
+) -> None:
     page = pages.softhier_page()
     by_op = sections(page)
     tail = pages.softhier_tail()
@@ -61,7 +61,7 @@ def test_the_softhier_page_holds_every_line_the_lookup_prints_for_every_row_and_
 
 
 @pytest.mark.parametrize("target", sorted(skill_pages.FACTS))
-def test_the_plugins_facts_page_is_the_generators_page_now(target: str):
+def test_the_plugins_facts_page_is_the_generators_page_now(target: str) -> None:
     path = skill_pages.SKILLS / f"alloy-facts-{target}" / "SKILL.md"
 
     assert path.read_text() == skill_pages.facts_page(target), "rerun: python -m alloy.hb_plugin.pages facts"
@@ -75,14 +75,14 @@ def test_the_plugins_facts_page_is_the_generators_page_now(target: str):
         ("Tiles\n=====\n\nA tile is 32x32.\n", False),
     ],
 )  # fmt: skip
-def test_a_docs_page_is_left_out_only_when_the_headers_hold_all_its_text(text: str, left_out: bool):
+def test_a_docs_page_is_left_out_only_when_the_headers_hold_all_its_text(text: str, left_out: bool) -> None:
     assert skill_pages.doxygen_only(text) is left_out
 
 
 @pytest.mark.parametrize("target", sorted(pages.ASKED))
 def test_the_page_holds_every_line_ask_prints_for_its_waits_barriers_and_gemm_plan(
     target: str, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     asked = sections(pages.page(target))["Asked"]
     for text in pages.ASKED[target]:
         op, *fields = text.split()

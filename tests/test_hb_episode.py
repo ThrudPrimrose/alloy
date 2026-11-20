@@ -158,6 +158,6 @@ def test_a_tuner_outside_a_run_logs_and_keeps_going(capsys: pytest.CaptureFixtur
     def refuse(schema: int, data: object) -> pathlib.Path:
         raise ValueError("a record needs an episode folder")
 
-    episode.keep_episode(refuse, episode.episode("none", "k", SECONDS, 0, ()))  # type: ignore[arg-type]
+    episode.keep_episode(refuse, episode.episode("none", "k", SECONDS, 0, ()))
 
     assert "episode record not kept: a record needs an episode folder" in capsys.readouterr().err

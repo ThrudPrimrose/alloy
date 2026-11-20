@@ -6,6 +6,7 @@ import pathlib
 import shutil
 import subprocess
 
+import dace
 import numpy as np
 import pytest
 from dace.codegen import cpf
@@ -18,7 +19,7 @@ from alloy.records import dumped_json, validated_json
 from helpers import MATRIX, REDUCTIONS, build, load_program, outlined, scope_with
 
 
-def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program(tmp_path):
+def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program(tmp_path: pathlib.Path) -> None:
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     archives = {
         r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.scopes
@@ -40,7 +41,7 @@ def test_a_library_of_scope_archives_renders_standalone_and_computes_the_program
     np.testing.assert_allclose(out, a.sum(axis=1), rtol=1e-12)
 
 
-def test_a_library_links_the_vector_library_its_candidates_were_built_against(tmp_path):
+def test_a_library_links_the_vector_library_its_candidates_were_built_against(tmp_path: pathlib.Path) -> None:
     program = outlined()
     archives = {r.symbol: tmp_path / f"lib{r.symbol}.a" for r in program.scopes}
     linker = Linker(program, MATRIX, tmp_path)
@@ -53,7 +54,7 @@ def test_a_library_links_the_vector_library_its_candidates_were_built_against(tm
     assert "-lmvec" not in links[1]
 
 
-def test_a_gcc_library_runs_on_libgomp_as_the_judge_grades_the_default_rendering(tmp_path):
+def test_a_gcc_library_runs_on_libgomp_as_the_judge_grades_the_default_rendering(tmp_path: pathlib.Path) -> None:
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     archives = {
         r.symbol: built(build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {})) for r in program.scopes
@@ -75,7 +76,7 @@ def test_a_gcc_library_runs_on_libgomp_as_the_judge_grades_the_default_rendering
 
 @pytest.mark.clang
 @pytest.mark.sleef
-def test_a_sleef_build_binds_its_vector_calls_to_sleef_not_to_glibcs_libmvec(tmp_path):
+def test_a_sleef_build_binds_its_vector_calls_to_sleef_not_to_glibcs_libmvec(tmp_path: pathlib.Path) -> None:
     program = outlined()
     libm = scope_with(program, libm=True, reduction=False)
     sleef = Candidate("c", "clang", fp_level=MATRIX.veclibs["sleef"].fp_level, veclib="sleef")
@@ -108,7 +109,7 @@ def private_vector_calls(built: Build) -> bool:
     return bool(kinds) and kinds <= {"t", "i", "r", "d", "b"}  # i: a local ifunc, as libmvec selects one
 
 
-def test_a_libmvec_scope_stays_on_the_programs_one_dynamic_vector_library(tmp_path):
+def test_a_libmvec_scope_stays_on_the_programs_one_dynamic_vector_library(tmp_path: pathlib.Path) -> None:
     """glibc's libmvec.a is not position-independent: libmvec is the dynamic library the private copies sit beside."""
     program = outlined()
     libm = scope_with(program, libm=True, reduction=False)
@@ -119,7 +120,7 @@ def test_a_libmvec_scope_stays_on_the_programs_one_dynamic_vector_library(tmp_pa
     assert sut.archive is not None and not private_vector_calls(sut)
 
 
-def test_a_vector_library_without_a_static_archive_fails_the_build_with_its_reason(tmp_path):
+def test_a_vector_library_without_a_static_archive_fails_the_build_with_its_reason(tmp_path: pathlib.Path) -> None:
     sut = closed_or_reason(tmp_path)
 
     assert sut == "libnosuchvectorlib has no static archive here, so the scope cannot keep a private copy of it"
@@ -133,7 +134,7 @@ def closed_or_reason(tmp_path: pathlib.Path) -> str:
     return why
 
 
-def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path):
+def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path: pathlib.Path) -> None:
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     winners = {
         r.symbol: build(r, Candidate("c", "gcc", fp_level="fast"), MATRIX, tmp_path / r.symbol, {})
@@ -156,7 +157,7 @@ def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path
     np.testing.assert_allclose(arrays["out"], arrays["a"].sum(axis=1), rtol=1e-12)
 
 
-def test_an_edited_best_makefile_rebuilds_every_archive_and_the_library(tmp_path):
+def test_an_edited_best_makefile_rebuilds_every_archive_and_the_library(tmp_path: pathlib.Path) -> None:
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     winners = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
     Linker(program, MATRIX, tmp_path).write_best(winners)
@@ -170,7 +171,7 @@ def test_an_edited_best_makefile_rebuilds_every_archive_and_the_library(tmp_path
     assert all(f"{symbol}.o" in sut for symbol in winners) and f"lib{program.sdfg.name}.so" in sut
 
 
-def test_the_timer_of_a_complex_scope_declares_its_entry_as_dace_does(tmp_path):
+def test_the_timer_of_a_complex_scope_declares_its_entry_as_dace_does(tmp_path: pathlib.Path) -> None:
     """DaCe spells a complex scope entry with its runtime types (``dace::complex128``); the timer compiles against them."""
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     scope = dataclasses.replace(
@@ -186,7 +187,7 @@ def test_the_timer_of_a_complex_scope_declares_its_entry_as_dace_does(tmp_path):
     assert sut.is_file()
 
 
-def stub_library(linker: Linker, sdfg, tmp_path, name: str) -> ctypes.CDLL:
+def stub_library(linker: Linker, sdfg: dace.SDFG, tmp_path: pathlib.Path, name: str) -> ctypes.CDLL:
     """``sdfg`` rendered by CPF in the program's signature and built into ``lib<name>.so``."""
     rendered = cpf.render(sdfg, language="c", signature=cpf.EntrySignature(["N", "a", "b", "total"]))
     source, library = tmp_path / f"{name}.c", tmp_path / f"lib{name}.so"
@@ -197,7 +198,7 @@ def stub_library(linker: Linker, sdfg, tmp_path, name: str) -> ctypes.CDLL:
     return ctypes.CDLL(str(library))
 
 
-def test_a_stub_runs_its_scope_and_the_scopes_before_it_and_no_later_one(tmp_path):
+def test_a_stub_runs_its_scope_and_the_scopes_before_it_and_no_later_one(tmp_path: pathlib.Path) -> None:
     program = outlined()
     linker = Linker(program, MATRIX, tmp_path)
     selection = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
@@ -222,7 +223,7 @@ def test_a_stub_runs_its_scope_and_the_scopes_before_it_and_no_later_one(tmp_pat
             )
 
 
-def test_scopes_run_in_program_order():
+def test_scopes_run_in_program_order() -> None:
     program = outlined()
 
     sut = execution_order(program.sdfg)
@@ -232,7 +233,7 @@ def test_scopes_run_in_program_order():
     assert sut[-1] == reduction
 
 
-def test_best_carries_each_winners_own_source_and_flags(tmp_path):
+def test_best_carries_each_winners_own_source_and_flags(tmp_path: pathlib.Path) -> None:
     program = outlined()
     winners = {
         scope.symbol: build(scope, Candidate("c", "gcc", fp_level="contract"), MATRIX, tmp_path / scope.symbol, {})
@@ -251,7 +252,7 @@ def test_best_carries_each_winners_own_source_and_flags(tmp_path):
 
 
 @pytest.mark.nvhpc
-def test_best_compiles_a_winner_into_the_code_that_was_measured(tmp_path):
+def test_best_compiles_a_winner_into_the_code_that_was_measured(tmp_path: pathlib.Path) -> None:
     """nvc's line tables (``-gopt``) keep a frame pointer: a ``best/`` compile without them is other code."""
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     winners = {r.symbol: build(r, Candidate("c", "nvhpc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}
@@ -271,7 +272,9 @@ def text_section(obj: pathlib.Path) -> list[str]:
     return listing.stdout.splitlines()[2:]
 
 
-def test_a_library_in_a_default_linker_folder_is_found_where_no_driver_reports_it(tmp_path, monkeypatch):
+def test_a_library_in_a_default_linker_folder_is_found_where_no_driver_reports_it(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """CI installs SLEEF into /usr/local/lib: the linker searches it, clang's -print-file-name does not."""
     from alloy.backend import runtime
 

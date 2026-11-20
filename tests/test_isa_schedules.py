@@ -2,6 +2,7 @@
 """The schedule axis: legality per ISA with reasons, C skeletons composed from the table's entries,
 and a compile-and-run numerical check of every skeleton the host can execute."""
 
+import pathlib
 import shutil
 import subprocess
 
@@ -14,7 +15,7 @@ TABLE = load()
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 
 
-def test_every_schedule_is_described_and_every_isa_offer_is_known():
+def test_every_schedule_is_described_and_every_isa_offer_is_known() -> None:
     for name in SCHEDULES:
         assert name in TABLE.schedule_info
     for isa in TABLE.isas.values():
@@ -36,7 +37,7 @@ def test_every_schedule_is_described_and_every_isa_offer_is_known():
         ("sve", "scalar_remainder", True),
     ],
 )
-def test_legality_and_the_reason(isa, schedule, offered):
+def test_legality_and_the_reason(isa: str, schedule: str, offered: bool) -> None:
     why = legal(isa, schedule, TABLE)
 
     assert (why == "") is offered
@@ -44,7 +45,7 @@ def test_legality_and_the_reason(isa, schedule, offered):
         assert why  # a refusal always names why
 
 
-def test_a_refusal_explains_missing_predication():
+def test_a_refusal_explains_missing_predication() -> None:
     assert "no predication" in legal("avx2", "full_mask", TABLE)
     assert "not offered" in legal("avx2", "sve_intrinsics", TABLE)
 
@@ -92,7 +93,7 @@ SKELETON_MARKS = [
 
 
 @pytest.mark.parametrize(("isa", "schedule", "dtype", "marks"), SKELETON_MARKS)
-def test_skeletons_compose_the_table_entries(isa, schedule, dtype, marks):
+def test_skeletons_compose_the_table_entries(isa: str, schedule: str, dtype: str, marks: list[str]) -> None:
     source = skeleton(TABLE, isa, schedule, dtype)
 
     for mark in marks:
@@ -102,7 +103,7 @@ def test_skeletons_compose_the_table_entries(isa, schedule, dtype, marks):
         assert "vfmaq_f32(vld1q_f32(Y + i), vdupq_n_f32(a), vld1q_f32(X + i))" in source
 
 
-def test_an_illegal_skeleton_refuses_with_the_reason():
+def test_an_illegal_skeleton_refuses_with_the_reason() -> None:
     with pytest.raises(KeyError, match="no predication"):
         skeleton(TABLE, "avx2", "full_mask", "f64")
 
@@ -119,7 +120,7 @@ _RUNNABLE = [
 
 @pytest.mark.skipif(not CC, reason="no C compiler on PATH")
 @pytest.mark.parametrize(("isa", "schedule", "dtype"), [(i, s, d) for i, s, d, *_ in _RUNNABLE])
-def test_skeletons_compile_and_run_on_the_host(isa, schedule, dtype):
+def test_skeletons_compile_and_run_on_the_host(isa: str, schedule: str, dtype: str) -> None:
     from alloy.isa.schedules import verify
     from alloy.isa.validate import host_can_run
 
@@ -130,7 +131,7 @@ def test_skeletons_compile_and_run_on_the_host(isa, schedule, dtype):
     assert verdict.ok is True, verdict.detail
 
 
-def test_an_unexecutable_skeleton_is_unverified_not_wrong(monkeypatch):
+def test_an_unexecutable_skeleton_is_unverified_not_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
     from alloy.isa.schedules import verify
 
     monkeypatch.setattr("alloy.isa.schedules.emulated", lambda isa: None)
@@ -144,7 +145,7 @@ def test_an_unexecutable_skeleton_is_unverified_not_wrong(monkeypatch):
     ("isa", "schedule", "dtype"),
     [("neon", "scalar_remainder", "f64"), ("sve", "sve_intrinsics", "f64"), ("sve", "full_mask", "f32")],
 )
-def test_an_arm_skeleton_runs_under_qemu_when_the_host_has_it(isa, schedule, dtype):
+def test_an_arm_skeleton_runs_under_qemu_when_the_host_has_it(isa: str, schedule: str, dtype: str) -> None:
     from alloy.isa.schedules import verify
     from alloy.isa.validate import emulated
 
@@ -153,7 +154,7 @@ def test_an_arm_skeleton_runs_under_qemu_when_the_host_has_it(isa, schedule, dty
     assert verdict.ok is (True if emulated(isa) else None), verdict.detail
 
 
-def test_every_schedule_spells_how_to_ask_each_compiler():
+def test_every_schedule_spells_how_to_ask_each_compiler() -> None:
     from alloy.isa.schedules import compiler_spelling
 
     assert compiler_spelling("scalar", "gcc", TABLE) == "-fno-tree-vectorize"
@@ -165,7 +166,7 @@ def test_every_schedule_spells_how_to_ask_each_compiler():
     assert "armv8-a+sve" in compiler_spelling("sve_intrinsics", "gcc", TABLE)
 
 
-def test_an_unknown_compiler_or_schedule_names_the_choices():
+def test_an_unknown_compiler_or_schedule_names_the_choices() -> None:
     import pytest
 
     from alloy.isa.schedules import compiler_spelling
@@ -174,7 +175,7 @@ def test_an_unknown_compiler_or_schedule_names_the_choices():
         compiler_spelling("wibble", "gcc", TABLE)
 
 
-def test_the_cli_verifies_a_skeleton():
+def test_the_cli_verifies_a_skeleton() -> None:
     import sys
 
     from alloy.isa.validate import host_can_run
@@ -192,16 +193,16 @@ def test_the_cli_verifies_a_skeleton():
     assert verdict in run.stdout
 
 
-def test_a_width_alias_is_refused_by_name():
+def test_a_width_alias_is_refused_by_name() -> None:
     with pytest.raises(KeyError, match="use avx512"):
         skeleton(TABLE, "avx512_256", "full_mask", "f64")
 
 
-def test_the_full_mask_count_cannot_truncate_to_32_bits():
+def test_the_full_mask_count_cannot_truncate_to_32_bits() -> None:
     assert "N - i < 16 ? N - i : 16" in skeleton(TABLE, "avx512", "full_mask", "f32")
 
 
-def test_a_compiler_spelling_names_a_compiler_not_any_field():
+def test_a_compiler_spelling_names_a_compiler_not_any_field() -> None:
     from alloy.isa.schedules import compiler_spelling
 
     with pytest.raises(KeyError, match="no 'title' spelling"):
@@ -209,7 +210,7 @@ def test_a_compiler_spelling_names_a_compiler_not_any_field():
 
 
 @pytest.mark.parametrize("name", ["scalar_remainder", "masked_remainder", "full_mask"])
-def test_gcc_accepts_the_spelling_of_a_schedule(name, tmp_path):
+def test_gcc_accepts_the_spelling_of_a_schedule(name: str, tmp_path: pathlib.Path) -> None:
     source = tmp_path / "k.c"
     source.write_text("void f(int n, double *a) { for (int i = 0; i < n; i++) a[i] += 1.0; }\n")
     flags = TABLE.schedule_info[name].gcc.split(" (")[0].split()
@@ -221,7 +222,7 @@ def test_gcc_accepts_the_spelling_of_a_schedule(name, tmp_path):
     assert run.returncode == 0, run.stderr
 
 
-def test_clang_accepts_the_spelling_of_a_masked_loop(tmp_path):
+def test_clang_accepts_the_spelling_of_a_masked_loop(tmp_path: pathlib.Path) -> None:
     source = tmp_path / "k.c"
     source.write_text("void f(int n, double *a) { for (int i = 0; i < n; i++) a[i] += 1.0; }\n")
     flags = TABLE.schedule_info["full_mask"].clang.split()

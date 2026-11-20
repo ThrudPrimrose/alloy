@@ -69,8 +69,10 @@ def render_isa(table: Table, isa_name: str) -> str:
     lines.append("")
     if isa.embedded_broadcast:
         lines += [
-            "A scalar operand fuses into any arithmetic instruction as an EVEX embedded broadcast "
-            "(`{1to8}`/`{1to16}`) when it comes from memory; a register scalar broadcasts explicitly.",
+            (
+                "A scalar operand fuses into any arithmetic instruction as an EVEX embedded broadcast "
+                "(`{1to8}`/`{1to16}`) when it comes from memory; a register scalar broadcasts explicitly."
+            ),
             "",
         ]
     lines += [isa.note, ""]
@@ -96,8 +98,10 @@ def render_index(table: Table) -> str:
     lines += [f"| `{op.name}` | {cell(op.semantics)} | {op.kind} | {op.result} |" for op in OPS.values()]
     lines += [
         "",
-        "Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the "
-        "integer ops. A scalar operand of a binary op is broadcast.",
+        (
+            "Dtypes: `f64`/`f32` everywhere, `f16` where the hardware has it, `i64`/`i32` for the "
+            "integer ops. A scalar operand of a binary op is broadcast."
+        ),
         "",
         "## Pages",
         "",
@@ -107,8 +111,10 @@ def render_index(table: Table) -> str:
         lines.append(f"- [`{name}.md`]({name}.md) — {isa.title}")
     lines += [
         "- [`kernels.md`](kernels.md) — sin, exp, log, pow and more as intrinsics: strict, relaxed and fast",
-        "- [`transcendentals.md`](transcendentals.md) — the exp/sin/cos/log polynomial tiers with "
-        "measured ULP and the vector math library calls",
+        (
+            "- [`transcendentals.md`](transcendentals.md) — the exp/sin/cos/log polynomial tiers with "
+            "measured ULP and the vector math library calls"
+        ),
         "",
     ]
     return "\n".join(lines)
@@ -119,34 +125,48 @@ def render_kernels() -> str:
     lines = [
         "# Math kernels — functions as intrinsics (generated, do not edit)",
         "",
-        "Every function comes as a ladder of C functions built from intrinsics; copy one into the loop's "
-        "translation unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> "
-        "<dtype>`; add `--max-ulp N` or `--max-abs E` for the cheapest one that holds a bound.",
+        (
+            "Every function comes as a ladder of C functions built from intrinsics; copy one into the loop's "
+            "translation unit and the call disappears. Get them with `python -m alloy.isa kernel <isa> <function> "
+            "<dtype>`; add `--max-ulp N` or `--max-abs E` for the cheapest one that holds a bound."
+        ),
         "",
-        "- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge "
-        "arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other "
-        "inputs are within the listed ulp: strict guarantees the domain.",
-        "- **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when "
-        "the inputs are known finite and in range.",
-        "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "
-        "tolerance, an activation, or a first guess.",
-        "- **mid3, mid2, mid1**: the rungs between `relaxed` and `fast`, `relaxed`'s program at lower degrees. A "
-        "function has only the rungs whose degree differs, numbered from the cheapest up.",
+        (
+            "- **strict**: libm's answer on every special input: NaN, infinities, signed zeros, subnormals and huge "
+            "arguments are correct, and lanes the vector path cannot hold take one cold branch to scalar libm. Other "
+            "inputs are within the listed ulp: strict guarantees the domain."
+        ),
+        (
+            "- **relaxed**: no branch. Holds under the contract below and gives garbage outside it. Pick it when "
+            "the inputs are known finite and in range."
+        ),
+        (
+            "- **fast**: `relaxed` at a lower degree, about half the digits. Pick it when the result feeds a "
+            "tolerance, an activation, or a first guess."
+        ),
+        (
+            "- **mid3, mid2, mid1**: the rungs between `relaxed` and `fast`, `relaxed`'s program at lower degrees. A "
+            "function has only the rungs whose degree differs, numbered from the cheapest up."
+        ),
         "",
-        "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
-        "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
-        "`relaxed` `pow` carries its logarithm as a double word and refuses the same way: take the next rung down "
-        "there. The other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
-        "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input. A rung "
-        "below `relaxed` misses a bounded function's bound by up to its absolute error: its `cos(0)` may be "
-        "0.99999999998 or 1.00000000000007, so clamp before `acos` or `sqrt(1 - c*c)`.",
+        (
+            "`strict` is a compile error under `-ffast-math` or `-fassociative-math`: reassociation undoes its error "
+            "compensation; so is every `log1p`, which has no kernel under reassociation: call the library there. The "
+            "`relaxed` `pow` carries its logarithm as a double word and refuses the same way: take the next rung down "
+            "there. The other `relaxed` and `fast` kernels build under both at up to 2.5 times the listed error. `relaxed` and "
+            "`fast` do not preserve the sign of a zero, and a kernel's division may raise FP flags on valid input. A rung "
+            "below `relaxed` misses a bounded function's bound by up to its absolute error: its `cos(0)` may be "
+            "0.99999999998 or 1.00000000000007, so clamp before `acos` or `sqrt(1 - c*c)`."
+        ),
         "",
-        "Inline them only when the loop has other work: the gain over a library call is the call and its spills. "
-        "It is not universal: `atan` and AVX2 `sinh` lose to the libraries, and SVML `exp` and `pow` are about even. "
-        "All kernels beat scalar libm by 4x to 13x. `python -m alloy.isa time <isa> <function> <dtype>` measures "
-        "every rung and the library calls on the machine at hand. ULP is the worst error against a wider libm: over "
-        "every input of the range for a one-argument f32 kernel (marked `all`), sampled for the others, where it is "
-        "not a proven bound.",
+        (
+            "Inline them only when the loop has other work: the gain over a library call is the call and its spills. "
+            "It is not universal: `atan` and AVX2 `sinh` lose to the libraries, and SVML `exp` and `pow` are about even. "
+            "All kernels beat scalar libm by 4x to 13x. `python -m alloy.isa time <isa> <function> <dtype>` measures "
+            "every rung and the library calls on the machine at hand. ULP is the worst error against a wider libm: over "
+            "every input of the range for a one-argument f32 kernel (marked `all`), sampled for the others, where it is "
+            "not a proven bound."
+        ),
         "",
         "| function | dtype | level | ulp | inputs | intrinsics (avx512) | branch | contract |",
         "|---|---|---|---:|---|---:|---|---|",
@@ -171,10 +191,12 @@ def render_transcendentals(table: Table) -> str:
     lines = [
         "# Transcendentals — polynomial tiers with measured ULP (generated, do not edit)",
         "",
-        "Error in units of 2^-52 at function scale: max \\|approx - ref\\| / spacing(max(\\|ref\\|, 1.0)) against "
-        "double-precision libm on dense grids, so real f64 ulp is up to 2.7x larger and f32 rows get the same f64 "
-        "figures. A tier holds on a reduced domain only: `kernel` gives whole functions with true ulp. Recipes are Horner schemes in "
-        "abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations.",
+        (
+            "Error in units of 2^-52 at function scale: max \\|approx - ref\\| / spacing(max(\\|ref\\|, 1.0)) against "
+            "double-precision libm on dense grids, so real f64 ulp is up to 2.7x larger and f32 rows get the same f64 "
+            "figures. A tier holds on a reduced domain only: `kernel` gives whole functions with true ulp. Recipes are Horner schemes in "
+            "abstract-op steps (`fma`/`mul` with inline coefficients) — copyable implementations."
+        ),
         "",
         "| tier | op | domain | error (ulp) | error (abs) |",
         "|---|---|---|---|---|",

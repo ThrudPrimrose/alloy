@@ -2,11 +2,13 @@ line-length = 120
 target-version = "py312"
 
 [lint]
-select = ["F", "UP", "I", "FLY", "Q", "C4", "DTZ", "T10", "EXE", "INT", "ISC", "PYI", "RSE", "TID", "W", "PERF", "FURB", "RUF100"]
+select = ["ANN", "F", "UP", "I", "FLY", "Q", "C4", "DTZ", "T10", "EXE", "INT", "ISC", "PYI", "RSE", "TID", "W", "PERF", "FURB", "RUF100"]
 ignore = ["UP031","C408","PYI041","PYI042","PYI016","PERF203","FURB136"]
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "F405", "I"]
+# Test doubles stand in for real objects by duck typing.
+"tests/*" = ["ANN401"]
 
 [format]
-exclude = ["*.ipynb"]
+exclude = ["*.ipynb", "*.md"]  # pages under alloy/hb_plugin/skills are generated

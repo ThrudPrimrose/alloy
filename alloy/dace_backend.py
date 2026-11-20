@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import TypedDict, Unpack
 
 import dace
 from dace.codegen import compiler
@@ -90,7 +90,7 @@ def instrumentation(sdfg: dace.SDFG) -> list[str]:
     return INSTRUMENT.findall(json.dumps(sdfg.to_json()))
 
 
-def json_value(value: Any) -> Any:
+def json_value(value: object) -> list[object] | str:
     """A value ``json`` has no form for: a set's order follows the hash seed, so it is sorted."""
     return sorted(value) if isinstance(value, frozenset | set) else str(value)
 
@@ -182,7 +182,20 @@ def compile(
     return program if return_program_handle else None
 
 
-def speculative(sdfg: dace.SDFG, **compile_args: Any) -> CompiledSDFG | None:
+class CompileArgs(TypedDict, total=False):
+    """The keyword arguments DaCe's build hook may pass on to :func:`compile`."""
+
+    manifest: Manifest | None
+    matrix: Matrix | None
+    out: pathlib.Path | None
+    finite_inputs: bool
+    running: dict[str, int] | None
+    output_file: str | None
+    validate: bool
+    return_program_handle: bool
+
+
+def speculative(sdfg: dace.SDFG, **compile_args: Unpack[CompileArgs]) -> CompiledSDFG | None:
     """``alloy-speculative``: every scope's pick predicted, verified when no input needs a manifest."""
     return compile(sdfg, mode=Mode.SPECULATIVE, **compile_args)
 

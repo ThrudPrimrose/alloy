@@ -14,16 +14,16 @@ PAGE = (pathlib.Path(ask.__file__).parent.parent / "hb_plugin" / "skills" / "all
 
 
 @pytest.mark.parametrize("name", [*ask.TARGETS, *ask.SPACES, *(s for s in ask.SWIZZLES if s != "none")])
-def test_the_page_names_every_target_space_and_swizzle_of_ask(name):
+def test_the_page_names_every_target_space_and_swizzle_of_ask(name: str) -> None:
     assert f"`{name}`" in PAGE
 
 
 @pytest.mark.parametrize("in_type", sorted(tile.GPU_BYTES))
-def test_the_page_names_every_gpu_tile_input_type(in_type):
+def test_the_page_names_every_gpu_tile_input_type(in_type: str) -> None:
     assert f"`{in_type}`" in PAGE or f"`--in {in_type}`" in PAGE
 
 
-def test_every_command_the_page_shows_exists(capsys):
+def test_every_command_the_page_shows_exists(capsys: pytest.CaptureFixture[str]) -> None:
     commands = set(re.findall(r'command="([a-z-]+)"', PAGE))
 
     assert {"ask", "ask-all", "host", "lookup", "kernel", "tile", "reverse"} <= commands
@@ -34,7 +34,7 @@ def test_every_command_the_page_shows_exists(capsys):
     capsys.readouterr()
 
 
-def test_the_cpu_mma_and_the_broadcast_source_the_page_shows_are_feasible():
+def test_the_cpu_mma_and_the_broadcast_source_the_page_shows_are_feasible() -> None:
     mma = re.search(r"`--a (\S+) --b (\S+) --c (\S+)`", PAGE)
     scalar = re.search(r"scalar source as\s+`--x (\S+)`", PAGE)
     assert mma is not None and scalar is not None

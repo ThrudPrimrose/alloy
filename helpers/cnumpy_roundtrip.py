@@ -19,7 +19,7 @@ import json
 import pathlib
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Any
 
 import numpy as np
@@ -81,12 +81,12 @@ def call_lifted(
         if got.shape != expected[name].shape:
             return f"wrong:shape:{name}"
         if got.size and not numerical_oracle.outputs_match(got, expected[name], rtol, atol):
-            return "wrong:" + numerical_oracle.mismatch_detail(name, got, expected[name], rtol, atol)
+            return "wrong:" + str(numerical_oracle.mismatch_detail(name, got, expected[name], rtol, atol))
     return "ok"
 
 
 @contextlib.contextmanager
-def lifted_backend(reference: pathlib.Path | None) -> Iterator[None]:
+def lifted_backend(reference: pathlib.Path | None) -> Generator[None]:
     """The oracle's C backend replaced by the lifted kernel: of the emitted C, or of ``reference``."""
     invoke, build = numerical_oracle.invoke_isolated, numerical_oracle.native_build_command
 
@@ -112,7 +112,7 @@ def lifted_backend(reference: pathlib.Path | None) -> Iterator[None]:
         def compute() -> str:
             return call_lifted(module, binding, by, syms, expected, compare, rtol, atol)
 
-        return numerical_oracle.forked_status(compute, numerical_oracle.INVOKE_TIMEOUT_S, expired="wrong:timeout")
+        return str(numerical_oracle.forked_status(compute, numerical_oracle.INVOKE_TIMEOUT_S, expired="wrong:timeout"))
 
     def no_build(backend: str, src: pathlib.Path, so: pathlib.Path, short: str) -> list[str]:
         return ["true"]
@@ -158,7 +158,7 @@ def run_one(short: str, reference: bool) -> str:
             status = numerical_oracle.run_kernel(short, only_backends={"c"})
         except Exception as exc:
             return f"skip:oracle:{type(exc).__name__}: {str(exc)[:160]}"
-    return status.get("c", "skip:no-c-status")
+    return str(status.get("c", "skip:no-c-status"))
 
 
 def table(results: dict[str, dict[str, str]]) -> str:

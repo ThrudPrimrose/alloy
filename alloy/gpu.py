@@ -240,7 +240,7 @@ def blocks(shapes: dict[int, Shape]) -> Callable[[dace.SDFG], None]:
     pipeline chose a block for (a map holding a thread-block map has none)."""
 
     def set_blocks(sdfg: dace.SDFG) -> None:
-        chosen = [entry for entry in device_maps(sdfg) if entry.map.gpu_block_size is not None]
+        chosen = [entry for entry in device_maps(sdfg) if entry.map.gpu_block_size is not None]  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
         for ordinal, shape in shapes.items():
             if ordinal < len(chosen):
                 chosen[ordinal].map.gpu_block_size = list(shape)
@@ -249,7 +249,8 @@ def blocks(shapes: dict[int, Shape]) -> Callable[[dace.SDFG], None]:
 
 
 def device_code(sdfg: dace.SDFG, dialect: str) -> str:
-    return cpf.render(sdfg, language=dialect, check_compiles=False).device_code
+    code: str = cpf.render(sdfg, language=dialect, check_compiles=False).device_code
+    return code
 
 
 @dataclass(frozen=True, slots=True)

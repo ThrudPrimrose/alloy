@@ -109,17 +109,17 @@ def test_the_flavor_submits_a_library_the_judge_grades_correct(
     assert isinstance(record, dict)
     assert kept.schema_version == record["schema"] == episode.SCHEMA
     assert set(record) == {"schema", "mode", "kernel", "seconds", "stubs", "scopes", "truncated"}
-    assert set(record["seconds"]) == {"generate", "time_stubs", "score", "total"}
+    assert set(record["seconds"]) == {"generate", "time_stubs", "score", "total"}  # pyright: ignore[reportArgumentType] -- test double
     assert (record["mode"], record["kernel"], record["truncated"]) == (
         flavor.split("_alloy_")[1].split("_")[0],
         kernel,
         False,
     )
-    for scope in record["scopes"]:
+    for scope in record["scopes"]:  # pyright: ignore[reportGeneralTypeIssues, reportOptionalIterable] -- test double
         assert set(scope) == {"symbol", "reference", "chosen", "note", "axes", "search"}
         assert (scope["chosen"] == episode.PLAIN[0]) == (not scope["axes"])
         assert scope["search"]["built"] >= scope["search"]["verified"] + scope["search"]["rejected"]
     if flavor.endswith("_profile"):  # each stub attempt, a dropped one too, counts; a timed reference took one
-        timed = [s["search"]["timed"] + (s["search"]["default_ns"] is not None) for s in record["scopes"]]
-        assert record["stubs"] >= sum(timed)
-        assert all(s["search"]["default_ns"] is None or s["search"]["default_ns"] > 0 for s in record["scopes"])
+        timed = [s["search"]["timed"] + (s["search"]["default_ns"] is not None) for s in record["scopes"]]  # pyright: ignore[reportGeneralTypeIssues, reportOptionalIterable] -- test double
+        assert record["stubs"] >= sum(timed)  # pyright: ignore[reportOperatorIssue] -- test double
+        assert all(s["search"]["default_ns"] is None or s["search"]["default_ns"] > 0 for s in record["scopes"])  # pyright: ignore[reportGeneralTypeIssues, reportOptionalIterable] -- test double

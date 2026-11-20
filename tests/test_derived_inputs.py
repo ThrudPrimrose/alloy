@@ -12,34 +12,34 @@ M = dace.symbol("M")
 
 
 @dace.program
-def axpy(x: dace.float64[N], y: dace.float64[N], a: dace.float64):
+def axpy(x: dace.float64[N], y: dace.float64[N], a: dace.float64) -> None:
     for i in dace.map[0:N]:
         y[i] = a * x[i] + y[i]
 
 
 @dace.program
-def roots(x: dace.float64[N], y: dace.float64[N]):
+def roots(x: dace.float64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = np.sqrt(x[i])
 
 
 @dace.program
-def gather(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
+def gather(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = x[idx[i]]
 
 
-def test_the_outputs_are_the_arguments_the_program_writes():
+def test_the_outputs_are_the_arguments_the_program_writes() -> None:
     assert inputs.derived_outputs(axpy.to_sdfg()) == ("y",)
 
 
-def test_any_value_is_valid_unless_a_call_or_an_integer_argument_restricts_it():
+def test_any_value_is_valid_unless_a_call_or_an_integer_argument_restricts_it() -> None:
     assert inputs.domain_gap(axpy.to_sdfg()) == ""
     assert inputs.domain_gap(roots.to_sdfg()) == "calls sqrt"
     assert inputs.domain_gap(gather.to_sdfg()) == "integer argument idx"
 
 
-def test_a_draw_sizes_every_symbol_from_the_derived_sizes_and_fills_every_argument_at_its_dtype():
+def test_a_draw_sizes_every_symbol_from_the_derived_sizes_and_fills_every_argument_at_its_dtype() -> None:
     sdfg = axpy.to_sdfg()
 
     sut = [inputs.derived_draw(sdfg, i) for i in range(2)]
@@ -51,12 +51,12 @@ def test_a_draw_sizes_every_symbol_from_the_derived_sizes_and_fills_every_argume
 
 
 @dace.program
-def outer(x: dace.float64[M], y: dace.float64[N], z: dace.float64[M, N]):
+def outer(x: dace.float64[M], y: dace.float64[N], z: dace.float64[M, N]) -> None:
     for i, j in dace.map[0:M, 0:N]:
         z[i, j] = x[i] * y[j]
 
 
-def test_two_size_symbols_never_share_a_size_and_the_values_have_both_signs_and_a_spread_of_magnitudes():
+def test_two_size_symbols_never_share_a_size_and_the_values_have_both_signs_and_a_spread_of_magnitudes() -> None:
     """A8: a program that confuses M and N passes square draws; one that loses a sign passes values in [0, 1)."""
     sdfg = outer.to_sdfg()
 

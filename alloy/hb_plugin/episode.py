@@ -209,7 +209,8 @@ def episode(
 
 
 def plain_json(record: Episode) -> pydantic.JsonValue:
-    return json.loads(dumped_json(record))
+    plain: pydantic.JsonValue = json.loads(dumped_json(record))
+    return plain
 
 
 def keep_episode(keep: Keep, data: pydantic.JsonValue) -> None:

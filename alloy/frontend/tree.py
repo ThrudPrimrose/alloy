@@ -17,6 +17,7 @@ from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
     ContinueBlock,
+    ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
@@ -130,7 +131,7 @@ def state_node(state: SDFGState) -> CfgNode:
     return CfgNode(kind=Kind.STATE, label=state.label, detail="", children=rows)
 
 
-def block_node(block: Any) -> CfgNode:
+def block_node(block: ControlFlowBlock) -> CfgNode:
     if isinstance(block, SDFGState):
         return state_node(block)
     if isinstance(block, ConditionalBlock):

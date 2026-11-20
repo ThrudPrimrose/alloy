@@ -5,6 +5,7 @@ Infeasible, with a reason and the nearest requests it takes, from the surfaces i
 import dataclasses
 import json
 import math
+import pathlib
 import subprocess
 
 import pytest
@@ -22,6 +23,8 @@ from alloy.isa.ask import (
     Invalid,
     Operand,
     Request,
+    Space,
+    Swizzle,
     Why,
     ask,
     ask_all,
@@ -44,14 +47,14 @@ MFMA_TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "xor:8"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256)),
                               "dst": Operand("shared", "f16", (64, 64), "row_major", "b128")}, unit="tma"), "tma"),
 ])  # fmt: skip
-def test_each_target_answers_a_request_it_can_carry_out_with_its_unit_and_steps(request_, unit):
+def test_each_target_answers_a_request_it_can_carry_out_with_its_unit_and_steps(request_: Request, unit: str) -> None:
     sut = ask(request_, verify=False)
 
     assert isinstance(sut, Feasible), sut
     assert sut.unit == unit and sut.steps and sut.code
 
 
-def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer():
+def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer() -> None:
     sut = ask(Request("sm90", "mma", TILE), verify=False)
 
     assert isinstance(sut, Feasible)
@@ -69,14 +72,14 @@ def test_a_gpu_mma_needing_four_instructions_per_k_block_is_one_feasible_answer(
                                "c": Operand("tile_register", "f32", (32, 32))}), "32x32 tiles"),
     (Request("sme", "mma", TILE), "--in f32 --acc f32"),
 ])  # fmt: skip
-def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_, reason):
+def test_a_request_no_unit_carries_out_is_infeasible_with_its_reason(request_: Request, reason: str) -> None:
     sut = ask(request_, verify=False)
 
     assert isinstance(sut, Infeasible | Invalid)
     assert reason in sut.reason
 
 
-def test_the_nearest_request_of_an_infeasible_tile_is_feasible():
+def test_the_nearest_request_of_an_infeasible_tile_is_feasible() -> None:
     refused = ask(
         Request(
             "gfx942",
@@ -93,7 +96,7 @@ def test_the_nearest_request_of_an_infeasible_tile_is_feasible():
     assert isinstance(sut, Feasible)
 
 
-def test_a_cpu_mma_is_the_checked_fma_fallback():
+def test_a_cpu_mma_is_the_checked_fma_fallback() -> None:
     tile = {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f32", (8, 16)),
             "c": Operand("global", "f32", (16, 16))}  # fmt: skip
 
@@ -102,7 +105,7 @@ def test_a_cpu_mma_is_the_checked_fma_fallback():
     assert isinstance(sut, Feasible) and sut.check.status == "run", sut
 
 
-def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys):
+def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["ask", "gfx942", "mma", "--a", "shared:f32:64x64:row_major:xor:8", "--b",
                  "shared:f32:64x64:col_major:xor:8", "--c", "register:f32:64x64", "--json"])  # fmt: skip
 
@@ -111,7 +114,7 @@ def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys):
     assert sut["request"]["target"] == "gfx942" and sut["request"]["operands"]["a"]["shape"] == [64, 64]
 
 
-def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile():
+def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile() -> None:
     tile = {"a": Operand("tile_register", "f32", (64, 96)), "b": Operand("tile_register", "f32", (96, 32)),
             "c": Operand("tile_register", "f32", (64, 32))}  # fmt: skip
 
@@ -150,7 +153,7 @@ GLOBAL = Operand("global", "f16", (256, 256))
                                "b": Operand("tile_register", "f32", (32, 32)),
                                "c": Operand("tile_register", "bf16", (32, 32))}), "one element type"),
 ])  # fmt: skip
-def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request_, reason):
+def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request_: Request, reason: str) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Infeasible | Invalid), sut
@@ -166,7 +169,9 @@ def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request
     (Request("sm90", "reduce_add", {"x": Operand("register", "f32")}, unit="thread"), "warp"),
     (Request("tensix", "exp", {"x": Operand("tile_register", "f32", (32, 32))}, unit="fpu"), "sfpu"),
 ])  # fmt: skip
-def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_the_unit_that_does(request_, runs_on):
+def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_the_unit_that_does(
+    request_: Request, runs_on: str
+) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Infeasible), sut
@@ -192,14 +197,14 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256,)), "dst": B128}), "two-dimensional"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256), "col_major"), "dst": B128}), "row-major"),
 ])  # fmt: skip
-def test_a_copy_the_unit_cannot_carry_out_is_infeasible(request_, reason):
+def test_a_copy_the_unit_cannot_carry_out_is_infeasible(request_: Request, reason: str) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
-def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load():
+def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load() -> None:
     register, memory = Operand("vector", "f32", (8,)), Operand("global", "f32", (8,))
 
     store = answered(Request("avx2", "copy", {"src": register, "dst": memory}))
@@ -212,7 +217,9 @@ def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load(
 
 @pytest.mark.parametrize("op", [row.op for row in simt.rows()])
 @pytest.mark.parametrize("target", ["sm90", "gfx942", "gfx90a"])
-def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_is_feasible(target: str, op: str):
+def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_is_feasible(
+    target: str, op: str
+) -> None:
     sut = answered(Request(target, op))
 
     assert isinstance(sut, Feasible), sut
@@ -221,7 +228,7 @@ def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_i
 
 
 @pytest.mark.parametrize("op", [row.op for row in simt.rows()])
-def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
+def test_every_device_row_is_reachable_on_every_gpu_target(op: str) -> None:
     for target in ("sm90", "gfx942", "gfx90a"):
         sut = answered(Request(target, op))
 
@@ -239,14 +246,16 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str):
     (Request("tensix", "sqrt", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
     (Request("sme", "add"), "mma only"),
 ])  # fmt: skip
-def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(request_, reason):
+def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(
+    request_: Request, reason: str
+) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
-def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code():
+def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> None:
     sut = answered(Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}))
 
     assert isinstance(sut, Feasible)
@@ -271,7 +280,7 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code():
     Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}),
     Request("sme", "add"),
 ])  # fmt: skip
-def test_every_nearest_request_of_a_refusal_is_itself_feasible(refused: Request):
+def test_every_nearest_request_of_a_refusal_is_itself_feasible(refused: Request) -> None:
     sut = answered(refused)
     assert isinstance(sut, Infeasible) and sut.nearest
 
@@ -281,7 +290,7 @@ def test_every_nearest_request_of_a_refusal_is_itself_feasible(refused: Request)
         assert isinstance(answered(Request(refused.target, op, operands)), Feasible), near
 
 
-def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.MonkeyPatch):
+def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
     def failing(plan_: tile.TilePlan) -> tile.TilePlan:
         return tile.replace_check(plan_, "failed", "relative error 0.5 against the f64 reference")
 
@@ -294,7 +303,7 @@ def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.M
     assert isinstance(sut, Infeasible) and "failed its check" in sut.reason
 
 
-def test_a_device_row_whose_recorded_check_failed_is_infeasible(monkeypatch: pytest.MonkeyPatch):
+def test_a_device_row_whose_recorded_check_failed_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
     failed = {("fma", "cuda"): simt.Verdict("fma", "cuda", "an sm_90 device", ok=False, error="relative error 0.5")}
     monkeypatch.setattr(simt, "verdicts", lambda: failed)
 
@@ -307,14 +316,18 @@ def test_a_device_row_whose_recorded_check_failed_is_infeasible(monkeypatch: pyt
     "shared:f16:64y64", "smem:f16:64x64", "shared:f16:64x64:b128", "shared:f16:64x64:row_major:b128:extra",
     "shared:f16:0x64", "shared",
 ])  # fmt: skip
-def test_the_cli_rejects_a_malformed_operand_as_a_usage_error_apart_from_infeasible(operand: str, capsys):
+def test_the_cli_rejects_a_malformed_operand_as_a_usage_error_apart_from_infeasible(
+    operand: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     code = main(["ask", "sm90", "mma", "--a", operand, "--b", "shared:f16:64x64", "--c", "register:f32:64x64"])
 
     printed = capsys.readouterr()
     assert code == 64 and "invalid (malformed_operand)" in printed.out and operand in printed.out
 
 
-def test_the_cli_reads_a_target_in_any_case_and_an_lds_swizzle_with_its_colon(capsys):
+def test_the_cli_reads_a_target_in_any_case_and_an_lds_swizzle_with_its_colon(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     code = main(["ask", "GFX942", "copy", "--src", "global:f16:256x256", "--dst", "shared:f16:64x64:row_major:xor:8",
                  "--json"])  # fmt: skip
 
@@ -322,7 +335,7 @@ def test_the_cli_reads_a_target_in_any_case_and_an_lds_swizzle_with_its_colon(ca
     assert code == 0 and sut["unit"] == "lds" and sut["request"]["operands"]["dst"]["swizzle"] == "xor:8"
 
 
-def test_an_operand_spells_back_to_what_parses_to_it():
+def test_an_operand_spells_back_to_what_parses_to_it() -> None:
     for text in ("register:f32", "vector:f64:4", "shared:f16:64x64:row_major:b128", "shared:f16:64x64:col_major",
                  "shared:f16:64x64:row_major:xor:8"):  # fmt: skip
         assert Operand.parse(text).spelled() == text
@@ -373,7 +386,7 @@ REGISTER = Operand("vector", "f64", (4,))
     (Request("sme", "add"), Why.NOT_COVERED),
     (Request("gfx942", "copy", {"src": LDS, "dst": GLOBAL}), Why.NOT_COVERED),
 ])  # fmt: skip
-def test_every_refusal_carries_its_reason_code_and_the_class_the_code_belongs_to(request_: Request, why: Why):
+def test_every_refusal_carries_its_reason_code_and_the_class_the_code_belongs_to(request_: Request, why: Why) -> None:
     sut = answered(request_)
 
     assert not isinstance(sut, Feasible), sut
@@ -382,7 +395,7 @@ def test_every_refusal_carries_its_reason_code_and_the_class_the_code_belongs_to
     assert sut.status == ("invalid" if why in INVALID else "infeasible") and sut.feasible is False
 
 
-def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap():
+def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap() -> None:
     infeasible = set(Why) - INVALID
 
     assert INVALID and infeasible and Why.MALFORMED in INVALID
@@ -390,7 +403,7 @@ def test_the_reason_codes_split_into_invalid_and_infeasible_without_overlap():
             Why.NOT_COVERED, Why.CHECK_FAILED, Why.COMBINE, Why.ORDER} == infeasible  # fmt: skip
 
 
-def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za():
+def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za() -> None:
     sut = answered(Request("sme", "mma", SME))
 
     assert isinstance(sut, Feasible) and sut.unit == "za"
@@ -405,7 +418,9 @@ def test_an_sme_mma_takes_a_transposed_and_answers_fmopa_into_za():
     (["sm90", "mma", "--a", "shared:f16:64x64"], 64, "invalid"),
     (["sm90", "mma", "--a", "shared:f16:64y64"], 64, "invalid"),
 ])  # fmt: skip
-def test_the_cli_exit_code_and_json_status_tell_feasible_infeasible_and_invalid_apart(argv, code, status, capsys):
+def test_the_cli_exit_code_and_json_status_tell_feasible_infeasible_and_invalid_apart(
+    argv: list[str], code: int, status: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     exit_code = main(["ask", *argv, "--json", "--no-verify"])
 
     sut = json.loads(capsys.readouterr().out)
@@ -427,7 +442,7 @@ def test_the_cli_exit_code_and_json_status_tell_feasible_infeasible_and_invalid_
 ])  # fmt: skip
 def test_an_mma_on_a_tile_the_kernel_would_misread_is_infeasible_and_says_how_to_get_the_tile_it_reads(
     request_: Request, why: Why, fix: str
-):
+) -> None:
     """A swizzle, a layout, or a space the kernel does not read never answers with the kernel: its code would compute
     on the wrong bytes."""
     sut = answered(request_)
@@ -442,7 +457,9 @@ def test_an_mma_on_a_tile_the_kernel_would_misread_is_infeasible_and_says_how_to
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": LDS}), "gfx942"),
     (Request("gfx90a", "copy", {"src": GLOBAL, "dst": LDS}), "gfx90a"),
 ])  # fmt: skip
-def test_a_gpu_copy_is_checked_by_the_tile_program_that_runs_it(request_, header, monkeypatch):
+def test_a_gpu_copy_is_checked_by_the_tile_program_that_runs_it(
+    request_: Request, header: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen: list[tuple[str, int, int, int]] = []
 
     def verified(plan_: tile.TilePlan) -> tile.TilePlan:
@@ -458,7 +475,7 @@ def test_a_gpu_copy_is_checked_by_the_tile_program_that_runs_it(request_, header
     assert unchecked.check.status == "unverified" and "verify off" in unchecked.check.basis
 
 
-def test_a_gpu_copy_whose_tile_program_fails_is_infeasible(monkeypatch):
+def test_a_gpu_copy_whose_tile_program_fails_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tile, "verify", lambda plan_: tile.replace_check(plan_, "failed", "did not compile"))
 
     sut = ask(Request("sm90", "copy", {"src": GLOBAL, "dst": B128}))
@@ -467,14 +484,14 @@ def test_a_gpu_copy_whose_tile_program_fails_is_infeasible(monkeypatch):
     assert sut.why is Why.CHECK_FAILED
 
 
-def test_a_tma_answer_states_the_shared_alignment_the_swizzle_needs():
+def test_a_tma_answer_states_the_shared_alignment_the_swizzle_needs() -> None:
     sut = answered(Request("sm90", "copy", {"src": GLOBAL, "dst": B128}))
 
     assert isinstance(sut, Feasible)
     assert "alignas(1024)" in sut.setup["shared tile"] and "barrier" in sut.setup
 
 
-def test_a_per_thread_row_refuses_an_operand_in_memory_and_says_to_load_it():
+def test_a_per_thread_row_refuses_an_operand_in_memory_and_says_to_load_it() -> None:
     sut = answered(Request("sm90", "fma", {"x": Operand("global", "f32")}))
 
     assert isinstance(sut, Infeasible)
@@ -482,7 +499,7 @@ def test_a_per_thread_row_refuses_an_operand_in_memory_and_says_to_load_it():
     assert sut.nearest == ("x register:f32",)
 
 
-def test_a_per_thread_row_computes_in_its_table_element_type():
+def test_a_per_thread_row_computes_in_its_table_element_type() -> None:
     half2 = next(row for row in simt.rows() if row.op == "add_half2")
 
     assert half2.dtype == "f16"
@@ -492,7 +509,7 @@ def test_a_per_thread_row_computes_in_its_table_element_type():
 
 
 @pytest.mark.parametrize("target", sorted(tile.TYPES))
-def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target):
+def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target: str) -> None:
     for in_type, acc_type in tile.TYPES[target]:
         k = tile.k_block(in_type) if in_type in tile.GPU_BYTES else 64
         assert tile.plan(target, 64, 64, k, in_type, acc_type).in_type == in_type
@@ -502,7 +519,9 @@ def test_every_tile_target_plans_exactly_the_type_pairs_it_declares(target):
 
 @pytest.mark.parametrize(("ok", "detail", "status"), [(True, "0.9 ulp", "run"), (None, "builds", "compiled"),
                                                       (None, "", "unverified")])  # fmt: skip
-def test_a_math_kernel_answer_carries_the_kernel_gate_verdict(ok, detail, status, monkeypatch):
+def test_a_math_kernel_answer_carries_the_kernel_gate_verdict(
+    ok: bool | None, detail: str, status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from alloy.isa import mathcheck
     from alloy.isa.validate import Verdict
 
@@ -520,7 +539,7 @@ def test_a_math_kernel_answer_carries_the_kernel_gate_verdict(ok, detail, status
     assert [(fn, dtype, isa) for fn, dtype, _, isa in seen] == [("exp", "f32", "avx2")]
 
 
-def test_a_math_kernel_that_fails_its_gate_is_infeasible(monkeypatch):
+def test_a_math_kernel_that_fails_its_gate_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
     from alloy.isa import mathcheck
     from alloy.isa.validate import Verdict
 
@@ -544,12 +563,12 @@ LDS_MMA = Request("gfx942", "mma", MFMA_TILE)
 LDS_COPY = Request("gfx942", "copy", {"src": Operand("global", "f16", (64, 64)), "dst": LDS})
 
 
-def recording(monkeypatch, verified: str = "compiled") -> list[tuple[str, int, int, int]]:
+def recording(monkeypatch: pytest.MonkeyPatch, verified: str = "compiled") -> list[tuple[str, int, int, int]]:
     seen: list[tuple[str, int, int, int]] = []
 
     def verify(plan_: tile.TilePlan) -> tile.TilePlan:
         seen.append((plan_.target, plan_.m, plan_.n, plan_.k))
-        return tile.replace_check(plan_, verified, "the program's check")  # type: ignore[arg-type]
+        return tile.replace_check(plan_, verified, "the program's check")
 
     monkeypatch.setattr(tile, "verify", verify)
     return seen
@@ -560,8 +579,8 @@ def recording(monkeypatch, verified: str = "compiled") -> list[tuple[str, int, i
     ([LDS_COPY, LDS_COPY, LDS_MMA], ("gfx942", 64, 64, 64)),
 ])  # fmt: skip
 def test_copies_and_the_mma_they_fill_carry_the_check_of_the_one_tile_program_that_runs_them(
-    requests, program, monkeypatch
-):
+    requests: list[Request], program: tuple[str, int, int, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen = recording(monkeypatch)
 
     sut = ask_all(requests)
@@ -580,7 +599,7 @@ def copy_request(target: str, text: str) -> Request:
     return Request(target, "copy", {name: Operand.parse(operand) for name, operand in fields})
 
 
-def test_a_copy_of_b_as_k_rows_of_n_does_not_combine_and_the_nearest_copies_do():
+def test_a_copy_of_b_as_k_rows_of_n_does_not_combine_and_the_nearest_copies_do() -> None:
     copy_b = Request("sm90", "copy", {"src": Operand("global", "f16", (128, 256)), "dst": BLOCK})
 
     sut = ask_all([COPY_A, copy_b, WIDE_MMA], verify=False)
@@ -591,7 +610,7 @@ def test_a_copy_of_b_as_k_rows_of_n_does_not_combine_and_the_nearest_copies_do()
     assert nearest and isinstance(ask_all([*nearest, WIDE_MMA], verify=False), Combined)
 
 
-def test_a_copy_into_a_block_the_mma_does_not_load_does_not_combine():
+def test_a_copy_into_a_block_the_mma_does_not_load_does_not_combine() -> None:
     narrow = Request("sm90", "copy", {"src": Operand("global", "f16", (256, 128)), "dst": B128})
 
     sut = ask_all([narrow, WIDE_MMA], verify=False)
@@ -600,26 +619,26 @@ def test_a_copy_into_a_block_the_mma_does_not_load_does_not_combine():
     assert "shared:f16:128x64:row_major:b128" in sut.reason
 
 
-def test_two_mmas_do_not_combine_because_no_tile_program_runs_both():
+def test_two_mmas_do_not_combine_because_no_tile_program_runs_both() -> None:
     sut = ask_all([WIDE_MMA, WIDE_MMA], verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.COMBINE
 
 
-def test_requests_on_two_targets_are_invalid_as_one_kernel():
+def test_requests_on_two_targets_are_invalid_as_one_kernel() -> None:
     sut = ask_all([COPY_A, LDS_MMA], verify=False)
 
     assert isinstance(sut, Invalid) and sut.why is Why.MIXED_TARGETS
 
 
-def test_a_refused_request_in_a_list_is_refused_with_its_index():
+def test_a_refused_request_in_a_list_is_refused_with_its_index() -> None:
     sut = ask_all([COPY_A, Request("sm90", "mma", TILE | {"b": B128})], verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.LAYOUT
     assert sut.reason.startswith("request 1 (mma): ")
 
 
-def test_a_kernel_whose_tile_program_fails_is_infeasible(monkeypatch):
+def test_a_kernel_whose_tile_program_fails_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
     recording(monkeypatch, "failed")
 
     sut = ask_all([COPY_A, COPY_BT, WIDE_MMA])
@@ -628,7 +647,7 @@ def test_a_kernel_whose_tile_program_fails_is_infeasible(monkeypatch):
     assert sut.reason.startswith("request 2 (mma): ")
 
 
-def test_requests_no_program_runs_together_say_each_is_checked_alone():
+def test_requests_no_program_runs_together_say_each_is_checked_alone() -> None:
     load = Request("avx2", "copy", {"src": Operand("global", "f64", (4,)), "dst": REGISTER})
 
     sut = ask_all([load, Request("avx2", "add", {"a": REGISTER})], verify=False)
@@ -645,7 +664,9 @@ def test_requests_no_program_runs_together_say_each_is_checked_alone():
     (["sm90", "copy src"], 64, "invalid"),
     (["sm90", ""], 64, "invalid"),
 ])  # fmt: skip
-def test_the_ask_all_cli_exit_code_and_json_status_tell_the_three_classes_apart(argv, code, status, capsys):
+def test_the_ask_all_cli_exit_code_and_json_status_tell_the_three_classes_apart(
+    argv: list[str], code: int, status: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     exit_code = main(["ask-all", *argv, "--json", "--no-verify"])
 
     sut = json.loads(capsys.readouterr().out)
@@ -655,7 +676,7 @@ def test_the_ask_all_cli_exit_code_and_json_status_tell_the_three_classes_apart(
 # The six primitives on logical data (notes/isa-design.md, 2.8): blocks, the whole-multiple rule, load and store.
 
 
-def test_a_whole_multiple_of_the_register_is_feasible_and_each_step_carries_its_count():
+def test_a_whole_multiple_of_the_register_is_feasible_and_each_step_carries_its_count() -> None:
     sut = answered(
         Request("avx512", "add", {"a": Operand("vector", "f32", (96,)), "b": Operand("vector", "f32", (96,))})
     )
@@ -671,8 +692,8 @@ def test_a_whole_multiple_of_the_register_is_feasible_and_each_step_carries_its_
     ("avx2", 3, (8,), ("x vector:f32:8",), "scalar remainder"),
 ])  # fmt: skip
 def test_an_extent_that_is_no_whole_multiple_is_refused_with_the_block_the_multiples_and_the_tail(
-    target, extent, block, nearest, fix
-):
+    target: str, extent: int, block: tuple[int], nearest: tuple[str, str] | tuple[str], fix: str
+) -> None:
     sut = answered(Request(target, "mul", {"a": Operand("vector", "f32", (extent,))}))
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
@@ -680,7 +701,7 @@ def test_an_extent_that_is_no_whole_multiple_is_refused_with_the_block_the_multi
     assert fix in sut.fix and f"{extent % block[0]} remain" in sut.reason or "less than one register" in sut.reason
 
 
-def test_operands_of_two_extents_are_invalid_on_every_target():
+def test_operands_of_two_extents_are_invalid_on_every_target() -> None:
     request = Request("avx512", "add", {"a": Operand("vector", "f32", (16,)), "b": Operand("vector", "f32", (32,))})
 
     sut = answered(request)
@@ -688,7 +709,7 @@ def test_operands_of_two_extents_are_invalid_on_every_target():
     assert isinstance(sut, Invalid) and sut.why is Why.CHAIN
 
 
-def test_a_reduction_over_several_registers_combines_them_lane_wise_and_reduces_once():
+def test_a_reduction_over_several_registers_combines_them_lane_wise_and_reduces_once() -> None:
     sut = answered(Request("avx512", "reduce_max", {"x": Operand("vector", "f64", (32,))}))
 
     assert isinstance(sut, Feasible)
@@ -696,7 +717,7 @@ def test_a_reduction_over_several_registers_combines_them_lane_wise_and_reduces_
     assert "accumulator" in sut.notes[-1]
 
 
-def test_a_scan_over_several_registers_carries_the_last_lane_into_the_next():
+def test_a_scan_over_several_registers_carries_the_last_lane_into_the_next() -> None:
     one = answered(Request("neon", "scan_add", {"x": Operand("vector", "f32", (4,))}))
     sut = answered(Request("neon", "scan_add", {"x": Operand("vector", "f32", (12,))}))
 
@@ -711,7 +732,9 @@ def test_a_scan_over_several_registers_carries_the_last_lane_into_the_next():
     ("load", Operand("global", "f32", (48,)), Operand("vector", "f32", (48,)), "_mm512_loadu_ps"),
     ("store", Operand("vector", "f32", (48,)), Operand("global", "f32", (48,)), "_mm512_storeu_ps"),
 ])  # fmt: skip
-def test_load_and_store_are_request_names_over_the_rows_of_copy(op, src, dst, spelling):
+def test_load_and_store_are_request_names_over_the_rows_of_copy(
+    op: str, src: Operand, dst: Operand, spelling: str
+) -> None:
     sut = answered(Request("avx512", op, {"src": src, "dst": dst}))
     as_copy = answered(Request("avx512", "copy", {"src": src, "dst": dst}))
 
@@ -726,7 +749,9 @@ def test_load_and_store_are_request_names_over_the_rows_of_copy(op, src, dst, sp
     ("store", "global", "vector"),
     ("load", "global", "shared"),
 ])  # fmt: skip
-def test_a_load_that_ends_in_memory_or_a_store_that_starts_there_is_invalid_and_names_copy(op, src, dst):
+def test_a_load_that_ends_in_memory_or_a_store_that_starts_there_is_invalid_and_names_copy(
+    op: str, src: Space, dst: Space
+) -> None:
     operands = {"src": Operand(src, "f32", (16,)), "dst": Operand(dst, "f32", (16,))}
 
     sut = answered(Request("avx512", op, operands))
@@ -735,7 +760,7 @@ def test_a_load_that_ends_in_memory_or_a_store_that_starts_there_is_invalid_and_
     assert sut.expected and sut.expected[0].startswith("copy")
 
 
-def test_a_refused_load_names_the_block_and_load_requests_that_are_feasible():
+def test_a_refused_load_names_the_block_and_load_requests_that_are_feasible() -> None:
     refused = Request("avx2", "load", {"src": Operand("global", "f32", (50,)), "dst": Operand("vector", "f32", (50,))})
 
     sut = answered(refused)
@@ -747,7 +772,7 @@ def test_a_refused_load_names_the_block_and_load_requests_that_are_feasible():
         assert isinstance(answered(Request("avx2", "load", operands)), Feasible), near
 
 
-def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile():
+def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile() -> None:
     whole = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (64, 96))}))
     partial = answered(Request("tensix", "exp", {"x": Operand("tile_register", "f32", (48, 32))}))
 
@@ -769,14 +794,16 @@ def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile(
                                "c": Operand("tile_register", "f32", (32, 32))}), (32, 32, 32)),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}), (8,)),
 ])  # fmt: skip
-def test_a_refusal_for_a_shape_tells_the_block_the_target_needs(refused, block):
+def test_a_refusal_for_a_shape_tells_the_block_the_target_needs(
+    refused: Request, block: tuple[int, int, int] | tuple[int]
+) -> None:
     sut = answered(refused)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
     assert sut.block == block
 
 
-def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixture[str]):
+def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["ask", "avx512", "add", "--a", "vector:f32:100", "--no-verify"])
 
     out = capsys.readouterr().out
@@ -785,7 +812,9 @@ def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixtu
 
 
 @pytest.mark.parametrize("shape", [(32, 32), (64, 64, 64)])
-def test_a_cpu_refuses_data_of_two_or_more_dimensions_with_the_block_and_the_flattened_run(shape: tuple[int, ...]):
+def test_a_cpu_refuses_data_of_two_or_more_dimensions_with_the_block_and_the_flattened_run(
+    shape: tuple[int, ...],
+) -> None:
     sut = ask(Request("avx2", "reduce_add", {"x": Operand("vector", "f32", shape)}), verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE, sut
@@ -793,25 +822,25 @@ def test_a_cpu_refuses_data_of_two_or_more_dimensions_with_the_block_and_the_fla
     assert sut.nearest == (f"x vector:f32:{math.prod(shape)}",) and "flatten" in sut.fix
 
 
-def test_a_gpu_thread_row_refuses_a_three_dimensional_operand():
+def test_a_gpu_thread_row_refuses_a_three_dimensional_operand() -> None:
     sut = ask(Request("sm90", "fma", {"x": Operand("register", "f32", (4, 4, 4))}), verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE and sut.block == (1,), sut
 
 
-def test_an_uneven_neon_request_names_a_neon_register():
+def test_an_uneven_neon_request_names_a_neon_register() -> None:
     sut = ask(Request("neon", "add", {"x": Operand("vector", "f32", (6,))}), verify=False)
 
     assert isinstance(sut, Infeasible) and "lanes of a neon register: 1 register holds 4, 2 remain" in sut.reason, sut
 
 
-def test_a_two_dimensional_request_in_a_type_the_isa_lacks_is_refused_for_the_type():
+def test_a_two_dimensional_request_in_a_type_the_isa_lacks_is_refused_for_the_type() -> None:
     sut = ask(Request("avx2", "add", {"x": Operand("vector", "bf16", (3, 5))}), verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why is Why.NO_ROW, sut
 
 
-def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[str]):
+def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["ask", "gfx942", "scan_add", "--x", "register:f32"]) == 0
 
     first = capsys.readouterr().out.splitlines()[0]
@@ -835,7 +864,9 @@ def test_the_cli_states_a_device_rows_check_once(capsys: pytest.CaptureFixture[s
         (["reverse", "v_mfma_f32_32x32x8f16"], "gives a checked v_mfma kernel"),
     ],
 )
-def test_a_gpu_name_in_a_cpu_command_is_refused_with_where_it_is_answered(argv, expected, capsys):
+def test_a_gpu_name_in_a_cpu_command_is_refused_with_where_it_is_answered(
+    argv: list[str], expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     code = main(argv)
 
     printed = capsys.readouterr()
@@ -844,7 +875,7 @@ def test_a_gpu_name_in_a_cpu_command_is_refused_with_where_it_is_answered(argv, 
     assert "did you mean fma" not in printed.err
 
 
-def test_a_missing_device_row_offers_the_related_rows_as_nearest():
+def test_a_missing_device_row_offers_the_related_rows_as_nearest() -> None:
     sut = ask(Request("gfx90a", "exp", {"x": Operand("register", "f32")}))
 
     assert isinstance(sut, Infeasible)
@@ -852,7 +883,7 @@ def test_a_missing_device_row_offers_the_related_rows_as_nearest():
     assert sut.nearest == ("gfx90a exp_fast",)
 
 
-def test_a_wavefront_row_on_memory_is_refused_as_a_wavefront_row():
+def test_a_wavefront_row_on_memory_is_refused_as_a_wavefront_row() -> None:
     sut = ask(Request("gfx90a", "reduce_add", {"x": Operand("global", "f32", (4096,))}))
 
     assert isinstance(sut, Infeasible)
@@ -861,7 +892,7 @@ def test_a_wavefront_row_on_memory_is_refused_as_a_wavefront_row():
     assert sut.fix == "load the value into a register first"
 
 
-def test_an_uncovered_gpu_copy_says_how_to_write_it_without_naming_the_design():
+def test_an_uncovered_gpu_copy_says_how_to_write_it_without_naming_the_design() -> None:
     sut = ask(
         Request("gfx90a", "copy", {"src": Operand("global", "f32", (256,)), "dst": Operand("register", "f32", (256,))})
     )
@@ -872,7 +903,7 @@ def test_an_uncovered_gpu_copy_says_how_to_write_it_without_naming_the_design():
     assert "plain device code" in sut.fix
 
 
-def test_a_bf16_mma_on_gfx90a_is_feasible_and_its_nearest_requests_keep_its_type():
+def test_a_bf16_mma_on_gfx90a_is_feasible_and_its_nearest_requests_keep_its_type() -> None:
     sut = ask(Request("gfx90a", "mma", {"a": Operand("shared", "bf16", (64, 64), "row_major", "xor:8"),
                                         "b": Operand("shared", "bf16", (64, 64), "col_major", "xor:8"),
                                         "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
@@ -888,7 +919,7 @@ def test_a_bf16_mma_on_gfx90a_is_feasible_and_its_nearest_requests_keep_its_type
 
 
 @pytest.mark.parametrize(("target", "swizzle"), [("gfx942", "xor:8"), ("sm90", "b128")])
-def test_an_fp8_copy_fills_rows_of_128_bytes(target, swizzle):
+def test_an_fp8_copy_fills_rows_of_128_bytes(target: str, swizzle: Swizzle) -> None:
     good = ask(Request(target, "copy", {"src": Operand("global", "e4m3", (256, 256)),
                                        "dst": Operand("shared", "e4m3", (64, 128), "row_major", swizzle)}), verify=False)  # fmt: skip
     narrow = ask(Request(target, "copy", {"src": Operand("global", "e4m3", (256, 256)),
@@ -899,7 +930,7 @@ def test_an_fp8_copy_fills_rows_of_128_bytes(target, swizzle):
     assert narrow.nearest == (f"src global:e4m3:256x256, dst shared:e4m3:64x128:row_major:{swizzle}",)
 
 
-def test_gfx90a_refuses_an_fp8_copy_with_the_types_it_takes():
+def test_gfx90a_refuses_an_fp8_copy_with_the_types_it_takes() -> None:
     sut = ask(Request("gfx90a", "copy", {"src": Operand("global", "e4m3", (256, 256)),
                                          "dst": Operand("shared", "e4m3", (64, 128), "row_major", "xor:8")}), verify=False)  # fmt: skip
 
@@ -924,13 +955,13 @@ def requests(target: str, *texts: str) -> list[Request]:
     ("gfx90a", "vmcnt", "s_waitcnt vmcnt(0)"), ("gfx942", "lgkmcnt", "s_waitcnt lgkmcnt(0)"),
     ("tensix", "noc", "noc_async_read_barrier()"), ("tensix", "cb", "cb_wait_front"),
 ])  # fmt: skip
-def test_a_wait_answers_the_instruction_that_completes_its_token(target, on, spelled):
+def test_a_wait_answers_the_instruction_that_completes_its_token(target: str, on: str, spelled: str) -> None:
     sut = ask(Request(target, "wait", on=on))
 
     assert isinstance(sut, Feasible) and spelled in sut.code
 
 
-def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has_none():
+def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has_none() -> None:
     on_gpu = ask(Request("sm90", "wait", on="vmcnt"))
     on_cpu = ask(Request("avx2", "wait", on="mbarrier"))
 
@@ -942,7 +973,7 @@ def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has
     (Request("gfx942", "mma", kind="16x16x16"),), (Request("sme", "mma", kind="f16"),),
     (Request("sm90", "copy", on="mbarrier"),),
 ])  # fmt: skip
-def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_):
+def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_: Request) -> None:
     sut = ask(request_)
 
     assert isinstance(sut, Invalid)
@@ -952,7 +983,7 @@ def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_drop
 @pytest.mark.parametrize(("target", "kind", "feasible"), [
     ("sm90", "proxy", True), ("sm90", "operand", True), ("gfx942", "proxy", False), ("gfx90a", "operand", False),
 ])  # fmt: skip
-def test_only_sm90_has_a_proxy_and_an_operand_fence(target, kind, feasible):
+def test_only_sm90_has_a_proxy_and_an_operand_fence(target: str, kind: str, feasible: bool) -> None:
     sut = ask(Request(target, "fence", kind=kind))
 
     assert isinstance(sut, Feasible) is feasible
@@ -964,7 +995,9 @@ def test_only_sm90_has_a_proxy_and_an_operand_fence(target, kind, feasible):
     ("sm90", TMA_COPY, "mbarrier", ("fence kind=proxy",)), ("sm90", WGMMA, "wgmma_group", ("fence kind=operand",)),
     ("gfx942", "copy src=global:f16:256x256 dst=shared:f16:64x64:row_major:xor:8", "lgkmcnt", ()),
 ])  # fmt: skip
-def test_an_asynchronous_unit_answers_how_its_work_completes(target, text, token, fences):
+def test_an_asynchronous_unit_answers_how_its_work_completes(
+    target: str, text: str, token: str, fences: tuple[()] | tuple[str]
+) -> None:
     (request,) = requests(target, text)
 
     sut = ask(request, verify=False)
@@ -973,7 +1006,7 @@ def test_an_asynchronous_unit_answers_how_its_work_completes(target, text, token
     assert (sut.completion.token, sut.completion.wait, sut.completion.fences) == (token, f"wait on={token}", fences)
 
 
-def test_a_synchronous_unit_has_no_completion():
+def test_a_synchronous_unit_has_no_completion() -> None:
     (request,) = requests("gfx942", "mma a=shared:f16:64x64:row_major:xor:8 b=shared:f16:64x64:col_major:xor:8 "
                                      "c=register:f32:64x64")  # fmt: skip
 
@@ -982,7 +1015,7 @@ def test_a_synchronous_unit_has_no_completion():
     assert isinstance(sut, Feasible) and sut.completion is None
 
 
-def test_a_kernel_that_states_no_waits_gets_them_in_order():
+def test_a_kernel_that_states_no_waits_gets_them_in_order() -> None:
     sut = ask_all(requests("sm90", TMA_COPY, WGMMA), verify=False)
 
     assert isinstance(sut, Combined)
@@ -990,7 +1023,7 @@ def test_a_kernel_that_states_no_waits_gets_them_in_order():
                          "fence kind=operand before request 1", "wait on=wgmma_group after request 1")  # fmt: skip
 
 
-def test_a_kernel_that_states_its_waits_in_order_is_feasible():
+def test_a_kernel_that_states_its_waits_in_order_is_feasible() -> None:
     sut = ask_all(requests("sm90", "fence kind=proxy", TMA_COPY, "wait on=mbarrier", "fence kind=operand", WGMMA,
                            "wait on=wgmma_group"), verify=False)  # fmt: skip
 
@@ -1005,7 +1038,9 @@ def test_a_kernel_that_states_its_waits_in_order_is_feasible():
     ((TMA_COPY, "wait on=mbarrier", "fence kind=operand", WGMMA, "wait on=wgmma_group"), 0, "fence kind=proxy"),
     ((WGMMA, TMA_COPY), 0, ""),
 ])  # fmt: skip
-def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missing_request(texts, refused, missing):
+def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missing_request(
+    texts: tuple[str, ...], refused: int, missing: str
+) -> None:
     sut = ask_all(requests("sm90", *texts), verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why == Why.ORDER
@@ -1015,7 +1050,7 @@ def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missin
 
 
 # Review of 2026-11-17 (reviewers A and C): each fix with its case.
-def test_a_device_row_answer_binds_the_names_its_code_uses():
+def test_a_device_row_answer_binds_the_names_its_code_uses() -> None:
     sut = ask(Request("gfx90a", "scan_add", {"x": Operand("register", "f32")}))
 
     assert isinstance(sut, Feasible)
@@ -1032,7 +1067,7 @@ def test_a_device_row_answer_binds_the_names_its_code_uses():
     Request("gfx942", "copy", {"src": Operand("global", "f16", (8, 8)),
                                "dst": Operand("shared", "f16", (64, 64), "row_major", "xor:8")}),
 ])  # fmt: skip
-def test_a_gpu_copy_from_a_source_too_small_or_misaligned_is_refused_with_a_feasible_nearest(request_):
+def test_a_gpu_copy_from_a_source_too_small_or_misaligned_is_refused_with_a_feasible_nearest(request_: Request) -> None:
     sut = ask(request_, verify=False)
 
     assert isinstance(sut, Infeasible) and sut.why == Why.SHAPE
@@ -1041,7 +1076,7 @@ def test_a_gpu_copy_from_a_source_too_small_or_misaligned_is_refused_with_a_feas
     assert isinstance(ask(Request(request_.target, "copy", {"src": src, "dst": dst}), verify=False), Feasible)
 
 
-def test_a_copy_on_a_target_without_copy_rows_is_refused_not_crashed():
+def test_a_copy_on_a_target_without_copy_rows_is_refused_not_crashed() -> None:
     sut = ask(Request("sme", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f32", (8,))}))
 
     assert isinstance(sut, Infeasible) and sut.why == Why.NOT_COVERED
@@ -1049,14 +1084,14 @@ def test_a_copy_on_a_target_without_copy_rows_is_refused_not_crashed():
 
 @pytest.mark.parametrize(("target", "on", "issued"), [("sm90", "mbarrier", True), ("sm90", "bulk_group", False),
                                                        ("gfx942", "vmcnt", False), ("tensix", "cb", True)])  # fmt: skip
-def test_a_wait_says_whether_a_checked_program_issues_it(target, on, issued):
+def test_a_wait_says_whether_a_checked_program_issues_it(target: str, on: str, issued: bool) -> None:
     sut = ask(Request(target, "wait", on=on))
 
     assert isinstance(sut, Feasible) and sut.check.status == "unverified"
     assert ("tile programs that ran issue it" in sut.check.basis) is issued
 
 
-def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys):
+def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         main(["ask", "tensix", "exp", "--y", "bad"])
 
@@ -1064,14 +1099,14 @@ def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys):
     capsys.readouterr()
 
 
-def test_a_gpu_tail_mask_request_says_a_gpu_tail_is_a_bounds_check_and_offers_the_ballot_count():
+def test_a_gpu_tail_mask_request_says_a_gpu_tail_is_a_bounds_check_and_offers_the_ballot_count() -> None:
     answer = answered(Request("sm90", "gen_mask", {"x": Operand("register", "f32")}))
 
     assert isinstance(answer, Infeasible) and answer.why is Why.NO_ROW
     assert "bounds check" in answer.fix and "ballot_count" in answer.fix
 
 
-def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion():
+def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion() -> None:
     copy_ = Request("sm90", "copy", {"src": GLOBAL, "dst": B128})
 
     sut = answered(copy_)
@@ -1083,7 +1118,7 @@ def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion():
     assert "  if (threadIdx.x == 0) { alloy_mbar_arrive_expect_tx(bar, 8192);" in sut.code
 
 
-def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it():
+def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it() -> None:
     sut = answered(Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (128, 64), "row_major",
                                                                           "b128")}))  # fmt: skip
 
@@ -1092,7 +1127,7 @@ def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it():
     assert tile.GPU_THREADS["sm90", 128] == 256
 
 
-def test_a_cpu_load_of_one_register_from_a_larger_array_is_a_block_of_it():
+def test_a_cpu_load_of_one_register_from_a_larger_array_is_a_block_of_it() -> None:
     sut = answered(Request("avx512", "load", {"src": Operand("global", "f64", (64,)), "dst": Operand("vector", "f64",
                                                                                                     (8,))}))  # fmt: skip
 
@@ -1101,7 +1136,7 @@ def test_a_cpu_load_of_one_register_from_a_larger_array_is_a_block_of_it():
     assert "a block of 8 of the 64 elements" in sut.notes[-1]
 
 
-def test_a_cpu_load_from_an_array_smaller_than_the_registers_is_refused():
+def test_a_cpu_load_from_an_array_smaller_than_the_registers_is_refused() -> None:
     sut = answered(Request("avx512", "load", {"src": Operand("global", "f64", (8,)), "dst": Operand("vector", "f64",
                                                                                                    (16,))}))  # fmt: skip
 
@@ -1111,7 +1146,9 @@ def test_a_cpu_load_from_an_array_smaller_than_the_registers_is_refused():
 
 @pytest.mark.parametrize(("op", "combine", "reduce_"), [("reduce_add", "svadd_f64_m", "svaddv_f64"),
                                                         ("reduce_max", "svmax_f64_m", "svmaxv_f64")])  # fmt: skip
-def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once(op, combine, reduce_):
+def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once(
+    op: str, combine: str, reduce_: str
+) -> None:
     sut = answered(Request("sve", op, {"x": Operand("vector", "f64", (64,))}))
 
     assert isinstance(sut, Feasible)
@@ -1131,7 +1168,7 @@ def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once
     ("reduce_min", "_mm512_mask_loadu_pd(_mm512_set1_pd(INFINITY), k, p) so its masked-off lanes hold INFINITY"),
     ("add", "compute with _mm512_mask_add_pd(src, k, a, b), store with _mm512_mask_storeu_pd(p, k, v)"),
 ])  # fmt: skip
-def test_an_avx512_tail_fix_names_the_masked_spelling_each_op_needs(op, fix):
+def test_an_avx512_tail_fix_names_the_masked_spelling_each_op_needs(op: str, fix: str) -> None:
     sut = answered(Request("avx512", op, {"x": Operand("vector", "f64", (100,))}))
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE
@@ -1148,7 +1185,9 @@ def test_an_avx512_tail_fix_names_the_masked_spelling_each_op_needs(op, fix):
     (Request("avx512", "exp", {"x": Operand("vector", "f64", (8,))}), "#include <immintrin.h> and <math.h>",
      "-mavx512f", "alloy_exp_f64_strict"),
 ])  # fmt: skip
-def test_a_cpu_answer_carries_its_header_its_flags_and_a_statement_to_copy(request_, header, flags, code):
+def test_a_cpu_answer_carries_its_header_its_flags_and_a_statement_to_copy(
+    request_: Request, header: str, flags: str, code: str
+) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Feasible)
@@ -1158,7 +1197,7 @@ def test_a_cpu_answer_carries_its_header_its_flags_and_a_statement_to_copy(reque
 
 @pytest.mark.parametrize(("op", "masked"), [("load", "_mm512_maskz_loadu_pd(k, p)"),
                                             ("store", "_mm512_mask_storeu_pd(p, k, v)")])  # fmt: skip
-def test_an_avx512_load_or_store_answer_shows_its_masked_form_and_the_mask_it_takes(op, masked):
+def test_an_avx512_load_or_store_answer_shows_its_masked_form_and_the_mask_it_takes(op: str, masked: str) -> None:
     vector, memory = Operand("vector", "f64", (8,)), Operand("global", "f64", (8,))
     operands = {"src": memory, "dst": vector} if op == "load" else {"src": vector, "dst": memory}
 
@@ -1172,7 +1211,7 @@ def test_an_avx512_load_or_store_answer_shows_its_masked_form_and_the_mask_it_ta
     )
 
 
-def test_an_avx512_mask_answer_says_how_to_build_iota_and_n():
+def test_an_avx512_mask_answer_says_how_to_build_iota_and_n() -> None:
     sut = answered(Request("avx512", "gen_mask", {"x": Operand("vector", "f64", (8,))}))
 
     assert isinstance(sut, Feasible) and sut.code == "k = _mm512_cmplt_epu64_mask(iota, n);"
@@ -1180,19 +1219,19 @@ def test_an_avx512_mask_answer_says_how_to_build_iota_and_n():
 
 
 @pytest.mark.parametrize("source", [Operand("register", "f64"), Operand("register", "f64", (1,))])
-def test_a_broadcast_takes_its_scalar_source_with_or_without_a_shape_of_one(source):
+def test_a_broadcast_takes_its_scalar_source_with_or_without_a_shape_of_one(source: Operand) -> None:
     sut = answered(Request("avx512", "broadcast", {"x": source}))
 
     assert isinstance(sut, Feasible) and sut.code == "v = _mm512_set1_pd(s);"
 
 
-def test_a_broadcast_from_a_partial_register_names_the_scalar_form():
+def test_a_broadcast_from_a_partial_register_names_the_scalar_form() -> None:
     sut = answered(Request("avx512", "broadcast", {"x": Operand("register", "f64", (3,))}))
 
     assert isinstance(sut, Infeasible) and "--x register:f64 (or register:f64:1)" in sut.reason
 
 
-def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible():
+def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible() -> None:
     vector = Operand("vector", "f64", (8,))
 
     sut = answered(Request("avx512", "mma", {"a": vector, "b": vector, "c": vector}))
@@ -1207,7 +1246,9 @@ def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible
 @pytest.mark.parametrize(("target", "dtype", "lanes"), [("avx512", "f64", 8), ("avx512", "f32", 16),
                                                         ("avx2", "f64", 4), ("avx2", "f32", 8)])  # fmt: skip
 @pytest.mark.avx512
-def test_the_carry_of_a_scan_broadcasts_the_last_lane_of_the_register_before(target, dtype, lanes, tmp_path):
+def test_the_carry_of_a_scan_broadcasts_the_last_lane_of_the_register_before(
+    target: str, dtype: str, lanes: int, tmp_path: pathlib.Path
+) -> None:
     scalar, vector = ("double", "__m512d" if target == "avx512" else "__m256d") if dtype == "f64" else (
         "float", "__m512" if target == "avx512" else "__m256")  # fmt: skip
     width = "512" if target == "avx512" else "256"
@@ -1232,7 +1273,9 @@ int main(void) {{
     assert printed.split() == [str(lanes)] * lanes
 
 
-def test_a_pending_tensix_row_with_a_stale_failure_is_unverified_for_an_elementwise_call_and_an_mma(monkeypatch):
+def test_a_pending_tensix_row_with_a_stale_failure_is_unverified_for_an_elementwise_call_and_an_mma(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rows = tuple(dataclasses.replace(r, pending=True) if r.op in ("add", "mma") else r for r in tensix.rows())
     failed = {(r.op, d, r.unit): tensix.Verdict(r.op, d, r.unit, ok=False, rel=0.5) for r in rows for d in ("f32",)}
     monkeypatch.setattr(tensix, "rows", lambda: rows)
@@ -1248,7 +1291,7 @@ def test_a_pending_tensix_row_with_a_stale_failure_is_unverified_for_an_elementw
     assert isinstance(exp, Infeasible) and exp.why is Why.CHECK_FAILED, "a row that is not pending is refused"
 
 
-def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_it_per_block():
+def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_it_per_block() -> None:
     sut = answered(Request("sve", "exp", {"x": Operand("vector", "f64", (64,))}))
 
     assert isinstance(sut, Feasible)
@@ -1262,7 +1305,9 @@ def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_
     ("gfx942", Operand("global", "bf16", (6,)), "__float22bfloat162_rn(make_float2(a, b))", 3),
     ("gfx90a", Operand("global", "f16", (3,)), "__half2float(x[i])", 3),
 ])  # fmt: skip
-def test_a_gpu_load_or_store_of_global_data_takes_the_widest_row_that_divides_it(target, request_, spelled, count):
+def test_a_gpu_load_or_store_of_global_data_takes_the_widest_row_that_divides_it(
+    target: str, request_: Operand, spelled: str, count: int
+) -> None:
     op = "store" if "make_float2" in spelled else "load"
 
     sut = answered(Request(target, op, {"x": request_}))
@@ -1271,14 +1316,14 @@ def test_a_gpu_load_or_store_of_global_data_takes_the_widest_row_that_divides_it
     assert spelled in sut.steps[0].spelling and sut.steps[0].count == count
 
 
-def test_a_gpu_load_from_registers_names_the_global_form():
+def test_a_gpu_load_from_registers_names_the_global_form() -> None:
     sut = answered(Request("sm90", "load", {"x": Operand("register", "f16")}))
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SPACE
     assert sut.nearest == ("x global:f16:1024",)
 
 
-def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_block():
+def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_block() -> None:
     sut = answered(Request("sm90", "load_wide", {"x": Operand("global", "f16", (100,))}))
 
     assert isinstance(sut, Infeasible) and sut.block == (8,)
@@ -1286,7 +1331,7 @@ def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_blo
 
 
 @pytest.mark.parametrize("op", ["add", "fma", "load"])
-def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op):
+def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op: str) -> None:
     """Zen 4 runs AVX-512 without AVX512-FP16: an f16 answer for plain avx512 would not run there."""
     sut = ask(Request("avx512", op, {"x": Operand("vector", "f16", (32,))}), verify=False)
 
@@ -1294,14 +1339,14 @@ def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op):
     assert sut.nearest == ("target avx512_fp16",)
 
 
-def test_the_fp16_target_answers_f16_with_the_fp16_flag():
+def test_the_fp16_target_answers_f16_with_the_fp16_flag() -> None:
     sut = ask(Request("avx512_fp16", "add", {"x": Operand("vector", "f16", (32,))}), verify=False)
 
     assert isinstance(sut, Feasible)
     assert "-mavx512fp16" in sut.setup["build"]
 
 
-def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one():
+def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one() -> None:
     sut = ask(Request("avx2", "log", {"x": Operand("register", "f32", (8,))}, max_ulp=4), verify=False)
 
     assert isinstance(sut, Feasible)

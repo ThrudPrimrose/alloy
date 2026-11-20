@@ -156,11 +156,12 @@ def commands(
     library_compile, library_link = languages.library_build_flags(LANGUAGE[compiler.dialect], libraries)
     if compiler.bench:
         own = [f for f in cpf.CUDA_BUILD_FLAGS if not f.startswith("-std=")] if compiler.bench == "nvcc" else []
-        return languages.build_shared_lib_commands(
+        commands: list[list[str]] = languages.build_shared_lib_commands(
             LANGUAGE[compiler.dialect], device, library, mode=MODE[compiler.dialect], compiler=compiler.bench,
             cc_override=compiler.driver or None, extra_compile=[*library_compile, *own, *flags],
             extra_link=[*library_link, *compiler.link], extra_sources=[host],
         )  # fmt: skip
+        return commands
     driver = shutil.which(compiler.driver) or compiler.driver
     fill = {"arch": arch, "cuda": cuda_root()}
     compile_flags = [flag.format(**fill) for flag in compiler.compile]

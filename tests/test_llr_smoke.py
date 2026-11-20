@@ -1,6 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 import dataclasses
 import math
+import pathlib
 
 import dace
 import pytest
@@ -55,7 +56,9 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
-def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_against_the_default(kernel, tmp_path):
+def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_against_the_default(
+    kernel: str, tmp_path: pathlib.Path
+) -> None:
     autogen.ensure(kernel, ["dace"])
     bench = Benchmark(kernel)
     sdfg = dace_program(bench).to_sdfg(simplify=False)
@@ -71,7 +74,7 @@ def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_agai
 
 
 @pytest.mark.e2e
-def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(tmp_path):
+def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(tmp_path: pathlib.Path) -> None:
     autogen.ensure("argmax_value", ["dace"])
     bench = Benchmark("argmax_value")
     sdfg = dace_program(bench).to_sdfg(simplify=False)
@@ -85,7 +88,9 @@ def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
-def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(pipeline, tmp_path, monkeypatch):
+def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(
+    pipeline: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """OMEN's scattering self-energies (complex128, an indirect neighbor index, matmuls in an eight-deep nest) after
     a bench transformation pipeline: every scope builds distinct variants and the whole program still verifies."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
@@ -109,7 +114,7 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(pipeline, t
 @pytest.mark.e2e
 @pytest.mark.gcc
 @pytest.mark.parametrize("kernel", ["tsvc_2_vpv", "tsvc_2_s1351", "tsvc_2_vsumr"])
-def test_an_intrinsic_tasklet_candidate_builds_verifies_and_is_timed(kernel, tmp_path):
+def test_an_intrinsic_tasklet_candidate_builds_verifies_and_is_timed(kernel: str, tmp_path: pathlib.Path) -> None:
     """The intrinsic-tasklet axis on this host's ISAs: each ISA's candidate builds, matches the reference (exactly for
     an elementwise loop, in the band for the reassociated sum), and is screened like every other candidate."""
     autogen.ensure(kernel, ["dace"])

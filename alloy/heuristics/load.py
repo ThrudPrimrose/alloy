@@ -13,6 +13,7 @@ from dace.dtypes import ScheduleType
 from dace.libraries.standard.nodes import ArgReduce, Reduce, Scan
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.symbolic import SymbolicType
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.iteration_domain import loop_trip_count
 
@@ -53,12 +54,12 @@ class Where:
     forks: bool = True
 
 
-def at(expr: Any, values: dict[str, float]) -> float:
+def at(expr: SymbolicType | None, values: dict[str, float]) -> float:
     """``expr`` at ``values``; NaN when it is not a number there, which spreads to the whole load."""
     if expr is None:
         return math.nan
     value = sympy.sympify(expr)
-    value = value.subs({s: values[s.name] for s in value.free_symbols if s.name in values})
+    value = value.subs({s: values[str(s)] for s in value.free_symbols if str(s) in values})
     return float(value) if value.is_number else math.nan
 
 

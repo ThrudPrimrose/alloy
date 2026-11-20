@@ -12,6 +12,7 @@ import tempfile
 from dataclasses import dataclass
 
 from alloy.isa import tensix
+from alloy.jsontype import Json
 from alloy.tensixgen.split import Options
 from alloy.tensixgen.tasks import programs
 
@@ -84,7 +85,7 @@ def run(folders: list[pathlib.Path], cache: pathlib.Path, image: str = tensix.IM
     return found
 
 
-def run_tasks(tasks: list[dict], cache: pathlib.Path, options: Options = Options()) -> list[Verdict]:
+def run_tasks(tasks: list[Json], cache: pathlib.Path, options: Options = Options()) -> list[Verdict]:
     """Each eval task's program, spelled for tt-metal 0.8x with ``options``, run on ttsim in one container."""
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="alloy_tensixgen_src_", dir=cache) as tmp:

@@ -17,7 +17,7 @@ N = dace.symbol("N", dace.int64)
 
 
 @dace.program
-def sums(a: dace.float64[N], out: dace.float64[1]):
+def sums(a: dace.float64[N], out: dace.float64[1]) -> None:
     out[0] = np.sum(a)
 
 
@@ -26,7 +26,7 @@ def a_map(state: dace.SDFGState, scope: nodes.MapEntry | None, extent: str, sche
     state.add_nedge(entry, leave, dace.Memlet())
     if scope is not None:
         state.add_nedge(scope, entry, dace.Memlet())
-        state.add_nedge(leave, state.exit_node(scope), dace.Memlet())
+        state.add_nedge(leave, state.exit_node(scope), dace.Memlet())  # pyright: ignore[reportArgumentType] -- test double
     return entry
 
 
@@ -42,28 +42,28 @@ def a_loop(sdfg: dace.SDFG, extent: str = "N") -> dace.SDFGState:
     return loop.add_state("body", is_start_block=True)
 
 
-def test_a_flat_parallel_map_enters_one_region_and_splits_among_the_cores():
+def test_a_flat_parallel_map_enters_one_region_and_splits_among_the_cores() -> None:
     sdfg, state = one_state()
     a_map(state, None, "0:N", ScheduleType.CPU_Multicore)
 
     assert load_of(sdfg, {"N": 1000}, 4) == Load(1.0, 1000.0, 250.0)
 
 
-def test_a_parallel_map_of_no_iterations_decides_no_load():
+def test_a_parallel_map_of_no_iterations_decides_no_load() -> None:
     sdfg, state = one_state()
     a_map(state, None, "0:N", ScheduleType.CPU_Multicore)
 
     assert load_of(sdfg, {"N": 0}, 4) is None
 
 
-def test_a_map_of_fewer_iterations_than_cores_splits_among_its_iterations():
+def test_a_map_of_fewer_iterations_than_cores_splits_among_its_iterations() -> None:
     sdfg, state = one_state()
     a_map(state, a_map(state, None, "0:2", ScheduleType.CPU_Multicore), "0:N", ScheduleType.Sequential)
 
     assert load_of(sdfg, {"N": 100}, 8) == Load(1.0, 200.0, 100.0)
 
 
-def test_a_parallel_map_in_a_triangular_loop_enters_a_region_per_iteration():
+def test_a_parallel_map_in_a_triangular_loop_enters_a_region_per_iteration() -> None:
     sdfg = dace.SDFG("nest")
     sdfg.add_symbol("N", dace.int64)
     a_map(a_loop(sdfg), None, "i+1:N", ScheduleType.CPU_Multicore)
@@ -73,7 +73,7 @@ def test_a_parallel_map_in_a_triangular_loop_enters_a_region_per_iteration():
     assert sut is not None and (sut.regions, sut.elements) == (64.0, 2016.0), "2016 = 63 + 62 + ... + 0"
 
 
-def test_a_team_around_a_worksharing_loop_counts_the_team_once_and_the_loop_per_iteration():
+def test_a_team_around_a_worksharing_loop_counts_the_team_once_and_the_loop_per_iteration() -> None:
     inner = dace.SDFG("inner")
     inner.add_symbol("N", dace.int64)
     a_map(a_loop(inner), None, "0:N", ScheduleType.CPU_Multicore)
@@ -81,28 +81,28 @@ def test_a_team_around_a_worksharing_loop_counts_the_team_once_and_the_loop_per_
     team = a_map(state, None, "0", ScheduleType.CPU_Persistent)
     nested = state.add_nested_sdfg(inner, {}, {}, symbol_mapping={"N": "N"})
     state.add_nedge(team, nested, dace.Memlet())
-    state.add_nedge(nested, state.exit_node(team), dace.Memlet())
+    state.add_nedge(nested, state.exit_node(team), dace.Memlet())  # pyright: ignore[reportArgumentType] -- test double
 
     sut = load_of(sdfg, {"N": 10}, 2)
 
     assert sut is not None and (sut.regions, sut.elements) == (11.0, 100.0)
 
 
-def test_a_map_inside_a_worksharing_loop_enters_no_region_of_its_own():
+def test_a_map_inside_a_worksharing_loop_enters_no_region_of_its_own() -> None:
     sdfg, state = one_state()
     a_map(state, a_map(state, None, "0:10", ScheduleType.CPU_Multicore), "0:N", ScheduleType.CPU_Multicore)
 
     assert load_of(sdfg, {"N": 100}, 2) == Load(1.0, 1000.0, 500.0)
 
 
-def test_a_parallel_map_under_a_sequential_one_enters_a_region_per_outer_iteration():
+def test_a_parallel_map_under_a_sequential_one_enters_a_region_per_outer_iteration() -> None:
     sdfg, state = one_state()
     a_map(state, a_map(state, None, "0:10", ScheduleType.Sequential), "0:N", ScheduleType.CPU_Multicore)
 
     assert load_of(sdfg, {"N": 100}, 2) == Load(10.0, 1000.0, 500.0)
 
 
-def test_a_chosen_reduction_enters_one_region_over_its_input():
+def test_a_chosen_reduction_enters_one_region_over_its_input() -> None:
     sdfg = sums.to_sdfg()
     (reduce,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     reduce.implementation = "CPU"
@@ -113,14 +113,14 @@ def test_a_chosen_reduction_enters_one_region_over_its_input():
     assert sut == Load(1.0, 1000.0, 250.0)
 
 
-def test_a_size_left_open_decides_no_load():
+def test_a_size_left_open_decides_no_load() -> None:
     sdfg, state = one_state()
     a_map(state, None, "0:N", ScheduleType.CPU_Multicore)
 
     assert load_of(sdfg, {}, 4) is None
 
 
-def test_a_library_node_of_unknown_threading_decides_no_load():
+def test_a_library_node_of_unknown_threading_decides_no_load() -> None:
     sdfg, state = one_state()
     state.add_node(Dot("dot"))
 
@@ -135,15 +135,15 @@ def a_branch() -> dace.SDFG:
     return sdfg
 
 
-def test_a_branch_decides_no_load():
+def test_a_branch_decides_no_load() -> None:
     assert load_of(a_branch(), {"N": 100}, 4) is None
 
 
-def test_a_branch_inside_a_parallel_map_decides_no_load():
+def test_a_branch_inside_a_parallel_map_decides_no_load() -> None:
     sdfg, state = one_state()
     team = a_map(state, None, "0:N", ScheduleType.CPU_Multicore)
     nested = state.add_nested_sdfg(a_branch(), {}, {})
     state.add_nedge(team, nested, dace.Memlet())
-    state.add_nedge(nested, state.exit_node(team), dace.Memlet())
+    state.add_nedge(nested, state.exit_node(team), dace.Memlet())  # pyright: ignore[reportArgumentType] -- test double
 
     assert load_of(sdfg, {"N": 100}, 4) is None

@@ -50,13 +50,13 @@ HIP_ROWS = [(t, op) for t, op in SIMT if t != "sm90"]
 
 @pytest.mark.cuda
 @pytest.mark.parametrize(("target", "op"), CUDA_ROWS)
-def test_a_cuda_device_row_compiles_on_its_own(target, op, tmp_path):
+def test_a_cuda_device_row_compiles_on_its_own(target: str, op: str, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(Request(target, op), verify=False), tmp_path)
 
 
 @pytest.mark.hip
 @pytest.mark.parametrize(("target", "op"), HIP_ROWS)
-def test_a_hip_device_row_compiles_on_its_own(target, op, tmp_path):
+def test_a_hip_device_row_compiles_on_its_own(target: str, op: str, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(Request(target, op), verify=False), tmp_path)
 
 
@@ -66,7 +66,7 @@ def test_a_hip_device_row_compiles_on_its_own(target, op, tmp_path):
     *(Request("sm90", "wait", on=on) for on in ("mbarrier", "bulk_group", "cp_async_group", "wgmma_group")),
     *(Request("sm90", "fence", kind=kind) for kind in ("proxy", "operand")),
 ], ids=str)  # fmt: skip
-def test_an_sm90_answer_compiles_with_its_build_line_alone(request_, tmp_path):
+def test_an_sm90_answer_compiles_with_its_build_line_alone(request_: Request, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(request_, verify=False), tmp_path)
 
 
@@ -75,11 +75,11 @@ def test_an_sm90_answer_compiles_with_its_build_line_alone(request_, tmp_path):
     mma("gfx942", "f16"), mma("gfx942", "e5m2"), mma("gfx90a", "bf16"), Request("gfx942", "copy", LDS),
     Request("gfx90a", "copy", LDS), *(Request(t, "wait", on=on) for t in ("gfx942", "gfx90a") for on in ("vmcnt", "lgkmcnt")),
 ], ids=str)  # fmt: skip
-def test_a_cdna_answer_compiles_with_its_build_line_alone(request_, tmp_path):
+def test_a_cdna_answer_compiles_with_its_build_line_alone(request_: Request, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(request_, verify=False), tmp_path)
 
 
-def test_a_trimmed_gpu_answer_carries_only_its_own_type_and_shape():
+def test_a_trimmed_gpu_answer_carries_only_its_own_type_and_shape() -> None:
     sut = ask(mma("sm90", "e4m3"), verify=False)
 
     assert isinstance(sut, Feasible)
@@ -89,7 +89,7 @@ def test_a_trimmed_gpu_answer_carries_only_its_own_type_and_shape():
 
 
 @pytest.mark.clang
-def test_an_sme_mma_answer_compiles_with_its_build_line_alone(tmp_path):
+def test_an_sme_mma_answer_compiles_with_its_build_line_alone(tmp_path: pathlib.Path) -> None:
     operands = {"a": Operand("global", "f32", (32, 32), "col_major"), "b": Operand("global", "f32", (32, 32)),
                 "c": Operand("tile_register", "f32", (32, 32))}  # fmt: skip
 
@@ -99,27 +99,31 @@ def test_an_sme_mma_answer_compiles_with_its_build_line_alone(tmp_path):
 @pytest.mark.gcc
 @pytest.mark.parametrize(("target", "dtype", "lanes"), [("avx512", "f64", 8), ("avx2", "f32", 8), ("neon", "f64", 2),
                                                         ("sve", "f32", 0)])  # fmt: skip
-def test_a_cpu_math_kernel_compiles_with_its_build_line_alone(target, dtype, lanes, tmp_path):
+def test_a_cpu_math_kernel_compiles_with_its_build_line_alone(
+    target: str, dtype: str, lanes: int, tmp_path: pathlib.Path
+) -> None:
     x = Operand("vector", dtype, (lanes,) if lanes else ())
 
     assert_builds(ask(Request(target, "exp", {"x": x}), verify=False), tmp_path)
 
 
 @pytest.mark.gcc
-def test_a_cpu_mma_answer_compiles_with_its_build_line_alone(tmp_path):
+def test_a_cpu_mma_answer_compiles_with_its_build_line_alone(tmp_path: pathlib.Path) -> None:
     tile_ = Operand("global", "f64", (64, 64))
 
     assert_builds(ask(Request("avx512", "mma", {"a": tile_, "b": tile_, "c": tile_}), verify=False), tmp_path)
 
 
 #: The C types of the operand names the AVX-512 f64 rows' signatures use.
-DECLARED = "__m512d a = _mm512_set1_pd(1), b = a, c = a, v = a, src = a; double s = 0, buffer[8] = {0}, *p = buffer; "
-DECLARED += "__mmask8 k = 0; __m512i iota = _mm512_setzero_si512(), n = iota;"
+DECLARED = (
+    "__m512d a = _mm512_set1_pd(1), b = a, c = a, v = a, src = a; double s = 0, buffer[8] = {0}, *p = buffer; "
+    "__mmask8 k = 0; __m512i iota = _mm512_setzero_si512(), n = iota;"
+)
 
 
 @pytest.mark.gcc
 @pytest.mark.parametrize("op", ["add", "fma", "broadcast", "reduce_add", "scan_add", "gen_mask"])
-def test_a_cpu_answer_is_one_statement_that_compiles_with_its_header_and_flags(op, tmp_path):
+def test_a_cpu_answer_is_one_statement_that_compiles_with_its_header_and_flags(op: str, tmp_path: pathlib.Path) -> None:
     sut = ask(Request("avx512", op, {"x": Operand("vector", "f64", (8,))}), verify=False)
     assert isinstance(sut, Feasible)
     unused = "(void)a; (void)b; (void)c; (void)v; (void)src; (void)s; (void)p; (void)k; (void)iota; (void)n;"

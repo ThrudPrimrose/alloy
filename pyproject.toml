@@ -30,7 +30,7 @@ bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@9a8117
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.15.10"]
+dev = ["alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.17.6"]
 # What GVSoC's build and launcher (gapy) import, from gvsoc's requirement files without the documentation tools and
 # the build tools, at versions that agree with the rest of the lock; the SoftHier v1 image runs with exactly these (alloy/isa/softhier_pins.toml; helpers/build_softhier.sh installs it).
 softhier = ["argparse==1.4.0", "beautifulsoup4==4.15.0", "hjson==3.1.0", "html2text==2025.4.15",
@@ -64,14 +64,50 @@ no-binary-package = ["cupy"]
 override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@0718136bb3424180abd8209ec5fc3524b343011b"]
 
 [tool.mypy]
+# Strict static typing for Alloy's own code, as in a statically typed language. The untyped libraries it calls (DaCe,
+# the benchmark, tt-metal, torch) are skipped: their values are Any at the boundary, which strict mode makes explicit.
 python_version = "3.12"
-follow_imports = "silent"
+strict = true
+warn_unreachable = true
+# Every untyped decorator comes from a skipped library (@dace.program, the benchmark's routes).
+disallow_untyped_decorators = false
+extra_checks = true
+
+[[tool.mypy.overrides]]
+module = ["dace", "dace.*", "hpcagent_bench", "hpcagent_bench.*", "hpcagent_agent", "hpcagent_agent.*", "ttnn",
+    "ttnn.*", "torch", "torch.*", "tree_sitter", "tree_sitter.*", "tree_sitter_language_pack", "cupy", "cupy.*",
+    "mpmath", "mpmath.*", "sympy", "sympy.*", "yaml"]
+follow_imports = "skip"
 ignore_missing_imports = true
-check_untyped_defs = true
+
+# The benchmark plugin subclasses the benchmark's classes, which the skip above makes Any.
+[[tool.mypy.overrides]]
+module = ["alloy.hb_plugin", "alloy.hb_plugin.*"]
+disallow_subclassing_any = false
+
+# The GVSoC verdicts hash this file's bytes (alloy.isa.softhier.digest): an edit voids every recorded run.
+[[tool.mypy.overrides]]
+module = ["alloy.isa.softhier_harness"]
+disallow_any_generics = false
+disallow_untyped_calls = false
+
 
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+include = ["alloy", "tests", "helpers"]
+# Hashed into the GVSoC verdicts (alloy.isa.softhier.digest), so left as recorded.
+ignore = ["alloy/isa/softhier_harness.py"]
+typeCheckingMode = "strict"
+# Types that come from the untyped libraries above are unknown to pyright; every type Alloy declares is checked.
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportUnknownLambdaType = "none"
+reportUnknownParameterType = "none"
+# Tests import their own helpers.py, as pytest puts tests/ on the path.
+executionEnvironments = [{ root = "tests", extraPaths = ["tests", "."] }, { root = "." }]
 
 [tool.pytest.ini_options]
 # A hung child or compiler fails its test with a traceback instead of eating the CI job budget.

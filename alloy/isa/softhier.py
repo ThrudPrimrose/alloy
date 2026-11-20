@@ -32,6 +32,7 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
 from alloy.isa import softhier_harness
+from alloy.jsontype import Json
 
 __all__ = ["ROWS_PATH", "Row", "Verdict", "build_line", "code", "digest", "rows", "verdicts"]
 
@@ -105,7 +106,7 @@ class Verdict:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def table(path: pathlib.Path = ROWS_PATH) -> dict:
+def table(path: pathlib.Path = ROWS_PATH) -> Json:
     return tomllib.loads(path.read_text())
 
 
@@ -118,13 +119,14 @@ def untyped(row: Row) -> bool:
     return set(row.dtypes) <= {"bytes", "none"}
 
 
-def config() -> dict:
-    return table()["target"]["config"]
+def config() -> Json:
+    configured: Json = table()["target"]["config"]
+    return configured
 
 
 def vlmax(dtype: str) -> int:
     """Elements of one LMUL-8 register group: VLEN * 8 / SEW, VLEN = VLSU ports x port width."""
-    vlen = config()["spatz_num_vlsu_port"] * config()["spatz_vlsu_port_width"]
+    vlen: int = config()["spatz_num_vlsu_port"] * config()["spatz_vlsu_port_width"]
     return vlen * 8 // int(dtype[1:])
 
 
@@ -203,7 +205,7 @@ def digest(row: Row, dtype: str) -> str:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def recorded(path: pathlib.Path = VERDICTS_PATH) -> dict:
+def recorded(path: pathlib.Path = VERDICTS_PATH) -> Json:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
@@ -234,7 +236,7 @@ def planted() -> tuple[Row, ...]:
     return tuple(found)
 
 
-def harness_rows(with_planted: bool = True) -> list[dict]:
+def harness_rows(with_planted: bool = True) -> list[Json]:
     """Every row at every element type it runs at, as the harness reads them."""
     chosen = tuple(r for r in rows() if not r.checked_by) + (planted() if with_planted else ())
     by_key = {r.key(): r for r in rows()}
@@ -249,7 +251,7 @@ def harness_rows(with_planted: bool = True) -> list[dict]:
     ]  # fmt: skip
 
 
-def spec(jobs: int = 8, scratch: str | None = None) -> dict:
+def spec(jobs: int = 8, scratch: str | None = None) -> Json:
     """The harness's input: the configuration, the build, link, and run lines as argument lists, and the rows."""
     compile_ = ["riscv32-unknown-elf-gcc", *FLAGS, "-I", "{sdk}/runtime/runtime/include", "-c", "alloy.c", "-o",
                 "alloy.o"]  # fmt: skip

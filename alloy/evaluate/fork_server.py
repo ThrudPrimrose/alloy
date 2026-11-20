@@ -8,5 +8,5 @@ import os
 
 os.environ["OMP_PROC_BIND"] = "false"
 
-import dace  # noqa: F401
-import numpy  # noqa: F401
+import dace  # noqa: F401  # pyright: ignore[reportUnusedImport] -- preloaded for every child
+import numpy  # noqa: F401  # pyright: ignore[reportUnusedImport] -- preloaded for every child

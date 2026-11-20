@@ -23,21 +23,23 @@ N = dace.symbol("N")
 
 
 @dace.program
-def roots(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+def roots(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         y[i] = np.sqrt(x[i])
     for i in dace.map[0:N]:
         z[i] = y[i] * 2.0
 
 
-def test_profile_mode_needs_a_manifest_to_know_the_sizes_it_times_at(tmp_path):
+def test_profile_mode_needs_a_manifest_to_know_the_sizes_it_times_at(tmp_path: pathlib.Path) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
 
     with pytest.raises(ValueError, match="profile mode times at declared sizes, so it needs a manifest"):
         api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path))
 
 
-def test_without_a_manifest_a_program_any_input_suits_is_verified_on_derived_draws_and_its_picks_linked(tmp_path):
+def test_without_a_manifest_a_program_any_input_suits_is_verified_on_derived_draws_and_its_picks_linked(
+    tmp_path: pathlib.Path,
+) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
 
     sut = api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path), mode=Mode.SPECULATIVE)
@@ -50,7 +52,9 @@ def test_without_a_manifest_a_program_any_input_suits_is_verified_on_derived_dra
     assert (tmp_path / "out" / "best" / "Makefile").is_file()
 
 
-def test_without_a_manifest_a_program_whose_inputs_have_a_domain_links_every_scopes_default_build(tmp_path):
+def test_without_a_manifest_a_program_whose_inputs_have_a_domain_links_every_scopes_default_build(
+    tmp_path: pathlib.Path,
+) -> None:
     sdfg = roots.to_sdfg()
 
     sut = api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path), mode=Mode.SPECULATIVE)
@@ -61,7 +65,7 @@ def test_without_a_manifest_a_program_whose_inputs_have_a_domain_links_every_sco
     assert sut.report.is_file()
 
 
-def test_a_program_without_a_loop_nest_is_refused_by_name(tmp_path):
+def test_a_program_without_a_loop_nest_is_refused_by_name(tmp_path: pathlib.Path) -> None:
     sdfg = dace.SDFG("no_nest")
     sdfg.add_array("x", [1], dace.float64)
     state = sdfg.add_state()
@@ -72,7 +76,7 @@ def test_a_program_without_a_loop_nest_is_refused_by_name(tmp_path):
         api.generate(sdfg, tmp_path / "out", matrix=gcc_only(tmp_path))
 
 
-def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winner(tmp_path):
+def test_a_small_program_goes_through_the_whole_sweep_and_links_a_verified_winner(tmp_path: pathlib.Path) -> None:
     """``scale``: one scope, every single-factor variant of gcc and clang, each built, verified on fuzzed inputs and
     timed, and the winner linked into alloy_full."""
     matrix = gcc_and_clang(tmp_path)
@@ -132,7 +136,9 @@ def assert_best_is(sut: api.Result, names: dict[str, str]) -> None:
         assert scope.flags == winner.flags
 
 
-def test_what_best_links_is_the_build_the_speculative_pick_names(tmp_path, monkeypatch):
+def test_what_best_links_is_the_build_the_speculative_pick_names(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     names: dict[str, str] = {}
 
@@ -148,7 +154,9 @@ def test_what_best_links_is_the_build_the_speculative_pick_names(tmp_path, monke
     assert_best_is(sut, names)
 
 
-def profile_run(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, arm: Verdict) -> tuple[api.Result, list]:
+def profile_run(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, arm: Verdict
+) -> tuple[api.Result, list[ScopeReport]]:
     """A profile run of ``scale`` whose timing names a winner without timing anything."""
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     seen: list[ScopeReport] = []
@@ -162,13 +170,15 @@ def profile_run(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, arm: Ve
     return api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=gcc_only(tmp_path)), seen
 
 
-def test_what_best_links_is_the_build_the_timing_names(tmp_path, monkeypatch):
+def test_what_best_links_is_the_build_the_timing_names(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sut, (rep,) = profile_run(tmp_path, monkeypatch, Verdict("pass"))
 
     assert_best_is(sut, {rep.scope.symbol: last_distinct_build(rep)})
 
 
-def test_winners_the_whole_program_refuses_give_way_to_the_reference(tmp_path, monkeypatch):
+def test_winners_the_whole_program_refuses_give_way_to_the_reference(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Two scopes each inside the band can compound past it: their combination is what the verdict is about."""
     sut, (rep,) = profile_run(tmp_path, monkeypatch, Verdict("fail"))
 

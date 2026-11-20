@@ -59,7 +59,7 @@ def cache_instances() -> list[tuple[int, int]]:
             sizes[key] = int(size[:-1]) * 1024
     if not sizes:
         return []
-    top = max(level for level, unused in sizes)
+    top = max(level for level, _ in sizes)
     cores = physical_cores()
     instances = [(size, cpu_list(shared)) for (level, shared), size in sizes.items() if level == top]
     instances.sort(key=lambda inst: min(inst[1] & set(cores), default=1 << 30))
@@ -86,7 +86,7 @@ def largest_cache_bytes(threads: int | None = None) -> int:
 def cpu_flags() -> frozenset[str]:
     """The CPU feature flags ``/proc/cpuinfo`` lists: ``flags`` on x86, ``Features`` on aarch64 (first core's line)."""
     for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
-        key, unused, value = line.partition(":")
+        key, _, value = line.partition(":")
         if key.strip() in ("flags", "Features"):
             return frozenset(value.split())
     raise RuntimeError("/proc/cpuinfo lists no CPU flags")

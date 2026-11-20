@@ -186,7 +186,8 @@ def serve(judge: Judge, request: RouteRequest) -> None:
     spelled = request.parts[1] if len(request.parts) > 1 else ""
     if spelled not in (ISA, SWEEP, *MODES):
         error = f"no Alloy mode {spelled!r}; modes: {sorted(MODES)}"
-        return judge.reply(HTTPStatus.NOT_FOUND, JudgeError(error=error))
+        judge.reply(HTTPStatus.NOT_FOUND, JudgeError(error=error))
+        return None
     outcome = isa_query(request.body) if spelled == ISA else generate(judge, request, spelled)
     if outcome is None:
         return None
@@ -195,4 +196,5 @@ def serve(judge: Judge, request: RouteRequest) -> None:
         append_tool_call(agent_root(request.episode_id), call)
     except (OSError, ValueError) as exc:  # a flat-layout run has no episode folder; the answer still goes out
         print(f"alloy: tool call {call.tool} not recorded: {exc}", file=sys.stderr, flush=True)
-    return judge.reply(outcome[0], outcome[1])
+    judge.reply(outcome[0], outcome[1])
+    return None

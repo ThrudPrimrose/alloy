@@ -20,13 +20,15 @@ from alloy.hb_plugin.eval_set import Refused, Task, admit
         ("tsvc_2_s251", "map", ["b", "c", "d"], ("s = (b + (c * d))", "a = (s * s)")),  # a scalar temporary
     ],
 )
-def test_an_admitted_kernel_is_its_program_over_whole_arrays(kernel, kind, inputs, program):
+def test_an_admitted_kernel_is_its_program_over_whole_arrays(
+    kernel: str, kind: str, inputs: list[str], program: tuple[str, str] | tuple[str]
+) -> None:
     sut = admit(kernel)
 
     assert (sut.kind, [name for name, *_ in sut.inputs], sut.program) == (kind, inputs, program)
 
 
-def test_an_input_keeps_the_benchs_domain():
+def test_an_input_keeps_the_benchs_domain() -> None:
     (x,) = admit("transc_sin_wide").inputs
 
     assert x == ("x", -100.0, 100.0)
@@ -39,12 +41,12 @@ def test_an_input_keeps_the_benchs_domain():
         ("icon_aes_graupel", "not"),  # helpers and np.where, not the Tensix table
     ],
 )
-def test_a_kernel_outside_the_contract_is_refused_with_where(kernel, why):
+def test_a_kernel_outside_the_contract_is_refused_with_where(kernel: str, why: str) -> None:
     with pytest.raises(Refused, match=why):
         admit(kernel)
 
 
-def test_the_set_holds_no_dev_kernel_and_one_kernel_per_program():
+def test_the_set_holds_no_dev_kernel_and_one_kernel_per_program() -> None:
     tasks, refused = eval_set.admitted()
 
     names = {t.name for t in tasks}
@@ -53,21 +55,21 @@ def test_the_set_holds_no_dev_kernel_and_one_kernel_per_program():
     assert len({eval_set.shape_of(t) for t in tasks}) == len(tasks)
 
 
-def test_two_kernels_differing_only_in_domain_are_two_tasks():
+def test_two_kernels_differing_only_in_domain_are_two_tasks() -> None:
     small, wide = admit("transc_sin_small"), admit("transc_sin_wide")
 
     assert small.program == wide.program
     assert eval_set.shape_of(small) != eval_set.shape_of(wide)
 
 
-def test_a_task_round_trips_through_its_shape():
+def test_a_task_round_trips_through_its_shape() -> None:
     task = Task("k", "map", (("p", 0.0, 1.0), ("q", 0.0, 1.0)), "r", ("r = (p * q)",))
     renamed = Task("k2", "map", (("u", 0.0, 1.0), ("v", 0.0, 1.0)), "w", ("w = (u * v)",))
 
     assert eval_set.shape_of(task) == eval_set.shape_of(renamed)
 
 
-def test_the_draw_is_seeded_and_skips_what_keep_refuses():
+def test_the_draw_is_seeded_and_skips_what_keep_refuses() -> None:
     first = eval_set.draw("cpu", 5, lambda name: "tsvc" not in name)
 
     assert first == eval_set.draw("cpu", 5, lambda name: "tsvc" not in name)

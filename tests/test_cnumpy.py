@@ -24,7 +24,7 @@ def lifted(source: str, bound: dict[str, Any]) -> tuple[str, types.FunctionType]
     return module, namespace["kernel"]
 
 
-def test_a_flat_index_with_offsets_delinearizes_against_the_shape():
+def test_a_flat_index_with_offsets_delinearizes_against_the_shape() -> None:
     source = """
     void k(double *restrict aa, const double *restrict bb, const int64_t N) {
       for (int64_t i = 1; i < N; ++i)
@@ -45,7 +45,7 @@ def test_a_flat_index_with_offsets_delinearizes_against_the_shape():
     np.testing.assert_array_equal(aa, expected)
 
 
-def test_integer_division_truncates_as_c_does_unless_both_sides_are_non_negative():
+def test_integer_division_truncates_as_c_does_unless_both_sides_are_non_negative() -> None:
     source = """
     void k(int64_t *restrict out, const int64_t a, const int64_t N) {
       for (int64_t i = 0; i < N; ++i) out[i] = (a / 2) + (i / 2) + (a % 3);
@@ -60,7 +60,7 @@ def test_integer_division_truncates_as_c_does_unless_both_sides_are_non_negative
     np.testing.assert_array_equal(out, [-3 + i // 2 - 1 for i in range(4)])
 
 
-def test_a_null_pointer_then_malloc_becomes_np_empty_and_the_nests_become_array_statements():
+def test_a_null_pointer_then_malloc_becomes_np_empty_and_the_nests_become_array_statements() -> None:
     source = """
     void k(const double *restrict x, double *restrict y, const int64_t N) {
       double *t = NULL;
@@ -82,7 +82,7 @@ def test_a_null_pointer_then_malloc_becomes_np_empty_and_the_nests_become_array_
     np.testing.assert_array_equal(y, 3 * x)
 
 
-def test_a_matmul_nest_and_cblas_dgemm_both_become_matmul():
+def test_a_matmul_nest_and_cblas_dgemm_both_become_matmul() -> None:
     nest = """
     void k(const double *restrict A, const double *restrict B, double *restrict C, const int64_t M, const int64_t N,
            const int64_t K) {
@@ -112,7 +112,7 @@ def test_a_matmul_nest_and_cblas_dgemm_both_become_matmul():
         np.testing.assert_allclose(c, a @ b)
 
 
-def test_reductions_become_np_sum_over_the_reduced_axes():
+def test_reductions_become_np_sum_over_the_reduced_axes() -> None:
     source = """
     void k(const double *restrict x, double *restrict rows, double *restrict total, const int64_t M,
            const int64_t N) {
@@ -142,7 +142,7 @@ def test_reductions_become_np_sum_over_the_reduced_axes():
     assert total[0] == x.sum()
 
 
-def test_memset_constants_float_scalars_and_nested_branches_keep_c_semantics():
+def test_memset_constants_float_scalars_and_nested_branches_keep_c_semantics() -> None:
     source = """
     constexpr int64_t K = 2;
     #define SCALE 0.5
@@ -180,7 +180,7 @@ def test_memset_constants_float_scalars_and_nested_branches_keep_c_semantics():
         ("switch (N) { case 1: x[0] = 1.0; }", "switch"),
     ],
 )
-def test_constructs_outside_canonical_c_are_refused_with_their_reason(body: str, reason: str):
+def test_constructs_outside_canonical_c_are_refused_with_their_reason(body: str, reason: str) -> None:
     source = f"static double twice(double v) {{ double w = 2.0 * v; return w; }}\nvoid k(double *restrict x, const int64_t N) {{ {body} }}"
     bound = binding("k", ("x", "ptr_double", ["N"]), ("N", "int64", []))
 
@@ -190,7 +190,7 @@ def test_constructs_outside_canonical_c_are_refused_with_their_reason(body: str,
     assert refused.value.reason == reason
 
 
-def test_the_command_line_writes_the_numpy_and_the_sdfg(tmp_path):
+def test_the_command_line_writes_the_numpy_and_the_sdfg(tmp_path: pathlib.Path) -> None:
     source = tmp_path / "k.c"
     source.write_text(
         "void k(double *restrict y, const double *restrict x, const int64_t N) {\n"
@@ -210,7 +210,7 @@ def test_the_command_line_writes_the_numpy_and_the_sdfg(tmp_path):
     assert {"x", "y"} <= set(sdfg.arrays) and "N" in sdfg.free_symbols
 
 
-def test_every_refusal_reason_on_the_skill_page_is_one_the_lifter_prints():
+def test_every_refusal_reason_on_the_skill_page_is_one_the_lifter_prints() -> None:
     page = pathlib.Path(cnumpy.__file__).parent.parent / "hb_plugin" / "skills" / "alloy-c" / "SKILL.md"
     table = page.read_text().split("## Refused, with the reason printed")[1]
     reasons = {
@@ -225,7 +225,7 @@ def test_every_refusal_reason_on_the_skill_page_is_one_the_lifter_prints():
     assert [r for r in reasons if f'"{r}"' not in code] == []
 
 
-def test_a_dereference_of_an_output_pointer_is_its_first_element_and_pragmas_are_dropped():
+def test_a_dereference_of_an_output_pointer_is_its_first_element_and_pragmas_are_dropped() -> None:
     source = """
     void k(const double *restrict x, double *restrict out, const int64_t N) {
       double s = 0.0;
@@ -243,7 +243,7 @@ def test_a_dereference_of_an_output_pointer_is_its_first_element_and_pragmas_are
     assert out[0] == 6.0
 
 
-def test_a_constant_extent_stays_a_name_so_the_index_splits_against_it():
+def test_a_constant_extent_stays_a_name_so_the_index_splits_against_it() -> None:
     source = """
     constexpr int64_t nb = 3;
     void k(double *restrict q, const int64_t batch) {
@@ -258,7 +258,7 @@ def test_a_constant_extent_stays_a_name_so_the_index_splits_against_it():
     np.testing.assert_array_equal(q, [[0.0] * 3, [1.0] * 3])
 
 
-def test_a_horner_form_index_splits_against_extents_that_are_no_single_symbol():
+def test_a_horner_form_index_splits_against_extents_that_are_no_single_symbol() -> None:
     source = """
     void k(double *restrict t, const int64_t N) {
       for (int64_t i = 0; i < (N - 1); ++i)
@@ -273,7 +273,7 @@ def test_a_horner_form_index_splits_against_extents_that_are_no_single_symbol():
     np.testing.assert_array_equal(t, [[0.0, 1.0], [10.0, 11.0], [20.0, 21.0]])
 
 
-def test_an_index_whose_stride_is_not_the_temporaries_extent_reads_the_flat_view():
+def test_an_index_whose_stride_is_not_the_temporaries_extent_reads_the_flat_view() -> None:
     source = """
     void k(double *restrict out, const int64_t N, const int64_t W) {
       double *t = (double *)malloc((size_t)((N) * ((N + 1))) * sizeof(double));
@@ -291,7 +291,7 @@ def test_an_index_whose_stride_is_not_the_temporaries_extent_reads_the_flat_view
     np.testing.assert_array_equal(out, [0.0, 1.0, 10.0, 11.0])
 
 
-def test_a_const_index_local_delinearizes_through_its_value():
+def test_a_const_index_local_delinearizes_through_its_value() -> None:
     source = """
     void k(double *restrict aa, const int64_t LEN) {
       const int64_t n = LEN;
@@ -310,7 +310,7 @@ def test_a_const_index_local_delinearizes_through_its_value():
     np.testing.assert_array_equal(aa, [[0, 0, 0], [0, 1, 1], [0, 1, 2]])
 
 
-def test_the_binding_s_c_symbol_names_the_function_when_it_differs_from_the_kernel_name():
+def test_the_binding_s_c_symbol_names_the_function_when_it_differs_from_the_kernel_name() -> None:
     bound = {**binding("K_fp64", ("x", "ptr_double", ["N"]), ("N", "int64", [])), "symbols": {"c": "k_fp64"}}
 
     module = cnumpy.translate("void k_fp64(double *restrict x, const int64_t N) { x[0] = 1.0; }", bound)
@@ -318,7 +318,7 @@ def test_the_binding_s_c_symbol_names_the_function_when_it_differs_from_the_kern
     assert "x[0] = 1.0" in module
 
 
-def test_helpers_of_the_file_are_inlined_a_value_into_its_expression_a_void_one_into_the_caller():
+def test_helpers_of_the_file_are_inlined_a_value_into_its_expression_a_void_one_into_the_caller() -> None:
     source = """
     static int64_t idx(int64_t i, int64_t j, int64_t n) { return i * n + j; }
     static void bump(double *restrict a, const double *restrict b, const int64_t n) {
@@ -366,7 +366,7 @@ def test_helpers_of_the_file_are_inlined_a_value_into_its_expression_a_void_one_
         ),
     ],
 )
-def test_helpers_outside_the_inlinable_form_are_refused(helpers: str, call: str, reason: str):
+def test_helpers_outside_the_inlinable_form_are_refused(helpers: str, call: str, reason: str) -> None:
     source = f"{helpers}\nvoid k(double *restrict x, const int64_t N) {{ {call} }}"
 
     with pytest.raises(cnumpy.Refused) as refused:

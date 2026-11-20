@@ -32,7 +32,7 @@ def edited_run(tmp_path: pathlib.Path, edit: str) -> tuple[api.Result, str]:
     return result, unit.stem
 
 
-def test_a_correct_edit_is_built_by_every_candidate_and_verified_against_the_rendering(tmp_path):
+def test_a_correct_edit_is_built_by_every_candidate_and_verified_against_the_rendering(tmp_path: pathlib.Path) -> None:
     sut, symbol = edited_run(tmp_path, "2.0 -> (1.0 + 1.0)")
 
     (report,) = sut.scopes
@@ -44,7 +44,7 @@ def test_a_correct_edit_is_built_by_every_candidate_and_verified_against_the_ren
     assert all(verdicts[b.name].ok for b in agent if not b.duplicate_of)
 
 
-def test_a_wrong_edit_fails_verification(tmp_path):
+def test_a_wrong_edit_fails_verification(tmp_path: pathlib.Path) -> None:
     sut, symbol = edited_run(tmp_path, "2.0 -> 3.0")
 
     assert sut.verification is not None
@@ -54,7 +54,7 @@ def test_a_wrong_edit_fails_verification(tmp_path):
     assert sut.winners and not any(b.name.startswith("agent_") for b in sut.winners.values())
 
 
-def test_a_unit_named_after_no_scope_is_refused(tmp_path):
+def test_a_unit_named_after_no_scope_is_refused(tmp_path: pathlib.Path) -> None:
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     stray = tmp_path / "nope.c"
     stray.write_text("void nope(void) {}\n")
@@ -64,7 +64,7 @@ def test_a_unit_named_after_no_scope_is_refused(tmp_path):
         api.generate(sdfg, tmp_path / "out", manifest=manifest, matrix=gcc_only(tmp_path), sources={"nope": stray})
 
 
-def test_reference_mode_links_each_scopes_default_build_unswept(tmp_path):
+def test_reference_mode_links_each_scopes_default_build_unswept(tmp_path: pathlib.Path) -> None:
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
 

@@ -27,12 +27,12 @@ def request(folder: str) -> RouteRequest:
 @pytest.fixture
 def root(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
     monkeypatch.setenv("HPCAGENT_BENCH_SHARED_DIR", str(tmp_path / "shared"))
-    folder = agent_root("e1")
+    folder: pathlib.Path = agent_root("e1")
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
 
-def test_each_scope_unit_is_copied_under_its_symbol(root: pathlib.Path, tmp_path: pathlib.Path):
+def test_each_scope_unit_is_copied_under_its_symbol(root: pathlib.Path, tmp_path: pathlib.Path) -> None:
     scopes = root / "best" / "scopes"
     scopes.mkdir(parents=True)
     (scopes / "scale_0.c").write_text("void scale_0(void) {}\n")
@@ -44,7 +44,7 @@ def test_each_scope_unit_is_copied_under_its_symbol(root: pathlib.Path, tmp_path
     assert pathlib.Path(sut["scale_0"]).read_text() == "void scale_0(void) {}\n"
 
 
-def test_a_unit_linked_out_of_the_agents_folder_is_refused(root: pathlib.Path, tmp_path: pathlib.Path):
+def test_a_unit_linked_out_of_the_agents_folder_is_refused(root: pathlib.Path, tmp_path: pathlib.Path) -> None:
     outside = tmp_path / "other_agent.c"
     outside.write_text("void scale_0(void) {}\n")
     scopes = root / "best" / "scopes"
@@ -56,6 +56,6 @@ def test_a_unit_linked_out_of_the_agents_folder_is_refused(root: pathlib.Path, t
 
 
 @pytest.mark.parametrize("folder", ["", "missing"])
-def test_a_folder_without_scope_units_is_refused(root: pathlib.Path, tmp_path: pathlib.Path, folder: str):
+def test_a_folder_without_scope_units_is_refused(root: pathlib.Path, tmp_path: pathlib.Path, folder: str) -> None:
     with pytest.raises(ValueError, match="name the edited folder|no scopes"):
         copied_units(request(folder), tmp_path / "copies")

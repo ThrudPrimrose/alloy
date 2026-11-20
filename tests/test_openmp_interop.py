@@ -140,8 +140,8 @@ def executables() -> list[str]:
 @pytest.mark.parametrize("runtime_name", RUNTIMES)
 @pytest.mark.parametrize("names", COMBINATIONS)
 def test_archives_from_several_compilers_link_exactly_when_the_runtime_exports_their_calls(
-    tmp_path, names, runtime_name
-):
+    tmp_path: pathlib.Path, names: tuple[str, ...], runtime_name: str
+) -> None:
     library = runtime.resolve(MATRIX.openmp_runtimes[runtime_name], executables())
     archives = [kernel_archive(tmp_path, n, runtime_name) for n in names]
     predicted = all(not runtime.unresolved(a, library) for a in archives)
@@ -168,7 +168,7 @@ def test_archives_from_several_compilers_link_exactly_when_the_runtime_exports_t
 
 
 @pytest.mark.parametrize("name", SEEDED_COMPILERS)
-def test_a_reduction_seeded_from_omp_orig_keeps_the_update_of_every_thread(tmp_path, name):
+def test_a_reduction_seeded_from_omp_orig_keeps_the_update_of_every_thread(tmp_path: pathlib.Path, name: str) -> None:
     comp = MATRIX.compilers[name]
     soname = MATRIX.openmp_runtimes[MATRIX.defaults.openmp_runtime]
     library = runtime.resolve(soname, executables())

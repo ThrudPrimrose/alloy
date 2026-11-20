@@ -10,6 +10,7 @@ import platform
 from dataclasses import dataclass
 
 import dace
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
@@ -67,7 +68,9 @@ class Body:
         return max((self.crossing(d, lo, hi) for d in range(lo, hi)), default=0)
 
 
-def node_levels(state: dace.SDFGState, inside: SubgraphView) -> dict[nodes.Node, int]:
+def node_levels(
+    state: dace.SDFGState, inside: SubgraphView[nodes.Node, MultiConnectorEdge[Memlet]]
+) -> dict[nodes.Node, int]:
     """Every node's level, walking the body in dependency order: a code node sits one past its deepest producer."""
     members = set(inside.nodes())
     levels: dict[nodes.Node, int] = {}
@@ -154,16 +157,18 @@ def cut_after(sdfg: dace.SDFG, block: dace.SDFGState) -> None:
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG) and block in node.sdfg.nodes():
                 entry = state.entry_node(node)
-                where = {"map_entry": entry, "nested_sdfg": node}
-                if not SubgraphFission.can_be_applied_to(sdfg, options={"cut": block.label}, **where):
+                if entry is None:
+                    raise ValueError(f"{node.label} has no enclosing map to cut")
+                cut = {"cut": block.label}
+                if not SubgraphFission.can_be_applied_to(sdfg, options=cut, map_entry=entry, nested_sdfg=node):
                     raise NotImplementedError(f"SubgraphFission refuses to cut {node.label}'s map after {block.label}")
-                SubgraphFission.apply_to(sdfg, options={"cut": block.label}, verify=False, **where)
+                SubgraphFission.apply_to(sdfg, options=cut, verify=False, map_entry=entry, nested_sdfg=node)
                 return
     raise ValueError(f"no map body holds {block.label}")
 
 
 def forward(
-    sdfg: dace.SDFG, state: dace.SDFGState, value: nodes.AccessNode, later: list[MultiConnectorEdge]
+    sdfg: dace.SDFG, state: dace.SDFGState, value: nodes.AccessNode, later: list[MultiConnectorEdge[Memlet]]
 ) -> nodes.AccessNode:
     """Route the ``later`` reads of ``value`` through a copy of it, returned: the copy, made in ``value``'s piece,
     alone crosses the cut, so that piece reads ``value`` locally and inlines back into a flat map (``InlineSDFG``
@@ -193,7 +198,11 @@ def forwarded(
 
 
 def pieces(
-    sdfg: dace.SDFG, state: dace.SDFGState, inside: SubgraphView, upstream: set[nodes.Node], chosen: set[nodes.Node]
+    sdfg: dace.SDFG,
+    state: dace.SDFGState,
+    inside: SubgraphView[nodes.Node, MultiConnectorEdge[Memlet]],
+    upstream: set[nodes.Node],
+    chosen: set[nodes.Node],
 ) -> tuple[list[nodes.Node], list[nodes.Node]]:
     """The nodes of the pieces before and at the set, in graph order, with the copies of the values read past them."""
     code = [n for n in inside.nodes() if isinstance(n, nodes.CodeNode)]

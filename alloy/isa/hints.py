@@ -9,12 +9,17 @@ status and traps). The hints are never generic: they name the actual tasklets an
 import ast
 import dataclasses
 from collections import Counter
+from typing import TYPE_CHECKING
 
-from alloy.isa.mathcheck import HEADERS, validate_kernel
+from alloy.isa.mathcheck import validate_kernel
 from alloy.isa.mathkernels import COMPENSATED, LEVELS, NEEDS_IEEE, functions, kernel, ladder, render, target_of
 from alloy.isa.ops import OPS, called_name
 from alloy.isa.table import DTYPES, Table, load
-from alloy.isa.validate import host_can_run, validate
+from alloy.isa.validate import HEADERS, host_can_run, validate
+
+if TYPE_CHECKING:
+    import dace
+    from dace.sdfg import nodes
 
 __all__ = ["Hint", "OpUse", "Spelling", "advice", "tasklet_hints"]
 
@@ -134,7 +139,7 @@ def is_copy(code: str) -> bool:
     return len(body) == 1 and isinstance(body[0], ast.Assign) and isinstance(body[0].value, ast.Name)
 
 
-def lane_of(state, node) -> str:
+def lane_of(state: "dace.SDFGState", node: "nodes.Node") -> str:
     """The lane a node writes in, or ``""`` when the table has no spelling for it (complex, narrow integers)."""
     import dace
 
@@ -145,7 +150,7 @@ def lane_of(state, node) -> str:
     return ""
 
 
-def conflict_of(state, node) -> str:
+def conflict_of(state: "dace.SDFGState", node: "nodes.Node") -> str:
     """The write-conflict ``node``'s output meets, on its memlet tree or past a private access node, or ``""``."""
     from dace.frontend.operations import detect_reduction_type
     from dace.sdfg import nodes
@@ -159,7 +164,7 @@ def conflict_of(state, node) -> str:
     return ""
 
 
-def library_use(state, node) -> OpUse:
+def library_use(state: "dace.SDFGState", node: "nodes.LibraryNode") -> OpUse:
     """A library node: its name in the advice, a reduce by its conflict, the rest as sum-of-products."""
     from dace.frontend.operations import detect_reduction_type
     from dace.libraries.standard.nodes import Reduce
@@ -171,7 +176,7 @@ def library_use(state, node) -> OpUse:
     return OpUse(node.label, ("fma", "reduce_add"), (type(node).__name__,), False, "", lane_of(state, node))
 
 
-def op_uses(sdfg) -> list[OpUse]:
+def op_uses(sdfg: "dace.SDFG") -> list[OpUse]:
     """Every computing tasklet and library node of ``sdfg`` and what it computes, in SDFG order."""
     import dace
     from dace.sdfg import nodes
@@ -258,7 +263,9 @@ def kernel_spelling(isa: str, dtype: str, fn: str, recommended: str = "") -> Spe
     return Spelling(fn, kernel_summary(isa, dtype, fn, recommended), f"({arguments}) -> v", "", verdict)
 
 
-def tasklet_hints(sdfg, isa: str, dtype: str, table: Table | None = None, recommended: str = "") -> list[Hint]:
+def tasklet_hints(
+    sdfg: "dace.SDFG", isa: str, dtype: str, table: Table | None = None, recommended: str = ""
+) -> list[Hint]:
     """Every tasklet's do-it-yourself hints for ``isa`` in the tasklet's own lane (``dtype`` when it has none) --
     relevant spellings, traps, and how each was validated on this host. ``recommended`` names the kernel level the
     build should take."""
@@ -283,15 +290,19 @@ VERDICT_WORDS = {
 }
 
 
-def advice(reason: str, sdfg, isa: str, dtype: str, table: Table | None = None, recommended: str = "") -> str:
+def advice(
+    reason: str, sdfg: "dace.SDFG", isa: str, dtype: str, table: Table | None = None, recommended: str = ""
+) -> str:
     """The full do-it-yourself response body: the reason, the instruction, and the tasklet-derived
     hints. This is what the emission path returns when it cannot emit or validation fails."""
     table = table or load()
     lines = [
         f"Reason: {reason}",
         "",
-        "Do it yourself: hand-write the loop in C with intrinsics. Spellings come from `lookup`, math functions from "
-        "`kernel`, loop shapes from `skeleton`: the `alloy_isa` tool in a benchmark, `python -m alloy.isa` elsewhere.",
+        (
+            "Do it yourself: hand-write the loop in C with intrinsics. Spellings come from `lookup`, math functions from "
+            "`kernel`, loop shapes from `skeleton`: the `alloy_isa` tool in a benchmark, `python -m alloy.isa` elsewhere."
+        ),
         "",
         f"Relevant hints from your tasklets ({isa}/{dtype}):",
         "",

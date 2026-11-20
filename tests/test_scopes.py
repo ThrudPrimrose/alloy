@@ -13,16 +13,16 @@ N = dace.symbol("N")
 
 
 @dace.program
-def blas_dot(x: dace.float64[N], y: dace.float64[N], out: dace.float64[1]):
+def blas_dot(x: dace.float64[N], y: dace.float64[N], out: dace.float64[1]) -> None:
     out[0] = x @ y
 
 
 @dace.program
-def blas_gemv(a: dace.float64[N, N], x: dace.float64[N], out: dace.float64[N]):
+def blas_gemv(a: dace.float64[N, N], x: dace.float64[N], out: dace.float64[N]) -> None:
     out[:] = a @ x
 
 
-def test_the_libm_map_and_the_sum_become_separate_scopes():
+def test_the_libm_map_and_the_sum_become_separate_scopes() -> None:
     sut = outlined()
 
     assert len(sut.scopes) == len(external_call.external_calls(sut.sdfg)) == 3
@@ -39,7 +39,7 @@ def test_the_libm_map_and_the_sum_become_separate_scopes():
         ("scale", ["1"]),
     ],
 )
-def test_the_accumulation_length_is_the_reduced_extent_of_each_scope(kernel, lengths):
+def test_the_accumulation_length_is_the_reduced_extent_of_each_scope(kernel: str, lengths: list[str]) -> None:
     sut = scopes.outline(load_program(f"{REDUCTIONS}:{kernel}").to_sdfg(), MATRIX.libm_calls)
 
     assert [str(r.accumulation_length) for r in sut.scopes] == lengths
@@ -63,7 +63,7 @@ def canonical_sum() -> dace.SDFG:
     return sdfg
 
 
-def test_a_sum_through_a_private_scalar_accumulates_over_the_whole_map():
+def test_a_sum_through_a_private_scalar_accumulates_over_the_whole_map() -> None:
     (sut,) = scopes.outline(canonical_sum(), MATRIX.libm_calls).scopes
 
     assert sut.has_reduction
@@ -71,11 +71,11 @@ def test_a_sum_through_a_private_scalar_accumulates_over_the_whole_map():
 
 
 M = dace.symbol("M", dace.int64)
-N = dace.symbol("N", dace.int64)
+N = dace.symbol("N", dace.int64)  # pyright: ignore[reportConstantRedefinition] -- the programs below take int64 extents
 
 
 @dace.program
-def two_increments(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, N], d: dace.float64[M, N]):
+def two_increments(a: dace.float64[M, N], b: dace.float64[M, N], c: dace.float64[M, N], d: dace.float64[M, N]) -> None:
     for i in dace.map[0:M]:
         for j in dace.map[0:N]:
             b[i, j] = a[i, j] + 1.0
@@ -87,7 +87,7 @@ def tasklet_labels(sdfg: dace.SDFG) -> list[str]:
     return [n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)]
 
 
-def test_tasklets_that_share_a_frontend_label_each_get_their_own_in_a_scope():
+def test_tasklets_that_share_a_frontend_label_each_get_their_own_in_a_scope() -> None:
     sdfg = two_increments.to_sdfg()
     assert tasklet_labels(sdfg).count("_Add_") == 2
 
@@ -97,14 +97,14 @@ def test_tasklets_that_share_a_frontend_label_each_get_their_own_in_a_scope():
     assert len(labels) == len(set(labels))
 
 
-def test_a_library_node_a_pipeline_chose_stays_whole_as_its_own_scope():
+def test_a_library_node_a_pipeline_chose_stays_whole_as_its_own_scope() -> None:
     sdfg = load_program(f"{REDUCTIONS}:row_sum").to_sdfg()
-    (chosen,) = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    (chosen,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     chosen.implementation = "CPU"
 
     sut = scopes.outline(sdfg, MATRIX.libm_calls)
 
-    kept = [r for r in sut.scopes if any(isinstance(n, Reduce) for n, parent in r.sdfg.all_nodes_recursive())]
+    kept = [r for r in sut.scopes if any(isinstance(n, Reduce) for n, _ in r.sdfg.all_nodes_recursive())]
     assert len(kept) == 1
     assert kept[0].has_reduction
     assert str(kept[0].accumulation_length) == "N"
@@ -114,13 +114,13 @@ def chosen_blas(program: dace.frontend.python.parser.DaceProgram) -> scopes.Prog
     """``program``'s ``@`` as the BLAS node it lowers to, with a vendor library chosen."""
     sdfg = program.to_sdfg()
     sdfg.expand_library_nodes(recursive=True, predicate=lambda n: isinstance(n, blas.MatMul))
-    (chosen,) = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+    (chosen,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
     chosen.implementation = "OpenBLAS"
     return scopes.outline(sdfg, MATRIX.libm_calls)
 
 
 @pytest.mark.parametrize("program", [blas_dot, blas_gemv])
-def test_a_threaded_blas_sum_reduces_so_its_program_sweeps_team_sizes(program):
+def test_a_threaded_blas_sum_reduces_so_its_program_sweeps_team_sizes(program: dace.SDFG) -> None:
     draw = inputs.Draw({}, {})
 
     sut = chosen_blas(program)
@@ -135,19 +135,19 @@ K = dace.symbol("K", dace.int64)
 
 
 @dace.program
-def update_in_place(a: dace.float64[N], b: dace.float64[N]):
+def update_in_place(a: dace.float64[N], b: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
         a[i] += 2.0 * b[i]
 
 
 @dace.program
-def row_totals_in_order(a: dace.float64[N, K], out: dace.float64[N]):
+def row_totals_in_order(a: dace.float64[N, K], out: dace.float64[N]) -> None:
     for i in dace.map[0:N]:
-        for k in range(K):
+        for k in range(K):  # pyright: ignore[reportArgumentType] -- test double
             out[i] += a[i, k]
 
 
-def test_an_update_in_place_writes_each_element_once_so_its_scope_does_not_reduce():
+def test_an_update_in_place_writes_each_element_once_so_its_scope_does_not_reduce() -> None:
     """A12: ``a[i] += ...`` is a WCR memlet that no two iterations share, so nothing reassociates: a scope that only
     updates in place takes the FP default of an elementwise scope and is verified at one team size."""
     (sut,) = scopes.outline(update_in_place.to_sdfg(), MATRIX.libm_calls).scopes
@@ -155,7 +155,7 @@ def test_an_update_in_place_writes_each_element_once_so_its_scope_does_not_reduc
     assert not sut.has_reduction
 
 
-def test_an_accumulation_over_a_sequential_loop_reduces_though_no_map_iterations_conflict():
+def test_an_accumulation_over_a_sequential_loop_reduces_though_no_map_iterations_conflict() -> None:
     (sut,) = scopes.outline(row_totals_in_order.to_sdfg(), MATRIX.libm_calls).scopes
 
     assert sut.has_reduction

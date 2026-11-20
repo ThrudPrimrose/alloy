@@ -202,7 +202,9 @@ def domain_gap(sdfg: dace.SDFG) -> str:
     return f"symbol {loose[0]} is no array extent" if loose else ""
 
 
-def drawn_values(rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dtype, array: bool) -> Any:
+def drawn_values(
+    rng: np.random.Generator, shape: tuple[int, ...], dtype: np.dtype, array: bool
+) -> np.ndarray | np.generic:
     """Values at ``dtype`` of both signs (A8): half uniform in [-1, 1), half of magnitude 10^u for u uniform in
     [-3, 3], so a wrong sign or a scale-dependent error shows; both truth values for booleans, both parts for complex
     numbers."""

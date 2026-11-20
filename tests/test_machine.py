@@ -13,20 +13,24 @@ from alloy import machine
     ("setting", "expected"),
     [("512M", 512 << 20), ("2g", 2 << 30), ("1024K", 1 << 20), ("2048", 2 << 20), ("", 4 << 20)],
 )
-def test_the_openmp_worker_stack_follows_omp_stacksize(monkeypatch, setting, expected):
+def test_the_openmp_worker_stack_follows_omp_stacksize(
+    monkeypatch: pytest.MonkeyPatch, setting: str, expected: int
+) -> None:
     monkeypatch.setenv("OMP_STACKSIZE", setting)
 
     assert machine.openmp_stack_bytes() == expected
 
 
-def without_sources(monkeypatch, *names: str) -> None:
+def without_sources(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
     kept = tuple((source, probe) for source, probe in machine.CLOCK_SOURCES if source not in names)
-    gone = tuple((source, lambda: None) for source, probe in machine.CLOCK_SOURCES if source in names)
+    gone = tuple((source, lambda: None) for source, _ in machine.CLOCK_SOURCES if source in names)
     monkeypatch.setattr(machine, "CLOCK_SOURCES", gone + kept)
     machine.clock.cache_clear()
 
 
-def test_a_host_without_cpufreq_cpuinfo_or_lscpu_measures_its_clock_within_a_fifth(monkeypatch):
+def test_a_host_without_cpufreq_cpuinfo_or_lscpu_measures_its_clock_within_a_fifth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A3: an aarch64 kernel lists no cpu MHz and a container hides cpufreq; the measured clock still answers."""
     # only cpufreq's maximum bounds a running clock: cpuinfo lists the current or the nominal clock, which a boosting
     # core exceeds (3.56 GHz measured against a listed 2.6 GHz on a CI VM); a guest's cpufreq lists the maximum its
@@ -45,10 +49,10 @@ def test_a_host_without_cpufreq_cpuinfo_or_lscpu_measures_its_clock_within_a_fif
     machine.clock.cache_clear()
 
 
-def test_each_clock_source_is_named_and_asked_in_order(monkeypatch):
+def test_each_clock_source_is_named_and_asked_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def answering(name: str, hz: float | None):
+    def answering(name: str, hz: float | None) -> Callable[[], float | None]:
         def probe() -> float | None:
             calls.append(name)
             return hz
@@ -68,7 +72,7 @@ def test_each_clock_source_is_named_and_asked_in_order(monkeypatch):
     machine.clock.cache_clear()
 
 
-def test_lscpu_fields_are_read_from_nested_children():
+def test_lscpu_fields_are_read_from_nested_children() -> None:
     entries: list[dict[str, object]] = [
         {"field": "Architecture:", "data": "aarch64", "children": [{"field": "CPU max MHz:", "data": "3456.0"}]}
     ]
@@ -76,7 +80,9 @@ def test_lscpu_fields_are_read_from_nested_children():
     assert machine.lscpu_fields(entries)["CPU max MHz:"] == "3456.0"
 
 
-def test_a_team_reaches_the_l3_of_the_complexes_it_spans_and_a_serial_build_one(monkeypatch):
+def test_a_team_reaches_the_l3_of_the_complexes_it_spans_and_a_serial_build_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A9.1, team-aware (owner, 2026-11-16): three 32 MiB L3s of eight cores each, as an EPYC's complexes."""
     monkeypatch.setattr(machine, "cache_instances", lambda: [(32 << 20, 8)] * 3)
     monkeypatch.setattr(machine, "physical_cores", lambda: tuple(range(24)))
@@ -86,11 +92,11 @@ def test_a_team_reaches_the_l3_of_the_complexes_it_spans_and_a_serial_build_one(
     assert machine.largest_cache_bytes(9) == 64 << 20
 
 
-def test_a_sysfs_cpu_list_reads_ranges_and_singles():
+def test_a_sysfs_cpu_list_reads_ranges_and_singles() -> None:
     assert machine.cpu_list("0-3,8,10-11\n") == {0, 1, 2, 3, 8, 10, 11}
 
 
-def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(monkeypatch):
+def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """A9.3: 128 MiB per core on a 64-core node with little free memory would push the probe into swap."""
     monkeypatch.setattr(machine, "available_memory", lambda: 4 << 30)
 
@@ -100,7 +106,7 @@ def test_the_copy_measurement_holds_at_most_an_eighth_of_the_available_memory(mo
     assert machine.stream_bytes_per_thread(4) == 16 << 20
 
 
-def test_a_host_without_the_openmp_runtime_prices_a_region_at_the_default():
+def test_a_host_without_the_openmp_runtime_prices_a_region_at_the_default() -> None:
     assert machine.region_cost(None, "omp") == machine.RegionCost(machine.REGION_NS, "default")
 
 
@@ -125,16 +131,18 @@ def raising(error: Exception) -> Callable[..., subprocess.CompletedProcess[str]]
     ],
     ids=["no compiler", "failed build or crash", "timeout", "no number printed"],
 )
-def test_a_region_probe_that_fails_prices_a_region_at_the_default(tmp_path, monkeypatch, run):
+def test_a_region_probe_that_fails_prices_a_region_at_the_default(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, run: Callable[..., object]
+) -> None:
     """A probe that does not build, end, or print a number must not end the prediction that asked for it."""
-    monkeypatch.setattr(machine.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
 
     sut = machine.region_cost(tmp_path / "libomp.so", "omp")
 
     assert sut == machine.RegionCost(machine.REGION_NS, "default")
 
 
-def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host():
+def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host() -> None:
     """A15: the prediction's region cost comes from this host and runtime, not Zen 4's constant."""
     from alloy import configuration_matrix
     from alloy.backend import runtime

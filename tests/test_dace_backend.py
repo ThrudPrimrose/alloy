@@ -57,7 +57,9 @@ def outputs(program: dace.SDFG | dace.codegen.compiled_sdfg.CompiledSDFG) -> np.
 
 
 @pytest.mark.gcc
-def test_the_program_alloy_builds_is_called_like_the_sdfg_and_computes_what_dace_computes(tmp_path):
+def test_the_program_alloy_builds_is_called_like_the_sdfg_and_computes_what_dace_computes(
+    tmp_path: pathlib.Path,
+) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     expected = outputs(sdfg)
 
@@ -70,7 +72,7 @@ def test_the_program_alloy_builds_is_called_like_the_sdfg_and_computes_what_dace
 
 
 @pytest.mark.gcc
-def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp_path):
+def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp_path: pathlib.Path) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     sdfg.build_folder = str(tmp_path / "build")
     expected = outputs(load_program(f"{REDUCTIONS}:scale").to_sdfg())
@@ -91,7 +93,9 @@ def built_outputs(matrix: Matrix, out: pathlib.Path) -> np.ndarray:
 
 
 @pytest.mark.gcc
-def test_a_program_declared_small_links_its_serial_build_and_computes_what_dace_computes(tmp_path):
+def test_a_program_declared_small_links_its_serial_build_and_computes_what_dace_computes(
+    tmp_path: pathlib.Path,
+) -> None:
     sdfg = scale_sdfg()
     sdfg.build_folder = str(tmp_path / "alloy_build")
 
@@ -105,7 +109,7 @@ def test_a_program_declared_small_links_its_serial_build_and_computes_what_dace_
 
 
 @pytest.mark.gcc
-def test_a_second_compile_of_the_same_program_loads_the_first_build(tmp_path):
+def test_a_second_compile_of_the_same_program_loads_the_first_build(tmp_path: pathlib.Path) -> None:
     matrix, out = gcc_only(tmp_path), tmp_path / "alloy"
     expected = built_outputs(matrix, out)
     swept = (out / "report.md").stat().st_mtime_ns
@@ -117,7 +121,7 @@ def test_a_second_compile_of_the_same_program_loads_the_first_build(tmp_path):
 
 
 @pytest.mark.gcc
-def test_the_program_links_the_build_alloy_picked(tmp_path, monkeypatch):
+def test_the_program_links_the_build_alloy_picked(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The picked build is wrong on purpose: only a program that really links it computes 3 * a."""
     sdfg_file, out, matrix = tmp_path / "program.sdfg", tmp_path / "alloy", gcc_only(tmp_path)
     load_program(f"{REDUCTIONS}:scale").to_sdfg().save(str(sdfg_file))
@@ -154,7 +158,7 @@ def doubled(sdfg: dace.SDFG, constant: str) -> dace.SDFG:
 
 
 @pytest.mark.gcc
-def test_a_changed_program_never_loads_the_build_of_the_old_one(tmp_path):
+def test_a_changed_program_never_loads_the_build_of_the_old_one(tmp_path: pathlib.Path) -> None:
     matrix, out = gcc_only(tmp_path), tmp_path / "alloy"
     dace_backend.compile(load_program(f"{REDUCTIONS}:scale").to_sdfg(), matrix=matrix, out=out)
     changed = doubled(load_program(f"{REDUCTIONS}:scale").to_sdfg(), "3.0")
@@ -182,35 +186,35 @@ def scale_sdfg() -> dace.SDFG:
     return load_program(f"{REDUCTIONS}:scale").to_sdfg()
 
 
-def test_two_frontend_runs_of_one_program_share_a_build_key():
+def test_two_frontend_runs_of_one_program_share_a_build_key() -> None:
     assert key_of(scale_sdfg()) == key_of(scale_sdfg())
 
 
-def test_the_build_key_changes_with_the_program():
+def test_the_build_key_changes_with_the_program() -> None:
     assert key_of(doubled(scale_sdfg(), "3.0")) != key_of(scale_sdfg())
 
 
-def test_the_build_key_changes_with_the_program_name_the_library_exports():
+def test_the_build_key_changes_with_the_program_name_the_library_exports() -> None:
     renamed = scale_sdfg()
     renamed.name = "other"  # pyright: ignore[reportAttributeAccessIssue] -- DaCe Property descriptor
 
     assert key_of(renamed) != key_of(scale_sdfg())
 
 
-def test_the_build_key_changes_with_what_the_program_instruments():
+def test_the_build_key_changes_with_what_the_program_instruments() -> None:
     timed = scale_sdfg()
     timed.instrument = dace.InstrumentationType.Timer
 
     assert key_of(timed) != key_of(scale_sdfg())
 
 
-def test_the_build_key_changes_with_the_matrix():
+def test_the_build_key_changes_with_the_matrix() -> None:
     flags = dataclasses.replace(MATRIX, build_flags=(*MATRIX.build_flags, "-funroll-loops"))
 
     assert key_of(scale_sdfg(), flags) != key_of(scale_sdfg())
 
 
-def test_the_build_key_changes_with_the_manifest_and_what_it_draws(tmp_path):
+def test_the_build_key_changes_with_the_manifest_and_what_it_draws(tmp_path: pathlib.Path) -> None:
     manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
     wider = write_manifest(tmp_path, "scale", SCALE_MANIFEST.replace("[64, 512]", "[64, 1024]"))
 
@@ -220,7 +224,7 @@ def test_the_build_key_changes_with_the_manifest_and_what_it_draws(tmp_path):
     assert key_of(scale_sdfg(), manifest=narrow) != key_of(scale_sdfg(), manifest=manifest)
 
 
-def test_the_build_key_changes_with_what_the_caller_declares():
+def test_the_build_key_changes_with_what_the_caller_declares() -> None:
     plain = key_of(scale_sdfg())
 
     assert key_of(scale_sdfg(), finite_inputs=True) != plain
@@ -228,7 +232,9 @@ def test_the_build_key_changes_with_what_the_caller_declares():
     assert key_of(scale_sdfg(), running={"N": 16}) != plain
 
 
-def test_the_build_key_changes_with_a_compilers_version(tmp_path, monkeypatch):
+def test_the_build_key_changes_with_a_compilers_version(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     matrix = gcc_only(tmp_path)
     fake = tmp_path / "gcc"
     fake.write_text("#!/bin/sh\necho gcc 14.1\n")
@@ -241,7 +247,7 @@ def test_the_build_key_changes_with_a_compilers_version(tmp_path, monkeypatch):
     assert key_of(scale_sdfg(), matrix) != old
 
 
-def test_the_build_key_changes_with_the_host_and_the_library_search_path(monkeypatch):
+def test_the_build_key_changes_with_the_host_and_the_library_search_path(monkeypatch: pytest.MonkeyPatch) -> None:
     plain = key_of(scale_sdfg())
     monkeypatch.setenv("LIBRARY_PATH", "/opt/vector/lib")
     searched = key_of(scale_sdfg())
@@ -251,14 +257,14 @@ def test_the_build_key_changes_with_the_host_and_the_library_search_path(monkeyp
     assert key_of(scale_sdfg()) != searched
 
 
-def test_the_build_key_changes_with_dace_compiler_configuration():
+def test_the_build_key_changes_with_dace_compiler_configuration() -> None:
     plain = key_of(scale_sdfg())
 
     with set_temporary("compiler", "cpu", "args", value="-O1"):
         assert key_of(scale_sdfg()) != plain
 
 
-def test_the_build_key_of_an_absent_compiler_is_still_a_key(tmp_path):
+def test_the_build_key_of_an_absent_compiler_is_still_a_key(tmp_path: pathlib.Path) -> None:
     missing = configuration_matrix.load(variant(tmp_path, 'c = "gcc"', 'c = "no-such-gcc"'))
 
     assert key_of(scale_sdfg(), missing) != key_of(scale_sdfg())

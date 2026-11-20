@@ -27,7 +27,8 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Literal
+from types import CodeType
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -853,7 +854,18 @@ TIER_STEPS: dict[str, Any] = {
 }
 
 
-def tier_step(expression: str) -> Any:
+class Tier(Protocol):
+    """What the tier checks read of an :class:`~alloy.isa.table.Approx`."""
+
+    @property
+    def op(self) -> str: ...
+    @property
+    def domain(self) -> str: ...
+    @property
+    def recipe(self) -> tuple[str, ...]: ...
+
+
+def tier_step(expression: str) -> CodeType:
     """A tier step compiled, or ``ValueError`` when it is more than calls on names."""
     tree = ast.parse(expression, mode="eval")
     if not all(isinstance(node, TIER_SYNTAX) for node in ast.walk(tree)):
@@ -861,17 +873,18 @@ def tier_step(expression: str) -> Any:
     return compile(tree, "<tier>", "eval")
 
 
-def run_tier(tier: Any, x: np.ndarray) -> Any:
+def run_tier(tier: Tier, x: np.ndarray) -> np.ndarray:
     """A tier's Horner recipe (abstract-op steps) at ``x``."""
     names: dict[str, Any] = {**TIER_STEPS, "x": x}
     value: Any = x
     for step in tier.recipe:
         name, _, expression = step.strip().partition(" = ")
         value = names[name.strip()] = eval(tier_step(expression), {"__builtins__": {}}, names)
-    return value
+    result: np.ndarray = value
+    return result
 
 
-def evaluate_tier(tier: Any) -> tuple[np.ndarray, Any]:
+def evaluate_tier(tier: Tier) -> tuple[np.ndarray, np.ndarray]:
     """A tier on its domain: (grid, approx)."""
     half = next((half for key, half in TIER_SPANS.items() if key in tier.domain), None)
     if half is None:
@@ -889,7 +902,7 @@ TIER_REFERENCES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 
 
-def tier_error(tier: Any) -> tuple[float, float]:
+def tier_error(tier: Tier) -> tuple[float, float]:
     """A tier's worst error against libm: in units of 2^-52 at function scale, and absolute."""
     x, approx = evaluate_tier(tier)
     reference = TIER_REFERENCES[tier.op](x)
