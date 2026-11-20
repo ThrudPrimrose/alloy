@@ -10,6 +10,8 @@
 6. Library nodes expand.
 """
 
+import warnings
+
 from dace import data, dtypes, nodes
 from dace.libraries.comm.nodes.node import CommNode
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -52,9 +54,13 @@ def lower(sdfg: SDFG, tile: int = 256) -> None:
     # still a tasklet RedundantArray can prove elementwise, it does not become a second kernel through HBM
     sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
     try:
-        VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(tile,), target_isa=ISA.SCALAR, assume_even=True, fuse_multiply_add=True)
-        ).apply_pass(sdfg, {})
+        # A kernel with nothing elementwise (copies, library nodes, collectives, scalar tasklets) is left untiled,
+        # which is correct here; DaCe warns about it
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="VectorizeMultiDim: tiled nothing", category=UserWarning)
+            VectorizeCPUMultiDim(
+                VectorizeConfig(widths=(tile,), target_isa=ISA.SCALAR, assume_even=True, fuse_multiply_add=True)
+            ).apply_pass(sdfg, {})
     except ValueError as error:
         # A remainder tile would be masked, and no Spatz loop takes a mask
         raise LoweringError(f"the tile width {tile} must divide every elementwise extent: {error}") from error

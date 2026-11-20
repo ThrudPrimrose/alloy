@@ -61,7 +61,7 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
 # Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@6628a9dd95b0f421767048df7c483d828f7f50d6"]
+override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@65787312f56a67dfe4c4c68b78f419e8cef290ae"]
 
 [tool.mypy]
 # Strict static typing for Alloy's own code, as in a statically typed language. The untyped libraries it calls (DaCe,
