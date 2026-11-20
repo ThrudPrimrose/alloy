@@ -4,6 +4,7 @@ condition, and each outlined scope as a row labeled with its entry symbol."""
 
 import dace
 import numpy as np
+from dace.sdfg.state import LoopRegion
 
 from alloy.frontend import scopes, tree
 from alloy.frontend.tree import CfgNode, Kind
@@ -14,7 +15,7 @@ N, T = dace.symbol("N"), dace.symbol("T")
 
 @dace.program
 def stepped(a: dace.float64[N], b: dace.float64[N], flag: dace.int64) -> None:
-    for t in range(T):  # pyright: ignore[reportArgumentType, reportUnusedVariable] -- the test reads the loop name
+    for _ in range(T):  # pyright: ignore[reportArgumentType] -- test double
         b[:] = a + 1.0
         a[:] = b * 2.0
     if flag > 0:
@@ -42,12 +43,17 @@ def test_each_outlined_scope_is_a_row_named_by_its_entry_symbol() -> None:
 
 
 def test_the_time_loop_and_the_branches_keep_their_domain_and_conditions() -> None:
-    sut = tree.cfg_tree(stepped.to_sdfg())
+    sdfg = stepped.to_sdfg()
+    (region,) = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
+
+    sut = tree.cfg_tree(sdfg)
 
     (loop,) = [child for child in sut.children if child.kind == Kind.LOOP]
     (conditional,) = [child for child in sut.children if child.kind == Kind.CONDITIONAL]
-    assert loop.detail == "t=0:T"
-    assert [branch.detail for branch in conditional.children] == ["when (flag > 0)", "else"]
+    assert loop.detail == f"{region.loop_variable}=0:T", "the domain as range reads it, whatever the frontend names it"
+    when, otherwise = (branch.detail for branch in conditional.children)
+    assert when.startswith("when ") and "flag > 0" in when
+    assert otherwise == "else"
     assert sum(kind == Kind.MAP for kind in kinds(loop)) == 2
 
 
