@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=0718136bb3424180abd8209ec5fc3524b343011b" }]
+overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=6628a9dd95b0f421767048df7c483d828f7f50d6" }]
 
 [[package]]
 name = "accelerate"
@@ -1295,7 +1295,7 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0b2"
-source = { git = "https://github.com/spcl/dace.git?rev=0718136bb3424180abd8209ec5fc3524b343011b#0718136bb3424180abd8209ec5fc3524b343011b" }
+source = { git = "https://github.com/spcl/dace.git?rev=6628a9dd95b0f421767048df7c483d828f7f50d6#6628a9dd95b0f421767048df7c483d828f7f50d6" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },

@@ -69,6 +69,7 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
             language=matrix.languages[candidate.language].render,
             signature=cpf.EntrySignature(order=list(scope.abi_order)),
             check_compiles=False,
+            tasklet_labels=True,  # predict maps each line of the object's line table to its tasklet
         )
     code: str = rendering.code
     if header:
