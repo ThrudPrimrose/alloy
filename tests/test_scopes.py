@@ -89,7 +89,8 @@ def tasklet_labels(sdfg: dace.SDFG) -> list[str]:
 
 def test_tasklets_that_share_a_frontend_label_each_get_their_own_in_a_scope() -> None:
     sdfg = two_increments.to_sdfg()
-    assert tasklet_labels(sdfg).count("_Add_") == 2
+    before = tasklet_labels(sdfg)
+    assert len(set(before)) < len(before), "precondition: the frontend gives the two increments one label"
 
     (sut,) = scopes.outline(sdfg, MATRIX.libm_calls).scopes
 
