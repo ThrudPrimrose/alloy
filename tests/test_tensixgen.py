@@ -12,12 +12,13 @@ import pytest
 
 pytest.importorskip("hpcagent_bench", reason="the eval tasks are bench kernels")
 
+from dace import placement
 from dace.libraries.tileops.nodes import TileReduce, TileUnop
 
 from alloy.hb_plugin import eval_set
 from alloy.tensixgen import ttsim
 from alloy.tensixgen.backend import Refused, code, op_of, place, rule
-from alloy.tensixgen.split import Options, Program, Slots, program
+from alloy.tensixgen.split import SHARDED, Options, Program, Slots, placement_of, program
 from alloy.tensixgen.tasks import programs, tile_sdfg
 
 
@@ -162,12 +163,104 @@ def test_a_row_sum_is_refused_not_taken_for_a_full_sum():
         program(task, sdfg, {})
 
 
+def record(p: Program) -> dict:
+    return json.loads(json.dumps(p.descriptor))
+
+
+def array(shape: tuple, nodes: object, body: object) -> dace.data.Array:
+    desc = dace.data.Array(dace.float32, shape)
+    desc.placement = placement.Placement(nodes, placement.SymbolicLambda(body))
+    return desc
+
+
+def test_interleaved_tile_pages_and_height_shards_are_recognised():
+    n, m, banks = dace.symbol("LEN_1D"), dace.symbol("M"), dace.symbol("NB")
+
+    assert placement_of("x", dace.data.Array(dace.float32, (n,))) == 0
+    assert placement_of("x", array((n,), banks, lambda i: (i // 1024) % banks)) == 0
+    assert placement_of("x", array((m, n), banks, lambda i, j: ((i // 32) * (n // 32) + j // 32) % banks)) == 0
+    assert placement_of("x", array((n,), 32, lambda i: (i // (n // 32)) % 32)) == 32
+    assert placement_of("x", array((m, n), 64, lambda i, j: i // (m // 64))) == 64
+
+
+@pytest.mark.parametrize(
+    "shape, nodes, body, reason",
+    [
+        ((64, 64), 4, lambda i, j: (2 * (i // 2) + j // 3) % 4, "pages of one tile"),
+        ((64, 64), 4, lambda i, j: (j // 16) % 4, "more than the outermost dimension"),
+        ((96,), 3, lambda i: (i // 32) % 3, "a divisor of 1024"),
+        ((1 << 20,), dace.symbol("P"), lambda i: (i // 1024) % 8, "a divisor of 1024"),
+        ((1 << 20,), 32, lambda i: (i // 2048) % 32, "not one block of the outermost dimension per core"),
+    ],
+    ids=["pages_not_one_tile", "column_shards", "three_cores", "symbolic_cores", "block_cyclic_wraps"],
+)
+def test_a_placement_tt_metal_does_not_allocate_is_refused(shape: tuple, nodes: object, body: object, reason: str):
+    with pytest.raises(Refused, match=reason):
+        placement_of("x", array(shape, nodes, body))
+
+
+def test_no_placement_generates_the_same_program_as_the_interleaved_placement(
+    tasks: dict[str, dict], card: dict[str, Program]
+):
+    sdfg, scalars = tile_sdfg("tsvc_2_s1351")
+
+    sut = program(tasks["tsvc_2_s1351"], sdfg, scalars)
+
+    old = card["tsvc_2_s1351"]
+    assert (sut.reader, sut.compute, sut.writer, sut.config) == (old.reader, old.compute, old.writer, old.config)
+    assert record(sut)["placement"]["a"] == {"kind": "interleaved", "cores": 0, "tiles": 0, "map": None}
+
+
+def test_a_sharded_map_reads_and_writes_its_cores_own_l1_shards(tasks: dict[str, dict], card: dict[str, Program]):
+    (sut,) = programs([tasks["tsvc_2_s1351"]], Options(cores=32, placement=SHARDED))
+
+    assert "TensorAccessor" not in sut.reader + sut.writer and "start" not in sut.reader + sut.writer
+    assert "noc_async_read(s1 + (i + t) * bytes1, w1 + t * bytes1, bytes1);" in sut.reader
+    assert "const uint64_t s1 = get_noc_addr(get_arg_val<uint32_t>(3));" in sut.reader
+    assert "noc_async_write(r + t * bytes, s + (i + t) * bytes, bytes);" in sut.writer
+    assert sut.compute == card["tsvc_2_s1351"].compute
+    assert sut.descriptor["options"] == {"dst_block": 2, "cores": 32, "placement": "sharded"}
+    assert {k: (v["kind"], v["cores"], v["tiles"]) for k, v in record(sut)["placement"].items()} == dict.fromkeys(
+        ("a", "b", "c"), ("sharded", 32, 32)
+    )
+
+
+def test_a_sharded_reduction_writes_its_partial_tiles_to_interleaved_dram(tasks: dict[str, dict]):
+    (sut,) = programs([tasks["tsvc_2_s313"]], Options(cores=32, placement=SHARDED))
+
+    assert "get_noc_addr" in sut.reader and "noc_async_write_tile(start + i + t, s, " in sut.writer
+    assert record(sut)["placement"]["dot"]["kind"] == "interleaved"
+
+
+def test_shards_beyond_the_l1_they_may_take_are_refused(tasks: dict[str, dict]):
+    with pytest.raises(Refused, match="of L1 they may take"):
+        programs([tasks["tsvc_2_s251"]], Options(cores=8, placement=SHARDED))  # 4 arrays of 128 tiles a core
+
+
+def test_sharded_and_interleaved_arrays_of_one_map_are_refused(tasks: dict[str, dict]):
+    sdfg, scalars = tile_sdfg("tsvc_2_vtv")
+    n = sdfg.arrays["a"].shape[0]
+    sdfg.arrays["a"].placement = placement.Placement(32, placement.SymbolicLambda(lambda i: (i // (n // 32)) % 32))
+
+    with pytest.raises(Refused, match="one placement only"):
+        program(tasks["tsvc_2_vtv"], sdfg, scalars)
+
+
+def test_a_sharded_placement_without_the_cores_is_refused(tasks: dict[str, dict]):
+    with pytest.raises(Refused, match="needs the cores"):
+        programs([tasks["tsvc_2_vtv"]], Options(placement=SHARDED))
+
+
 @pytest.mark.tensix
-@pytest.mark.parametrize("dst_block", [1, 0], ids=["dst_block=1", "dst_block=max"])
-def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, dict], dst_block: int):
+@pytest.mark.parametrize(
+    "options",
+    [Options(1), Options(0), Options(0, 32, SHARDED)],
+    ids=["dst_block=1", "dst_block=max", "sharded,cores=32"],
+)
+def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, dict], options: Options):
     if shutil.which("docker") is None:
         pytest.fail("the tensix mark needs docker")
 
-    found = [v for task in tasks.values() for v in ttsim.run_tasks([task], ttsim.default_cache(), Options(dst_block))]
+    found = [v for task in tasks.values() for v in ttsim.run_tasks([task], ttsim.default_cache(), options)]
 
     assert [v.name for v in found if not v.ok] == [], found

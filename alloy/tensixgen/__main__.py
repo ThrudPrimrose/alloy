@@ -3,7 +3,8 @@
 ``agents/tasks.json``), from DaCe's tile nodes.
 
     python -m alloy.tensixgen generate OUT [TASK ...] [--version v06|v08] [--dst-block N] [--cores K]
-    python -m alloy.tensixgen ttsim [TASK ...] [--dst-block N] [--cores K]   # one container per task
+                                       [--placement interleaved|sharded]
+    python -m alloy.tensixgen ttsim [TASK ...] [--dst-block N] [--cores K] [--placement ...]   # a container per task
 """
 
 import argparse
@@ -12,7 +13,7 @@ import pathlib
 import sys
 
 from alloy.tensixgen import ttsim
-from alloy.tensixgen.split import Options
+from alloy.tensixgen.split import INTERLEAVED, SHARDED, Options
 from alloy.tensixgen.tasks import programs
 
 
@@ -26,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", choices=("v06", "v08"), default="v06", help="tt-metal spelling (generate)")
     parser.add_argument("--dst-block", type=int, default=0, help="tiles per DST acquire (0: the most that fit)")
     parser.add_argument("--cores", type=int, default=0, help="cores (0: the whole grid, as contract v2)")
+    parser.add_argument("--placement", choices=(INTERLEAVED, SHARDED), default=INTERLEAVED,
+                        help="the arrays' placement: interleaved DRAM, or L1 sharded over --cores")  # fmt: skip
     parser.add_argument("--cache", type=pathlib.Path, default=ttsim.default_cache())
     args = parser.parse_args(argv)
     names = list(args.names)
@@ -37,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"no task {', '.join(sorted(unknown))}")
     tasks = [t for t in tasks if not names or t["name"] in names]
-    options = Options(args.dst_block, args.cores)
+    options = Options(args.dst_block, args.cores, args.placement)
     if out is not None:
         for p in programs(tasks, options, args.version):
             print(p.write(out / p.name))

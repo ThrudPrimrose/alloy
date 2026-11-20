@@ -11,7 +11,11 @@ core_index, out]``), which the host folds in float64.
 The tile body's loads become the reader and ``copy_tile`` from the CBs, its store the writer and ``pack_tile``, and
 every compute node the code of its ``tensix`` expansion, on DST tiles assigned in order (a DST tile is reused once
 its last reader has run). ``dst_block`` tiles go through one DST acquire, op by op, so an init is issued once per
-block. A reduction folds the block's tiles and the running partial tile (CB 24) into one."""
+block. A reduction folds the block's tiles and the running partial tile (CB 24) into one.
+
+Each array's DaCe placement (``data.Array.placement``) says where its tiles lie: none or one tile per page dealt
+round-robin over the DRAM banks is interleaved DRAM, read and written through a ``TensorAccessor``; one contiguous
+block of the outermost dimension per core is L1 sharded over those cores, read and written in the core's own shard."""
 
 import dataclasses
 import json
@@ -20,6 +24,8 @@ import re
 from dataclasses import dataclass
 
 import dace
+import sympy
+from dace import symbolic
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileBinop
 from dace.sdfg import nodes
@@ -28,7 +34,21 @@ from dace.sdfg.utils import dfs_topological_sort
 from alloy.isa.tensix_harness import compute_include, dataflow_include
 from alloy.tensixgen.backend import TILE_NODES, Refused, code, constant, node_code, op_of, rule, use_tensix
 
-__all__ = ["ACC_CB", "DST_TILES", "OUT_CB", "Body", "Options", "Program", "Step", "body_of", "program", "tile_body"]
+__all__ = [
+    "ACC_CB",
+    "DST_TILES",
+    "INTERLEAVED",
+    "OUT_CB",
+    "SHARDED",
+    "Body",
+    "Options",
+    "Program",
+    "Step",
+    "body_of",
+    "placement_of",
+    "program",
+    "tile_body",
+]
 
 CONTRACT = 2
 OUT_CB = 16
@@ -42,14 +62,22 @@ TILES = 1024
 DST_TILES = 4
 #: The one load and store subset admitted: one tile of consecutive elements.
 LANES = 1024
+#: The placements tt-metal 0.63 allocates, the sweep's axis: DRAM interleaved, L1 height sharded.
+INTERLEAVED, SHARDED = "interleaved", "sharded"
+TILE_BYTES = 4096
+#: L1 bytes one core's shards may take; Wormhole's and Blackhole's L1 is about 1.4 MiB, the CBs and kernels need the
+#: rest.
+L1_SHARD_BYTES = 1 << 20
 
 
 @dataclass(frozen=True, slots=True)
 class Options:
-    """The sweep axes: tiles per DST acquire (0: the most that fit), cores (0: the whole grid)."""
+    """The sweep axes: tiles per DST acquire (0: the most that fit), cores (0: the whole grid), and the placement the
+    task's arrays get (:data:`INTERLEAVED` or :data:`SHARDED`)."""
 
     dst_block: int = 0
     cores: int = 0
+    placement: str = INTERLEAVED
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +161,39 @@ def dense(subset: dace.subsets.Subset) -> bool:
     one index in every other."""
     *rest, (_, _, step) = subset.ndrange()
     return step == 1 and subset.num_elements() == LANES and all(b == e for b, e, _ in rest)
+
+
+def placement_of(name: str, desc: dace.data.Array) -> int:
+    """Where array ``name``'s tiles lie: 0 for interleaved DRAM (no placement, or pages of one tile dealt round-robin
+    over all nodes, the banks), ``P`` for L1 sharded over ``P`` cores (``(i // B) % P`` or ``i // B`` of the outermost
+    index, one block per core). :class:`Refused` for any other placement: tt-metal 0.63 allocates neither."""
+    place = desc.placement
+    if place is None:
+        return 0
+    pages, dims = place.pages, place.dims
+    if pages is not None:
+        if sympy.Mul(*pages.blocks) != LANES or symbolic.equal(pages.count, place.nodes) is not True:
+            raise Refused(
+                f"{name}: pages of {pages.blocks} elements over {pages.count} of {place.nodes} nodes; interleaved DRAM"
+                f" deals pages of one tile ({LANES} elements) over every bank"
+            )
+        return 0
+    first = dims[0]
+    if first is None or any(d is not None for d in dims[1:]) or first.stride != 1:
+        raise Refused(f"{name}: {place} distributes more than the outermost dimension: no L1 sharding of tt-metal 0.63")
+    # a placement does not name its memory: one tile per block over every node is interleaved, so a 1-D shard of one
+    # tile per core reads as interleaved too
+    wraps = first.count is not None and symbolic.equal(first.count, place.nodes) is True
+    if len(dims) == 1 and first.block == LANES and wraps:
+        return 0
+    cores = place.nodes
+    if not (isinstance(cores, sympy.Integer) and 0 < int(cores) and TILES % int(cores) == 0):
+        raise Refused(
+            f"{name}: L1 sharding over {cores} cores; the host shards {TILES} tiles over a divisor of {TILES}"
+        )
+    if not (first.count is None or wraps) or symbolic.equal(first.block * cores, desc.shape[0]) is False:
+        raise Refused(f"{name}: {place} is not one block of the outermost dimension per core")
+    return int(cores)
 
 
 def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: dict[str, float],
@@ -343,19 +404,34 @@ def compute(name: str, title: str, body: Body, block: int, inputs: int, version:
     return "\n".join([*head, "namespace NAMESPACE {", "void MAIN {", *loop, "}", "}  // namespace NAMESPACE", ""])
 
 
-def reader(inputs: int, block: int, version: str) -> str:
-    """Reads this core's tiles ``start .. start + n - 1`` of every input, ``block`` tiles per input per barrier."""
+def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
+    """Reads this core's tiles ``start .. start + n - 1`` of every input, ``block`` tiles per input per barrier; sharded
+    inputs, the core's ``n`` tiles from its own L1 shard."""
+    if sharded:
+        what, read = (
+            "n tiles from its L1 shard",
+            "noc_async_read(s{k} + (i + t) * bytes{k}, w{k} + t * bytes{k}, bytes{k});",
+        )
+    else:
+        what, read = "tiles start .. start + n - 1", "noc_async_read_tile(start + i + t, s{k}, w{k} + t * bytes{k});"
     lines = [
-        f"// reader: this core's tiles start .. start + n - 1 of {inputs} input(s), input k into CB k, {block} per barrier",
+        f"// reader: this core's {what} of {inputs} input(s), input k into CB k, {block} per barrier",
         "#include <stdint.h>",
         f'#include "{dataflow_include(version == "v08")}"',
         "",
         "void kernel_main() {",
         "    uint32_t num_tiles = get_arg_val<uint32_t>(0);",
-        "    uint32_t start = get_arg_val<uint32_t>(1);",
     ]
+    if not sharded:
+        lines.append("    uint32_t start = get_arg_val<uint32_t>(1);")
     for k in range(inputs):
         offset = "0" if k == 0 else f"args{k - 1}.next_compile_time_args_offset()"
+        if sharded:  # a shard lies at the same L1 address on every core
+            lines += [
+                f"    const uint32_t bytes{k} = get_tile_size({k});",
+                f"    const uint64_t s{k} = get_noc_addr(get_arg_val<uint32_t>({k + 2}));",
+            ]
+            continue
         lines += [
             f"    constexpr auto args{k} = TensorAccessorArgs<{offset}>();",
             f"    const uint32_t bytes{k} = get_tile_size({k});",
@@ -367,7 +443,7 @@ def reader(inputs: int, block: int, version: str) -> str:
         *(f"        cb_reserve_back({k}, n);" for k in range(inputs)),
         *(f"        uint32_t w{k} = get_write_ptr({k});" for k in range(inputs)),
         "        for (uint32_t t = 0; t < n; ++t) {",
-        *(f"            noc_async_read_tile(start + i + t, s{k}, w{k} + t * bytes{k});" for k in range(inputs)),
+        *("            " + read.format(k=k) for k in range(inputs)),
         "        }",
         "        noc_async_read_barrier();",
         *(f"        cb_push_back({k}, n);" for k in range(inputs)),
@@ -378,8 +454,32 @@ def reader(inputs: int, block: int, version: str) -> str:
     return "\n".join(lines)
 
 
-def writer(block: int, version: str) -> str:
-    """Writes this core's output tiles from CB 16 at ``start``: a map's ``n`` tiles, a reduction's one tile."""
+def writer(block: int, version: str, sharded: bool = False) -> str:
+    """Writes this core's output tiles from CB 16 at ``start``: a map's ``n`` tiles, a reduction's one tile; a sharded
+    map's ``n`` tiles into the core's own L1 shard."""
+    if sharded:
+        return "\n".join([
+            f"// writer: n tiles from CB {OUT_CB} to this core's L1 shard of the output ({block} per barrier)",
+            "#include <stdint.h>",
+            f'#include "{dataflow_include(version == "v08")}"',
+            "",
+            "void kernel_main() {",
+            "    uint32_t num_tiles = get_arg_val<uint32_t>(0);",
+            f"    const uint32_t bytes = get_tile_size({OUT_CB});",
+            "    const uint64_t s = get_noc_addr(get_arg_val<uint32_t>(2));",
+            f"    for (uint32_t i = 0; i < num_tiles; i += {block}) {{",
+            f"        uint32_t n = num_tiles - i < {block} ? num_tiles - i : {block};",
+            f"        cb_wait_front({OUT_CB}, n);",
+            f"        uint32_t r = get_read_ptr({OUT_CB});",
+            "        for (uint32_t t = 0; t < n; ++t) {",
+            "            noc_async_write(r + t * bytes, s + (i + t) * bytes, bytes);",
+            "        }",
+            "        noc_async_write_barrier();",
+            f"        cb_pop_front({OUT_CB}, n);",
+            "    }",
+            "}",
+            "",
+        ])  # fmt: skip
     return "\n".join([
         f"// writer: n tiles from CB {OUT_CB} to output tiles start .. start + n - 1 ({block} per barrier); a reduction"
         " passes n = 1 and start = the core's index",
@@ -455,6 +555,33 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     block = options.dst_block or room
     if not 1 <= block <= room:
         raise Refused(f"{task['name']}: {block} tile(s) of {body.width} DST tile(s) each exceed one DST acquire")
+    output = str(task["output"])
+    arrays: dict[str, dace.data.Array] = {}
+    for name in dict.fromkeys([*inputs, output]):
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, dace.data.Array):
+            raise Refused(f"{task['name']}: {name} is a {type(desc).__name__}; contract v2 moves arrays")
+        arrays[name] = desc
+    shards = {name: placement_of(name, desc) for name, desc in arrays.items()}
+    if reduce and shards[output]:
+        raise Refused(f"{task['name']}: a reduction writes one partial tile per core to DRAM, not to {output}'s shards")
+    # each core reads and writes the same tiles of every array: sharded and interleaved arrays would need the host's
+    # core order to equal the shard order
+    kinds = {shards[name] for name in (inputs if reduce else shards)}
+    if len(kinds) > 1:
+        raise Refused(
+            f"{task['name']}: arrays placed on {sorted(kinds)} cores (0: interleaved DRAM); one placement only"
+        )
+    (sharded,) = kinds
+    if sharded and options.cores not in (0, sharded):
+        raise Refused(f"{task['name']}: arrays sharded over {sharded} cores, the program runs on {options.cores}")
+    held = sum(bool(cores) for cores in shards.values()) * (TILES // sharded if sharded else 0) * TILE_BYTES
+    if held > L1_SHARD_BYTES:
+        raise Refused(
+            f"{task['name']}: {held} bytes of shards per core exceed the {L1_SHARD_BYTES} of L1 they may take"
+        )
+    options = dataclasses.replace(options, dst_block=block, cores=sharded or options.cores,
+                                  placement=SHARDED if sharded else INTERLEAVED)  # fmt: skip
     count = len(inputs)
     sized = [*range(count), OUT_CB] if block > 1 else []  # the host's CBs hold 2 tiles: room for 2 blocks
     extra = [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
@@ -471,11 +598,21 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
         "tt_metal": version,
         **{k: task[k] for k in ("name", "kind", "inputs", "output", "program")},
         "reduce": body.fold_op,
-        "options": dataclasses.asdict(dataclasses.replace(options, dst_block=block)),
+        "options": dataclasses.asdict(options),
         "axes": {
             "dst_block": list(range(1, DST_TILES // body.width + 1)),
             "cores": list(CORE_COUNTS),
+            "placement": [INTERLEAVED, SHARDED],
         },
+        "placement": {
+            name: {
+                "kind": SHARDED if cores else INTERLEAVED,
+                "cores": cores,
+                "tiles": TILES // cores if cores else 0,
+                "map": None if arrays[name].placement is None else str(arrays[name].placement),
+            }
+            for name, cores in shards.items()
+        },  # fmt: skip
         "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), OUT_CB]}
         | ({str(ACC_CB): [2, "float32"]} if reduce else {}),
         "reader_args": ["num_tiles", "start_tile", *(f"{name}_addr" for name in inputs)],
@@ -486,9 +623,9 @@ def program(task: dict, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     title = " | ".join(task["program"])
     return Program(
         str(task["name"]),
-        reader(count, block, version),
+        reader(count, block, version, bool(sharded)),
         compute(str(task["name"]), title, body, block, count, version),
-        writer(block, version),
+        writer(block, version, bool(sharded) and not reduce),
         config,
         descriptor,
     )

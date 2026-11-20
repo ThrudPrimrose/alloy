@@ -4,7 +4,8 @@ card) under the eval contract v2 of alloy-tenstorrent ``agents/SPEC.md``, and pr
 Standalone: it runs inside a tt-metal image and never imports alloy. Inputs, reference
 and verdict are agents/host.py's ``task_run``: seeded float32 inputs over each input's range, the float64 program as
 the reference, |got - ref| <= 1e-5 + 1e-3 |ref|, and a sum's partial tiles added in float64 with the allowance
-2^-23 sqrt(N) |ref|. Its cores are the descriptor's (``options.cores``, 0 the whole grid).
+2^-23 sqrt(N) |ref|. Its cores are the descriptor's (``options.cores``, 0 the whole grid), and each array lies where
+the descriptor's ``placement`` says: interleaved DRAM, or L1 height sharded over those cores.
 
     python3 ttsim_host.py FOLDER...   # each: reader.cpp, compute.cpp, writer.cpp, config.json, program.json
 """
@@ -91,17 +92,28 @@ def run(dev, folder: pathlib.Path) -> dict:
     task = json.loads((folder / "program.json").read_text())
     cfg = json.loads((folder / "config.json").read_text())
     xs, want = operands(task)
-    mem = ttnn.DRAM_MEMORY_CONFIG
-    tensors = [ttnn.from_torch(x.float(), dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=dev, memory_config=mem)
-               for x in xs]  # fmt: skip
     grid = dev.compute_with_storage_grid_size()
     cores = [(x, y) for y in range(grid.y) for x in range(grid.x)]  # core index = y * grid.x + x
     cores = cores[: task["options"]["cores"] or len(cores)]
     assert len(cores) <= TILES, f"{len(cores)} cores for {TILES} tiles: a core without a tile hangs"
     core = ttnn.CoreRangeSet([ttnn.CoreRange(ttnn.CoreCoord(x, y), ttnn.CoreCoord(x, y)) for x, y in cores])
+    placed = task["placement"]
+
+    def memory(name: str):
+        """DRAM interleaved, or L1 height sharded: ``tiles`` tile rows on each core, shard k on core k."""
+        if placed[name]["kind"] == "interleaved":
+            return ttnn.DRAM_MEMORY_CONFIG
+        assert placed[name]["cores"] == len(cores), f"{name} is sharded over {placed[name]['cores']} cores"
+        spec = ttnn.ShardSpec(core, [32 * placed[name]["tiles"], 32], ttnn.ShardOrientation.ROW_MAJOR)
+        return ttnn.MemoryConfig(ttnn.TensorMemoryLayout.HEIGHT_SHARDED, ttnn.BufferType.L1, spec)
+
+    names = [name for name, *_ in task["inputs"]]
+    tensors = [ttnn.from_torch(x.float(), dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=dev,
+                               memory_config=memory(name)) for name, x in zip(names, xs)]  # fmt: skip
     reduce = bool(task["reduce"])
     out_shape = [32 * len(cores), 32] if reduce else list(xs[0].shape)
-    out = ttnn.allocate_tensor_on_device(ttnn.Shape(out_shape), ttnn.float32, ttnn.TILE_LAYOUT, dev, mem)
+    out_mem = memory(task["output"])
+    out = ttnn.allocate_tensor_on_device(ttnn.Shape(out_shape), ttnn.float32, ttnn.TILE_LAYOUT, dev, out_mem)
     plan = dict.fromkeys(range(len(xs)), (2, "float32")) | {OUT_CB: (2, "float32")}
     for extra in cfg.get("extra_cbs", []):
         plan[int(extra["index"])] = (int(extra["tiles"]), extra["format"])
@@ -132,13 +144,18 @@ def run(dev, folder: pathlib.Path) -> dict:
                  for i, (c, n, s0) in enumerate(zip(cores, counts, starts))}  # fmt: skip
     compute_rt = {c: [n] for c, n in zip(cores, counts)}
     src = source_code(ttnn)
-    per_input = [a for x in tensors for a in ttnn.TensorAccessorArgs(x).get_compile_time_args()]
+    # a sharded array's kernel addresses its core's shard directly: no TensorAccessor, no compile-time args
+    per_input = [a for name, x in zip(names, tensors) if placed[name]["kind"] == "interleaved"
+                 for a in ttnn.TensorAccessorArgs(x).get_compile_time_args()]  # fmt: skip
+    out_args = (
+        [] if placed[task["output"]]["kind"] == "sharded" else ttnn.TensorAccessorArgs(out).get_compile_time_args()
+    )
     kernels = [
         ttnn.KernelDescriptor(kernel_source=(folder / "reader.cpp").read_text(), source_type=src, core_ranges=core,
                               compile_time_args=per_input, runtime_args=per_core(ttnn, reader_rt),
                               config=ttnn.ReaderConfigDescriptor()),
         ttnn.KernelDescriptor(kernel_source=(folder / "writer.cpp").read_text(), source_type=src, core_ranges=core,
-                              compile_time_args=ttnn.TensorAccessorArgs(out).get_compile_time_args(),
+                              compile_time_args=out_args,
                               runtime_args=per_core(ttnn, writer_rt), config=ttnn.WriterConfigDescriptor()),
         ttnn.KernelDescriptor(kernel_source=(folder / "compute.cpp").read_text(), source_type=src, core_ranges=core,
                               compile_time_args=[], runtime_args=per_core(ttnn, compute_rt), config=config),
