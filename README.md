@@ -50,6 +50,9 @@ Layout:
   flags that ask gcc/clang for the same shape.
   This is the bridge between DaCe's auto-vectorized intrinsic code and the math an agent reasons in.
 - `alloy/heuristics/`: what Alloy picks without timing: `predict`, `prune`, `fission`, `fp`.
+- `alloy/softhiergen/`: SoftHier v1 code generation as a DaCe target (importing it registers the storages, the
+  schedule and the expansions); `program.generate` lowers an SDFG to one C++ unit, and `gate/` checks the programs on
+  GVSoC on ault. `docs/softhiergen.md` describes the code as built; update it with every change of behavior.
 - `alloy/`: `api` (`generate`, the entry point), `dace_backend` (Alloy behind `SDFG.compile`), `gpu` (speculated
   threadblock shapes), `guidance` (advice for the scopes left short), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
   `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,

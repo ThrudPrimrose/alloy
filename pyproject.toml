@@ -53,7 +53,7 @@ alloy-speculative = "alloy.dace_backend:speculative"
 include = ["alloy*"]
 
 [tool.setuptools.package-data]
-alloy = ["configuration_matrix.toml", "gpu_matrix.toml", "isa/*.h", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompt/*.md", "hb_plugin/prompt/*.yaml", "hb_plugin/prompt/*/*.md", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py", "isa/*.toml"]
+alloy = ["configuration_matrix.toml", "gpu_matrix.toml", "isa/*.h", "hb_plugin/plugin.toml", "hb_plugin/skills/*/SKILL.md", "hb_plugin/prompt/*.md", "hb_plugin/prompt/*.yaml", "hb_plugin/prompt/*/*.md", "hb_plugin/tools/*.py", "hb_plugin/routes/*.py", "isa/*.toml", "softhiergen/runtime/include/softhiergen/*"]
 
 [tool.uv]
 conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia" }, { extra = "dev-amd" }],
@@ -80,9 +80,10 @@ module = ["dace", "dace.*", "hpcagent_bench", "hpcagent_bench.*", "hpcagent_agen
 follow_imports = "skip"
 ignore_missing_imports = true
 
-# The benchmark plugin subclasses the benchmark's classes, which the skip above makes Any.
+# The benchmark plugin and the SoftHier backend subclass the benchmark's and DaCe's classes, which the skip above
+# makes Any.
 [[tool.mypy.overrides]]
-module = ["alloy.hb_plugin", "alloy.hb_plugin.*"]
+module = ["alloy.hb_plugin", "alloy.hb_plugin.*", "alloy.softhiergen", "alloy.softhiergen.*"]
 disallow_subclassing_any = false
 
 # The GVSoC verdicts hash this file's bytes (alloy.isa.softhier.digest): an edit voids every recorded run.
