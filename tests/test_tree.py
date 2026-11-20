@@ -14,7 +14,7 @@ N, T = dace.symbol("N"), dace.symbol("T")
 
 @dace.program
 def stepped(a: dace.float64[N], b: dace.float64[N], flag: dace.int64) -> None:
-    for _ in range(T):  # pyright: ignore[reportArgumentType] -- test double
+    for t in range(T):  # pyright: ignore[reportArgumentType, reportUnusedVariable] -- the test reads the loop name
         b[:] = a + 1.0
         a[:] = b * 2.0
     if flag > 0:
