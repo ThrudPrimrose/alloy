@@ -32,7 +32,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-from alloy.softhiergen import storage
+from alloy.softhiergen import hbm, storage
 from alloy.softhiergen.arch import V1
 from alloy.softhiergen.library import collectives, dma, kernels, redmule, rvv, sync
 from alloy.softhiergen.library.common import LoweringError
@@ -64,9 +64,11 @@ def lower(sdfg: SDFG, tile: int = 256) -> None:
     except ValueError as error:
         # A remainder tile would be masked, and no Spatz loop takes a mask
         raise LoweringError(f"the tile width {tile} must divide every elementwise extent: {error}") from error
-    for desc in sdfg.arrays.values():
+    for name, desc in sdfg.arrays.items():
         if isinstance(desc, data.Array):
             desc.storage = storage.HBM
+            if desc.placement is not None:  # pyright: ignore[reportUnnecessaryComparison] -- DaCe's annotation
+                hbm.node_count(name, desc, sdfg.constants)
     expand_whole_array_nodes(sdfg)
     for state in sdfg.states():
         for node in state.nodes():
@@ -74,6 +76,7 @@ def lower(sdfg: SDFG, tile: int = 256) -> None:
                 node.map.schedule = storage.DEVICE
                 place_in_tcdm(state, node)
     check_top_level(sdfg)
+    check_placed_access(sdfg)
     select_implementations(sdfg)
     insert_sync(sdfg)
     sdfg.expand_library_nodes(recursive=True)
@@ -157,6 +160,19 @@ def kernel_states(sdfg: SDFG) -> list[tuple[SDFGState, list[nodes.Node], nodes.M
                         for inner in nested.sdfg.all_sdfgs_recursive():
                             found.extend((s, s.nodes(), node) for s in inner.states())
     return found
+
+
+def check_placed_access(sdfg: SDFG) -> None:
+    """Only copy nodes reach a placed array: the iDMA expansion is what computes its element addresses."""
+    for state, inside, _ in kernel_states(sdfg):
+        for node in inside:
+            if isinstance(node, (nodes.AccessNode, nodes.EntryNode, nodes.ExitNode, CopyLibraryNode)):
+                continue
+            for edge in state.all_edges(node):
+                if not edge.data.is_empty() and hbm.placed(state.sdfg.arrays[edge.data.data]) is not None:
+                    raise LoweringError(
+                        f"{node.label}: reads or writes the placed array {edge.data.data}; only a copy may"
+                    )
 
 
 def select_implementations(sdfg: SDFG) -> None:

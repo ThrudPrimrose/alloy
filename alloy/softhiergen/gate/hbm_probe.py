@@ -15,7 +15,7 @@ import shutil
 import sys
 
 from alloy.softhiergen.arch import TARGET, V1, node_bases
-from alloy.softhiergen.program import FLAGS, RUNTIME
+from alloy.softhiergen.program import FLAGS, RUNTIME, link_script
 
 WORDS = 1024
 
@@ -101,29 +101,12 @@ int main(void) {{
 
 
 def build_run(nodes: list[tuple[str, int]]) -> str:
-    # Node 0 is the SDK's .hbm, which starts at the first west node after .data
-    phdrs = "\\n".join(f"  dsh_hbm{k} PT_LOAD;" for k in range(1, len(nodes)))
-    sections = "\\n".join(
-        f"  .dsh_hbm{k} 0x{base:x} : {{ KEEP(*(.dsh_hbm{k})) }} :dsh_hbm{k}" for k, (_, base) in enumerate(nodes) if k
-    )
     return f"""#!/bin/bash
 # The SDK linker script plus one load segment and section per HBM node after the first
 set -eo pipefail
 cd "$(dirname "$0")"
 SDK=$SOFTHIER_SDK/runtime/runtime
-awk -v phdrs="{phdrs}" -v sections="{sections}" '
-    /^PHDRS/ {{ in_phdrs = 1 }}
-    in_phdrs && /^}}/ {{ phdrs_end = NR; in_phdrs = 0 }}
-    {{ lines[NR] = $0 }}
-    /^}}/ {{ last = NR }}
-    END {{
-        for (i = 1; i <= NR; ++i) {{
-            if (i == phdrs_end) print phdrs
-            if (i == last) print sections
-            print lines[i]
-        }}
-    }}
-' $SDK/flex_memory.ld > link.ld
+{link_script(len(nodes))}
 riscv32-unknown-elf-gcc {FLAGS} -I $SDK/include -I include -T link.ld -nostartfiles -Wl,--gc-sections \\
     -o softhier.elf $SDK/flex_start.s main.c
 riscv32-unknown-elf-readelf -lW softhier.elf | grep LOAD

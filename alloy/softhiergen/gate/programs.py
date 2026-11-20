@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import dace
 import numpy
+from dace import placement
 from dace.libraries.comm.nodes import Allgather, Allreduce, Alltoall, Bcast, Gather, Reduce, ReduceScatter, Scatter
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
@@ -291,6 +292,67 @@ def collective_cases() -> list[Case]:
             in_kernel(lambda: Alltoall("alltoall"), P * n, P * n, False),
             {"X": X},
             {"Y": blocks.transpose(1, 0, 2).reshape(P, P * n)},
+            0.0,
+        ),
+    ]
+
+
+def placed(make: Callable[[], dace.SDFG], **maps: tuple[int, Callable[..., object]]) -> Callable[[], dace.SDFG]:
+    """``make`` with each named array placed over the HBM nodes: (node count, index map)."""
+
+    def build() -> dace.SDFG:
+        sdfg = make()
+        for name, (nodes, index_map) in maps.items():
+            sdfg.arrays[name].placement = placement.Placement(nodes, placement.SymbolicLambda(index_map))
+        return sdfg
+
+    return build
+
+
+def placement_cases() -> list[Case]:
+    """Arrays placed over the HBM nodes (west0, west1, south0, south1): copies that stay on one node and copies cut
+    where a block ends, in 1D and 2D; block-cyclic, blocked and page-cyclic placements."""
+    rng = numpy.random.default_rng(11)
+    f32 = numpy.float32
+    a, b = rng.uniform(-4, 4, N).astype(f32), rng.uniform(-4, 4, N).astype(f32)
+    alpha = f32(1.5)
+    ga, gb = (rng.uniform(-1, 1, (64, 64)).astype(numpy.float16) for _ in range(2))
+    matrix = numpy.arange(16 * 24, dtype=numpy.float32).reshape(16, 24)
+    blocks_512 = (4, lambda i: (i // 512) % 4)
+    return [
+        Case(
+            "placed axpy (blocks of 512 over 4 nodes)",
+            placed(lambda: axpy.to_sdfg(simplify=True), x=blocks_512, y=blocks_512),
+            {"a": alpha, "x": a, "y": b},
+            {"y": alpha * a + b},
+            1e-6,
+        ),
+        Case(
+            "placed vector add (tiles cut at blocks of 128)",
+            placed(lambda: vadd.to_sdfg(simplify=True), A=(4, lambda i: (i // 128) % 4), B=(4, lambda i: i // 1024)),
+            {"A": a, "B": b},
+            {"C": a + b},
+            1e-6,
+        ),
+        Case(
+            "placed GEMM (row blocks, 2D block-cyclic, page-cyclic)",
+            placed(
+                lambda: gemm.to_sdfg(simplify=True),
+                A=(4, lambda i, j: (i // 16) % 4),
+                B=(4, lambda i, j: 2 * ((i // 32) % 2) + (j // 32) % 2),
+                C=(4, lambda i, j: (2 * (i // 32) + j // 32) % 4),
+            ),
+            {"A": ga, "B": gb},
+            {"C": (ga.astype(numpy.float64) @ gb.astype(numpy.float64)).astype(numpy.float16)},
+            1e-3,
+        ),
+        Case(
+            "placed strided rows copy (3 nodes)",
+            placed(
+                lambda: block_copy("0:16:2, 0:10"), X=(3, lambda i, j: (j // 8) % 3), Y=(4, lambda i, j: (i // 2) % 4)
+            ),
+            {"X": matrix},
+            {"Y": matrix[0:16:2, 0:10]},
             0.0,
         ),
     ]

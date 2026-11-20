@@ -1,9 +1,10 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
 """Build a lowered SDFG into a SoftHier program folder, and read its results after GVSoC has run it.
 
-A folder holds ``kernels.cpp`` (the generated unit), ``main.c`` (the program's arrays as preloaded ``.hbm`` data, and
-``main``: the SDK frame around ``__dsh_program``, a cycle count, and a dump of every array), the runtime headers and
-``build_run.sh``, which compiles with the SDK's flags, links with its start code and linker script, and runs GVSoC.
+A folder holds ``kernels.cpp`` (the generated unit), ``main.c`` (the program's arrays as preloaded ``.hbm`` data, a
+placed array as one share per HBM node in the node's section, and ``main``: the SDK frame around ``__dsh_program``, a
+cycle count, and a dump of every array), the runtime headers and ``build_run.sh``, which compiles with the SDK's flags,
+links with its start code and linker script (plus a section per HBM node when arrays are placed), and runs GVSoC.
 
 shortcut: inputs are baked into the ELF, so new data means a relink; preload separately when programs get large.
 """
@@ -18,8 +19,8 @@ import numpy
 from dace import config, data, dtypes
 from dace.sdfg import SDFG
 
-from alloy.softhiergen import passes, storage
-from alloy.softhiergen.arch import TARGET, V1
+from alloy.softhiergen import hbm, passes, storage
+from alloy.softhiergen.arch import TARGET, V1, node_bases
 from alloy.softhiergen.codegen.target import SoftHierCodeGen, static_size
 
 RUNTIME = pathlib.Path(__file__).parent / "runtime" / "include"
@@ -64,6 +65,39 @@ echo DSH-RAN
 """
 
 
+def link_script(nodes: int) -> str:
+    """Shell lines that write ``link.ld``: the SDK's linker script plus a load segment and a section at the node's
+    base for each of the first ``nodes`` HBM nodes after node 0, which is the SDK's ``.hbm``."""
+    bases = node_bases()[1:nodes]
+    phdrs = "\\n".join(f"  dsh_hbm{k} PT_LOAD;" for k in range(1, nodes))
+    sections = "\\n".join(
+        f"  .dsh_hbm{k} 0x{base:x} : {{ KEEP(*(.dsh_hbm{k})) }} :dsh_hbm{k}" for k, (_, base) in enumerate(bases, 1)
+    )
+    return f"""awk -v phdrs="{phdrs}" -v sections="{sections}" '
+    /^PHDRS/ {{ in_phdrs = 1 }}
+    in_phdrs && /^}}/ {{ phdrs_end = NR; in_phdrs = 0 }}
+    {{ lines[NR] = $0 }}
+    /^}}/ {{ last = NR }}
+    END {{
+        for (i = 1; i <= NR; ++i) {{
+            if (i == phdrs_end) print phdrs
+            if (i == last) print sections
+            print lines[i]
+        }}
+    }}
+' $SDK/flex_memory.ld > link.ld"""
+
+
+def build_run(nodes: int) -> str:
+    """``build_run.sh`` for a program whose placed arrays span ``nodes`` HBM nodes (1: only ``.hbm``)."""
+    if nodes <= 1:
+        return BUILD_RUN
+    script = BUILD_RUN.replace("-T $SDK/flex_memory.ld", "-T link.ld")
+    return script.replace(
+        "SDK=$SOFTHIER_SDK/runtime/runtime\n", f"SDK=$SOFTHIER_SDK/runtime/runtime\n{link_script(nodes)}\n"
+    )
+
+
 def generate(sdfg: SDFG, tile: int = 256) -> str:
     """Lowers ``sdfg`` in place and returns the generated C++ unit."""
     passes.lower(sdfg, tile)
@@ -101,6 +135,23 @@ def main_unit(sdfg: SDFG, inputs: Inputs) -> tuple[str, list[dict[str, Any]]]:
         array = numpy.zeros(desc.shape, dtype=desc.dtype.as_numpy_dtype())
         if name in inputs:
             array[...] = inputs[name]
+        if desc.placement is not None:
+            # The shares laid end to end; each node's share is its own array in its node's section
+            positions = hbm.positions(desc, sdfg.constants)
+            share = hbm.share_size(desc, sdfg.constants)
+            shares = numpy.zeros(hbm.node_count(name, desc, sdfg.constants) * share, dtype=array.dtype)
+            shares[positions] = array.ravel()
+            for node in range(len(shares) // share):
+                body = ", ".join(scalar_literal(value) for value in shares[node * share : (node + 1) * share])
+                data_lines.append(
+                    f'__attribute__((section("{hbm.section(node)}"), aligned(64))) {c_type(desc.dtype)} '
+                    f"{hbm.share_name(name, node)}[{share}] = {{{body}}};"
+                )
+                dumps.append(f'        dump("{name}", {hbm.share_name(name, node)}, {share * array.itemsize});')
+            meta.append(
+                {"name": name, "dtype": array.dtype.str, "shape": list(array.shape), "positions": positions.tolist()}
+            )
+            continue
         body = ", ".join(scalar_literal(value) for value in array.flat)
         data_lines.append(
             f'__attribute__((section(".hbm"), aligned(64))) {c_type(desc.dtype)} {name}[{array.size}] = {{{body}}};'
@@ -173,16 +224,27 @@ int main(void) {{
 
 def write_folder(folder: pathlib.Path, sdfg: SDFG, kernels: str, inputs: Inputs) -> None:
     """Writes the program folder of a lowered ``sdfg`` whose generated unit is ``kernels``."""
-    # shortcut: every HBM array goes to .hbm from the first west channel on; place arrays over the channels when a
-    # program outgrows the west edge
+    # An array without a placement goes to .hbm from the first west channel on
     west = V1.hbm_chan_placement[0] * V1.hbm_node_addr_space
+    hbm_arrays = {
+        name: desc for name, desc in sdfg.arrays.items() if isinstance(desc, data.Array) and desc.storage == storage.HBM
+    }
     used = sum(
         -(-static_size(desc, name) * desc.dtype.bytes // 64) * 64
-        for name, desc in sdfg.arrays.items()
-        if isinstance(desc, data.Array) and desc.storage == storage.HBM
+        for name, desc in hbm_arrays.items()
+        if desc.placement is None  # pyright: ignore[reportUnnecessaryComparison] -- DaCe's annotation
     )
     if used > west:
         raise ValueError(f"{sdfg.name}: its HBM arrays take {used} bytes, the west HBM channels hold {west}")
+    # Each node holds its shares of the placed arrays; node 0 also the .hbm arrays
+    per_node = [used] + [0] * (len(node_bases()) - 1)
+    for name, desc in hbm_arrays.items():
+        if desc.placement is not None:  # pyright: ignore[reportUnnecessaryComparison] -- DaCe's annotation
+            for node in range(hbm.node_count(name, desc, sdfg.constants)):
+                per_node[node] += hbm.share_size(desc, sdfg.constants) * desc.dtype.bytes
+    nodes = max((node + 1 for node, size in enumerate(per_node) if size), default=1)
+    if nodes > 1 and max(per_node) > V1.hbm_node_addr_space:
+        raise ValueError(f"{sdfg.name}: its HBM nodes hold {per_node} bytes, one node {V1.hbm_node_addr_space}")
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "kernels.cpp").write_text(kernels)
     source, meta = main_unit(sdfg, inputs)
@@ -191,7 +253,7 @@ def write_folder(folder: pathlib.Path, sdfg: SDFG, kernels: str, inputs: Inputs)
     (folder / "arch.py").write_text(V1.to_arch_py())
     shutil.copytree(RUNTIME, folder / "include", dirs_exist_ok=True)
     script = folder / "build_run.sh"
-    script.write_text(BUILD_RUN)
+    script.write_text(build_run(nodes))
     script.chmod(0o755)
 
 
@@ -210,8 +272,11 @@ def read_results(folder: pathlib.Path) -> tuple[dict[str, numpy.ndarray], int]:
     for entry in json.loads((folder / "meta.json").read_text()):
         dtype = numpy.dtype(entry["dtype"])
         raw = numpy.array(found.get(entry["name"], []), dtype=numpy.uint32).tobytes()
-        count = int(numpy.prod(entry["shape"]))
+        # A placed array was dumped share by share: its elements sit at their positions in the shares
+        positions = numpy.array(entry["positions"]) if "positions" in entry else None
+        count = int(numpy.prod(entry["shape"])) if positions is None else int(positions.max()) + 1
         if len(raw) < count * dtype.itemsize:
             raise ValueError(f"{entry['name']}: the run printed {len(raw)} bytes of {count * dtype.itemsize}")
-        arrays[entry["name"]] = numpy.frombuffer(raw[: count * dtype.itemsize], dtype=dtype).reshape(entry["shape"])
+        values = numpy.frombuffer(raw[: count * dtype.itemsize], dtype=dtype)
+        arrays[entry["name"]] = (values if positions is None else values[positions]).reshape(entry["shape"])
     return arrays, cycles

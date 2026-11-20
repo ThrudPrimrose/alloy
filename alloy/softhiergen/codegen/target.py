@@ -6,7 +6,8 @@ global barrier between them. Cluster c runs iterations c, c + P, ... of the kern
 (replicated); the expansions of the library nodes guard their effects by core role.
 
 Arrays: a ``SoftHier_TCDM`` array is a static in ``.l1`` (TCDM), at one address on every cluster; a
-``SoftHier_HBM`` array is a static in ``.hbm`` (an argument is defined in the data unit). The linker assigns both.
+``SoftHier_HBM`` array is a static in ``.hbm`` (an argument is defined in the data unit), a placed one a share per HBM
+node in that node's section with a table of the shares (:mod:`alloy.softhiergen.hbm`). The linker assigns them all.
 """
 
 import math
@@ -24,6 +25,7 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
+from alloy.softhiergen import hbm
 from alloy.softhiergen.arch import V1, Arch
 from alloy.softhiergen.library.common import LoweringError
 from alloy.softhiergen.storage import DEVICE, HBM, TCDM
@@ -89,6 +91,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
                 continue
             if isinstance(desc, data.Scalar):
                 code.write(f'extern "C" const {desc.dtype.ctype} {name};')
+            elif desc.storage == HBM and hbm.placed(desc) is not None:
+                code.write(hbm.shares_code(name, desc, self.sdfg.constants, desc.dtype.ctype))
             elif desc.storage == HBM:
                 code.write(f'extern "C" {desc.dtype.ctype} {name}[];')
         code.write(self.globals.getvalue())
@@ -204,8 +208,11 @@ class SoftHierCodeGen(TargetCodeGenerator):
             declaration_stream.write(f"{ctype}* {name} = {symbol};", cfg, state_id, node)
             self.dispatcher.defined_vars.add(name, DefinedType.Pointer, f"{ctype} *")
             return
-        # A transient HBM array: one object in .hbm, defined here
-        if name not in self.statics:
+        # A transient HBM array: one object in .hbm, or a placed one's shares, defined here
+        if name not in self.statics and hbm.placed(nodedesc) is not None:
+            self.statics.add(name)
+            self.globals.write(hbm.shares_code(name, nodedesc, sdfg.constants, ctype))
+        elif name not in self.statics:
             self.statics.add(name)
             self.globals.write(f'{ctype} {name}[{size}] __attribute__((section(".hbm"), aligned(64)));')
         self.dispatcher.defined_vars.add(name, DefinedType.Pointer, f"{ctype} *")

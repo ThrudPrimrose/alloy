@@ -56,6 +56,10 @@ Structure (facts, from `flex_cluster.py`, `flex_cluster_arch.py`, the SDK header
   - `hbm_east(nid, off)  = HBM_BASE + (nid + NY + NX) * NODE_SPACE + off`
   - `hbm_south(nid, off) = HBM_BASE + (nid + 2 * NY + NX) * NODE_SPACE + off`
   with `HBM_BASE = hbm_start_base` (default `0xC0000000`) and `NODE_SPACE = hbm_node_addr_space`.
+  `arch.node_bases()` lists the nodes in this order; the v1 configuration (`hbm_chan_placement = [2, 0, 0, 2]`)
+  has west0 `0xC0000000`, west1 `0xC4000000`, south0 `0xD8000000` and south1 `0xDC000000`. The probe
+  `gate/hbm_probe.py` (ault job 920009) showed that GVSoC preloads each of them from its own ELF section and load
+  segment and that every cluster's iDMA reads and writes each of them.
   Addresses are 64-bit; the DMA calls take `uint64_t`.
 - Stacked DRAM (`dram3d_enable = 1`): one DRAMSys instance above each cluster, at
   `dram3d_addr_base + cid * dram3d_node_space + offset` (default base `0x10000000000`).
@@ -111,8 +115,9 @@ DRAM, no RedMulE, no collectives and no preload. It is not targeted.
 ```
 alloy/softhiergen/
   __init__.py          imports the modules below, which register everything
-  arch.py              Arch: the v1 configuration (field names of the simulator's FlexClusterArch), V1
+  arch.py              Arch: the v1 configuration (field names of the simulator's FlexClusterArch), V1, node_bases()
   storage.py           SoftHier_TCDM, SoftHier_HBM, SoftHier_Device
+  hbm.py               array placement over the HBM nodes: checks, sections, share names, element positions
   passes.py            lower(): the lowering pipeline (section 6)
   program.py           generate(), write_folder(), read_results()
   codegen/target.py    SoftHierCodeGen
@@ -126,6 +131,7 @@ alloy/softhiergen/
     sync.py            Sync, DmaWait, RedmuleWait (SoftHier)
   runtime/include/softhiergen/
     dsh.h              what the generated C++ unit includes instead of <dace/dace.h>
+    dsh_math.h         py_floor and py_mod (Python's // and %), which placement addresses use
     dsh_rt.h, dsh_rt.c the runtime over the SDK (C): roles, barriers, iDMA, RedMulE, collectives
     dsh_rvv.h          strip-mined RVV loops over riscv_vector.h
   gate/                the simulator gate: NumPy programs, prepare and check, ault.sh
@@ -141,7 +147,13 @@ tests/test_softhiergen_*.py  tests without the toolchain; the `softhier` marker 
 - **Top level.** Outside kernels, the SDFG holds only access nodes and kernels, in a straight sequence of
   states. Control flow around kernels is a `LoweringError`; it belongs inside a kernel.
 - **Storages.** `SoftHier_HBM`: every global array. The linker places it in `.hbm` (side HBM, west channel
-  0), which the simulator preloads. `SoftHier_TCDM`: every transient array inside a kernel, a static in
+  0), which the simulator preloads. An array with a `placement` (`dace.placement.Placement`, block-cyclic per
+  dimension or page-cyclic) is one share per node instead: node `k` of the placement is HBM node `k` of
+  `node_bases()`, its share the C array `__dsh_<name>_node<k>` in section `.hbm` (`k = 0`, after `.data`) or
+  `.dsh_hbm<k>` (at the node's base), holding element `idx` at element `offset_of(idx)` of share
+  `node_of(idx)`. Every share has the size of the largest one (`local_shape`), padded to 64 bytes.
+  The table `__dsh_<name>_nodes` lists the shares, so an element's address is the share's base plus
+  `offset_of(idx) * itemsize`. `SoftHier_TCDM`: every transient array inside a kernel, a static in
   `.l1` at one address on every cluster, placed by the linker (no planner). A transient scalar inside a
   kernel is `Register`: every core computes it.
 - **Roles.** Control flow and scalar tasklets run replicated on every core. Library node expansions guard
@@ -166,14 +178,18 @@ tests/test_softhiergen_*.py  tests without the toolchain; the `softhier` marker 
    then DaCe's vectorizer (`VectorizeCPUMultiDim`, widths `(tile,)`, `ISA.SCALAR`, `assume_even`, fused
    multiply-add) turns elementwise maps into tile maps of tile nodes. An extent that `tile` does not divide is a
    `LoweringError` (the remainder tile would need a mask).
-2. Every global array goes to `SoftHier_HBM`.
+2. Every global array goes to `SoftHier_HBM`. An array with a placement must pass `placement.check(shape,
+   hbm_node_addr_space // itemsize, constants)` (every element its own node and offset, node ids exactly
+   `0 .. nodes - 1`, each share fits one node), and `nodes` must not exceed the model's HBM nodes; otherwise
+   `LoweringError`.
 3. `expand_whole_array_nodes`: an access-to-access edge becomes a `CopyLibraryNode` with the edge's
    subsets (a library node's transient output that only relays into another array is written there
    directly). Each top-level library node (matrix product, reduction, copy, allreduce) expands with
    `SoftHierKernel` to a nested SDFG holding one kernel over the clusters, and the nested SDFGs are inlined.
 4. Each remaining top-level map becomes a `SoftHier_Device` kernel; its transients go to TCDM (arrays) or
    registers (scalars).
-5. `check_top_level` enforces the top-level rule of section 5.
+5. `check_top_level` enforces the top-level rule of section 5; `check_placed_access` refuses any node in a kernel
+   other than a copy that reads or writes a placed array (only the iDMA expansion computes its addresses).
 6. `select_implementations` gives every library node inside a kernel its SoftHier implementation
    (`KERNEL_IMPLEMENTATIONS`); a node without one is a `LoweringError`. A communication node or a `GRID` sync
    needs a kernel map of exactly one iteration per cluster, since both meet in global barriers.
@@ -195,7 +211,13 @@ element-wise loop.
   contiguous rows; both sides move the same element count and dtype. A step of the outer range multiplies the
   row stride (`X[0:16:2, 0:10]`); a step inside the row is refused. A 1D copy is `dsh_dma_1d`, a 2D one
   `dsh_dma_2d` with both strides. A masked copy is refused. `MaskedCopyLibraryNode` is a
-  `CopyLibraryNode` and takes the same implementation.
+  `CopyLibraryNode` and takes the same implementation. One side of a copy may be a placed array (both placed is
+  refused). When every distributed dimension's range provably lies in one block (step 1, the block a multiple of
+  the extent, and the start a multiple of the extent for every value of the enclosing map parameters), the copy
+  stays on node `node_of(start)` and is a box of that node's share: one 1D or 2D transfer from the share's base
+  plus `offset_of(start)`. Otherwise the DMA core loops over the rows of the placed side and cuts each row where a
+  block of the last dimension ends, one `dsh_dma_1d` per run, with node and offset computed per run; the other side
+  must then be one run or rows of the placed side's row length.
 - **Tile nodes on Spatz** (`rvv.py`, `SoftHierRVV`). `TileBinop` (`+ - * / min max`, tile-tile and
   tile-scalar forms, the reversed loop for scalar `-` or `/` tile), `TileUnop` (`neg`, `abs`, `sqrt`),
   `TileFMA`, `TileReduce` of a whole tile (`+`, `max`, `min`). Element types `float32`, `float16`, `int32`; no
@@ -218,7 +240,8 @@ element-wise loop.
 
 `SoftHierCodeGen` (target `softhier`) emits each kernel as a function of one C++ unit whose body DaCe's
 CPU generator produces. It defines TCDM arrays as `.l1` statics and transient HBM arrays as `.hbm`
-objects, declares global arrays and scalar arguments `extern "C"` (the data unit defines them), prints SDFG
+objects (a placed one as its shares), declares global arrays, the shares of placed ones, and scalar arguments
+`extern "C"` (the data unit defines them), emits each placed array's table of shares, prints SDFG
 constants as `constexpr` with `sym2cpp`, and refuses any access-to-access copy left after lowering. The
 frame code DaCe always generates is not used: `generate` returns only the SoftHier code object.
 
@@ -228,7 +251,14 @@ around `__dsh_program` with a cycle count, and prints every array through a TCDM
 `SOFTHIER_ARCH_FILE`; the runtime headers; `meta.json`; and `build_run.sh`, which compiles with the SDK's
 flags without `-ffast-math`, links with its start code and linker script, fails when the sections linked to `L3`
 pass `instruction_mem_size` or `.l1` passes `cluster_tcdm_size - 0x10`, and runs GVSoC. `write_folder` refuses a
-program whose HBM arrays pass the west channels (`hbm_chan_placement[0] * hbm_node_addr_space` bytes).
+program whose HBM arrays without placement pass the west channels (`hbm_chan_placement[0] * hbm_node_addr_space`
+bytes). A placed array's inputs are scattered into its shares by `node_of` and `offset_of`, each share dumped in
+node order; `meta.json` keeps every element's position in the shares (`node * share + offset`), and
+`read_results` gathers the array back from them. With placed arrays over more than one node, `build_run.sh`
+links with `link.ld`: the SDK's `flex_memory.ld` plus one `PT_LOAD` segment and one section `.dsh_hbm<k>` at
+the node's base for each node after the first, and `write_folder` refuses a program whose arrays pass
+`hbm_node_addr_space` on any node (node 0 also holds `.data` and the arrays without placement). A program without
+placed arrays gets the same `kernels.cpp`, `main.c`, `meta.json` and `build_run.sh` as before placement existed.
 `read_results` reads the printed words back into arrays.
 
 Limitation: `max` and `min` on Spatz (`vfmax`, `vfmin`, `vfredmax`, `vfredmin`) return the other operand when one
@@ -243,11 +273,13 @@ Each is marked `shortcut:` where it lives.
 - Whole-array kernels split the leading dimension evenly and hold one share in TCDM at once (`kernels.py`).
 - All-to-all patterns run as `P` turns of one sender each; all senders at once hangs the v1 model
   (`collectives.py`).
-- Every HBM array goes to the west channels from `0xC0000000`; no placement over the channels (`program.py`).
+- A copy that crosses a block of a placed array is one 1D transfer per run, issued in a loop (`dma.py`).
 
 ## 10. Testing
 
-`tests/` runs without the toolchain (`pytest -m "not toolchain"`): generated-code strings, the SDFG after
-single passes, and the `LoweringError` of each refused case. The `toolchain` marker builds a program with
+`tests/` runs without the toolchain (`pytest -m "not softhier"`): generated-code strings, the SDFG after
+single passes, and the `LoweringError` of each refused case. `tests/test_softhiergen_placement.py` compiles the iDMA
+code of copies to and from placed arrays with the host `g++` (transfers as `memcpy`) and compares the moved elements
+with NumPy; it skips without a host `g++`. The `softhier` marker builds a program with
 the RISC-V GCC and checks that no vector instruction lies outside a `dsh_rvv_*` function. The gate (`alloy/softhiergen/gate/`) compares simulator results with NumPy on ault:
 `python -m alloy.softhiergen.gate.run prepare <dir>`, `alloy/softhiergen/gate/ault.sh <dir> <name>`, `python -m alloy.softhiergen.gate.run check <dir>`.

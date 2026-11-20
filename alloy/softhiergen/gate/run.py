@@ -10,7 +10,7 @@ import traceback
 import numpy
 
 from alloy.softhiergen import program
-from alloy.softhiergen.gate.programs import cases, collective_cases
+from alloy.softhiergen.gate.programs import cases, collective_cases, placement_cases
 
 
 def yes_no(flag: bool) -> str:
@@ -22,7 +22,7 @@ def slug(name: str) -> str:
 
 
 def prepare(root: pathlib.Path) -> None:
-    for case in cases() + collective_cases():
+    for case in cases() + collective_cases() + placement_cases():
         folder = root / slug(case.name)
         try:
             sdfg = case.sdfg()
@@ -37,7 +37,7 @@ def prepare(root: pathlib.Path) -> None:
 def check(root: pathlib.Path) -> bool:
     print("| program | builds | runs | correct | cycles |\n|---|---|---|---|---|")
     passed = True
-    for case in cases() + collective_cases():
+    for case in cases() + collective_cases() + placement_cases():
         folder = root / slug(case.name)
         log = (folder / "build_run.log").read_text() if (folder / "build_run.log").exists() else ""
         built, ran = "DSH-BUILT" in log, "DSH-RAN" in log

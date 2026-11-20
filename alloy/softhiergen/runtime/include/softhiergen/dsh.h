@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "softhiergen/dsh_math.h"
 #include "softhiergen/dsh_rt.h"
 #include "softhiergen/dsh_rvv.h"
 
