@@ -438,6 +438,86 @@ def compute(name: str, title: str, body: Body, block: int, inputs: int, version:
     return "\n".join([*head, "namespace NAMESPACE {", "void MAIN {", *loop, "}", "}  // namespace NAMESPACE", ""])
 
 
+def placements(task: Json, sdfg: dace.SDFG, inputs: list[str], output: str, reduce: bool,
+               options: Options) -> tuple[dict[str, dace.data.Array], dict[str, int], int]:  # fmt: skip
+    """The task's arrays, the cores each is sharded over (0: interleaved DRAM), and the one placement they share:
+    a reduction's output stays in DRAM, and the shards of one core fit its L1."""
+    arrays: dict[str, dace.data.Array] = {}
+    for name in dict.fromkeys([*inputs, output]):
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, dace.data.Array):
+            raise Refused(f"{task['name']}: {name} is a {type(desc).__name__}; contract v2 moves arrays")
+        arrays[name] = desc
+    shards = {name: placement_of(name, desc) for name, desc in arrays.items()}
+    if reduce and shards[output]:
+        raise Refused(f"{task['name']}: a reduction writes one partial tile per core to DRAM, not to {output}'s shards")
+    # each core reads and writes the same tiles of every array: sharded and interleaved arrays would need the host's
+    # core order to equal the shard order
+    kinds = {shards[name] for name in (inputs if reduce else shards)}
+    if len(kinds) > 1:
+        raise Refused(
+            f"{task['name']}: arrays placed on {sorted(kinds)} cores (0: interleaved DRAM); one placement only"
+        )
+    (sharded,) = kinds
+    if sharded and options.cores not in (0, sharded):
+        raise Refused(f"{task['name']}: arrays sharded over {sharded} cores, the program runs on {options.cores}")
+    held = sum(bool(cores) for cores in shards.values()) * (TILES // sharded if sharded else 0) * TILE_BYTES
+    if held > L1_SHARD_BYTES:
+        raise Refused(
+            f"{task['name']}: {held} bytes of shards per core exceed the {L1_SHARD_BYTES} of L1 they may take"
+        )
+    return arrays, shards, sharded
+
+
+def compute_config(count: int, block: int, reduce: bool) -> dict[str, object]:
+    """The compute kernel's config for ``count`` inputs and ``block`` tiles per DST acquire: fp32 in DST, and the CBs
+    sized for two blocks."""
+    sized = [*range(count), OUT_CB] if block > 1 else []  # the host's CBs hold 2 tiles: room for 2 blocks
+    extra = [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
+    extra += [{"index": ACC_CB, "tiles": 2, "format": "float32"}] if reduce else []
+    return {
+        "fp32_dest_acc_en": True,
+        "math_approx_mode": False,
+        "math_fidelity": "HiFi4",
+        "unpack_to_dest_fp32": [*range(count), *([ACC_CB] if reduce else [])],
+        "extra_cbs": extra,
+    }
+
+
+def host_descriptor(task: Json, version: str, body: Body, options: Options, arrays: dict[str, dace.data.Array],
+                    shards: dict[str, int], inputs: list[str], block: int, reduce: bool) -> dict[str, object]:  # fmt: skip
+    """``program.json``: what the host needs to run the program (contract, options and sweep axes, each array's
+    placement, the CBs, and the kernels' arguments)."""
+    count = len(inputs)
+    return {
+        "contract": CONTRACT,
+        "tt_metal": version,
+        **{k: task[k] for k in ("name", "kind", "inputs", "output", "program")},
+        "reduce": body.fold_op,
+        "options": dataclasses.asdict(options),
+        "axes": {
+            "dst_block": list(range(1, DST_TILES // body.width + 1)),
+            "cores": list(CORE_COUNTS),
+            "placement": [INTERLEAVED, SHARDED],
+        },
+        "placement": {
+            name: {
+                "kind": SHARDED if cores else INTERLEAVED,
+                "cores": cores,
+                "tiles": TILES // cores if cores else 0,
+                "map": None if arrays[name].placement is None else str(arrays[name].placement),  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
+            }
+            for name, cores in shards.items()
+        },  # fmt: skip
+        "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), OUT_CB]}
+        | ({str(ACC_CB): [2, "float32"]} if reduce else {}),
+        "reader_args": ["num_tiles", "start_tile", *(f"{name}_addr" for name in inputs)],
+        "writer_args": ["1", "core_index", "out_addr"] if reduce else ["num_tiles", "start_tile", "out_addr"],
+        "compute_args": ["num_tiles"],
+        "rows": {op: rule(op, version).source for op in dict.fromkeys(body.ops)},
+    }
+
+
 def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
     """Reads this core's tiles ``start .. start + n - 1`` of every input, ``block`` tiles per input per barrier; sharded
     inputs, the core's ``n`` tiles from its own L1 shard."""
@@ -590,70 +670,12 @@ def program(task: Json, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     if not 1 <= block <= room:
         raise Refused(f"{task['name']}: {block} tile(s) of {body.width} DST tile(s) each exceed one DST acquire")
     output = str(task["output"])
-    arrays: dict[str, dace.data.Array] = {}
-    for name in dict.fromkeys([*inputs, output]):
-        desc = sdfg.arrays[name]
-        if not isinstance(desc, dace.data.Array):
-            raise Refused(f"{task['name']}: {name} is a {type(desc).__name__}; contract v2 moves arrays")
-        arrays[name] = desc
-    shards = {name: placement_of(name, desc) for name, desc in arrays.items()}
-    if reduce and shards[output]:
-        raise Refused(f"{task['name']}: a reduction writes one partial tile per core to DRAM, not to {output}'s shards")
-    # each core reads and writes the same tiles of every array: sharded and interleaved arrays would need the host's
-    # core order to equal the shard order
-    kinds = {shards[name] for name in (inputs if reduce else shards)}
-    if len(kinds) > 1:
-        raise Refused(
-            f"{task['name']}: arrays placed on {sorted(kinds)} cores (0: interleaved DRAM); one placement only"
-        )
-    (sharded,) = kinds
-    if sharded and options.cores not in (0, sharded):
-        raise Refused(f"{task['name']}: arrays sharded over {sharded} cores, the program runs on {options.cores}")
-    held = sum(bool(cores) for cores in shards.values()) * (TILES // sharded if sharded else 0) * TILE_BYTES
-    if held > L1_SHARD_BYTES:
-        raise Refused(
-            f"{task['name']}: {held} bytes of shards per core exceed the {L1_SHARD_BYTES} of L1 they may take"
-        )
+    arrays, shards, sharded = placements(task, sdfg, inputs, output, reduce, options)
     options = dataclasses.replace(options, dst_block=block, cores=sharded or options.cores,
                                   placement=SHARDED if sharded else INTERLEAVED)  # fmt: skip
     count = len(inputs)
-    sized = [*range(count), OUT_CB] if block > 1 else []  # the host's CBs hold 2 tiles: room for 2 blocks
-    extra = [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
-    extra += [{"index": ACC_CB, "tiles": 2, "format": "float32"}] if reduce else []
-    config: dict[str, object] = {
-        "fp32_dest_acc_en": True,
-        "math_approx_mode": False,
-        "math_fidelity": "HiFi4",
-        "unpack_to_dest_fp32": [*range(count), *([ACC_CB] if reduce else [])],
-        "extra_cbs": extra,
-    }
-    descriptor: dict[str, object] = {
-        "contract": CONTRACT,
-        "tt_metal": version,
-        **{k: task[k] for k in ("name", "kind", "inputs", "output", "program")},
-        "reduce": body.fold_op,
-        "options": dataclasses.asdict(options),
-        "axes": {
-            "dst_block": list(range(1, DST_TILES // body.width + 1)),
-            "cores": list(CORE_COUNTS),
-            "placement": [INTERLEAVED, SHARDED],
-        },
-        "placement": {
-            name: {
-                "kind": SHARDED if cores else INTERLEAVED,
-                "cores": cores,
-                "tiles": TILES // cores if cores else 0,
-                "map": None if arrays[name].placement is None else str(arrays[name].placement),  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
-            }
-            for name, cores in shards.items()
-        },  # fmt: skip
-        "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), OUT_CB]}
-        | ({str(ACC_CB): [2, "float32"]} if reduce else {}),
-        "reader_args": ["num_tiles", "start_tile", *(f"{name}_addr" for name in inputs)],
-        "writer_args": ["1", "core_index", "out_addr"] if reduce else ["num_tiles", "start_tile", "out_addr"],
-        "compute_args": ["num_tiles"],
-        "rows": {op: rule(op, version).source for op in dict.fromkeys(body.ops)},
-    }
+    config = compute_config(count, block, reduce)
+    descriptor = host_descriptor(task, version, body, options, arrays, shards, inputs, block, reduce)
     title = " | ".join(task["program"])
     return Program(
         str(task["name"]),
