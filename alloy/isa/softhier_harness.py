@@ -128,7 +128,8 @@ def program(row: dict) -> tuple[str, list[int]]:
         body = f"    if (flex_get_cluster_id() == 0) {{\n{body}    }}\n"
         return frame(row["code"], data, body), []  # compared with reference()
     if kind == "dma_1d":
-        words = [random.Random(7).getrandbits(32) for _ in range(DMA_WORDS)]
+        rng = random.Random(7)  # one generator: distinct words, so a reordered copy fails
+        words = [rng.getrandbits(32) for _ in range(DMA_WORDS)]
         data = c_array("IN0", words, 32)
         nbytes = DMA_WORDS * 4
         body = (
@@ -142,7 +143,8 @@ def program(row: dict) -> tuple[str, list[int]]:
         )
         return frame(row["code"], data, cluster0(body)), words
     if kind == "dma_2d":
-        words = [random.Random(8).getrandbits(32) for _ in range(ROWS * COLS)]
+        rng = random.Random(8)
+        words = [rng.getrandbits(32) for _ in range(ROWS * COLS)]
         rows, cols = BLOCK
         block = [words[(ROW0 + r) * COLS + COL0 + c] for r in range(rows) for c in range(cols)]
         scattered = [0] * (ROWS * COLS)

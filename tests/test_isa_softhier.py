@@ -339,6 +339,18 @@ def test_the_harness_program_runs_the_rows_code_verbatim_inside_the_sdk_frame() 
             assert f"{row['fn']}(" in source.split("int main()")[1], row["name"]
 
 
+def test_the_copy_checks_move_distinct_words_so_a_reordered_copy_fails() -> None:
+    for row in softhier.harness_rows():
+        if row["kind"] in ("dma_1d", "dma_2d"):
+            _, expected = softhier_harness.program(row)
+            moved = (
+                expected
+                if row["kind"] == "dma_1d"
+                else expected[: softhier_harness.BLOCK[0] * softhier_harness.BLOCK[1]]
+            )
+            assert len(set(moved)) == len(moved), row["name"]
+
+
 def test_the_2d_check_gathers_the_block_and_scatters_it_back_into_zeros() -> None:
     row = next(r for r in softhier.harness_rows() if r["name"] == "copy_2d")
 
