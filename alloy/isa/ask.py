@@ -620,6 +620,24 @@ def mixed(request: Request) -> str:
     )
 
 
+def untyped(request: Request, expected: Operand) -> Invalid | None:
+    """The refusal of a request with no operand to name its element type, or with operands of mixed types; None."""
+    if not request.operands:
+        reason = f"{request.op} needs an operand: it names the element type"
+        return bad(request, Why.OPERANDS, reason, spell(x=expected))
+    if why := mixed(request):
+        return bad(request, Why.MIXED_TYPES, why, spell(x=expected))
+    return None
+
+
+def unchained(request: Request, shapes: set[tuple[int, ...]], expected: Operand) -> Invalid | None:
+    """The refusal of operands that do not share one shape, or None."""
+    if len(shapes) <= 1:
+        return None
+    reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
+    return bad(request, Why.CHAIN, reason, spell(x=expected))
+
+
 def vector_op(request: Request, verify: bool) -> Answer:
     """A CPU operation: the table's row, or the math kernel at the cheapest rung that holds ``max_ulp`` (the strict
     rung where the table has the function without an instruction)."""
@@ -627,12 +645,8 @@ def vector_op(request: Request, verify: bool) -> Answer:
     table = load()
     lanes = table.isa(isa).lanes.get(dtype, 0)
     register = Operand("vector", dtype, (lanes,) if lanes else ())
-    if not request.operands:
-        return bad(
-            request, Why.OPERANDS, f"{request.op} needs an operand: it names the element type", spell(x=register)
-        )
-    if why := mixed(request):
-        return bad(request, Why.MIXED_TYPES, why, spell(x=register))
+    if refusal := untyped(request, register):
+        return refusal
     try:
         gate(isa, dtype)
     except KeyError as exc:
@@ -640,9 +654,8 @@ def vector_op(request: Request, verify: bool) -> Answer:
     # a broadcast's source is one scalar: register:<dtype> or register:<dtype>:1
     scalar = request.op == "broadcast" and all(o.shape in ((), (1,)) for o in request.operands.values())
     shapes = set() if scalar else {operand.shape for operand in request.operands.values() if operand.shape}
-    if len(shapes) > 1:
-        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
-        return bad(request, Why.CHAIN, reason, spell(x=register))
+    if refusal := unchained(request, shapes, register):
+        return refusal
     for operand in request.operands.values():
         if operand.space not in ("vector", "register"):
             fix = f"load it first: ask load with src global and dst {register.spelled()}"
@@ -906,9 +919,8 @@ def memory_row(request: Request, typed: list[simt.Row], dtype: str) -> tuple[sim
         if len(operand.shape) >= 2 or operand.swizzle != "none":
             return no(request, Why.SHAPE, f"{request.op} moves a run of elements; a tile is a copy operand",
                       spell(x=Operand("global", dtype, (math.prod(operand.shape),))), block=(1,))  # fmt: skip
-    if len(shapes) > 1:
-        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
-        return bad(request, Why.CHAIN, reason, spell(x=Operand("global", dtype, (1024,))))
+    if refusal := unchained(request, shapes, Operand("global", dtype, (1024,))):
+        return refusal
     n = math.prod(next(iter(shapes), ()))
     widest = sorted(typed, key=per_thread, reverse=True)
     for row in widest:
@@ -956,19 +968,16 @@ def tile_call(request: Request) -> Answer:
             *(f"unit {u}" for u in units),
         )
     one = Operand("tile_register", dtype if dtype in tensix.dtypes() else "f32", (32, 32))
-    if not request.operands:
-        return bad(request, Why.OPERANDS, f"{request.op} needs an operand: it names the element type", spell(x=one))
-    if why := mixed(request):
-        return bad(request, Why.MIXED_TYPES, why, spell(x=one))
+    if refusal := untyped(request, one):
+        return refusal
     if dtype not in tensix.dtypes():
         return no(request, Why.ELEMENT_TYPE, f"Tensix computes {', '.join(tensix.dtypes())}, not {dtype}", spell(x=one))
     if any(o.space != "tile_register" for o in request.operands.values()):
         return no(request, Why.SPACE, "a Tensix tile call computes on the unit's tile registers", spell(x=one),
                   fix=INTO_SPACE["tensix"])  # fmt: skip
     shapes = {o.shape for o in request.operands.values() if o.shape}
-    if len(shapes) > 1:
-        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
-        return bad(request, Why.CHAIN, reason, spell(x=one))
+    if refusal := unchained(request, shapes, one):
+        return refusal
     shape = next(iter(shapes), (32, 32))
     if len(shape) != 2 or shape[0] % 32 or shape[1] % 32:
         sizes = {tuple(max(32, e - e % 32) for e in shape[:2]), tuple(-(-e // 32) * 32 for e in shape[:2])}
@@ -1617,9 +1626,8 @@ def softhier_vector(request: Request) -> Answer:
             return no(request, Why.SPACE, f"the Spatz row loads and stores the cluster's TCDM (shared), not "
                       f"{operand.space}", spell(x=Operand("shared", dtype, operand.shape or (1024,))), fix=fix)  # fmt: skip
     shapes = {o.shape for o in request.operands.values()}
-    if len(shapes) > 1:
-        reason = f"the operands of {request.op} share one shape; got {', '.join(str(s) for s in sorted(shapes))}"
-        return bad(request, Why.CHAIN, reason, spell(x=Operand("shared", dtype, (1024,))))
+    if refusal := unchained(request, shapes, Operand("shared", dtype, (1024,))):
+        return refusal
     n = max(math.prod(s) for s in shapes)
     if n < 1:
         return bad(request, Why.MALFORMED, f"{request.op} needs at least one element", spell(x=one))
