@@ -204,6 +204,24 @@ def unknown_options(
     return None
 
 
+def check_compiler(m: Matrix, name: str, comp: Compiler) -> None:
+    """Compiler ``name`` spells an executable, only declared options (every FP level), and the default cost model."""
+    if not comp.executables:
+        raise ValueError(f"{m.path}: compilers.{name} names no executable for any language")
+    options: tuple[tuple[str, dict[str, tuple[str, ...]], Iterable[str], bool], ...] = (
+        ("openmp", comp.openmp, m.openmp_runtimes, False),
+        ("fp", comp.fp, m.fp_levels, True),
+        ("veclib", comp.veclib, m.veclibs, False),
+        ("isa", comp.isa, m.isas, False),
+        ("tail", comp.tail, m.tails, False),
+    )
+    for option, spelled, declared, complete in options:
+        if reason := unknown_options(name, option, spelled, declared, complete=complete):
+            raise ValueError(f"{m.path}: {reason}")
+    if m.defaults.cost_model not in comp.cost_model:
+        raise ValueError(f"{m.path}: compilers.{name} does not spell the default cost model {m.defaults.cost_model!r}")
+
+
 def check_consistency(m: Matrix) -> None:
     """Defaults, gating names and vector-library levels must refer to declared entries."""
     d = m.defaults
@@ -218,20 +236,7 @@ def check_consistency(m: Matrix) -> None:
     if not any("cpp" in comp.executables for comp in m.compilers.values()):
         raise ValueError(f"{m.path}: no compiler spells cpp, and the scope timers build as C++")
     for name, comp in m.compilers.items():
-        if not comp.executables:
-            raise ValueError(f"{m.path}: compilers.{name} names no executable for any language")
-        options: tuple[tuple[str, dict[str, tuple[str, ...]], Iterable[str], bool], ...] = (
-            ("openmp", comp.openmp, m.openmp_runtimes, False),
-            ("fp", comp.fp, m.fp_levels, True),
-            ("veclib", comp.veclib, m.veclibs, False),
-            ("isa", comp.isa, m.isas, False),
-            ("tail", comp.tail, m.tails, False),
-        )
-        for option, spelled, declared, complete in options:
-            if reason := unknown_options(name, option, spelled, declared, complete=complete):
-                raise ValueError(f"{m.path}: {reason}")
-        if d.cost_model not in comp.cost_model:
-            raise ValueError(f"{m.path}: compilers.{name} does not spell the default cost model {d.cost_model!r}")
+        check_compiler(m, name, comp)
     for name, tail in m.tails.items():
         if unknown := sorted(set(tail.isas) - m.isas.keys()):
             raise ValueError(f"{m.path}: tails.{name}.isas names undeclared ISAs {unknown}")

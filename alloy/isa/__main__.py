@@ -18,6 +18,7 @@ import platform
 import re
 import signal
 import sys
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 from alloy.isa import ALIASES, OPS, ask, load, pages, simt, softhier, tensix, tile
@@ -255,48 +256,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def dispatch(table: Table, args: argparse.Namespace) -> int:
-    """Run the subcommand; its exit code."""
-    if args.command == "lookup":
-        return lookup_command(table, args)
-    if args.command == "tile":
-        return tile_command(args)
-    if args.command == "ask":
-        return ask_command(args)
-    if args.command == "ask-all":
-        return ask_all_command(args)
-    if args.command == "page":
-        print(pages.page(args.target))
-        return 0
-    if args.command == "kernel":
-        level = args.level
-        table.isa(args.isa)
-        if args.max_ulp is not None or args.max_abs is not None:
-            if level:
-                raise KeyError("--level names one rung and --max-ulp/--max-abs pick one: give one of the two")
-            picked = cheapest(args.function, args.dtype, args.isa, max_ulp=args.max_ulp, max_abs=args.max_abs)
-            level = picked.kernel.level
-        return print_kernels(table, args.isa, args.function, args.dtype, level, not args.no_verify)
-    if args.command == "tiers":
-        return tiers_command(table, args)
-    if args.command == "time":
-        return time_command(table, args)
-    if args.command == "validate":
-        return validate_command(table, args)
-    if args.command == "skeleton":
-        return print_skeleton(table, args.isa, args.schedule, args.dtype, not args.no_verify)
-    if args.command == "reverse":
-        print_hits(table, args.name, args.json)
-    elif args.command == "assist":
-        print_assists(table, args.name)
-    elif args.command == "host":
-        print_host(table)
-    elif args.command == "ops":
-        print_ops()
-    elif args.command == "isas":
-        print_isas(table)
-    elif args.command == "schedule":
-        print_schedule(table, args.isa)
+def kernel_command(table: Table, args: argparse.Namespace) -> int:
+    """A function's math kernels at one rung: the named ``--level``, or the cheapest within ``--max-ulp``/``--max-abs``."""
+    level = args.level
+    table.isa(args.isa)
+    if args.max_ulp is not None or args.max_abs is not None:
+        if level:
+            raise KeyError("--level names one rung and --max-ulp/--max-abs pick one: give one of the two")
+        picked = cheapest(args.function, args.dtype, args.isa, max_ulp=args.max_ulp, max_abs=args.max_abs)
+        level = picked.kernel.level
+    return print_kernels(table, args.isa, args.function, args.dtype, level, not args.no_verify)
+
+
+def printed(show: Callable[[], object]) -> int:
+    """Exit code 0 after ``show`` prints its answer."""
+    show()
     return 0
 
 
@@ -871,6 +845,32 @@ def ask_all_command(args: argparse.Namespace) -> int:
     for i, one in enumerate(answer.answers):
         print_lines(pages.feasible_lines(f"[{i}] {one.request.op}", one))
     return 0
+
+
+#: Each subcommand's handler: the table and the arguments to its exit code.
+COMMANDS: dict[str, Callable[[Table, argparse.Namespace], int]] = {
+    "lookup": lookup_command,
+    "tile": lambda _, args: tile_command(args),
+    "ask": lambda _, args: ask_command(args),
+    "ask-all": lambda _, args: ask_all_command(args),
+    "page": lambda _, args: printed(lambda: print(pages.page(args.target))),
+    "kernel": kernel_command,
+    "tiers": tiers_command,
+    "time": time_command,
+    "validate": validate_command,
+    "skeleton": lambda t, args: print_skeleton(t, args.isa, args.schedule, args.dtype, not args.no_verify),
+    "reverse": lambda t, args: printed(lambda: print_hits(t, args.name, args.json)),
+    "assist": lambda t, args: printed(lambda: print_assists(t, args.name)),
+    "host": lambda t, _: printed(lambda: print_host(t)),
+    "ops": lambda _t, _a: printed(print_ops),
+    "isas": lambda t, _: printed(lambda: print_isas(t)),
+    "schedule": lambda t, args: printed(lambda: print_schedule(t, args.isa)),
+}
+
+
+def dispatch(table: Table, args: argparse.Namespace) -> int:
+    """Run the subcommand; its exit code."""
+    return COMMANDS[args.command](table, args)
 
 
 if __name__ == "__main__":
