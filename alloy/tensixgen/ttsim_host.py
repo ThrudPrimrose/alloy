@@ -97,6 +97,24 @@ def per_core(module: ModuleType, values: dict[tuple[int, int], list[int]]) -> ob
     return args
 
 
+def compute_descriptor(module: ModuleType, cfg: Json) -> "ttnn.ComputeConfigDescriptor":
+    """The compute kernel's config from ``config.json``: fp32 accumulation, fidelity, and the CBs unpacked to DST at
+    fp32."""
+    config = module.ComputeConfigDescriptor()
+    config.fp32_dest_acc_en = bool(cfg["fp32_dest_acc_en"])
+    config.math_approx_mode = bool(cfg["math_approx_mode"])
+    config.math_fidelity = getattr(module.MathFidelity, cfg["math_fidelity"])
+    mode = unpack_mode(module)
+    modes = [mode.Default] * 64
+    for i in cfg["unpack_to_dest_fp32"]:
+        modes[int(i)] = mode.UnpackToDestFp32
+    try:
+        config.unpack_to_dest_mode = modes
+    except TypeError:  # tt-metal 0.6x has 32 circular buffers
+        config.unpack_to_dest_mode = modes[:32]
+    return config
+
+
 def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
     import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
@@ -134,18 +152,7 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
                           format_descriptors=[ttnn.CBFormatDescriptor(buffer_index=i, data_format=fmt[f][0], page_size=fmt[f][1])])
         for i, (tiles, f) in sorted(plan.items())
     ]  # fmt: skip
-    config = ttnn.ComputeConfigDescriptor()
-    config.fp32_dest_acc_en = bool(cfg["fp32_dest_acc_en"])
-    config.math_approx_mode = bool(cfg["math_approx_mode"])
-    config.math_fidelity = getattr(ttnn.MathFidelity, cfg["math_fidelity"])
-    mode = unpack_mode(ttnn)
-    modes = [mode.Default] * 64
-    for i in cfg["unpack_to_dest_fp32"]:
-        modes[int(i)] = mode.UnpackToDestFp32
-    try:
-        config.unpack_to_dest_mode = modes
-    except TypeError:  # tt-metal 0.6x has 32 circular buffers
-        config.unpack_to_dest_mode = modes[:32]
+    config = compute_descriptor(ttnn, cfg)
     base, rest = divmod(TILES, len(cores))
     counts = [base + (i < rest) for i in range(len(cores))]
     starts = [sum(counts[:i]) for i in range(len(cores))]
