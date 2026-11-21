@@ -203,96 +203,127 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
     for n in state.data_nodes():
         if sdfg.arrays[n.data].dtype != dace.float32:
             raise Refused(f"{n.data} is {sdfg.arrays[n.data].dtype}: contract v2 moves float32 tiles")
-    spans: set[tuple[str, tuple[object, ...]]] = set()  # each load's and store's subset, with its array's shape
     reads: dict[str, int] = {}
     for e in state.edges():
         if isinstance(e.src, nodes.AccessNode) and not e.data.is_empty():
             reads[e.src.data] = reads.get(e.src.data, 0) + 1
-    slots = Slots(reads)
-    loaded: dict[str, int] = {}  # a tile copied from CB k, which a later reader may copy again
-    steps: list[Step] = []
-    ops: list[str] = []
-    result, fold, fold_op = -1, None, ""
+    body = BodyBuilder(state, sdfg, inputs, scalars, version, Slots(reads))
     for node in dfs_topological_sort(state):
         if isinstance(node, nodes.AccessNode):
-            for e in state.in_edges(node):
-                src = e.src
-                if not isinstance(src, nodes.AccessNode) or e.data.is_empty():
-                    continue
-                desc = sdfg.arrays[src.data]
-                if not desc.transient and isinstance(desc, dace.data.Scalar):  # a scalar argument: a filled tile
-                    if src.data not in scalars:
-                        raise Refused(f"the scalar {src.data} has no value at generation")
-                    init, call = code("broadcast", ("_c",), scalars[src.data], version)
-                    steps.append(Step(init, call, (("_c", slots.take(node.data)),)))
-                    ops.append("broadcast")
-                elif src.data in slots.of:  # a copy between tiles: one DST tile
-                    slots.bind(node.data, slots.read(src.data))
-                    if src.data in loaded:
-                        loaded[node.data] = loaded[src.data]
-                else:
-                    raise Refused(f"{node.data}: a copy from {src.data}, which no tile holds")
+            body.access(node)
         elif isinstance(node, MaskedCopyLibraryNode):
-            if len(state.in_edges(node)) != 1:
-                raise Refused(f"{node.label}: a masked copy")
-            src, dst = state.in_edges(node)[0].src, state.out_edges(node)[0].dst
-            if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
-                raise Refused(f"{node.label}: a copy between non-data nodes")
-            load = not sdfg.arrays[src.data].transient
-            inner, outer = state.in_edges(node)[0], state.out_edges(node)[0]
-            span = inner.data.get_src_subset(inner, state) if load else outer.data.get_dst_subset(outer, state)
-            if span is None or not dense(span):
-                raise Refused(f"{node.label}: {span} is not one tile of consecutive elements")
-            spans.add((str(span), tuple(sdfg.arrays[src.data if load else dst.data].shape)))
-            if len(spans) > 1:  # the host reads and writes tile k of every array at the same index
-                raise Refused(f"{node.label}: the loads and stores take different tiles: {sorted(spans)}")
-            if load:  # a load: the reader's CB copied to DST
-                if src.data not in inputs:
-                    raise Refused(f"{node.label}: loads {src.data}, not an input of the task")
-                cb = inputs.index(src.data)
-                loaded[dst.data] = cb
-                steps.append(dataclasses.replace(copy(cb, version), tiles=(("_o", slots.take(dst.data)),)))
-            elif result >= 0:
-                raise Refused("more than one tile leaves the body: contract v2 writes one output")
-            else:  # the store: packed to CB 16 after the block; its DST tile stays taken
-                result = slots.of[src.data]
+            body.masked_copy(node)
         elif type(node) in TILE_NODES:
-            init, call = node_code(node, version)
-            ops.append(op_of(node))
-            ins = {e.dst_conn: e.src.data for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode)}
-            outs = {e.src_conn: e.dst.data for e in state.out_edges(node) if isinstance(e.dst, nodes.AccessNode)}
-            if "_src" in ins:  # a reduction: its source's DST tile stays taken for the fold
-                if result >= 0:
-                    raise Refused("more than one tile leaves the body: contract v2 writes one output")
-                result, fold, fold_op = slots.of[ins["_src"]], Step(init, call), op_of(node)
-            elif isinstance(node, TileBinop):  # a binary op: its output may take a dying operand's DST tile
-                for conn, kind, expr in (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b)):
-                    if kind == "Symbol":  # a constant operand: a filled tile
-                        ins[conn] = f"{node.label}{conn}"
-                        fill_init, fill = code("broadcast", ("_c",), constant(node, expr), version)
-                        steps.append(Step(fill_init, fill, (("_c", slots.take(ins[conn])),)))
-                        ops.append("broadcast")
-                a, b = slots.read(ins["_a"]), slots.read(ins["_b"])
-                k = next((x for x in (a, b) if slots.dead(x)), None)
-                k = slots.take(outs["_c"]) if k is None else slots.bind(outs["_c"], k)
-                steps.append(Step(init, call, (("_a", a), ("_b", b), ("_c", k))))
-            elif "_a" in ins:  # a unary op works in place on _c
-                a = slots.read(ins["_a"])
-                if slots.dead(a):
-                    k = slots.bind(outs["_c"], a)
-                elif ins["_a"] in loaded:  # the operand is read again later: copy it from its CB once more
-                    k = slots.take(outs["_c"])
-                    steps.append(dataclasses.replace(copy(loaded[ins["_a"]], version), tiles=(("_o", k),)))
-                else:
-                    raise Refused(f"{node.label}: its operand is read again, and no checked row copies DST to DST")
-                steps.append(Step(init, call, (("_c", k),)))
-            else:  # a filled tile
-                steps.append(Step(init, call, (("_c", slots.take(outs["_c"])),)))
-        elif not isinstance(node, MaskedCopyLibraryNode):
+            body.tile_node(node)
+        else:
             raise Refused(f"{node.label}: {type(node).__name__} in the tile body")
-    if result < 0:
+    if body.result < 0:
         raise Refused("no tile leaves the body")
-    return Body(steps, slots.width, result, fold, ops, fold_op)
+    return Body(body.steps, body.slots.width, body.result, body.fold, body.ops, body.fold_op)
+
+
+@dataclass
+class BodyBuilder:
+    """The state :func:`body_of` builds while it walks the tile body, one handler per kind of node."""
+
+    state: dace.SDFGState
+    sdfg: dace.SDFG
+    inputs: list[str]
+    scalars: dict[str, float]
+    version: str
+    slots: Slots
+    #: Each load's and store's subset, with its array's shape.
+    spans: set[tuple[str, tuple[object, ...]]] = dataclasses.field(default_factory=set)
+    #: A tile copied from CB k, which a later reader may copy again.
+    loaded: dict[str, int] = dataclasses.field(default_factory=dict)
+    steps: list[Step] = dataclasses.field(default_factory=list)
+    ops: list[str] = dataclasses.field(default_factory=list)
+    result: int = -1
+    fold: Step | None = None
+    fold_op: str = ""
+
+    def fill(self, tile: str, value: float) -> None:
+        """``tile`` filled with ``value`` in a DST tile of its own."""
+        init, call = code("broadcast", ("_c",), value, self.version)
+        self.steps.append(Step(init, call, (("_c", self.slots.take(tile)),)))
+        self.ops.append("broadcast")
+
+    def one_output(self) -> None:
+        if self.result >= 0:
+            raise Refused("more than one tile leaves the body: contract v2 writes one output")
+
+    def access(self, node: nodes.AccessNode) -> None:
+        for e in self.state.in_edges(node):
+            src = e.src
+            if not isinstance(src, nodes.AccessNode) or e.data.is_empty():
+                continue
+            desc = self.sdfg.arrays[src.data]
+            if not desc.transient and isinstance(desc, dace.data.Scalar):  # a scalar argument: a filled tile
+                if src.data not in self.scalars:
+                    raise Refused(f"the scalar {src.data} has no value at generation")
+                self.fill(node.data, self.scalars[src.data])
+            elif src.data in self.slots.of:  # a copy between tiles: one DST tile
+                self.slots.bind(node.data, self.slots.read(src.data))
+                if src.data in self.loaded:
+                    self.loaded[node.data] = self.loaded[src.data]
+            else:
+                raise Refused(f"{node.data}: a copy from {src.data}, which no tile holds")
+
+    def masked_copy(self, node: MaskedCopyLibraryNode) -> None:
+        state, sdfg = self.state, self.sdfg
+        if len(state.in_edges(node)) != 1:
+            raise Refused(f"{node.label}: a masked copy")
+        inner, outer = state.in_edges(node)[0], state.out_edges(node)[0]
+        src, dst = inner.src, outer.dst
+        if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
+            raise Refused(f"{node.label}: a copy between non-data nodes")
+        load = not sdfg.arrays[src.data].transient
+        span = inner.data.get_src_subset(inner, state) if load else outer.data.get_dst_subset(outer, state)
+        if span is None or not dense(span):
+            raise Refused(f"{node.label}: {span} is not one tile of consecutive elements")
+        self.spans.add((str(span), tuple(sdfg.arrays[src.data if load else dst.data].shape)))
+        if len(self.spans) > 1:  # the host reads and writes tile k of every array at the same index
+            raise Refused(f"{node.label}: the loads and stores take different tiles: {sorted(self.spans)}")
+        if load:  # a load: the reader's CB copied to DST
+            if src.data not in self.inputs:
+                raise Refused(f"{node.label}: loads {src.data}, not an input of the task")
+            cb = self.inputs.index(src.data)
+            self.loaded[dst.data] = cb
+            self.steps.append(dataclasses.replace(copy(cb, self.version), tiles=(("_o", self.slots.take(dst.data)),)))
+        else:  # the store: packed to CB 16 after the block; its DST tile stays taken
+            self.one_output()
+            self.result = self.slots.of[src.data]
+
+    def tile_node(self, node: nodes.LibraryNode) -> None:
+        state, slots = self.state, self.slots
+        init, call = node_code(node, self.version)
+        self.ops.append(op_of(node))
+        ins = {e.dst_conn: e.src.data for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode)}
+        outs = {e.src_conn: e.dst.data for e in state.out_edges(node) if isinstance(e.dst, nodes.AccessNode)}
+        if "_src" in ins:  # a reduction: its source's DST tile stays taken for the fold
+            self.one_output()
+            self.result, self.fold, self.fold_op = slots.of[ins["_src"]], Step(init, call), op_of(node)
+        elif isinstance(node, TileBinop):  # a binary op: its output may take a dying operand's DST tile
+            for conn, kind, expr in (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b)):
+                if kind == "Symbol":  # a constant operand: a filled tile
+                    ins[conn] = f"{node.label}{conn}"
+                    self.fill(ins[conn], constant(node, expr))
+            a, b = slots.read(ins["_a"]), slots.read(ins["_b"])
+            k = next((x for x in (a, b) if slots.dead(x)), None)
+            k = slots.take(outs["_c"]) if k is None else slots.bind(outs["_c"], k)
+            self.steps.append(Step(init, call, (("_a", a), ("_b", b), ("_c", k))))
+        elif "_a" in ins:  # a unary op works in place on _c
+            a = slots.read(ins["_a"])
+            if slots.dead(a):
+                k = slots.bind(outs["_c"], a)
+            elif ins["_a"] in self.loaded:  # the operand is read again later: copy it from its CB once more
+                k = slots.take(outs["_c"])
+                self.steps.append(dataclasses.replace(copy(self.loaded[ins["_a"]], self.version), tiles=(("_o", k),)))
+            else:
+                raise Refused(f"{node.label}: its operand is read again, and no checked row copies DST to DST")
+            self.steps.append(Step(init, call, (("_c", k),)))
+        else:  # a filled tile
+            self.steps.append(Step(init, call, (("_c", slots.take(outs["_c"])),)))
 
 
 def reduce_body(node: Reduce, state: dace.SDFGState, inputs: list[str], version: str) -> Body:
