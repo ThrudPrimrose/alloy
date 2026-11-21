@@ -1253,39 +1253,8 @@ def copy(request: Request, verify: bool) -> Answer:
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
     if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
-        tile_ = Operand("shared", dtype, (box[0], width), "row_major", "xor:8")
-        nearest = spell(src=source, dst=tile_)
-        if src.dtype != dst.dtype:
-            return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}",
-                       nearest)  # fmt: skip
-        if dst.dtype not in taken:
-            return no(request, Why.ELEMENT_TYPE, f"the checked LDS load copies {', '.join(taken)} tiles on "
-                      f"{request.target}, not {dst.dtype}", nearest)  # fmt: skip
-        if len(dst.shape) != 2 or dst.shape != (64, width):
-            return no(request, Why.SHAPE, f"the checked LDS load fills a tile of 64 rows of 128 bytes ({width} "
-                      f"{dtype}, 8 chunks of 16 bytes)", nearest)  # fmt: skip
-        row_bytes = src.shape[1] * tile.GPU_BYTES[dtype] if len(src.shape) == 2 else 0
-        if len(src.shape) != 2 or src.shape[0] < 64 or src.shape[1] < width or row_bytes % 16:
-            return no(request, Why.SHAPE, f"the LDS load reads one 64 x {width} box of a row-major global tile whose "
-                      "rows are whole 16-byte chunks: the source must hold the box", nearest)  # fmt: skip
-        if dst.swizzle != "xor:8" or src.swizzle != "none":
-            return no(request, Why.SWIZZLE, "the checked LDS load stores each chunk at slot chunk ^ (row % 8) (dst "
-                      "swizzle xor:8) from an unswizzled global tile", nearest)  # fmt: skip
-        if src.layout != "row_major" or dst.layout != "row_major":
-            return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
-        steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
-        spelled = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
-        loop = ("for (int it = 0; it < 2; ++it) {  // 512 chunks of 16 bytes per 64-row tile, 256 threads\n"
-                "  const int idx = threadIdx.x + 256 * it, r = idx / 8, c = idx % 8;\n"
-                f"  {spelled}\n}}")  # fmt: skip
-        signature = "void alloy_copy_lds(alloy_long2* sA, const char* a, long row_bytes)"
-        code = device_code(gpu_helpers(request.target), signature, loop)
-        if (check := copy_check(request.target, verify, dtype)) is None:
-            return no(
-                request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check"
-            )
-        notes = ("16 bytes per lane; a points at the block's first element (row 0, column k0)",)
-        return Feasible(request, "lds", steps, {"build": gpu_build(request.target)}, code, check, notes)
+        return lds_copy(request, src, dst, Operand("shared", dtype, (box[0], width), "row_major", "xor:8"), source,
+                        verify)  # fmt: skip
     return no(
         request,
         Why.NOT_COVERED,
@@ -1393,6 +1362,44 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
 STRENGTH = {"unverified": 0, "compiled": 1, "run": 2}
 
 
+def lds_copy(request: Request, src: Operand, dst: Operand, tile_: Operand, source: Operand, verify: bool) -> Answer:
+    """CDNA's copy of one 64-row K block from global memory into an LDS tile, each 16-byte chunk at the XOR-swizzled
+    slot the mma reads; ``tile_`` and ``source`` are the nearest request's operands."""
+    taken = [i for i, _ in tile.TYPES[request.target]]
+    dtype = tile_.dtype
+    width = tile.k_block(dtype)
+    nearest = spell(src=source, dst=tile_)
+    if src.dtype != dst.dtype:
+        return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}",
+                   nearest)  # fmt: skip
+    if dst.dtype not in taken:
+        return no(request, Why.ELEMENT_TYPE, f"the checked LDS load copies {', '.join(taken)} tiles on "
+                  f"{request.target}, not {dst.dtype}", nearest)  # fmt: skip
+    if len(dst.shape) != 2 or dst.shape != (64, width):
+        return no(request, Why.SHAPE, f"the checked LDS load fills a tile of 64 rows of 128 bytes ({width} "
+                  f"{dtype}, 8 chunks of 16 bytes)", nearest)  # fmt: skip
+    row_bytes = src.shape[1] * tile.GPU_BYTES[dtype] if len(src.shape) == 2 else 0
+    if len(src.shape) != 2 or src.shape[0] < 64 or src.shape[1] < width or row_bytes % 16:
+        return no(request, Why.SHAPE, f"the LDS load reads one 64 x {width} box of a row-major global tile whose "
+                  "rows are whole 16-byte chunks: the source must hold the box", nearest)  # fmt: skip
+    if dst.swizzle != "xor:8" or src.swizzle != "none":
+        return no(request, Why.SWIZZLE, "the checked LDS load stores each chunk at slot chunk ^ (row % 8) (dst "
+                  "swizzle xor:8) from an unswizzled global tile", nearest)  # fmt: skip
+    if src.layout != "row_major" or dst.layout != "row_major":
+        return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
+    steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
+    spelled = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
+    loop = ("for (int it = 0; it < 2; ++it) {  // 512 chunks of 16 bytes per 64-row tile, 256 threads\n"
+            "  const int idx = threadIdx.x + 256 * it, r = idx / 8, c = idx % 8;\n"
+            f"  {spelled}\n}}")  # fmt: skip
+    signature = "void alloy_copy_lds(alloy_long2* sA, const char* a, long row_bytes)"
+    code = device_code(gpu_helpers(request.target), signature, loop)
+    if (check := copy_check(request.target, verify, dtype)) is None:
+        return no(request, Why.CHECK_FAILED, f"the {request.target} tile program that runs this copy failed its check")
+    notes = ("16 bytes per lane; a points at the block's first element (row 0, column k0)",)
+    return Feasible(request, "lds", steps, {"build": gpu_build(request.target)}, code, check, notes)
+
+
 def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infeasible | Invalid:
     """The answers to ``requests`` as one kernel on one target. On a GPU, a copy into shared memory must write one K
     block that the list's mma loads, from the global matrix it loads; the copy and the mma then carry the check of the
@@ -1433,17 +1440,22 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
     if isinstance(order, Infeasible):
         return order
     weakest = min((a.check for a in answers), key=lambda c: STRENGTH[c.status])
-    together = set(fed) | set(mmas[:1]) | {i for i, r in enumerate(requests) if r.op in ("wait", "fence")}
-    if len(requests) == 1:
-        basis = answers[0].check.basis
-    elif len(together) == len(requests):
-        one = answers[mmas[0]].check.basis
-        basis = f"one program runs all {len(requests)} requests" + (f": {one}" if one else "")
-    else:
-        alone = ", ".join(str(i) for i in range(len(requests)) if i not in together)
-        basis = f"requests {alone} are checked alone, not in one program with the others"
+    basis = combined_basis(requests, answers, fed, mmas)
     return Combined(tuple(answers), tuple(f"copy {i} fills {name} of mma {mmas[0]}" for i, name in fed.items()),
                     Check(weakest.status, basis), order)  # fmt: skip
+
+
+def combined_basis(requests: Sequence[Request], answers: list[Feasible], fed: dict[int, str], mmas: list[int]) -> str:
+    """Which of the kernel's requests one program checks together (the mma, the copies it is fed by, the waits and
+    fences), and which alone."""
+    together = set(fed) | set(mmas[:1]) | {i for i, r in enumerate(requests) if r.op in ("wait", "fence")}
+    if len(requests) == 1:
+        return answers[0].check.basis
+    if len(together) == len(requests):
+        one = answers[mmas[0]].check.basis
+        return f"one program runs all {len(requests)} requests" + (f": {one}" if one else "")
+    alone = ", ".join(str(i) for i in range(len(requests)) if i not in together)
+    return f"requests {alone} are checked alone, not in one program with the others"
 
 
 def ordering(
