@@ -271,6 +271,22 @@ class Named(Protocol):
     def name(self) -> str: ...
 
 
+def score_reserve(costs: Sequence[float]) -> float:
+    """The seconds the selection's ``/score`` and the harness's own grade take, each about one stub's cost."""
+    return 2 * max(costs, default=0.0)
+
+
+def comparable(left: float, costs: Sequence[float]) -> bool:
+    """Whether ``left`` seconds still pay for the selection's score and the plain program's, to compare them."""
+    return left > score_reserve(costs) + max(costs, default=0.0)
+
+
+def stub_affordable(left: float, costs: Sequence[float]) -> bool:
+    """Whether one more stub fits in ``left`` seconds and still leaves the comparison with the plain program: a
+    ranking cut by the budget otherwise delivers its pick ungraded against it."""
+    return comparable(left - max(costs, default=0.0), costs)
+
+
 def ranked[B: Named](
     order: Sequence[str],
     start: dict[str, B],
@@ -351,12 +367,8 @@ def optimize(
 
     stub_costs: list[float] = []
 
-    def score_reserve() -> float:
-        # the selection's score plus the harness's own grade; the plain program's score needs one stub cost more
-        return 2 * max(stub_costs, default=0.0)
-
     def affordable_stub() -> bool:
-        return bool(deadline - time.monotonic() > max(stub_costs, default=0.0) + score_reserve())
+        return stub_affordable(deadline - time.monotonic(), stub_costs)
 
     def time_stub(selection: dict[str, Build], symbol: str) -> float:
         start = time.monotonic()
@@ -377,12 +389,12 @@ def optimize(
     left = deadline - time.monotonic()
     delivered = graded_pick(
         judge,
-        chosen if left > score_reserve() else references,
+        chosen if left > score_reserve(stub_costs) else references,
         references,
         lambda selection: library(task, spec, linker, selection, deliver),
         lambda: plain(task, spec, pipeline, deliver),
         task.kernel,
-        compare=left > score_reserve() + max(stub_costs, default=0.0),
+        compare=comparable(left, stub_costs),
     )
     score = time.monotonic() - scoring
     # every deliver builds the same .so path, so the returned library is built last

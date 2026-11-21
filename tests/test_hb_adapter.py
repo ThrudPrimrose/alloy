@@ -29,12 +29,14 @@ from hpcagent_bench.spec import BenchSpec
 from alloy.evaluate.verify import Verdict
 from alloy.hb_plugin import adapter
 from alloy.hb_plugin.adapter import (
+    comparable,
     fast_size,
     faster_correct,
     graded_pick,
     pipeline_sdfg,
     ranked,
     rendered,
+    stub_affordable,
     stub_time,
     verified,
 )
@@ -92,6 +94,17 @@ def test_the_ranking_stops_when_the_budget_does() -> None:
     assert timed == ["r0.ref"]
     assert sut == start
     assert times == {"r0": {"r0.ref": 1.0}, "r1": {}}, "the record keeps the stubs timed before the budget ran out"
+
+
+@pytest.mark.parametrize("left", [30.0, 39.0, 40.5, 41.0, 100.0])
+def test_a_stub_is_timed_only_when_the_comparison_with_the_plain_program_still_fits_after_it(left: float) -> None:
+    """Stubs of 10 s: a budget that admits one more stub must still pay the pick's and the plain program's scores
+    (llr-full: 147 of 262 profile episodes ran out and delivered their pick ungraded against the plain program)."""
+    costs = [8.0, 10.0]
+
+    if stub_affordable(left, costs):
+        assert comparable(left - max(costs), costs)
+    assert stub_affordable(41.0, costs) and not stub_affordable(39.0, costs)
 
 
 def test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count() -> None:
