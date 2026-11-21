@@ -116,6 +116,35 @@ def timed_winners(reports: list[ScopeReport], timings: Timings) -> dict[str, Bui
     return {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
 
 
+def selected(
+    mode: Mode,
+    program: Program,
+    reports: list[ScopeReport],
+    verification: Verification | None,
+    linker: Linker,
+    matrix: Matrix,
+    manifest: Manifest | None,
+    running: dict[str, int] | None,
+    *,
+    finite_inputs: bool,
+    time_locally: bool,
+) -> tuple[dict[str, Build], Timings | None, Predictions | None]:
+    """Each scope's build in ``mode``, with the timings or the predictions it was picked by: the reference build
+    (reference), the predicted fastest verified build (speculative), or the fastest timed one (profile, when it times
+    here); no pick when nothing could be timed."""
+    if mode == Mode.REFERENCE:  # the reference is what every other build is verified against
+        return {r.scope.symbol: r.builds[0] for r in reports}, None, None
+    if mode == Mode.SPECULATIVE:
+        known = known_sizes(program, running)
+        sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
+        predicted = predict.predictions(reports, matrix, sizes, known is not None)
+        return predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs), None, predicted
+    if verification is not None and manifest is not None and time_locally:
+        timings = timing.time_program(linker, reports, verification, manifest)
+        return timed_winners(reports, timings), timings, None
+    return {}, None, None
+
+
 def generate(
     sdfg: dace.SDFG,
     out: pathlib.Path,
@@ -157,21 +186,14 @@ def generate(
         sources=sources,
         reference_only=mode == Mode.REFERENCE,
     )
-    timings, best, commands, predicted, picked = None, None, None, None, None
+    best, commands, picked = None, None, None
     cases = test_cases(program, manifest)
     verification = verify.verify(program, matrix, reports, cases, out) if cases is not None else None
     linker = Linker(program, matrix, out)
-    winners: dict[str, Build] = {}
-    if mode == Mode.REFERENCE:  # the reference is what every other build is verified against
-        winners = {r.scope.symbol: r.builds[0] for r in reports}
-    elif mode == Mode.SPECULATIVE:
-        known = known_sizes(program, running)
-        sizes = known if known is not None else roofline_sizes(program, manifest, matrix)
-        predicted = predict.predictions(reports, matrix, sizes, known is not None)
-        winners = predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs)
-    elif verification is not None and manifest is not None and time_locally:
-        timings = timing.time_program(linker, reports, verification, manifest)
-        winners = timed_winners(reports, timings)
+    winners, timings, predicted = selected(
+        mode, program, reports, verification, linker, matrix, manifest, running,
+        finite_inputs=finite_inputs, time_locally=time_locally,
+    )  # fmt: skip
     if winners:
         picked = {symbol: b.name for symbol, b in winners.items()}
         best = linker.write_best(winners)
