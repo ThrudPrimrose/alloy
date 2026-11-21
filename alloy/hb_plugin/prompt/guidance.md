@@ -12,4 +12,3 @@ SDK. Before you write a kernel, settle each of these and note in your notes how 
    against the task's tolerance. A built-in function may be faster than it is accurate; when its accuracy is
    unknown or too low, compute the function another way that meets the tolerance.
 5. Every call you write from memory rather than from a source: list it, so a reader can check it.
-

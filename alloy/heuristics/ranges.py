@@ -268,12 +268,17 @@ def tasklet_ranges(
     return [(node, fn, args) for fn, args in ev.calls], writes
 
 
-def scope_ranges(
-    sdfg: dace.SDFG, ranges: Mapping[str, Interval]
-) -> tuple[dict[str, Interval | None], list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]]]:
-    """Every container's proven range in ``sdfg`` (``None``: unproven) from the declared ``ranges`` of its inputs,
-    and every libm call with its arguments' ranges."""
-    states = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, dace.SDFGState)]
+def held(known: dict[str, Interval | None], target: str, value: Interval | None) -> None:
+    """Join ``value`` into what ``known`` holds for ``target`` (``None``, unproven, absorbs)."""
+    kept = known.get(target, value)
+    known[target] = None if value is None or kept is None else kept.join(value)
+
+
+def starting(
+    sdfg: dace.SDFG, states: list[dace.SDFGState], ranges: Mapping[str, Interval]
+) -> dict[str, Interval | None]:
+    """The start of the proof: the declared ``ranges`` of the inputs nothing writes, and ``None`` for every container
+    a reduction or the program's caller writes."""
     writes = [
         (s, e) for s in states for e in s.edges() if isinstance(e.dst, nodes.AccessNode) and e.data.data is not None
     ]
@@ -283,33 +288,47 @@ def scope_ranges(
     known: dict[str, Interval | None] = {
         name: ranges.get(name) for name, desc in sdfg.arrays.items() if not desc.transient and name not in written
     }
-    known |= dict.fromkeys(unproven)
+    return known | dict.fromkeys(unproven)
 
-    def put(target: str, value: Interval | None) -> None:
-        held = known.get(target, value)
-        known[target] = None if value is None or held is None else held.join(value)
 
-    calls: list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]] = []
+Calls = list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]]
+
+
+def sweep(states: list[dace.SDFGState], known: dict[str, Interval | None]) -> tuple[Calls, list[nodes.Tasklet]]:
+    """One round over every state in order: joins each copy's and tasklet's ranges into ``known``. Returns the libm
+    calls and the tasklets that read a transient nothing has written yet (retried next round)."""
+    calls: Calls = []
+    skipped: list[nodes.Tasklet] = []
+    for state in states:
+        for node in sdutil.dfs_topological_sort(state):
+            if isinstance(node, nodes.AccessNode):  # a copy (through any scope): it holds what its source holds
+                for e in state.in_edges(node):
+                    source = state.memlet_path(e)[0].src
+                    if isinstance(source, nodes.AccessNode) and source.data in known:
+                        held(known, node.data, known[source.data])
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            found = tasklet_ranges(state, node, known)
+            if found is None:
+                skipped.append(node)
+                continue
+            calls += found[0]
+            for target, value in found[1]:
+                held(known, target, value)
+    return calls, skipped
+
+
+def scope_ranges(sdfg: dace.SDFG, ranges: Mapping[str, Interval]) -> tuple[dict[str, Interval | None], Calls]:
+    """Every container's proven range in ``sdfg`` (``None``: unproven) from the declared ``ranges`` of its inputs,
+    and every libm call with its arguments' ranges."""
+    states = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, dace.SDFGState)]
+    known = starting(sdfg, states, ranges)
+    calls: Calls = []
     skipped: list[nodes.Tasklet] = []
     before: dict[str, Interval | None] = {}
     for _ in range(ROUNDS):
-        calls, skipped, before = [], [], dict(known)
-        for state in states:
-            for node in sdutil.dfs_topological_sort(state):
-                if isinstance(node, nodes.AccessNode):  # a copy (through any scope): it holds what its source holds
-                    for e in state.in_edges(node):
-                        source = state.memlet_path(e)[0].src
-                        if isinstance(source, nodes.AccessNode) and source.data in known:
-                            put(node.data, known[source.data])
-                if not isinstance(node, nodes.Tasklet):
-                    continue
-                found = tasklet_ranges(state, node, known)
-                if found is None:
-                    skipped.append(node)  # a transient nothing has written yet: next round
-                    continue
-                calls += found[0]
-                for target, value in found[1]:
-                    put(target, value)
+        before = dict(known)
+        calls, skipped = sweep(states, known)
         if known == before:
             return known, calls + [c for t in skipped for c in unread_calls(t)]
     unsettled = {name: None for name, value in known.items() if before.get(name, value) != value}
