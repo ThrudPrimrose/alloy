@@ -1464,9 +1464,7 @@ def reduction(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stm
         return None
     every = outer + inner
     if init is not None and not (
-        len(init.targets) == 1
-        and ast.dump(init.targets[0]) == ast.dump(update.target)
-        and not names_in(init.value) & ({v for v, _ in every} | shapes.keys())
+        assigns_target(init, update) and not names_in(init.value) & ({v for v, _ in every} | shapes.keys())
     ):
         return None
     found = vectorized(shapes, update.value, *map(tuple, zip(*every, strict=True)))
@@ -1483,6 +1481,26 @@ def reduction(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stm
     if isinstance(init.value, ast.Constant) and init.value.value == 0:
         return [ast.Assign([out], total)]
     return [ast.Assign([out], ast.BinOp(init.value, ast.Add(), total))]
+
+
+def assigns_target(init: ast.Assign, update: ast.AugAssign) -> bool:
+    """Whether ``init`` assigns exactly the target ``update`` accumulates into."""
+    return len(init.targets) == 1 and ast.dump(init.targets[0]) == ast.dump(update.target)
+
+
+def oriented(
+    shapes: dict[str, tuple[str, ...]], side: ast.expr, want: tuple[str, str], extents: tuple[str, str], target: str
+) -> str | None:
+    """A matmul operand ``side`` (``Y[i, l]``) as NumPy spells it: ``Y`` when it is indexed ``want`` over an array of
+    ``extents``, ``Y.T`` when both are swapped; None otherwise, or when it is the ``target`` itself."""
+    if not isinstance(side, ast.Subscript) or not isinstance(side.value, ast.Name) or side.value.id == target:
+        return None
+    names, shape = index_names(side), shapes.get(side.value.id)
+    if names == want and shape == extents:
+        return side.value.id
+    if names == want[::-1] and shape == extents[::-1]:
+        return f"{side.value.id}.T"
+    return None
 
 
 def matmul(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stmt] | None:
@@ -1508,24 +1526,14 @@ def matmul(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stmt] 
     if not (isinstance(product, ast.BinOp) and isinstance(product.op, ast.Mult)):
         return None
     if init is not None and not (
-        len(init.targets) == 1
-        and ast.dump(init.targets[0]) == ast.dump(update.target)
-        and isinstance(init.value, ast.Constant)
-        and init.value.value == 0
+        assigns_target(init, update) and isinstance(init.value, ast.Constant) and init.value.value == 0
     ):
         return None
-    spelled: list[str] = []
-    for side, rows, cols, want in ((product.left, m, k, (i, variable)), (product.right, k, n, (variable, j))):
-        if not isinstance(side, ast.Subscript) or not isinstance(side.value, ast.Name) or side.value.id == name:
-            return None
-        names, shape = index_names(side), shapes.get(side.value.id)
-        if names == want and shape == (rows, cols):
-            spelled.append(side.value.id)
-        elif names == want[::-1] and shape == (cols, rows):
-            spelled.append(f"{side.value.id}.T")
-        else:
-            return None
-    value = ast.parse(f"{spelled[0]} @ {spelled[1]}", mode="eval").body
+    left = oriented(shapes, product.left, (i, variable), (m, k), name)
+    right = oriented(shapes, product.right, (variable, j), (k, n), name)
+    if left is None or right is None:
+        return None
+    value = ast.parse(f"{left} @ {right}", mode="eval").body
     if init is not None:
         return [ast.Assign([whole(name, 2)], value)]
     return [ast.AugAssign(whole(name, 2), ast.Add(), value)]
