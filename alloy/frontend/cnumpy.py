@@ -230,6 +230,11 @@ def child(scope: Scope, node: Node, name: str) -> Node:
     return found
 
 
+def field_text(scope: Scope, node: Node, name: str) -> str:
+    """The source of the child ``name`` of ``node``."""
+    return text(scope, child(scope, node, name))
+
+
 def python_identifier(name: str) -> str:
     """A C name as a Python name: no leading underscore, no keyword, no name the module itself uses."""
     new = name.lstrip("_") or "v"
@@ -271,32 +276,33 @@ def symbolic(scope: Scope, node: Node) -> sympy.Expr:
     kind = node.type
     if kind == "parenthesized_expression":
         return symbolic(scope, node.named_children[0])
-    if kind == "identifier" and text(scope, node) in scope.constants:
-        if is_integer_dtype(scope.constants[text(scope, node)][1]):
-            scope.used.add(text(scope, node))  # a symbol, as the shapes name it
-            return sympy.Symbol(python_identifier(text(scope, node)), integer=True)
-    elif kind == "identifier" and text(scope, node) in scope.bindings:
-        argument, outer, _ = scope.bindings[text(scope, node)]
+    name = text(scope, node) if kind == "identifier" else ""
+    if name in scope.constants:
+        if is_integer_dtype(scope.constants[name][1]):
+            scope.used.add(name)  # a symbol, as the shapes name it
+            return sympy.Symbol(python_identifier(name), integer=True)
+    elif name in scope.bindings:
+        argument, outer, _ = scope.bindings[name]
         return under(scope, outer, lambda: symbolic(scope, argument))
-    elif kind == "identifier" and text(scope, node) in scope.values:
-        return symbolic(scope, scope.values[text(scope, node)])  # idx = i * N + j, then a[idx]
-    elif kind == "identifier" and text(scope, node) not in CONSTANTS:
+    elif name in scope.values:
+        return symbolic(scope, scope.values[name])  # idx = i * N + j, then a[idx]
+    elif name and name not in CONSTANTS:
         known(scope, node)
-        return sympy.Symbol(python_name(scope, text(scope, node)), integer=True)
+        return sympy.Symbol(python_name(scope, name), integer=True)
     if kind == "number_literal" and is_integer(scope, node):
         return sympy.Integer(int(number(scope, node)))
     if kind == "cast_expression" and is_integer(scope, node) and is_integer(scope, child(scope, node, "value")):
         return symbolic(scope, child(scope, node, "value"))
-    if kind == "unary_expression" and text(scope, child(scope, node, "operator")) in ("-", "+"):
+    if kind == "unary_expression" and field_text(scope, node, "operator") in ("-", "+"):
         inner = symbolic(scope, child(scope, node, "argument"))
-        return -inner if text(scope, child(scope, node, "operator")) == "-" else inner
-    if kind == "binary_expression" and text(scope, child(scope, node, "operator")) in ("+", "-", "*"):
-        op = text(scope, child(scope, node, "operator"))
+        return -inner if field_text(scope, node, "operator") == "-" else inner
+    if kind == "binary_expression" and field_text(scope, node, "operator") in ("+", "-", "*"):
+        op = field_text(scope, node, "operator")
         left = symbolic(scope, child(scope, node, "left"))
         right = symbolic(scope, child(scope, node, "right"))
         return left + right if op == "+" else left - right if op == "-" else left * right
-    if kind == "call_expression" and text(scope, child(scope, node, "function")) in scope.functions:
-        function = text(scope, child(scope, node, "function"))
+    if kind == "call_expression" and field_text(scope, node, "function") in scope.functions:
+        function = field_text(scope, node, "function")
         value, bindings = returned(scope, node, function)
         return inlined(scope, function, bindings, lambda: symbolic(scope, value))
     spelled = expression(scope, node)
@@ -331,12 +337,12 @@ def row_major(scope: Scope, node: Node, shape: tuple[str, ...]) -> list[sympy.Ex
         node = node.named_children[0]
     if len(shape) == 1:
         return [symbolic(scope, node)]
-    if node.type != "binary_expression" or text(scope, child(scope, node, "operator")) != "+":
+    if node.type != "binary_expression" or field_text(scope, node, "operator") != "+":
         return None
     product = child(scope, node, "left")
     while product.type == "parenthesized_expression":
         product = product.named_children[0]
-    if product.type != "binary_expression" or text(scope, child(scope, product, "operator")) != "*":
+    if product.type != "binary_expression" or field_text(scope, product, "operator") != "*":
         return None
     stride = symbolic(scope, child(scope, product, "right"))
     if sympy.simplify(stride - extent(shape[-1])) != 0:
@@ -396,7 +402,7 @@ def is_integer(scope: Scope, node: Node) -> bool:
             return is_integer_dtype(scope.constants[name][1])
         return name in INTEGER_CONSTANTS or is_integer_dtype(scope.scalars.get(name, "float64"))
     if kind == "pointer_expression":
-        name = array_name(scope, text(scope, child(scope, node, "argument")))
+        name = array_name(scope, field_text(scope, node, "argument"))
         return name in scope.arrays and is_integer_dtype(scope.arrays[name].dtype)
     if kind == "subscript_expression":
         base = node
@@ -407,18 +413,18 @@ def is_integer(scope: Scope, node: Node) -> bool:
     if kind == "cast_expression":
         return is_integer_dtype(DTYPES.get(type_name(scope, child(scope, node, "type")), "float64"))
     if kind == "binary_expression":
-        op = text(scope, child(scope, node, "operator"))
+        op = field_text(scope, node, "operator")
         if op in ("<", ">", "<=", ">=", "==", "!=", "&&", "||", "<<", ">>", "&", "|", "^"):
             return True
         return is_integer(scope, child(scope, node, "left")) and is_integer(scope, child(scope, node, "right"))
     if kind == "unary_expression":
-        return text(scope, child(scope, node, "operator")) == "!" or is_integer(scope, child(scope, node, "argument"))
+        return field_text(scope, node, "operator") == "!" or is_integer(scope, child(scope, node, "argument"))
     if kind == "conditional_expression":
         return is_integer(scope, child(scope, node, "consequence")) and is_integer(
             scope, child(scope, node, "alternative")
         )
     if kind == "call_expression":
-        function = text(scope, child(scope, node, "function"))
+        function = field_text(scope, node, "function")
         if function.startswith("(") and function.strip("() ") in DTYPES:
             return is_integer_dtype(DTYPES[function.strip("() ")])
         definition = scope.functions.get(function)
@@ -446,7 +452,7 @@ def is_nonnegative(scope: Scope, node: Node) -> bool:
         return name in scope.nonnegative
     if kind == "cast_expression":
         return is_nonnegative(scope, child(scope, node, "value"))
-    if kind == "binary_expression" and text(scope, child(scope, node, "operator")) in ("+", "*", "/", "%", ">>"):
+    if kind == "binary_expression" and field_text(scope, node, "operator") in ("+", "*", "/", "%", ">>"):
         return is_nonnegative(scope, child(scope, node, "left")) and is_nonnegative(scope, child(scope, node, "right"))
     return False
 
@@ -504,7 +510,7 @@ def expression(scope: Scope, node: Node) -> str:
     if kind == "binary_expression":
         return binary(scope, node)
     if kind == "unary_expression":
-        op = text(scope, child(scope, node, "operator"))
+        op = field_text(scope, node, "operator")
         operand = expression(scope, child(scope, node, "argument"))
         return f"(not {operand})" if op == "!" else f"({op}{operand})"
     if kind == "conditional_expression":
@@ -532,13 +538,13 @@ def dereference(scope: Scope, node: Node) -> str:
     """``*p`` of an array ``p`` as ``p[0]``; any other pointer expression is pointer arithmetic."""
     argument = child(scope, node, "argument")
     name = array_name(scope, text(scope, argument))
-    if text(scope, child(scope, node, "operator")) != "*" or argument.type != "identifier" or name not in scope.arrays:
+    if field_text(scope, node, "operator") != "*" or argument.type != "identifier" or name not in scope.arrays:
         raise refuse(scope, node, "a pointer dereference or address (pointer arithmetic)")
     return f"{python_name(scope, name)}[{', '.join('0' * len(scope.arrays[name].shape))}]"
 
 
 def binary(scope: Scope, node: Node) -> str:
-    op = text(scope, child(scope, node, "operator"))
+    op = field_text(scope, node, "operator")
     left_node, right_node = child(scope, node, "left"), child(scope, node, "right")
     left, right = expression(scope, left_node), expression(scope, right_node)
     if op in ("/", "%") and is_integer(scope, left_node) and is_integer(scope, right_node):
@@ -731,7 +737,7 @@ def factors(scope: Scope, node: Node) -> list[str]:
         return [expression(scope, inner)] if inner.type == "parenthesized_expression" else factors(scope, inner)
     if node.type == "parenthesized_expression" and any(n.type == "sizeof_expression" for n in walk(node)):
         return factors(scope, node.named_children[0])
-    if node.type == "binary_expression" and text(scope, child(scope, node, "operator")) == "*":
+    if node.type == "binary_expression" and field_text(scope, node, "operator") == "*":
         return factors(scope, child(scope, node, "left")) + factors(scope, child(scope, node, "right"))
     if node.type == "sizeof_expression":
         return []
@@ -756,7 +762,7 @@ def pointer_value(scope: Scope, node: Node, name: str, dtype: str, value: Node |
         if name not in scope.arrays:
             scope.pointers[name] = dtype
         return []
-    function = text(scope, child(scope, inner, "function")) if inner.type == "call_expression" else ""
+    function = field_text(scope, inner, "function") if inner.type == "call_expression" else ""
     if function in ("malloc", "calloc"):
         arguments = arguments_of(scope, inner)
         if len(arguments) != (1 if function == "malloc" else 2):
@@ -844,7 +850,7 @@ def stored(scope: Scope, name: str, value: Node, spelled: str) -> str:
 
 def assignment(scope: Scope, node: Node) -> list[str]:
     left, right = child(scope, node, "left"), child(scope, node, "right")
-    op = text(scope, child(scope, node, "operator"))
+    op = field_text(scope, node, "operator")
     if left.type == "identifier" and (text(scope, left) in scope.arrays or text(scope, left) in scope.pointers):
         if op != "=":
             raise refuse(scope, node, "a pointer into an array (pointer arithmetic)")
@@ -1019,7 +1025,7 @@ def canonical_range(
     if variable.type != "identifier" or not is_integer_dtype(c_type(scope, child(scope, init, "type"))):
         return None
     name = text(scope, variable)
-    if test.type != "binary_expression" or text(scope, child(scope, test, "left")) != name:
+    if test.type != "binary_expression" or field_text(scope, test, "left") != name:
         return None
     bound = child(scope, test, "right")
     written = stored_names(scope, body)
@@ -1028,10 +1034,10 @@ def canonical_range(
     if any(n.type in ("call_expression", "assignment_expression", "update_expression") for n in walk(bound)):
         return None
     amount = "1"
-    if step.type == "update_expression" and text(scope, child(scope, step, "argument")) == name:
+    if step.type == "update_expression" and field_text(scope, step, "argument") == name:
         upward = "++" in text(scope, step)
-    elif step.type == "assignment_expression" and text(scope, child(scope, step, "left")) == name:
-        operator, right = text(scope, child(scope, step, "operator")), child(scope, step, "right")
+    elif step.type == "assignment_expression" and field_text(scope, step, "left") == name:
+        operator, right = field_text(scope, step, "operator"), child(scope, step, "right")
         if operator not in ("+=", "-=") or right.type != "number_literal" or not is_integer(scope, right):
             return None
         upward, amount = operator == "+=", number(scope, right)
@@ -1040,7 +1046,7 @@ def canonical_range(
     value = child(scope, declarators[0], "value")
     scope.scalars[name] = "int64"
     low, high = expression(scope, value), expression(scope, bound)
-    op = text(scope, child(scope, test, "operator"))
+    op = field_text(scope, test, "operator")
     stride = "" if amount == "1" and upward else f", {amount if upward else '-' + amount}"
     if upward and op in ("<", "<="):
         return name, f"{low}, {high}{' + 1' if op == '<=' else ''}{stride}", is_nonnegative(scope, value)
@@ -1050,7 +1056,7 @@ def canonical_range(
 
 
 def call_statement(scope: Scope, node: Node) -> list[str]:
-    function = text(scope, child(scope, node, "function"))
+    function = field_text(scope, node, "function")
     arguments = arguments_of(scope, node)
     if function in DROPPED:
         return []
