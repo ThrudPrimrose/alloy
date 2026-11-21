@@ -206,19 +206,25 @@ def statements(fn: ast.FunctionDef, scalars: dict[str, float]) -> Iterator[tuple
             continue
         if not isinstance(st, ast.For):
             raise Refused(f"line {st.lineno}: {ast.unparse(st).splitlines()[0]} is neither a loop nest nor setup")
-        extents: dict[str, str] = {}
-        index, body = nest(st, extents)
-        body = per_element(body, index, zeroed)
-        for inner in body:
-            if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
-                raise Refused(f"line {inner.lineno}: not one assignment")
-            target, arrays = inner.targets[0], set[str]()
-            acc = accumulator(target)
-            if acc is not None and acc in zeroed:
-                yield acc, reduction(inner, acc, index, scalars, arrays), arrays, True
-                continue
-            name = element(target, index, scalars, set())
-            yield name, element(inner.value, index, scalars, arrays), arrays, False
+        yield from loop_statements(st, zeroed, scalars)
+
+
+def loop_statements(
+    st: ast.For, zeroed: set[str], scalars: dict[str, float]
+) -> Iterator[tuple[str, str, set[str], bool]]:
+    """(target, expression, arrays read, reduces) per assignment of the loop nest ``st``; an assignment to an
+    accumulator in ``zeroed`` reduces."""
+    index, body = nest(st, {})
+    for inner in per_element(body, index, zeroed):
+        if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
+            raise Refused(f"line {inner.lineno}: not one assignment")
+        target, arrays = inner.targets[0], set[str]()
+        acc = accumulator(target)
+        if acc is not None and acc in zeroed:
+            yield acc, reduction(inner, acc, index, scalars, arrays), arrays, True
+            continue
+        name = element(target, index, scalars, set())
+        yield name, element(inner.value, index, scalars, arrays), arrays, False
 
 
 def module_constants(module: ast.Module) -> dict[str, float]:
