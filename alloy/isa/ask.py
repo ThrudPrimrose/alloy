@@ -1301,13 +1301,11 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
     return dataclasses.replace(answer, request=request)
 
 
-def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, verify: bool) -> Answer:
-    """sm_90's TMA: one box of a row-major global tile (f16, bf16, e4m3, or e5m2) into a 128B-swizzled shared tile."""
+def tma_refusal(request: Request, src: Operand, dst: Operand, nearest: str, dtype: str) -> Answer | None:
+    """Why the checked TMA load cannot copy ``src`` into ``dst`` (space, element type, swizzle, box, layout, the
+    source's extent), or None; ``dtype`` is the element type of the ``nearest`` request."""
     taken = [i for i, _ in tile.TYPES["sm90"]]
-    dtype = source.dtype
     width = tile.k_block(dtype)
-    rows = dst.shape[0] if len(dst.shape) == 2 and dst.shape[0] in (64, 128) else 64
-    nearest = spell(src=source, dst=Operand("shared", dtype, (rows, width), "row_major", "b128"))
     if dst.space != "shared":
         return no(request, Why.SPACE, f"TMA writes shared memory only, not {dst.space}", nearest)
     if dst.dtype not in taken:
@@ -1339,6 +1337,13 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
         return no(request, Why.SWIZZLE, "TMA reads an unswizzled global tile", nearest)
     if src.layout != "row_major" or dst.layout != "row_major":
         return no(request, Why.LAYOUT, "the checked TMA load copies row-major tiles", nearest)
+    return None
+
+
+def tma_setup(dtype: str, rows: int) -> dict[str, str]:
+    """What a TMA load of a ``rows``-row box of ``dtype`` needs set up: the tensor map, the aligned shared tile and
+    its barrier, the type note of an FP8 type, and the launch."""
+    width = tile.k_block(dtype)
     map_type, size = {"f16": "FLOAT16", "bf16": "BFLOAT16"}.get(dtype, "UINT8"), tile.GPU_BYTES[dtype]
     setup = {"tensor map": f"alloy_make_tmap<{tile.ELEM[dtype]}>(&map, global, rows, K, {rows}): {map_type}, box "
              f"{{{width}, {rows}}}, SWIZZLE_128B; the global address 16-byte aligned, K * {size} a multiple of 16",
@@ -1351,6 +1356,18 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
         f"as the tile program: grid dim3(N / BN, M / BM), {tile.GPU_THREADS['sm90', rows]} threads per block (one "
         f"warpgroup per 64 rows); one elected thread (threadIdx.x == 0) issues the TMA, and every thread then waits"
     )
+    return setup
+
+
+def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, verify: bool) -> Answer:
+    """sm_90's TMA: one box of a row-major global tile (f16, bf16, e4m3, or e5m2) into a 128B-swizzled shared tile."""
+    dtype = source.dtype
+    width = tile.k_block(dtype)
+    rows = dst.shape[0] if len(dst.shape) == 2 and dst.shape[0] in (64, 128) else 64
+    nearest = spell(src=source, dst=Operand("shared", dtype, (rows, width), "row_major", "b128"))
+    if refused := tma_refusal(request, src, dst, nearest, dtype):
+        return refused
+    setup = tma_setup(dtype, rows)
     # the wait is the completion's own request (wait on=mbarrier): the copy only issues
     steps = (Step("tma", f"mbarrier.arrive.expect_tx with {rows * 128} bytes"),
              Step("tma", "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes"))  # fmt: skip
