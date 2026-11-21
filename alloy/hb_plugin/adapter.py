@@ -34,6 +34,7 @@ from hpcagent_bench.frameworks.dace_framework import (
 )
 from hpcagent_bench.frameworks.framework import framework_class
 from hpcagent_bench.harness.envelope import Submission
+from hpcagent_bench.harness.judge_wire import ScorePreview
 from hpcagent_bench.harness.pipeline import judge_endpoints
 from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
 from hpcagent_bench.harness.scoring import resolve_kernel_timeout
@@ -271,20 +272,10 @@ class Named(Protocol):
     def name(self) -> str: ...
 
 
-def score_reserve(costs: Sequence[float]) -> float:
-    """The seconds the selection's ``/score`` and the harness's own grade take, each about one stub's cost."""
-    return 2 * max(costs, default=0.0)
-
-
-def comparable(left: float, costs: Sequence[float]) -> bool:
-    """Whether ``left`` seconds still pay for the selection's score and the plain program's, to compare them."""
-    return left > score_reserve(costs) + max(costs, default=0.0)
-
-
-def stub_affordable(left: float, costs: Sequence[float]) -> bool:
-    """Whether one more stub fits in ``left`` seconds and still leaves the comparison with the plain program: a
-    ranking cut by the budget otherwise delivers its pick ungraded against it."""
-    return comparable(left - max(costs, default=0.0), costs)
+def stub_affordable(left: float, costs: Sequence[float], score_cost: float) -> bool:
+    """Whether one more stub fits in ``left`` seconds and still leaves the pick's ``/score``, which takes about
+    ``score_cost`` (the plain program's grade): a ranking cut by the budget otherwise has no time to grade its pick."""
+    return left - max(costs, default=0.0) > score_cost
 
 
 def ranked[B: Named](
@@ -365,10 +356,14 @@ def optimize(
     linker, judge = Linker(result.program, matrix, out), judge_client()
     size = fast_size(config.current().service.preset)
 
+    # the plain program's grade first: the pick is compared to it, and its cost is what the pick's grade will take
+    scoring = time.monotonic()
+    plain_grade = public_grade(judge, plain(task, spec, pipeline, deliver), task.kernel)
+    score_cost = time.monotonic() - scoring
     stub_costs: list[float] = []
 
     def affordable_stub() -> bool:
-        return stub_affordable(deadline - time.monotonic(), stub_costs)
+        return plain_grade is not None and stub_affordable(deadline - time.monotonic(), stub_costs, score_cost)
 
     def time_stub(selection: dict[str, Build], symbol: str) -> float:
         start = time.monotonic()
@@ -385,17 +380,19 @@ def optimize(
     candidates = {rep.scope.symbol: verified(rep, verification.verdicts[rep.scope.symbol]) for rep in result.scopes}
     ranking = time.monotonic()
     chosen, timed = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
-    scoring = time.monotonic()
-    left = deadline - time.monotonic()
-    delivered = graded_pick(
-        judge,
-        chosen if left > score_reserve(stub_costs) else references,
-        references,
-        lambda selection: library(task, spec, linker, selection, deliver),
-        lambda: plain(task, spec, pipeline, deliver),
-        task.kernel,
-        compare=comparable(left, stub_costs),
-    )
+    picking = time.monotonic()
+    delivered = None
+    if plain_grade is not None and deadline - picking > score_cost:
+        delivered = graded_pick(
+            judge,
+            chosen,
+            references,
+            lambda selection: library(task, spec, linker, selection, deliver),
+            lambda: plain(task, spec, pipeline, deliver),
+            task.kernel,
+            baseline=plain_grade,
+        )
+    score = score_cost + time.monotonic() - picking
     score = time.monotonic() - scoring
     # every deliver builds the same .so path, so the returned library is built last
     submission = delivery(task, spec, pipeline, linker, delivered, deliver)
@@ -405,7 +402,7 @@ def optimize(
         task,
         started,
         generate,
-        scoring - ranking,
+        picking - ranking,
         score,
         len(stub_costs),
         scope_records(result, matrix, delivered, timed),
@@ -479,26 +476,34 @@ def graded_pick[B](
     build: Callable[[dict[str, B]], Submission],
     plain_program: Callable[[], Submission],
     kernel: str,
-    compare: bool = True,
+    baseline: ScorePreview | None = None,
 ) -> dict[str, B] | None:
-    """``chosen`` if ``/score`` grades it correct and, when ``compare``, no slower than ``plain_program``; else
-    ``None``, the plain program (:func:`plain`). A pick of every reference is no pick. Without ``compare`` (no time
-    for a second grade) a correct pick is kept ungraded against it."""
+    """``chosen`` if ``/score`` grades it correct and no slower than ``plain_program`` (graded here, or its grade
+    ``baseline`` when given); else ``None``, the plain program (:func:`plain`). A pick of every reference is no
+    pick."""
     if chosen == references:
         return None
-    baseline = plain_program if compare else None
-    return chosen if faster_correct(judge, lambda: build(chosen), baseline, kernel) else None
+    plain_grade = (lambda: baseline) if baseline is not None else (lambda: judge.score(plain_program(), kernel))
+    return chosen if faster_correct(judge, lambda: build(chosen), plain_grade, kernel) else None
+
+
+def public_grade(judge: JudgeClient, submission: Submission, kernel: str) -> ScorePreview | None:
+    """``/score`` of ``submission``, or None when the judge does not answer."""
+    try:
+        return judge.score(submission, kernel)
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def faster_correct(
-    judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], Submission] | None, kernel: str
+    judge: JudgeClient, pick: Callable[[], Submission], baseline: Callable[[], ScorePreview] | None, kernel: str
 ) -> bool:
-    """Whether ``pick`` grades correct and no slower than ``baseline`` (if any); a judge that does not answer keeps
-    the plain program, the library that is safe without a grade. Each is built just before its grade: both share one
-    .so."""
+    """Whether ``pick`` grades correct and no slower than ``baseline``'s grade (if any); a judge that does not
+    answer keeps the plain program, the library that is safe without a grade. The pick is graded first: the baseline
+    may build into the .so they share."""
     try:
         graded = judge.score(pick(), kernel)
-        reference = judge.score(baseline(), kernel) if baseline is not None else None
+        reference = baseline() if baseline is not None else None
     except (OSError, RuntimeError, ValueError):
         return False
     return graded.correct and (reference is None or not reference.correct or graded.speedup >= reference.speedup)
@@ -693,7 +698,7 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep, folder: pathlib.Path | No
         best = best if best is not None else timed(program)
         if best is not None and seconds < best:
             best, chosen, build_name = seconds, library, result.candidate.name
-    kept = faster_correct(judge, lambda: chosen, lambda: default, task.kernel)
+    kept = faster_correct(judge, lambda: chosen, lambda: judge.score(default, task.kernel), task.kernel)
     note = f"profiled, device build {build_name}" if kept else "graded slower or wrong: the pipeline's blocks"
     record_episode(keep, "gpu-profile", task, started, stubs=len(costs), scopes=gpu_scopes(shapes, kept, note))
     return chosen if kept else default

@@ -29,7 +29,6 @@ from hpcagent_bench.spec import BenchSpec
 from alloy.evaluate.verify import Verdict
 from alloy.hb_plugin import adapter
 from alloy.hb_plugin.adapter import (
-    comparable,
     fast_size,
     faster_correct,
     graded_pick,
@@ -96,15 +95,22 @@ def test_the_ranking_stops_when_the_budget_does() -> None:
     assert times == {"r0": {"r0.ref": 1.0}, "r1": {}}, "the record keeps the stubs timed before the budget ran out"
 
 
-@pytest.mark.parametrize("left", [30.0, 39.0, 40.5, 41.0, 100.0])
-def test_a_stub_is_timed_only_when_the_comparison_with_the_plain_program_still_fits_after_it(left: float) -> None:
-    """Stubs of 10 s: a budget that admits one more stub must still pay the pick's and the plain program's scores
-    (llr-full: 147 of 262 profile episodes ran out and delivered their pick ungraded against the plain program)."""
+def test_a_stub_is_timed_only_while_the_picks_grade_still_fits_after_it() -> None:
+    """Stubs of 10 s and a /score of 100 s (the plain program's, graded first): on ault a /score took 110 to 490 s
+    and a stub 9 s, so a reserve of a few stub costs left no time to grade the pick (job 920743)."""
     costs = [8.0, 10.0]
 
-    if stub_affordable(left, costs):
-        assert comparable(left - max(costs), costs)
-    assert stub_affordable(41.0, costs) and not stub_affordable(39.0, costs)
+    assert stub_affordable(111.0, costs, 100.0)
+    assert not stub_affordable(109.0, costs, 100.0)
+
+
+def test_a_pick_is_compared_to_the_plain_programs_grade_when_it_is_given_without_grading_it_again() -> None:
+    judge = Judge({"pick": (True, 2.0)})  # grading "base" would raise KeyError
+    plain_grade = ScorePreview(correct=True, speedup=1.5, native_ns=1, baseline_ns=1, baseline="c", speedups={})
+
+    sut = graded_pick(judge, {"r": Fake("pick")}, {"r": Fake("ref")}, library_of, lambda: BASE, "k", plain_grade)  # pyright: ignore[reportArgumentType] -- test double
+
+    assert sut is not None and sut["r"].name == "pick"
 
 
 def test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count() -> None:
@@ -192,7 +198,9 @@ PICK_CASES: list[tuple[dict[str, tuple[bool, float] | None], bool]] = [
 def test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(
     scores: dict[str, tuple[bool, float] | None], expected: bool
 ) -> None:
-    assert faster_correct(Judge(scores), lambda: PICK, lambda: BASE, "k") is expected  # pyright: ignore[reportArgumentType] -- test double
+    judge = Judge(scores)
+
+    assert faster_correct(judge, lambda: PICK, lambda: judge.score(BASE, "k"), "k") is expected  # pyright: ignore[reportArgumentType] -- test double
 
 
 def test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share() -> None:
@@ -204,7 +212,7 @@ def test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_shar
 
     judge = Judge({"pick": (True, 2.0), "base": (True, 1.0)})
 
-    assert faster_correct(judge, lambda: build("pick"), lambda: build("base"), "k")  # pyright: ignore[reportArgumentType] -- test double
+    assert faster_correct(judge, lambda: build("pick"), lambda: judge.score(build("base"), "k"), "k")  # pyright: ignore[reportArgumentType] -- test double
 
 
 PROFILE_CASES = [((True, 0.53), "base"), ((True, 2.0), "pick")]
