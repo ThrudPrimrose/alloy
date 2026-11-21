@@ -381,33 +381,31 @@ def lookup_command(table: Table, args: argparse.Namespace) -> int:
             f"{matrix_note(args.op) or suggestion(args.op, [*OPS, *functions()])}"
         )
     if function in OPS:
-        verdict = None if args.no_verify else validate(args.isa, function, args.dtype, table)
-        if verdict is not None and verdict.ok is False:
-            return report_failure(verdict)
-        if args.json:
-            row = dataclasses.asdict(table.entry(args.isa, function, args.dtype))
-            modelled = [dataclasses.asdict(c) for c in costs(args.isa, function, args.dtype)]
-            print(
-                json.dumps(
-                    {
-                        "isa": args.isa,
-                        "op": function,
-                        "dtype": args.dtype,
-                        **row,
-                        "costs": modelled,
-                        "verdict": record(verdict),
-                    }
-                )
-            )
-            return 0
-        print_entry(table, args.isa, function, args.dtype)
-        if verdict is not None:
-            print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}".rstrip())
+        code = entry_command(table, args.isa, function, args.dtype, args.json, not args.no_verify)
+        if code is not None:
+            return code
     if function in functions():
         if args.json:
             return print_kernels_json(table, args.isa, function, args.dtype, args.level, not args.no_verify)
         return print_kernels(table, args.isa, function, args.dtype, args.level, not args.no_verify)
     return 0
+
+
+def entry_command(table: Table, isa: str, op: str, dtype: str, as_json: bool, verify: bool) -> int | None:
+    """Print ``op``'s table entry after its check; the exit code when the lookup ends here (a failed check, or the
+    JSON answer), None when its math kernels follow."""
+    verdict = validate(isa, op, dtype, table) if verify else None
+    if verdict is not None and verdict.ok is False:
+        return report_failure(verdict)
+    if as_json:
+        row = dataclasses.asdict(table.entry(isa, op, dtype))
+        modelled = [dataclasses.asdict(c) for c in costs(isa, op, dtype)]
+        print(json.dumps({"isa": isa, "op": op, "dtype": dtype, **row, "costs": modelled, "verdict": record(verdict)}))
+        return 0
+    print_entry(table, isa, op, dtype)
+    if verdict is not None:
+        print(f"{'verified' if verdict.ok else 'unverified'}: {verdict.basis}; {verdict.detail}".rstrip())
+    return None
 
 
 def tensix_lookup(op: str, dtype: str, as_json: bool) -> int:
