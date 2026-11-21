@@ -139,12 +139,13 @@ class Parser(argparse.ArgumentParser):
         self.exit(USAGE, f"{self.prog}: error: {message}\n")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = Parser(
+def parser() -> Parser:
+    """The command line: one subcommand per query."""
+    cli = Parser(
         prog="alloy.isa",
         description="The machine abstract math ISA and its per-target intrinsic spellings.",
     )
-    commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
+    commands = cli.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
     lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, softhier, cuda, hip")
@@ -243,8 +244,11 @@ def main(argv: list[str] | None = None) -> int:
     all_p.add_argument("requests", nargs="+", help="op name=operand ... [unit=U] [max_ulp=X], one request per argument")
     all_p.add_argument("--no-verify", action="store_true", help="skip the check")
     all_p.add_argument("--json", action="store_true", help="the Combined, Infeasible, or Invalid answer as JSON")
+    return cli
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
     for field in ("isa", "op", "dtype", "function", "target", "unit"):
         if isinstance(value := vars(args).get(field), str):
             setattr(args, field, value.lower())
