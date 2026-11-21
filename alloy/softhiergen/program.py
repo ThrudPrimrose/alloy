@@ -122,6 +122,26 @@ def c_type(dtype: dtypes.typeclass) -> str:
     return "_Float16" if dtype == dtypes.float16 else dtype.ctype
 
 
+def placed_shares(
+    name: str, desc: data.Array, array: numpy.ndarray, constants: Mapping[str, Any]
+) -> tuple[list[str], list[str], numpy.ndarray]:
+    """The placed array ``name`` holding ``array`` as one C array per node in the node's section, the dump calls of
+    the shares in node order, and each element's position in the shares laid end to end."""
+    positions = hbm.positions(desc, constants)
+    share = hbm.share_size(desc, constants)
+    shares = numpy.zeros(hbm.node_count(name, desc, constants) * share, dtype=array.dtype)
+    shares[positions] = array.ravel()
+    lines, dumps = [], []
+    for node in range(len(shares) // share):
+        body = ", ".join(scalar_literal(value) for value in shares[node * share : (node + 1) * share])
+        lines.append(
+            f'__attribute__((section("{hbm.section(node)}"), aligned(64))) {c_type(desc.dtype)} '
+            f"{hbm.share_name(name, node)}[{share}] = {{{body}}};"
+        )
+        dumps.append(f'        dump("{name}", {hbm.share_name(name, node)}, {share * array.itemsize});')
+    return lines, dumps, positions
+
+
 def main_unit(sdfg: SDFG, inputs: Inputs) -> tuple[str, list[dict[str, Any]]]:
     """``main.c`` and the metadata of the arrays it dumps, in dump order."""
     data_lines, dumps, meta = [], [], []
@@ -136,18 +156,9 @@ def main_unit(sdfg: SDFG, inputs: Inputs) -> tuple[str, list[dict[str, Any]]]:
         if name in inputs:
             array[...] = inputs[name]
         if desc.placement is not None:
-            # The shares laid end to end; each node's share is its own array in its node's section
-            positions = hbm.positions(desc, sdfg.constants)
-            share = hbm.share_size(desc, sdfg.constants)
-            shares = numpy.zeros(hbm.node_count(name, desc, sdfg.constants) * share, dtype=array.dtype)
-            shares[positions] = array.ravel()
-            for node in range(len(shares) // share):
-                body = ", ".join(scalar_literal(value) for value in shares[node * share : (node + 1) * share])
-                data_lines.append(
-                    f'__attribute__((section("{hbm.section(node)}"), aligned(64))) {c_type(desc.dtype)} '
-                    f"{hbm.share_name(name, node)}[{share}] = {{{body}}};"
-                )
-                dumps.append(f'        dump("{name}", {hbm.share_name(name, node)}, {share * array.itemsize});')
+            lines, calls, positions = placed_shares(name, desc, array, sdfg.constants)
+            data_lines += lines
+            dumps += calls
             meta.append(
                 {"name": name, "dtype": array.dtype.str, "shape": list(array.shape), "positions": positions.tolist()}
             )
