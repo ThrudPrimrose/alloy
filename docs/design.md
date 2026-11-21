@@ -1,10 +1,10 @@
 # Alloy design notes
 
-Decisions as of 2026-10-26. Change one only with the owner's approval.
+Decisions as of 2026-10-26, updated 2026-11-20 to match the code as built. Change one only with the owner's approval.
 
 ## What Alloy is
 
-A per-scope code generation backend for DaCe: each scope is built under many configurations, every build is
+A per-scope code generation backend for DaCe and an execution-checked cross-ISA lookup: each CPU/GPU scope is built under many configurations, every build is
 verified, and the best one per scope is linked. Two products share one core:
 
 1. **DaCe backend** (`alloy/dace_backend.py`). Input: an SDFG, a manifest optional. The SDFG already states the
@@ -15,16 +15,19 @@ verified, and the best one per scope is linked. Two products share one core:
    - Without a manifest only speculative mode runs: the sizes and value domains are unknown. Inputs are verified on
      draws derived from the SDFG (every size symbol odd, arguments uniform in [0, 1)) only when any value is valid
      (`inputs.domain_gap`: no `sqrt`/`log`/`pow`/... call, no integer argument that may index); otherwise each
-     scope's default build ships. Only the default (64-bit) index width is built, since the real sizes are unknown.
+     scope's default build ships.
    - A build stays under `out`. A compile whose `build_key` matches loads it, so a repeated `sdfg()` sweeps once: the
      key digests the SDFG and its name, mode, declarations, matrix, compiler versions, manifest, Alloy's sources, the
      DaCe and bench versions, CPU flags, library search paths and DaCe's compiler config. DaCe's `use_cache` skips
      that check and is not consulted.
    - Profile mode needs a manifest: it times at the declared sizes.
-2. **HPCAgent-Bench tool and skill.** Input: NumPy plus a manifest (DaCe frontend to an SDFG, then 1); the manifest
-   gives the value domains, size presets and constraints. C plus a manifest waits for the bench's C-to-NumPy
-   translator. Shipped as a bench user plugin in `alloy/hb_plugin` (tool and skill there); the skill assumes the
-   bench.
+2. **HPCAgent-Bench tool and skill.** Input: NumPy plus a manifest (DaCe frontend to an SDFG, then 1), or canonical C plus
+   the bench binding JSON lifted deterministically through `alloy/frontend/cnumpy.py` (see `alloy/hb_plugin/skills/alloy-c/SKILL.md`);
+   the manifest gives the value domains, size presets and constraints. Shipped as a bench user plugin in `alloy/hb_plugin`
+   (tools `alloy_profile`, `alloy_speculative`, `alloy_reference`, `alloy_sweep`, and `alloy_isa`, plus skills and flavors);
+   the skill assumes the bench.
+
+Alloy also hosts two direct accelerator backends over DaCe tile SDFGs: `alloy/tensixgen/` (Tenstorrent Tensix compute/reader/writer generation from checked `tensix.toml` rows and SFPI rungs) and `alloy/softhiergen/` (SoftHier v1 RISC-V/Spatz/iDMA/RedMulE code generation; see [softhiergen.md](softhiergen.md)).
 
 Per run: the program is split into scopes (each top-level nest its own translation unit, compile command and static
 `.a`); Alloy sweeps candidates per scope, verifies them, times them (profile mode) or picks from the builds' reports
@@ -43,16 +46,14 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
 `api.generate(..., matrix=)` swaps it; every output folder keeps a copy). Code holds only the gating rules.
 
 - Rendering: CPF-C (C23) and CPF-C++ (C++20).
-- Compiler: gcc and clang. Always `-O3 -march=native`.
+- Compiler: gcc, clang, icx (Intel oneAPI), and nvc (NVIDIA HPC SDK), wherever usable on `PATH`. Always `-O3 -march=native -fPIC` plus 64-byte function/loop alignment (except `nvc`).
   - clang 22 needs `libomp-22-dev`, which this box lacks, so local runs use clang 21.
-- Codegen knobs (`compiler.cpu.codegen_params`):
-  - `loop_access_form`
-  - `heap_ptr_restrict`
-  - `const_scalar_abi`
-  - `decl_placement`
-  - `index_ctype` + `loop_index_type`, swept together. int32 is allowed only when the element-count bound fits.
-  - `scalar_init_style`: screened once, then fixed.
-  - Fixed: `const_init=on`; translation-unit split always on.
+- Codegen knobs (`[codegen.knobs]`, forwarded to `compiler.cpu.codegen_params`):
+  - `heap_ptr_restrict`: `["restrict", "none"]`
+  - `const_scalar_abi`: `["by_ref", "by_value"]`
+  - `scalar_decl`: `["eager", "late"]`
+  - DaCe indices stay `int64`; translation-unit split is always on. (Earlier draft axes `loop_access_form`, `index_ctype`/`loop_index_type`, and `scalar_init_style` were retired from `configuration_matrix.toml`.)
+- Intrinsic tasklets (`[intrinsic_tasklets]`, `alloy/backend/intrinsics.py`): per scope, a candidate whose admitted innermost elementwise or reduction (`add`/`min`/`max`) loop body is rewritten as a DaCe tasklet spelled from the checked CPU rows of `alloy/isa/intrinsics.toml` (AVX2, AVX-512, NEON, SVE) with a scalar remainder loop; built at the default FP level, at `contract` when a product feeds a sum, and at `reassoc` for reductions.
 - FP levels:
   - `strict`
   - `contract` (FMA)
@@ -101,11 +102,11 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
 
 ## Sweep axes (GPU)
 
-Status: not built.
+Status: built (`alloy/gpu.py`, `alloy/gpu_build.py`, `alloy/gpu_matrix.toml`) for HPCAgent-Bench CUDA and HIP tasks; DaCe `SDFG.compile` build plugin on GPU remains open.
 
-- Thread-block dimensions, `__launch_bounds__`, codegen knobs, `-use_fast_math` as a GPU FP level.
-- NVIDIA: nvcc and clang-cuda (local GPU).
-- AMD: hipcc and raw clang with the AMDGPU target. Runs on a remote box; ask before every ssh.
+- Thread-block dimensions (`rank 1`: 64--1024 threads; `rank >= 2`: 32x4, 32x8, 16x16, 64x4, 32x16, 128x2), `scalar_decl` (`eager` vs. `late`), and `intrinsic` device-map rendering (`gpu_build.py`).
+- NVIDIA (`cuda`): `nvcc -Xptxas -v` register/spill and occupancy ranking.
+- AMD (`hip`): `hipcc -Rpass-analysis=kernel-resource-usage` waves-per-SIMD and spill ranking, plus profile-mode coordinate descent (`gpu.descend`) in the bench tuner. Runs on remote GPU clusters; ask before every ssh.
 
 ## Verification
 
@@ -226,12 +227,9 @@ reductions, masks, math functions) and looks up the spelling per target instead 
   `/profile`, and keeps one only when the program runs faster; a shape that fails to launch is dropped; it stops
   when the kernel's time is short; the result is delivered if `/score` grades it correct and no slower than the
   pipeline's own blocks. The DaCe build plugin on GPU is not done.
-- Packets `alloy-profile` and `alloy-speculative` (an LLM agent; skill page `alloy`): the tool `alloy_<mode>` posts
-  `/alloy/<mode>`, which runs Alloy on the episode's kernel after `canon_cpu` in a spawned process holding a device
-  slot (`alloy/hb_plugin/workbench.py`). It answers with plain C/C++ an agent rebuilds without DaCe: `best/program.c`
-  (the CPF entry in the bench C ABI), `best/scopes/<symbol>.<ext>` (each scope's chosen candidate), a `Makefile`
-  compiling every scope with its own compiler and flags, the library it built (submit as `library=`), the scratch
-  it requests and `report.md` with the top candidates per scope.
+- Packets `alloy-profile`, `alloy-speculative`, `alloy`, `alloy-full`, `alloy-full-reference`, and `alloy-isa` (plus study ablation packets `accel-guidance`, `tt-docs-md`, `alloy-isa-{tensix,softhier}`, `alloy-facts-{tensix,softhier}`; see `alloy/hb_plugin/plugin.toml`):
+  - `alloy_profile`, `alloy_speculative`, and `alloy_reference` post `/alloy/<mode>` (`alloy/hb_plugin/workbench.py`), running Alloy on the episode's kernel after `canon_cpu` (or `canon_gpu` for `hip`/`cuda`) in a spawned process holding a device slot. On CPU tasks it returns plain unbuilt C/C++ sources that the agent builds without DaCe (`best/program.c`, `best/scopes/<symbol>.<ext>`, `best/Makefile`, `best/advice/<symbol>.md`, and `report.md`); the judge verifies that a scratch copy builds (`checked_sha256`) without placing the `.so` in the agent's folder (owner decision, 2026-11-17). On GPU tasks it writes `best/program.{hip,cu}` and `best/device.{hip,cu}` with compile-only ranked threadblock picks (`gpu.speculate`) and `report.md` (profile coordinate descent runs in the tuner flavor).
+  - `alloy_sweep` posts `/alloy/sweep` with the agent's edited `best/scopes/<symbol>.c` translation units, re-sweeping compilers, FP levels, vector math libraries, and ISA flags over the edits, verifying against the kernel's reference, and returning a fresh `best/` folder, `Makefile`, and ranked report.
 - Scope coverage over 259 LLR kernels (10-12): `parallel_cpu` 257 outline, `canon_cpu` 215. canon misses 28 that
   keep a library node with its `CPU` (C++) expansion (Reduce 9, ScatterConflictCheck 7, Scan 4, ArgReduce 3, none 5)
   and 15 whose scope needs `__dace_num_threads` (ExternalCall cannot type it); `inc` fails both. These record
@@ -259,7 +257,7 @@ reductions, masks, math functions) and looks up the spelling per target instead 
 
 ## Report format
 
-Status: built (profile mode). `report.json` is the record (`alloy/report.py`, schema 7, pydantic, refused on an
+Status: built (`profile`, `speculative`, `verified`, and `reference` modes). `report.json` is the record (`alloy/report.py`, `SCHEMA = 8`, reading schemas 7 and 8; pydantic, refused on an
 unknown key, a wrong type or another schema); `report.md` is rendered from it and nothing else.
 
 0. The vectorization options: every ISA x loop tail, with the compilers that build it on this host or why none can.

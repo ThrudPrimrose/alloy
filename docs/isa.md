@@ -7,17 +7,17 @@ agents reach it as the `alloy_isa` tool of the `alloy-isa` and `alloy` packets.
 
 ## What the table holds
 
-The table spells 33 abstract ops (`alloy/isa/ops.py`) on four SIMD ISAs. The ops are loads and stores, gather and
-scatter, arithmetic, `fma`, `sqrt`, comparisons and `select`, integer bit operations, the reductions `reduce_add`,
+The table spells 37 abstract ops (`alloy/isa/ops.py`) on four SIMD ISAs (414 `(isa, dtype, op)` rows plus 22 hardware assists). The ops cover loads and stores, gather and
+scatter, arithmetic, `fma`, `sqrt`, comparisons and `select`, integer bit/shift/logical operations, the reductions `reduce_add`,
 `reduce_min`, and `reduce_max`, the scan `scan_add`, `gen_mask`, and the math functions `exp`, `sin`, and `cos`. The ISAs are AVX2, AVX-512, NEON, and SVE, and `avx512_256` names AVX-512 under
 a 256-bit compiler width, so it has no spellings of its own.
 
-| ISA | f64 | f32 | f16 | i64 | i32 | Assists |
-|---|---|---|---|---|---|---|
-| `avx2` | 26 | 26 | 14 | 16 | 16 | 3 |
-| `avx512` | 27 | 27 | 14 | 16 | 16 | 9 |
-| `neon` | 26 | 26 | 14 | 16 | 16 | 4 |
-| `sve` | 27 | 27 | 15 | 16 | 16 | 6 |
+| ISA | f64 | f32 | f16 | i64 | i32 | Total rows | Assists |
+|---|---|---|---|---|---|---|---|
+| `avx2` | 26 | 30 | 14 | 16 | 16 | 102 | 3 |
+| `avx512` | 27 | 31 | 15 | 16 | 16 | 105 | 9 |
+| `neon` | 26 | 30 | 14 | 16 | 16 | 102 | 4 |
+| `sve` | 27 | 31 | 15 | 16 | 16 | 105 | 6 |
 
 A row of `intrinsics.toml` holds the C intrinsic, its signature, the lane semantics, the masked form where the ISA has
 one, the assembly mnemonic, and a note on traps such as operand order. Where no single intrinsic exists, the row holds
@@ -62,7 +62,7 @@ A `lookup` ends with a `cost:` line when `costs.toml` has the row: µops, latenc
 stream, as llvm-mca models the row's compiled instruction. x86 rows are modelled on Zen 4 (`znver4`, the host of
 beverin's MI300A) and Arm rows on Neoverse V2 (`neoverse-v2`, GH200's Grace). The cost is the arithmetic's own cost.
 Clang folds a row's operand load into the instruction, so `helpers/isacost.py` measures the register form instead.
-The column records 331 of 373 rows that name a mnemonic. The rest are rows whose instruction the compiler replaced.
+The column records 390 of the 414 CPU rows in `costs.toml`. The rest are composite recipes or rows without a single modelled mnemonic.
 
 The column shows what an intrinsic name hides. On Zen 4 a 512-bit `vaddpd` has the latency of a 256-bit one and
 half its throughput, because Zen 4 issues it as two 256-bit halves. Where AVX-512 wins on Zen 4, masking and the
@@ -79,8 +79,8 @@ member mask first (`__shfl_down_sync`), and its warp has 32 lanes. HIP's take no
 
 `python -m alloy.isa.simt verify` checks every row with a generated program: one warp runs the row on every thread,
 and the host compares each thread's value with the row's C reference. A dialect whose GPU the machine has is run; the
-other is compiled for its targets (gfx90a and gfx942 for HIP) and recorded as compiled, not run. The recorded checks
-ran on an NVIDIA RTX 4050, where all 11 rows are correct, and compiled all 11 HIP rows for both CDNA targets.
+other is compiled for its targets (`gfx90a` and `gfx942` for HIP, `sm_90a` for CUDA) and recorded as compiled, not run. The recorded checks
+(`simt_verified.toml`, run 2026-11-18) cover all 26 CUDA rows (verified on GH200) and all 26 HIP rows (verified on MI250X and MI300A).
 
 ## Tenstorrent Tensix
 
@@ -98,7 +98,7 @@ kernel around the row's call, and a writer, launches it with `ttnn.generic_op`, 
 `python -m alloy.isa.tensix verify` runs every row on Tenstorrent's simulator ttsim (v1.16.0, Blackhole) inside a
 pinned tt-metal 0.8x release image and records the result in `tensix_verified.toml`. The CI job `tensix` reruns it
 and uploads the file it would write (artifact `tensix-verified`), so a new row, added with `pending = true`, is
-recorded from CI. All 42 row and dtype pairs pass on ttsim. The measured errors are what a kernel author needs to
+recorded from CI. All 23 rows (46 row-and-dtype pairs) pass on ttsim. The measured errors are what a kernel author needs to
 know.
 
 | Path | f32 max relative error | bf16 |
@@ -123,12 +123,13 @@ Two limits apply to the simulator. ttsim does not model `SFPLOADMACRO`, so verif
 simulator interface, which tt-metal 0.6x does not, so 0.6x spellings are checked on hardware. The Daisytuner Blackhole
 runs 0.6x, and its jobs live in the `alloy-tenstorrent` repository.
 
-On that Blackhole (tt-metal 0.63, runs of 2026-11-16) every row compiles and runs, and 30 of the 34 row and dtype
-pairs hold the table's bound. All six FPU pairs pass, and so do 12 of the 14 SFPU rows at each dtype. The two rows
-that miss the bound at both dtypes are `log` and `tanh`. tt-metal 0.63 computes `log` with a low-order approximation
-and `tanh` from a lookup table, and their f32 relative error near the function's zero exceeds 0.3 and 0.1. The two
-rows carry a `note` that the lookup prints. The job reports only exit codes, so it gives these error ranges and not
-exact values.
+On that Blackhole (tt-metal 0.63, runs of 2026-11-16 and card probes of 2026-11-18 in `tensix_card.toml`) every row compiles and runs, and 30 of the 34 earlier elementwise row-and-dtype
+pairs held the table's bound. Quantitative card probes recorded in `tensix_card.toml` measure `exp_tile` at `1.73e-3` max relative error (bf16-level accuracy), `log_tile` at `0.0165` max absolute error (relative error > 1 near $x=1$), `sqrt_tile` at `5.54e-6` relative (`9.3e-8` with `legacy_compat = false`), and `div_binary_tile` at `2.43e-7` relative; `tanh_tile` misses the bound by 0.1--0.3 relative near zero. To restore f32 accuracy on tt-metal 0.63, `tensix.toml` ships two card-checked SFPI math rungs (`alloy_log_f32_sfpi` at 3.79 ulp / `2.26e-7` max relative error and `alloy_exp_f32_sfpi` at 1.66 ulp / `9.87e-8` max relative error), which `alloy.tensixgen` automatically substitutes for `v06`.
+
+## Arm SME and SoftHier v1
+
+- **Arm SME (`sme`, `alloy_tile_sme.h`).** Outer-product matrix tile kernel (`svmopa_za32_f32_m`) into 2D `ZA` tiles (`SVL/32 x SVL/32`, f32) under `__arm_locally_streaming` mode with transposed `A` (streaming mode has no gather) and `svwhilelt` edge predication. Checked by cross-compilation and execution under QEMU (`-cpu max,sme=on`).
+- **SoftHier v1 (`softhier`, `alloy/isa/softhier.py`, `softhier.toml`, `softhier_verified.toml`).** Simulated $2\times 2$ cluster mesh (`pulp.chips.soft_hier_old.flex_cluster` on pinned GVSoC; never pooled with native hardware timings). Covers 14 operations across Spatz RVV (`f32`/`f16` vector arithmetic and reductions), `iDMA` (`copy_1d`, `copy_2d`, `wait_idma`), `RedMulE` (`mma` in f16 with `(m,k,n)` config order and `wait_redmule`), and cluster/global barriers (`barrier_cluster`, `barrier_global`). All 19 row-and-dtype programs pass on GVSoC, and 8 of 8 planted mutants (wrong order, missing waits, invalid HBM loads) fail the gate.
 
 The Python side of `ttnn.generic_op` also differs in 0.6x, and the harness handles both versions. In 0.6x the
 runtime arguments are nested lists, `SourceType` and `UnpackToDestMode` live in `ttnn._ttnn.program_descriptor`, and

@@ -33,31 +33,34 @@ Layout:
   control-flow tree the report carries, `cnumpy` lifts a C kernel plus the bench's binding JSON to canonical NumPy and
   its SDFG (`python -m alloy.frontend.cnumpy kernel.c kernel_binding.json --sdfg kernel.sdfg`; the C it accepts is
   in `alloy/hb_plugin/skills/alloy-c/SKILL.md`).
-- `alloy/backend/`: `candidates` enumerates the sweep, `build` renders, compiles and checks one candidate, `runtime`
-  resolves and checks the OpenMP runtime, `sweep` builds every candidate.
+- `alloy/backend/`: `candidates` enumerates the sweep, `build` renders, compiles and checks one candidate, `intrinsics`
+  rewrites admitted innermost loops into checked intrinsic DaCe tasklets, `runtime` resolves and checks the OpenMP
+  runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from scope archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
-- `alloy/isa/`: the machine abstract math ISA (`ops.py`: load, store, gather, scatter, broadcast, +, -, *, /, %,
-  fma, sqrt, min, max, abs, neg, select, lanewise reduction, integer & / << >> && ||, gen_mask, zero, and the
-  transcendentals exp/sin/cos) spelled per ISA and dtype — f64/f32 everywhere, f16 where the hardware has it
-  (AVX2 emulates through f32), i64/i32 for the integer ops — with fallback recipes where an op has no native
-  instruction. `intrinsics.toml` is verified against the clang resource headers; both lookup directions;
-  `python -m alloy.isa host|lookup|reverse|assist|kernel|validate|skeleton|ops|isas|schedule`. `validate.py` runs
-  a row's intrinsic or recipe in a compiled kernel, natively or under `qemu-aarch64` when that is on PATH, or re-measures
-  its tier, before an agent sees it; a row that did not run stays `unverified`, however it compiled;
-  `hints.py` builds the do-it-yourself response from a scope's tasklets when emission fails;
-  `schedules.py` emits compile-and-run-verified C skeletons per loop schedule, with the compiler
-  flags that ask gcc/clang for the same shape.
+- `alloy/isa/`: the machine abstract math ISA (`ops.py`, 37 ops across 414 CPU rows + 22 assists in `intrinsics.toml`,
+  390 `llvm-mca` cost rows in `costs.toml`, 19 precision-bounded math functions in `mathkernels.toml`, 26 CUDA + 26 HIP
+  device rows in `simt.toml`, 23 Tensix rows + 2 card-checked SFPI rungs in `tensix.toml`, 14 SoftHier ops in
+  `softhier.toml`, and tile kernels in `alloy_tile_{cpu,sme,sm90,cdna}*`) exposed through one CLI:
+  `python -m alloy.isa host|lookup|reverse|assist|kernel|tiers|time|validate|skeleton|ops|isas|schedule|tile|ask|ask-all`.
+  `validate.py` runs a row's intrinsic or recipe in a compiled kernel, natively or under `qemu-aarch64` when that is on
+  PATH, or re-measures its tier, before an agent sees it; a row that did not run stays `unverified`, however it compiled;
+  `hints.py` builds the do-it-yourself response from a scope's tasklets when emission fails; `schedules.py` emits
+  compile-and-run-verified C skeletons per loop schedule, with the compiler flags that ask gcc/clang for the same shape.
   This is the bridge between DaCe's auto-vectorized intrinsic code and the math an agent reasons in.
-- `alloy/heuristics/`: what Alloy picks without timing: `predict`, `prune`, `fission`, `fp`.
+- `alloy/heuristics/`: what Alloy picks without timing: `predict`, `prune`, `fission`, `fp`, `ranges`.
+- `alloy/tensixgen/`: Tenstorrent Tensix code generation from DaCe tile SDFGs (`backend.py`, `split.py`, `ttsim.py`),
+  lowering checked `tensix.toml` rows and automatically substituting card-checked SFPI rungs where `tt-metal` 0.63 misses
+  f32 tolerance.
 - `alloy/softhiergen/`: SoftHier v1 code generation as a DaCe target (importing it registers the storages, the
   schedule and the expansions); `program.generate` lowers an SDFG to one C++ unit, and `gate/` checks the programs on
   GVSoC on ault. `docs/softhiergen.md` describes the code as built; update it with every change of behavior.
-- `alloy/`: `api` (`generate`, the entry point), `dace_backend` (Alloy behind `SDFG.compile`), `gpu` (speculated
-  threadblock shapes), `guidance` (advice for the scopes left short), `machine` (cores, cache), `report` (builds `report.json`, renders `report.md` from it, loads it back),
-  `records` (the strict pydantic configuration of the timing, verdict, report and manifest records). Every compiler,
-  flag and option is in `alloy/configuration_matrix.toml`, validated by the pydantic models of
-  `alloy/configuration_matrix.py`.
+- `alloy/`: `api` (`generate`, the entry point), `dace_backend` (Alloy behind `SDFG.compile`), `gpu` / `gpu_build` /
+  `gpu_matrix.toml` (GPU threadblock speculation, `scalar_decl`, intrinsic maps, and profile coordinate descent),
+  `guidance` (advice for the scopes left short), `machine` (cores, cache), `report` (builds `report.json` schema 8,
+  renders `report.md` from it, loads it back), `records` (the strict pydantic configuration of the timing, verdict,
+  report and manifest records). Every CPU compiler, flag and option is in `alloy/configuration_matrix.toml`, validated
+  by the pydantic models of `alloy/configuration_matrix.py`.
 - `examples/`: input programs for Alloy (dace numpy with symbolic sizes).
 - `samples/`: A/B studies. Each holds a slow and a fast rendering of one kernel, the harness, and the setup that
   measured the gap.
