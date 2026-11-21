@@ -56,46 +56,60 @@ def run(
     ``best/scopes/<symbol>.c``): the scope's reference stays its rendered default, the one build every other is
     verified against, and every candidate of the unit's language compiles the unit as ``agent_<candidate>``.
     ``reference_only`` builds each compiler's default and keeps the reference alone."""
-    reports = []
     host_isas = matrix.host_isas(machine.cpu_flags())
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
-        for scope in program.scopes:
-            folder = out / "scopes" / scope.symbol
-            renders: dict[RenderKey, pathlib.Path] = {}
+        return [
+            swept_scope(scope, matrix, out / "scopes" / scope.symbol, pool, host_isas, finite_inputs=finite_inputs,
+                        ranges=ranges, source=(sources or {}).get(scope.symbol), reference_only=reference_only)
+            for scope in program.scopes
+        ]  # fmt: skip
 
-            def built(cands: list[Candidate]) -> list[Build]:
-                sources = [write_source(scope, cand, matrix, folder, renders) for cand in cands]
-                return list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, cands))
 
-            candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs)
-            facts = prune.facts(scope, ranges)
-            natives = [c for c in candidates if prune.is_native(c)]
-            first = dict(zip(natives, built(natives), strict=True))
-            if reference_only:
-                reports.append(ScopeReport(scope, (reference_first(list(first.values()))[0],)))
-                continue
-            if sources and scope.symbol in sources:
-                reference = reference_first(list(first.values()))[0]
-                unit = sources[scope.symbol]
-                once: dict[str, str] = {}
-                builds = edited(reference, candidates, unit, matrix, folder, pool)
-                reports.append(ScopeReport(scope, tuple(deduplicated(b, once) for b in builds)))
-                continue
-            # the cells that may make a loop vectorize (an emission form, an FP level, a rung) are built before the
-            # vector cells are pruned, so "nothing vectorizes" reads every one of them
-            plain = [c for c in candidates if c not in first and not prune.is_vector_cell(c)]
-            kept, pruned = prune.prune(plain, matrix, facts, list(first.values()), host_isas)
-            second = dict(zip(kept, built(kept), strict=True))
-            vector = [c for c in candidates if c not in first and prune.is_vector_cell(c)]
-            kept, pruned_vector = prune.prune(vector, matrix, facts, [*first.values(), *second.values()], host_isas)
-            later = second | dict(zip(kept, built(kept), strict=True))
-            pruned = pruned + pruned_vector
-            seen: dict[str, str] = {}
-            ordered = [first.get(c) or later[c] for c in candidates if c in first or c in later]
-            note = intrinsics.offer(matrix, scope.sdfg, host_isas).note
-            kept_builds = tuple(deduplicated(b, seen) for b in reference_first(ordered))
-            reports.append(ScopeReport(scope, kept_builds, tuple(pruned), note))
-    return reports
+def swept_scope(
+    scope: Scope,
+    matrix: Matrix,
+    folder: pathlib.Path,
+    pool: ThreadPoolExecutor,
+    host_isas: tuple[str, ...],
+    *,
+    finite_inputs: bool,
+    ranges: Mapping[str, Interval] | None,
+    source: pathlib.Path | None,
+    reference_only: bool,
+) -> ScopeReport:
+    """One scope's builds in the three stages of :func:`run` under ``folder``; ``source`` is an edited translation
+    unit in place of the scope's rendering."""
+    renders: dict[RenderKey, pathlib.Path] = {}
+
+    def built(cands: list[Candidate]) -> list[Build]:
+        sources = [write_source(scope, cand, matrix, folder, renders) for cand in cands]
+        return list(pool.map(lambda s, c: compile_source(s, c, matrix), sources, cands))
+
+    candidates = one_factor_at_a_time(matrix, scope, finite_inputs=finite_inputs)
+    facts = prune.facts(scope, ranges)
+    natives = [c for c in candidates if prune.is_native(c)]
+    first = dict(zip(natives, built(natives), strict=True))
+    if reference_only:
+        return ScopeReport(scope, (reference_first(list(first.values()))[0],))
+    if source is not None:
+        reference = reference_first(list(first.values()))[0]
+        once: dict[str, str] = {}
+        builds = edited(reference, candidates, source, matrix, folder, pool)
+        return ScopeReport(scope, tuple(deduplicated(b, once) for b in builds))
+    # the cells that may make a loop vectorize (an emission form, an FP level, a rung) are built before the vector
+    # cells are pruned, so "nothing vectorizes" reads every one of them
+    plain = [c for c in candidates if c not in first and not prune.is_vector_cell(c)]
+    kept, pruned = prune.prune(plain, matrix, facts, list(first.values()), host_isas)
+    second = dict(zip(kept, built(kept), strict=True))
+    vector = [c for c in candidates if c not in first and prune.is_vector_cell(c)]
+    kept, pruned_vector = prune.prune(vector, matrix, facts, [*first.values(), *second.values()], host_isas)
+    later = second | dict(zip(kept, built(kept), strict=True))
+    pruned = pruned + pruned_vector
+    seen: dict[str, str] = {}
+    ordered = [first.get(c) or later[c] for c in candidates if c in first or c in later]
+    note = intrinsics.offer(matrix, scope.sdfg, host_isas).note
+    kept_builds = tuple(deduplicated(b, seen) for b in reference_first(ordered))
+    return ScopeReport(scope, kept_builds, tuple(pruned), note)
 
 
 def edited(
