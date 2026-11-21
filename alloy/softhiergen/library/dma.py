@@ -139,12 +139,20 @@ def split_call(
     return "\n".join(lines)
 
 
+def copy_edges(
+    node: CopyLibraryNode, state: dace.SDFGState
+) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]]:
+    """The edges into and out of copy ``node``."""
+    src = next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME)
+    dst = next(e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    return src, dst
+
+
 def dma_call(node: CopyLibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> str:
     """The iDMA call of a copy node; raises when the copy is no 1D or 2D transfer."""
     if isinstance(node, MaskedCopyLibraryNode) and node.has_mask:
         raise LoweringError(f"{node.label}: a masked copy has no iDMA lowering")
-    src = next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME)
-    dst = next(e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    src, dst = copy_edges(node, state)
     src_desc, dst_desc = edge_desc(sdfg, src), edge_desc(sdfg, dst)
     if src_desc.dtype != dst_desc.dtype:
         raise LoweringError(f"{node.label}: iDMA does not convert {src_desc.dtype} to {dst_desc.dtype}")
@@ -163,10 +171,14 @@ def dma_call(node: CopyLibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> s
         return split_call(dst, dst_desc, INPUT_CONNECTOR_NAME, src_rows, True, sdfg)  # pyright: ignore[reportArgumentType] -- DaCe's annotation
     if src_rows is None or dst_rows is None:
         raise LoweringError(f"{node.label}: {src.data} -> {dst.data} is no 1D or 2D transfer")
-    size = src_desc.dtype.bytes
+    return transfer(node.label, f"{dst_address}, {src_address}", src_rows, dst_rows, src_desc.dtype.bytes)
+
+
+def transfer(label: str, addresses: str, src_rows: Rows, dst_rows: Rows, size: int) -> str:
+    """The iDMA call between ``addresses`` (destination, source) that moves ``src_rows`` into ``dst_rows`` of
+    ``size``-byte elements: one 1D transfer when both sides are one run, else one 2D transfer of equal rows."""
     if src_rows[0] * src_rows[1] != dst_rows[0] * dst_rows[1]:
-        raise LoweringError(f"{node.label}: the two sides move different element counts")
-    addresses = f"{dst_address}, {src_address}"
+        raise LoweringError(f"{label}: the two sides move different element counts")
     if src_rows[0] == 1 and dst_rows[0] == 1:
         return f"dsh_dma_1d({addresses}, {src_rows[1] * size});"
     if src_rows[0] == 1:
@@ -174,14 +186,13 @@ def dma_call(node: CopyLibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> s
     if dst_rows[0] == 1:
         dst_rows = src_rows[0], src_rows[1], src_rows[1]
     if src_rows[:2] != dst_rows[:2]:
-        raise LoweringError(f"{node.label}: the rows of the two sides differ, {src_rows} and {dst_rows}")
+        raise LoweringError(f"{label}: the rows of the two sides differ, {src_rows} and {dst_rows}")
     rows, row, _ = src_rows
     return f"dsh_dma_2d({addresses}, {row * size}, {dst_rows[2] * size}, {src_rows[2] * size}, {rows});"
 
 
 def expand(node: CopyLibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> dace.nodes.Tasklet:
-    src = next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME)
-    dst = next(e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    src, dst = copy_edges(node, state)
     return guarded_tasklet(
         f"{node.label}_dma",
         {INPUT_CONNECTOR_NAME: pointer_to(sdfg, src)},
