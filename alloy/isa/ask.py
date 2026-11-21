@@ -950,10 +950,8 @@ def ttsim_check(row: tensix.Row, dtype: str) -> Check | str:
     return Check("run", "ttsim")
 
 
-def tile_call(request: Request) -> Answer:
-    """A Tensix operation on one 32 x 32 tile: its tile calls on the unit that has the operation, with ttsim's
-    recorded check."""
-    dtype = dtype_of(request)
+def tensix_rows(request: Request, dtype: str) -> list[tensix.Row] | Infeasible:
+    """The Tensix rows of the request's operation on the unit it asks (any unit if none), the SFPU first for f32."""
     rows = [r for r in tensix.rows() if r.op == request.op]
     if not rows and request.op == "reduce_min":
         return no(request, Why.NO_ROW, "Tensix reduce_tile pools SUM, AVG, and MAX; it has no MIN", "tensix neg",
@@ -973,6 +971,16 @@ def tile_call(request: Request) -> Answer:
             f"tensix {request.op} runs on {', '.join(units)}, not {request.unit}",
             *(f"unit {u}" for u in units),
         )
+    return found
+
+
+def tile_call(request: Request) -> Answer:
+    """A Tensix operation on one 32 x 32 tile: its tile calls on the unit that has the operation, with ttsim's
+    recorded check."""
+    dtype = dtype_of(request)
+    found = tensix_rows(request, dtype)
+    if not isinstance(found, list):
+        return found
     one = Operand("tile_register", dtype if dtype in tensix.dtypes() else "f32", (32, 32))
     if refusal := untyped(request, one):
         return refusal
@@ -1423,6 +1431,19 @@ def lds_copy(request: Request, src: Operand, dst: Operand, tile_: Operand, sourc
     return Feasible(request, "lds", steps, {"build": gpu_build(request.target)}, code, check, notes)
 
 
+def asked(
+    requests: Sequence[Request], verify: bool, kept: dict[int, Feasible]
+) -> list[Feasible] | Infeasible | Invalid:
+    """``ask`` of each request but the ``kept`` answers, or the first refusal, naming the request's index."""
+    answers: list[Feasible] = []
+    for i, request in enumerate(requests):
+        answer = kept[i] if i in kept else ask(request, verify=verify)
+        if not isinstance(answer, Feasible):
+            return dataclasses.replace(answer, reason=f"request {i} ({request.op}): {answer.reason}")
+        answers.append(answer)
+    return answers
+
+
 def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infeasible | Invalid:
     """The answers to ``requests`` as one kernel on one target. On a GPU, a copy into shared memory must write one K
     block that the list's mma loads, from the global matrix it loads; the copy and the mma then carry the check of the
@@ -1438,27 +1459,18 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
     if len(mmas) > 1:
         return no(requests[mmas[1]], Why.COMBINE, f"requests {mmas[0]} and {mmas[1]} are both mma; a tile program "
                   "runs one mma, so no program checks them together", fix="ask each mma with its copies alone")  # fmt: skip
-    answers: list[Feasible] = []
-    for i, request in enumerate(requests):
-        answer = ask(request, verify=False)
-        if not isinstance(answer, Feasible):
-            return dataclasses.replace(answer, reason=f"request {i} ({request.op}): {answer.reason}")
-        answers.append(answer)
+    answers = asked(requests, False, {})
+    if not isinstance(answers, list):
+        return answers
     fed = feeds(requests, mmas[0]) if mmas and requests[0].target in DIALECT else {}
     if isinstance(fed, Infeasible):
         return fed
-    for i, request in enumerate(requests):
-        if verify and i not in fed:
-            answer = ask(request, verify=True)
-            if not isinstance(answer, Feasible):
-                return dataclasses.replace(answer, reason=f"request {i} ({request.op}): {answer.reason}")
-            answers[i] = answer
+    if verify:
+        answers = asked(requests, True, {i: answers[i] for i in fed})
+        if not isinstance(answers, list):
+            return answers
     for i in fed:
-        mma_check = answers[mmas[0]].check
-        basis = f"the tile program of request {mmas[0]} (mma), which runs this copy" + (
-            f": {mma_check.basis}" if mma_check.basis else ""
-        )
-        answers[i] = dataclasses.replace(answers[i], check=Check(mma_check.status, basis))
+        answers[i] = carried(answers[i], answers[mmas[0]].check, mmas[0])
     order = ordering(requests, answers, fed, mmas)
     if isinstance(order, Infeasible):
         return order
@@ -1466,6 +1478,14 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
     basis = combined_basis(requests, answers, fed, mmas)
     return Combined(tuple(answers), tuple(f"copy {i} fills {name} of mma {mmas[0]}" for i, name in fed.items()),
                     Check(weakest.status, basis), order)  # fmt: skip
+
+
+def carried(copy: Feasible, mma_check: Check, mma: int) -> Feasible:
+    """A copy that feeds the mma of request ``mma``, with that mma's tile-program check."""
+    basis = f"the tile program of request {mma} (mma), which runs this copy" + (
+        f": {mma_check.basis}" if mma_check.basis else ""
+    )
+    return dataclasses.replace(copy, check=Check(mma_check.status, basis))
 
 
 def combined_basis(requests: Sequence[Request], answers: list[Feasible], fed: dict[int, str], mmas: list[int]) -> str:
