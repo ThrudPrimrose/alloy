@@ -979,11 +979,8 @@ def tile_call(request: Request) -> Answer:
     if refusal := unchained(request, shapes, one):
         return refusal
     shape = next(iter(shapes), (32, 32))
-    if len(shape) != 2 or shape[0] % 32 or shape[1] % 32:
-        sizes = {tuple(max(32, e - e % 32) for e in shape[:2]), tuple(-(-e // 32) * 32 for e in shape[:2])}
-        near = (spell(x=Operand("tile_register", one.dtype, s)) for s in sorted(sizes) if len(s) == 2)
-        reason = f"a Tensix tile call computes one 32x32 tile at a time; {'x'.join(map(str, shape))} is no whole number of tiles"
-        return no(request, Why.SHAPE, reason, *near, fix="pad the data to whole 32x32 tiles", block=(32, 32))
+    if refused := untiled(request, shape, one.dtype):
+        return refused
     tiles = (shape[0] // 32) * (shape[1] // 32)
     row = found[0]
     if row.kind == "scan" and shape[1] > 32:  # first = (i == 0) restarts the total only at the top of one column
@@ -1008,16 +1005,35 @@ def tile_call(request: Request) -> Answer:
           f"{math.ceil(r.error_ulp)}" for r in tensix.rungs(row.op, dtype)[:1]),
     )  # fmt: skip
     steps: tuple[Step, ...] = (Step(unit, init, 1 if once else tiles), Step(unit, call, tiles))
+    if row.kind == "reduction":  # every tile into one DST tile, packed once; the harness runs it so
+        steps += (Step(unit, "pack_tile(0, c16)"),)
+    return Feasible(request, unit, steps, tensix_setup(row, dtype), f"{init};\n{call};", check, notes)
+
+
+def untiled(request: Request, shape: tuple[int, ...], dtype: str) -> Infeasible | None:
+    """The refusal of a Tensix ``shape`` that is no whole number of 32x32 tiles, with the sizes below and above;
+    None."""
+    if len(shape) == 2 and not shape[0] % 32 and not shape[1] % 32:
+        return None
+    sizes = {tuple(max(32, e - e % 32) for e in shape[:2]), tuple(-(-e // 32) * 32 for e in shape[:2])}
+    near = (spell(x=Operand("tile_register", dtype, s)) for s in sorted(sizes) if len(s) == 2)
+    reason = (
+        f"a Tensix tile call computes one 32x32 tile at a time; {'x'.join(map(str, shape))} is no whole number of tiles"
+    )
+    return no(request, Why.SHAPE, reason, *near, fix="pad the data to whole 32x32 tiles", block=(32, 32))
+
+
+def tensix_setup(row: tensix.Row, dtype: str) -> dict[str, str]:
+    """What the host sets for Tensix ``row`` at ``dtype``: its header, the compute config, and a reduction's scaler."""
     setup = {"header": row.header}
     if dtype == "f32":  # without these, f32 data passes DST at bf16 precision (tensix.toml's target note)
         setup["compute config"] = "fp32_dest_acc_en = true, math_fidelity = HiFi4" + (
-            "; unpack_to_dest_mode UnpackToDestFp32 for the CBs copied into DST" if unit == "sfpu" else ""
+            "; unpack_to_dest_mode UnpackToDestFp32 for the CBs copied into DST" if row.unit.lower() == "sfpu" else ""
         )
-    if row.kind == "reduction":  # every tile into one DST tile, packed once; the harness runs it so
-        steps += (Step(unit, "pack_tile(0, c16)"),)
+    if row.kind == "reduction":
         setup |= {"compute config": "fp32_dest_acc_en = true, math_fidelity = HiFi4",
                   "scaler": "one tile in CB c1: 1 in the first row of each 16x16 face"}  # fmt: skip
-    return Feasible(request, unit, steps, setup, f"{init};\n{call};", check, notes)
+    return setup
 
 
 def sfpi_rung(request: Request) -> Answer:
