@@ -591,16 +591,22 @@ def subscript(scope: Scope, node: Node) -> str:
         return f"{target}[{', '.join(expression(scope, i) for i in indices)}]"
     if len(array.shape) == 1:
         return f"{target}[{expression(scope, indices[0])}]"
-    split = row_major(scope, indices[0], array.shape)
+    return flat_subscript(scope, target, array, indices[0])
+
+
+def flat_subscript(scope: Scope, target: str, array: Array, flat: Node) -> str:
+    """``A[flat]`` of a multidimensional ``A``: split into one index per axis where its strides allow, else read
+    through ``A.reshape(-1)``."""
+    split = row_major(scope, flat, array.shape)
     if split is None and any(not (e.is_Symbol or e.is_Integer) for e in map(extent, array.shape[1:])):
-        return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # strides split only against names
+        return f"{target}.reshape(-1)[{expression(scope, flat)}]"  # strides split only against names
     if split is None:
-        index = symbolic(scope, indices[0])
+        index = symbolic(scope, flat)
         if any(str(n) in scope.opaque for n in index.free_symbols):
-            return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # an opaque term may hold any stride
+            return f"{target}.reshape(-1)[{expression(scope, flat)}]"  # an opaque term may hold any stride
         split = delinearize(array, index)
         if all(e == 0 for e in split[:-1]):
-            return f"{target}.reshape(-1)[{expression(scope, indices[0])}]"  # no stride split off
+            return f"{target}.reshape(-1)[{expression(scope, flat)}]"  # no stride split off
     return f"{target}[{', '.join(printed(scope, e) for e in split)}]"
 
 
@@ -949,6 +955,14 @@ def update(scope: Scope, node: Node) -> list[str]:
     return [f"{target} {op}= 1"]
 
 
+#: The statements a for-loop header may hold (``header_statement``).
+HEADER_STATEMENTS: dict[str, Callable[[Scope, Node], list[str]]] = {
+    "declaration": declaration,
+    "assignment_expression": assignment,
+    "update_expression": update,
+}
+
+
 def indented(lines: list[str]) -> list[str]:
     return [f"    {line}" for line in lines] or ["    pass"]
 
@@ -975,6 +989,15 @@ def stored_names(scope: Scope, node: Node) -> set[str]:
     return names
 
 
+def header_statement(scope: Scope, part: Node | None, kinds: tuple[str, ...]) -> list[str]:
+    """A for-loop header's initializer or update as statements, when it is one of ``kinds``."""
+    if part is None:
+        return []
+    if part.type not in kinds:
+        raise refuse(scope, part, "a for-loop header outside canonical C form")
+    return HEADER_STATEMENTS[part.type](scope, part)
+
+
 def for_loop(scope: Scope, node: Node) -> list[str]:
     """``for (int64_t i = lo; i < hi; ++i)`` as ``for i in range(lo, hi)``; any other shape as a while loop."""
     init, test, step = (node.child_by_field_name(f) for f in ("initializer", "condition", "update"))
@@ -991,24 +1014,25 @@ def for_loop(scope: Scope, node: Node) -> list[str]:
         return lines
     if any(n.type == "continue_statement" for n in loop_body_nodes(body)):
         raise refuse(scope, node, "continue in a loop without a canonical range")
-    first: list[str] = []
-    if init is not None and init.type == "declaration":
-        first = declaration(scope, init)
-    elif init is not None and init.type == "assignment_expression":
-        first = assignment(scope, init)
-    elif init is not None:
-        raise refuse(scope, init, "a for-loop header outside canonical C form")
+    first = header_statement(scope, init, ("declaration", "assignment_expression"))
     for name in stored_names(scope, node):
         scope.nonnegative.discard(name)
-    advance: list[str] = []
-    if step is not None and step.type == "update_expression":
-        advance = update(scope, step)
-    elif step is not None and step.type == "assignment_expression":
-        advance = assignment(scope, step)
-    elif step is not None:
-        raise refuse(scope, step, "a for-loop header outside canonical C form")
+    advance = header_statement(scope, step, ("update_expression", "assignment_expression"))
     test_text = "True" if test is None else expression(scope, test)
     return [*first, f"while {test_text}:", *indented([*statement(scope, body), *advance])]
+
+
+def loop_step(scope: Scope, step: Node, name: str) -> tuple[bool, str] | None:
+    """(upward, amount) of a for-loop update that moves ``name`` by an integer literal (``++i``, ``i -= 2``), or
+    None."""
+    if step.type == "update_expression" and field_text(scope, step, "argument") == name:
+        return "++" in text(scope, step), "1"
+    if step.type != "assignment_expression" or field_text(scope, step, "left") != name:
+        return None
+    operator, right = field_text(scope, step, "operator"), child(scope, step, "right")
+    if operator not in ("+=", "-=") or right.type != "number_literal" or not is_integer(scope, right):
+        return None
+    return operator == "+=", number(scope, right)
 
 
 def canonical_range(
@@ -1033,16 +1057,10 @@ def canonical_range(
         return None
     if any(n.type in ("call_expression", "assignment_expression", "update_expression") for n in walk(bound)):
         return None
-    amount = "1"
-    if step.type == "update_expression" and field_text(scope, step, "argument") == name:
-        upward = "++" in text(scope, step)
-    elif step.type == "assignment_expression" and field_text(scope, step, "left") == name:
-        operator, right = field_text(scope, step, "operator"), child(scope, step, "right")
-        if operator not in ("+=", "-=") or right.type != "number_literal" or not is_integer(scope, right):
-            return None
-        upward, amount = operator == "+=", number(scope, right)
-    else:
+    stepped = loop_step(scope, step, name)
+    if stepped is None:
         return None
+    upward, amount = stepped
     value = child(scope, declarators[0], "value")
     scope.scalars[name] = "int64"
     low, high = expression(scope, value), expression(scope, bound)
@@ -1436,9 +1454,11 @@ def elementwise(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> ast.stmt |
     return ast.Assign([whole(name, len(ranges))], found[0])
 
 
-def reduction(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stmt] | None:
-    """``for o...: [T[o] = c;] for r...: T[o] += e[o..., r...]`` as ``T[:] = c + np.sum(e, axis=...)``; without
-    outer loops, ``s += e[r...]`` into a scalar as ``s += np.sum(e)``."""
+def reduction_nest(
+    loop: ast.For,
+) -> tuple[list[tuple[str, str]], ast.Assign | None, list[tuple[str, str]], ast.AugAssign] | None:
+    """``loop`` split into its outer loops, the optional initial assignment, the inner loops, and the ``+=`` they
+    run, when it has the shape of a reduction."""
     outer, body = nest(loop)
     init: ast.Assign | None = None
     if len(body) == 2 and isinstance(body[0], ast.Assign) and isinstance(body[1], ast.For):
@@ -1451,16 +1471,26 @@ def reduction(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stm
         return None
     if not inner or len(body) != 1 or not isinstance(body[0], ast.AugAssign) or not isinstance(body[0].op, ast.Add):
         return None
-    update = body[0]
+    return outer, init, inner, body[0]
+
+
+def accumulated(shapes: dict[str, tuple[str, ...]], target: ast.expr, outer: list[tuple[str, str]]) -> str | None:
+    """The container a reduction's ``+=`` accumulates into: an array indexed by the ``outer`` loops, or a scalar
+    without them."""
     if outer:
-        name = array_target(shapes, update.target, outer)
-        if name is None:
-            return None
-    elif isinstance(update.target, ast.Name):
-        name = update.target.id
-    else:
+        return array_target(shapes, target, outer)
+    return target.id if isinstance(target, ast.Name) else None
+
+
+def reduction(shapes: dict[str, tuple[str, ...]], loop: ast.For) -> list[ast.stmt] | None:
+    """``for o...: [T[o] = c;] for r...: T[o] += e[o..., r...]`` as ``T[:] = c + np.sum(e, axis=...)``; without
+    outer loops, ``s += e[r...]`` into a scalar as ``s += np.sum(e)``."""
+    found_nest = reduction_nest(loop)
+    if found_nest is None:
         return None
-    if name in names_in(update.value):
+    outer, init, inner, update = found_nest
+    name = accumulated(shapes, update.target, outer)
+    if name is None or name in names_in(update.value):
         return None
     every = outer + inner
     if init is not None and not (
