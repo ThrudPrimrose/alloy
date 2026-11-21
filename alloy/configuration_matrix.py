@@ -237,6 +237,12 @@ def check_consistency(m: Matrix) -> None:
         raise ValueError(f"{m.path}: no compiler spells cpp, and the scope timers build as C++")
     for name, comp in m.compilers.items():
         check_compiler(m, name, comp)
+    check_references(m)
+
+
+def check_references(m: Matrix) -> None:
+    """The tails, the intrinsic tasklets, and the vector libraries name only declared ISAs, lookup targets, ops, and
+    FP levels."""
     for name, tail in m.tails.items():
         if unknown := sorted(set(tail.isas) - m.isas.keys()):
             raise ValueError(f"{m.path}: tails.{name}.isas names undeclared ISAs {unknown}")

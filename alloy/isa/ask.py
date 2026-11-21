@@ -867,17 +867,8 @@ def thread_op(request: Request) -> Answer:
         if not isinstance(found, tuple):
             return found
         row, count = found
-    else:
-        scalar = Operand("register", row.dtype)
-        for operand in request.operands.values():
-            if len(operand.shape) >= 2 or operand.swizzle != "none":
-                return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
-                          "copy operand", spell(x=scalar), block=(1,))  # fmt: skip
-            if operand.space != "register":
-                group = "wavefront" if dialect == "hip" else "warp"
-                held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
-                return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} "
-                          "memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
+    elif refused := off_register(request, row, dialect):
+        return refused
     if request.max_ulp is not None:
         return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
@@ -891,6 +882,21 @@ def thread_op(request: Request) -> Answer:
     notes = (*((row.note,) if row.note else ()), *spread, simt.bindings(dialect))
     setup = {"build": gpu_build(request.target)}
     return Feasible(request, unit, (Step(unit, spelling, count),), setup, row_code(row, dialect), check, notes)
+
+
+def off_register(request: Request, row: simt.Row, dialect: str) -> Infeasible | None:
+    """The refusal of an operand that is no scalar in a register, for a SIMT row that computes on registers; None."""
+    scalar = Operand("register", row.dtype)
+    for operand in request.operands.values():
+        if len(operand.shape) >= 2 or operand.swizzle != "none":
+            return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
+                      "copy operand", spell(x=scalar), block=(1,))  # fmt: skip
+        if operand.space != "register":
+            group = "wavefront" if dialect == "hip" else "warp"
+            held = f"one register per lane of a {group}" if row.kind == "warp" else "one thread's registers"
+            return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} "
+                      "memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
+    return None
 
 
 def row_code(row: simt.Row, dialect: str) -> str:
