@@ -83,6 +83,21 @@ def elementwise(state: dace.SDFGState, entry: nodes.MapEntry) -> str:
     return ""
 
 
+def node_fit(state: dace.SDFGState, node: nodes.Node, scope: nodes.EntryNode | None) -> tuple[set[str], str]:
+    """The operations ``node`` needs a Tensix row for, and why it keeps the kernel off Tensix ("" when it does not):
+    a map that is not elementwise, a nested SDFG or library node, or a tasklet outside a map or with an operation no
+    row computes."""
+    if isinstance(node, nodes.MapEntry) and (why := elementwise(state, node)):
+        return set(), why
+    if isinstance(node, nodes.NestedSDFG | nodes.LibraryNode):
+        return set(), f"{type(node).__name__} {node.label}"
+    if not isinstance(node, nodes.Tasklet) or not any(not e.data.is_empty() for e in state.all_edges(node)):
+        return set(), ""  # a dataless tasklet is a size assumption check (``abort()`` on a negative length)
+    if scope is None:
+        return set(), f"{node.label}: outside a map"
+    return tasklet_ops(node)
+
+
 def fit(kernel: str, sdfg: dace.SDFG, rows: frozenset[str]) -> Fit:
     """``kernel``'s verdict from its SDFG: every map elementwise and one-dimensional, no loop, every tasklet inside a
     map and computing only operations of ``rows``."""
@@ -93,19 +108,10 @@ def fit(kernel: str, sdfg: dace.SDFG, rows: frozenset[str]) -> Fit:
     for state in [b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, dace.SDFGState)]:
         scopes = state.scope_dict()
         for node in state.nodes():
-            if isinstance(node, nodes.MapEntry) and (why := elementwise(state, node)):
+            ops, why = node_fit(state, node, scopes[node])
+            needed |= ops
+            if why:
                 return Fit(kernel, tuple(sorted(needed)), why)
-            if isinstance(node, nodes.NestedSDFG | nodes.LibraryNode):
-                return Fit(kernel, tuple(sorted(needed)), f"{type(node).__name__} {node.label}")
-            if isinstance(node, nodes.Tasklet):
-                if not any(not e.data.is_empty() for e in state.all_edges(node)):
-                    continue  # a size assumption check (``abort()`` on a negative length): host work, no data
-                if scopes[node] is None:
-                    return Fit(kernel, tuple(sorted(needed)), f"{node.label}: outside a map")
-                ops, why = tasklet_ops(node)
-                needed |= ops
-                if why:
-                    return Fit(kernel, tuple(sorted(needed)), why)
     missing = sorted(needed - rows)
     return Fit(kernel, tuple(sorted(needed)), f"no Tensix row for {', '.join(missing)}" if missing else "")
 
