@@ -249,6 +249,25 @@ def unread_calls(tasklet: nodes.Tasklet) -> list[tuple[nodes.Tasklet, str, tuple
     return [(tasklet, fn, (None,)) for fn in approximation.called_functions(tasklet.code.as_string)]
 
 
+def tasklet_ranges(
+    state: dace.SDFGState, node: nodes.Tasklet, known: Mapping[str, Interval | None]
+) -> tuple[list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]], list[tuple[str, Interval | None]]] | None:
+    """The libm calls of tasklet ``node`` with their arguments' ranges, and the range each container it writes gets,
+    from the ``known`` ranges of what it reads; None while one of its inputs has no entry yet."""
+    reads = [(e.dst_conn, e.data.data) for e in state.in_edges(node) if e.dst_conn and e.data.data]
+    if any(name not in known for _, name in reads):
+        return None
+    ev = evaluate(node, {conn: known[name] for conn, name in reads})
+    if ev is None:
+        return unread_calls(node), []
+    writes = [
+        (target, None if e.src_conn is None else ev.names.get(e.src_conn))  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
+        for e in state.out_edges(node)
+        if (target := state.memlet_path(e)[-1].data.data) is not None  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
+    ]
+    return [(node, fn, args) for fn, args in ev.calls], writes
+
+
 def scope_ranges(
     sdfg: dace.SDFG, ranges: Mapping[str, Interval]
 ) -> tuple[dict[str, Interval | None], list[tuple[nodes.Tasklet, str, tuple[Interval | None, ...]]]]:
@@ -284,18 +303,13 @@ def scope_ranges(
                             put(node.data, known[source.data])
                 if not isinstance(node, nodes.Tasklet):
                     continue
-                reads = [(e.dst_conn, e.data.data) for e in state.in_edges(node) if e.dst_conn and e.data.data]
-                if any(name not in known for _, name in reads):
+                found = tasklet_ranges(state, node, known)
+                if found is None:
                     skipped.append(node)  # a transient nothing has written yet: next round
                     continue
-                ev = evaluate(node, {conn: known[name] for conn, name in reads})
-                if ev is None:
-                    calls += unread_calls(node)
-                    continue
-                calls += [(node, fn, args) for fn, args in ev.calls]
-                for e in state.out_edges(node):
-                    if (target := state.memlet_path(e)[-1].data.data) is not None:  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
-                        put(target, None if e.src_conn is None else ev.names.get(e.src_conn))  # pyright: ignore[reportUnnecessaryComparison] -- DaCe types it without None
+                calls += found[0]
+                for target, value in found[1]:
+                    put(target, value)
         if known == before:
             return known, calls + [c for t in skipped for c in unread_calls(t)]
     unsettled = {name: None for name, value in known.items() if before.get(name, value) != value}
