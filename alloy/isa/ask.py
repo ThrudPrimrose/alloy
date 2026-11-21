@@ -1639,6 +1639,22 @@ def softhier_vector(request: Request) -> Answer:
     if request.max_ulp is not None:
         return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a SoftHier row has one accuracy",
                    "the request without max_ulp")  # fmt: skip
+    found = spatz_extent(request, row)
+    if not isinstance(found, int):
+        return found
+    dtype, n = dtype_of(request), found
+    lanes = softhier.vlmax(dtype)
+    strips = -(-n // lanes)
+    setvl = f"__riscv_vsetvl_e{dtype[1:]}m8(n - i)"
+    steps = (Step("spatz", setvl, strips), Step("spatz", softhier.spelled(row.call, dtype), strips))
+    tail = (f"{n} elements: {strips} strips of vl = min(n - i, {lanes}) (VLMAX of e{dtype[1:]}m8 at VLEN 256); the "
+            f"last strip, {n - (strips - 1) * lanes} elements, is the tail: no mask, no scalar epilogue")  # fmt: skip
+    return softhier_feasible(request, row, dtype, steps, (tail,))
+
+
+def spatz_extent(request: Request, row: softhier.Row) -> int | Answer:
+    """The elements per operand the Spatz ``row`` loops over, or why the request's operands do not fit it: their
+    names, one element type the row computes, TCDM, one shape, and the cluster's TCDM size."""
     one = Operand("shared", "f32", (1024,))
     if not request.operands:
         return bad(request, Why.OPERANDS, f"{request.op} needs an operand: it names the element type and the length",
@@ -1670,13 +1686,7 @@ def softhier_vector(request: Request) -> Answer:
         return no(request, Why.SHAPE, f"{n} {dtype} per operand do not fit the cluster's TCDM "
                   f"({softhier.config()['cluster_tcdm_size'] // 1024} KiB)", spell(x=Operand("shared", dtype, (16384,))),
                   fix="split the data into blocks that fit, and stream them in with iDMA")  # fmt: skip
-    lanes = softhier.vlmax(dtype)
-    strips = -(-n // lanes)
-    setvl = f"__riscv_vsetvl_e{dtype[1:]}m8(n - i)"
-    steps = (Step("spatz", setvl, strips), Step("spatz", softhier.spelled(row.call, dtype), strips))
-    tail = (f"{n} elements: {strips} strips of vl = min(n - i, {lanes}) (VLMAX of e{dtype[1:]}m8 at VLEN 256); the "
-            f"last strip, {n - (strips - 1) * lanes} elements, is the tail: no mask, no scalar epilogue")  # fmt: skip
-    return softhier_feasible(request, row, dtype, steps, (tail,))
+    return n
 
 
 def softhier_copy(request: Request) -> Answer:
