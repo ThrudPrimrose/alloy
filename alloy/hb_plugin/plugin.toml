@@ -94,17 +94,60 @@ full_name = "Alloy (stub agent)"
 optimizer = "alloy.hb_plugin.tuners:AlloyToolStub"
 extends = ["dace_cpu_canon"]
 
-# The agent-study configurations (alloy-workspace notes/design-review-2026-11-18.md, "Ablation"): one base prompt and one
-# task spec. `none` is the no-packet control "", `tool` is alloy-isa above. prompt-only adds guidance and no facts;
-# docs-md the vendor's pages by the rule in pages.py; facts-page the lookup's facts for one target as one page
-# (`python -m alloy.hb_plugin.pages` writes both kinds of page).
-[packets.accel-guidance]
-name = "Unfamiliar-accelerator guidance (no facts)"
-overlays = ["alloy:prompt/overlay-guidance.yaml"]
-
-[packets.tt-docs-md]
-name = "tt-metal v0.63.0 docs and kernel API headers"
+# The agent-study ablation (alloy-workspace notes/design-review-2026-11-18.md, "Ablation"): one base prompt and one task
+# spec; `none` is the no-packet control "", docs-md the vendor's documentation for the task's target (the rule in
+# pages.py, one packet per target), `tool` alloy-isa above.
+# BEGIN docs-md packets: written by `python -m alloy.hb_plugin.pages`, from the pages on disk
+[packets.docs-md-tensix]
+name = "Docs (tensix)"
 skills = ["tt-metal-compute-api", "tt-metal-dataflow-api", "tt-metal-docs"]
+
+[packets.docs-md-x86]
+name = "Docs (x86 AVX2, AVX-512 and AVX-512 FP16)"
+skills = [
+]
+
+[packets.docs-md-arm]
+name = "Docs (Arm NEON, SVE and SME)"
+skills = [
+]
+
+[packets.docs-md-sm90]
+name = "Docs (NVIDIA sm90 (PTX))"
+skills = [
+]
+
+[packets.docs-md-gfx942]
+name = "Docs (AMD gfx942 (CDNA3))"
+skills = [
+]
+
+[packets.docs-md-gfx90a]
+name = "Docs (AMD gfx90a (CDNA2))"
+skills = [
+    "docs-md-gfx90a-01-amd-instinct-mi200-instruction-set-archi",
+    "docs-md-gfx90a-02-contents",
+    "docs-md-gfx90a-03-preface",
+    "docs-md-gfx90a-04-chapter-1-introduction",
+    "docs-md-gfx90a-05-chapter-2-program-organization",
+    "docs-md-gfx90a-06-chapter-3-kernel-state",
+    "docs-md-gfx90a-07-chapter-4-program-flow-control",
+    "docs-md-gfx90a-08-chapter-5-scalar-alu-operations",
+    "docs-md-gfx90a-09-chapter-6-vector-alu-operations",
+    "docs-md-gfx90a-10-chapter-7-matrix-arithmetic-instructions",
+    "docs-md-gfx90a-11-chapter-8-scalar-memory-operations",
+    "docs-md-gfx90a-12-chapter-9-vector-memory-operations",
+    "docs-md-gfx90a-13-chapter-10-flat-memory-instructions",
+    "docs-md-gfx90a-14-chapter-11-data-share-operations",
+    "docs-md-gfx90a-15-chapter-12-instructions",
+    "docs-md-gfx90a-16-chapter-13-microcode-formats",
+]
+
+[packets.docs-md-softhier]
+name = "Docs (SoftHier v1)"
+skills = [
+]
+# END docs-md packets
 
 # `tool` per target: alloy_isa answers only for the task's target (tools/alloy.py TARGETS_ENV).
 [packets.alloy-isa-tensix]
@@ -116,11 +159,3 @@ env = { ALLOY_ISA_TARGETS = "tensix" }
 extends = "alloy-isa"
 name = "Alloy (ISA lookup, SoftHier)"
 env = { ALLOY_ISA_TARGETS = "softhier" }
-
-[packets.alloy-facts-tensix]
-name = "Alloy facts page (Tensix)"
-skills = ["alloy-facts-tensix"]
-
-[packets.alloy-facts-softhier]
-name = "Alloy facts page (SoftHier)"
-skills = ["alloy-facts-softhier"]

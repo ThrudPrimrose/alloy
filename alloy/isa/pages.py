@@ -1,16 +1,13 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""The text of the Tensix and SoftHier answers, for the lookup and for one page per target.
-
-``lookup tensix|softhier <op> <dtype>`` prints the lines of the rows it picks; ``page <target>`` prints the lines of
-every row, rung and dtype as one Markdown page. Both call the functions here, so the page holds exactly the facts the
-lookup prints (tests/test_isa_pages.py) and no fact has a second copy."""
+"""The text of the Tensix and SoftHier answers: ``lookup tensix|softhier <op> <dtype>`` prints the lines of the rows
+it picks, and ``ask`` its feasible or refused answers, through the functions here."""
 
 from collections.abc import Sequence
 
 from alloy.isa import OPS, ask, softhier, tensix, tensix_harness
 
-__all__ = ["ASKED", "TARGETS", "asked_lines", "checked", "feasible_lines", "page", "refusal_lines", "softhier_page", "softhier_row_lines", "tensix_page", "tensix_row_lines",
-           "tensix_rung_lines", "tensix_title"]  # fmt: skip
+__all__ = ["checked", "feasible_lines", "refusal_lines", "softhier_row_lines", "softhier_tail", "tensix_row_lines",
+           "tensix_rung_lines", "tensix_target_note", "tensix_title"]  # fmt: skip
 
 
 #: The tt-metal spelling of the card the eval runs on (Daisytuner Blackhole, tt-metal 0.63).
@@ -92,10 +89,6 @@ def softhier_tail() -> list[str]:
     return [f"build: {softhier.build_line()}", f"note: {softhier.table()['target']['note']}"]
 
 
-def fenced(lines: list[str]) -> list[str]:
-    return ["```text", *lines, "```", ""]
-
-
 def refusal_lines(title: str, answer: ask.Infeasible | ask.Invalid) -> list[str]:
     near = answer.nearest if isinstance(answer, ask.Infeasible) else answer.expected
     word = "nearest" if isinstance(answer, ask.Infeasible) else "expected"
@@ -125,107 +118,3 @@ def feasible_lines(title: str, answer: ask.Feasible) -> list[str]:
         fences = f"; before it: {', '.join(done.fences)}" if done.fences else ""
         lines.append(f"  async: completes on {done.token}: {done.wait}{fences}")
     return [*lines, answer.code]
-
-
-#: The ``ask`` answers a page carries beyond the rows: the waits, barriers, and a gemm tile plan per dtype.
-ASKED = {
-    "tensix": (
-        "wait on=noc",
-        "wait on=cb",
-        "mma a=tile_register:bf16:64x64 b=tile_register:bf16:64x64 c=tile_register:f32:64x64",
-    ),
-    "softhier": (
-        "wait on=idma",
-        "wait on=redmule",
-        "barrier kind=cluster",
-        "barrier kind=global",
-        "copy src=global:f16:64x64 dst=shared:f16:64x64",
-        "mma a=shared:f16:32x64 b=shared:f16:64x32 c=shared:f16:32x32",
-    ),
-}
-
-
-def asked_lines(target: str) -> list[str]:
-    """``ask <target> <request>`` for every request of :data:`ASKED`, as the CLI prints it (recorded checks only)."""
-    lines: list[str] = []
-    for text in ASKED[target]:
-        answer = ask.ask(ask.parsed_request(target, text), verify=False)
-        title = f"ask {target} {text}"
-        told = feasible_lines(title, answer) if isinstance(answer, ask.Feasible) else refusal_lines(title, answer)
-        lines += [line for line in told if not (line.startswith("  setup ") and line in lines)]  # a setup once
-        lines.append("")
-    return lines[:-1]
-
-
-def tensix_page() -> str:
-    """Every Tensix row with its runs at every dtype, and every SFPI rung, one section per op."""
-    target = tensix.table()["target"]
-    dtypes = tensix.dtypes()
-    verdicts = tensix.verdicts()
-    out = [
-        f"# {target['title']}: Alloy's checked facts",
-        "",
-        (
-            "Every row is a compute-kernel call on a 32x32 tile in DST, spelled for tt-metal 0.63 (the card's version). "
-            "Each row lists its includes and its init and call, the platform each verdict ran on with "
-            "the measured error, and its note. An SFPU math kernel is a function written on SFPU lanes (SFPI) with its "
-            "error measured on a Blackhole card."
-        ),
-        "",
-        "## Target",
-        "",
-        f"{target['title']}: tile calls, not intrinsics; dtypes {', '.join(dtypes)}.",
-        "",
-        *fenced([tensix_target_note()]),
-    ]
-    for op in dict.fromkeys(r.op for r in tensix.rows()):
-        lines = [tensix_title(",".join(dtypes), op)]
-        for row in (r for r in tensix.rows() if r.op == op):
-            lines += tensix_row_lines(row, [(d, verdicts.get((op, d, row.unit))) for d in dtypes])
-        for dtype in dtypes:
-            for rung in tensix.rungs(op, dtype):
-                lines += tensix_rung_lines(rung)
-        out += [f"## {op}", "", *fenced(lines)]
-    return "\n".join([*out, *asked_section("tensix")])
-
-
-def softhier_page() -> str:
-    """Every SoftHier row at every dtype it holds (a row of untyped data once), one section per op."""
-    target = softhier.table()["target"]
-    out = [
-        f"# {target['title']}: Alloy's checked facts",
-        "",
-        (
-            "Every row is C code for one operation on a SoftHier v1 cluster, with its GVSoC verdict and its note. A row "
-            "that moves bytes or no data (a copy, its wait, a barrier) holds for any element type."
-        ),
-        "",
-        "## Target",
-        "",
-        *fenced(softhier_tail()),
-    ]
-    for op in dict.fromkeys(r.op for r in softhier.rows()):
-        lines: list[str] = []
-        for row in (r for r in softhier.rows() if r.op == op):
-            shown = ("any",) if softhier.untyped(row) else row.dtypes
-            for dtype in shown:
-                spelled_as = row.dtypes[0] if softhier.untyped(row) else dtype
-                lines += softhier_row_lines(row, f"softhier/{dtype}/{op}", spelled_as,
-                                            softhier.verdict_of(row, spelled_as))  # fmt: skip
-        out += [f"## {op}", "", *fenced(lines)]
-    return "\n".join([*out, *asked_section("softhier")])
-
-
-def asked_section(target: str) -> list[str]:
-    intro = "What `ask` answers beyond the rows: the waits, the barriers, and a gemm tile plan."
-    return ["## Asked", "", intro, "", *fenced(asked_lines(target))]
-
-
-#: The targets with a page.
-TARGETS = {"tensix": tensix_page, "softhier": softhier_page}
-
-
-def page(target: str) -> str:
-    if target not in TARGETS:
-        raise KeyError(f"{target}: no facts page; pages exist for {', '.join(TARGETS)}")
-    return TARGETS[target]()

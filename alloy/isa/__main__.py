@@ -230,11 +230,6 @@ def parser() -> Parser:
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
     ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
 
-    page_p = commands.add_parser(
-        "page", help="every checked fact of a target as one Markdown page, the lookup's text: page tensix | softhier"
-    )
-    page_p.add_argument("target", help=", ".join(pages.TARGETS))
-
     all_p = commands.add_parser(
         "ask-all",
         help="requests that run as one kernel: ask-all sm90 'copy src=global:f16:64x64 "
@@ -855,7 +850,6 @@ COMMANDS: dict[str, Callable[[Table, argparse.Namespace], int]] = {
     "tile": lambda _, args: tile_command(args),
     "ask": lambda _, args: ask_command(args),
     "ask-all": lambda _, args: ask_all_command(args),
-    "page": lambda _, args: printed(lambda: print(pages.page(args.target))),
     "kernel": kernel_command,
     "tiers": tiers_command,
     "time": time_command,
