@@ -46,11 +46,9 @@ The following sections focus on the individual compute units. For precision, 'Te
 
 The following image shows the NoC grid of the Tenstorrent Wormhole™ processor (D = DRAM, T = Tensix, E = Ethernet, A = ARC/management, P = PCIe).
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-wormhole-logical-noc-diagram.webp">
 
 Each Tensix contains 5 "Baby" RISC-V CPUs (Data Movement 0, Data Movement 1, Unpack, Math and Pack), 2 NoC interfaces, a vector unit (SFPU), a matrix unit (FPU) and a pack and unpacker, as well as 1.5MB of SRAM (called L1 in the architecture) to hold transient data and facilitates data exchange between local components. The following image is a rough block diagram of a Tensix (blue arrow = instruction dispatch, brown arrow = data transfer)
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-tensix-rough-block-diagram.webp">
 
 It's a lot to take in. Let's start from the obvious - RISC-V cores and the SRAM. The SRAM stores data local to the Tensix and feeds the compute engines/peripherals. Unlike GPUs, where the Streaming Processors/Compute Units (CUDA/OpenCL terms) provide the majority of computation power, the Baby RISC-V cores in Tensix primarily handle instruction dispatch and control flow. They issue commands to the NoC/Matrix/Vector/{,Un}packer units, which in turn perform the actual computational work, rather than executing the computations directly. These cores are designated "Baby" cores to reflect their design - unlike modern superscalar, vector processors, they are deliberately minimal and share more architectural similarity with classic RISC processors like the MIPS R3000 than with the complex CPUs found in contemporary phones, desktops, and servers.
 
@@ -62,12 +60,10 @@ The intended data flow is as follows, resembling software pipelining but on a di
 * Packer packs the result back into a format for storage
 * NoC 1 sends the result to DRAM (or other Tensixes)
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-tensix-rough-block-diagram-dataflow.webp">
 
 
 The NoCs operate in a quasi-full-duplex configuration through a unidirectional, wraparound topology where NoC 0 and NoC 1 traverse the chip in opposite directions. This bidirectional capability allows both NoCs to simultaneously send and receive data, while the unidirectional design optimizes power consumption and silicon area utilization. The wraparound 2D torus topology ensures full connectivity, enabling any point on the chip to communicate with any other location. The opposing directional flow of the two NoCs naturally provides efficient return paths for data, regardless of the originating location.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-2-noc-and-direction.webp">
 
 It is important to understand that the flow described above is just one possible configuration. The RISC-V cores maintain full control of every part of the Tensix. For complex operations, they are fully capable and sometimes operators intentionally utilize both NoCs for the same data movement simultaneously, doubling the effective bandwidth at the cost of not being able to overlap reads and writes together. SRAM can be used as temporary storage for intermediate results within the operation itself.
 
@@ -82,7 +78,6 @@ This architecture, with its five RISC-V cores per Tensix, might initially sugges
 
 The following diagram illustrates how these kernel types are distributed across the Tensix architecture:
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-tensix-rough-kernel-blocks.webp">
 
 
 The three kernels - reader, compute, and writer - coordinate their execution using circular buffers, which are implemented in SRAM and facilitated by hardware metadata synchronization. These circular buffers act as producer-consumer queues, enabling safe and efficient data exchange between kernels.
@@ -95,7 +90,6 @@ Each kernel interacts with the buffers as follows:
 
 This mechanism ensures that each kernel only proceeds when the necessary data is ready, preventing race conditions and enabling asynchronous, pipelined execution across the hardware.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-circular-buffer-send-data-cross-kernel-or-itself.webp">
 The vector addition operation demonstrates the three-kernel architecture clearly. The reader kernel accepts three parameters: the addresses of input buffers A and B, and the number of tiles to process. It fetches data from DRAM and places it into circular buffers. The compute kernel waits for data availability from the reader, performs the addition operation, and outputs results to another circular buffer. The writer kernel then retrieves the computed results and writes them to the designated output buffer. Since the NoC interfaces and compute engines operate as independent peripherals, all operations execute asynchronously, requiring explicit synchronization barriers to ensure correct data flow and prevent race conditions.
 
 The following are the kernels, when run together, will perform vector addition on two input buffers A and B, each containing `n_tiles` tiles and write the result to an output buffer C.
@@ -225,12 +219,10 @@ The physical placement of DRAM controllers on the chip can be exploited to optim
 
 For specific operations, data can instead be stored in "sharded" mode (see the [Tensor and Memory Layout report](https://github.com/tenstorrent/tt-metal/blob/main/tech_reports/tensor_layouts/tensor_layouts.md) for details), where tensors are distributed across multiple Tensix cores based on the physical topology of the chip. This approach reduces the physical distance data must travel and minimizes cross-chip communication overhead. Sharded memory placement is particularly beneficial for attention mechanisms and convolution operations where the computation pattern aligns well with the data distribution strategy.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-wormhole-sharded-noc-access.webp">
 
 ### Native tile based computing
 Tenstorrent hardware natively operates on 32×32 element tiles, which optimizes common deep learning operations like matrix multiplication and convolution. This design choice addresses a fundamental inefficiency in traditional linear memory layouts: when performing matrix operations, hardware must buffer entire rows (often thousands of elements) because accessing the next row requires skipping large memory offsets, or manual zigzag/tiled matrix multiplication must be implemented which adds complexity.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-tile-memory-layout.webp">
 
 Tiled layouts solve this problem by organizing data so the next row element appears after only 32 elements, dramatically reducing the memory footprint needed for computation. This organization significantly improves the compute-to-SRAM ratio - instead of dedicating large amounts of SRAM to buffer full matrix rows, the hardware keeps more data actively involved in computation.
 
@@ -238,7 +230,6 @@ Tensors are stored in tiled format natively on Tenstorrent processors and conver
 
 The 32×32 tile size allows hardware to process data efficiently within a few clock cycles while maintaining computation pipelines. CPUs and GPUs must implement complex tiled access patterns in software to improve cache utilization and performance. Tenstorrent hardware provides this capability natively, eliminating the software overhead of tile management.
 
-<img width="900" alt="image" src="docs/source/common/images/matmul-blocked-row-column-diagram.webp">
 
 GPUs often struggle to efficiently supply data to their tensor cores because their architectures are primarily designed around vector operations. This can lead to less optimal memory access patterns for tensor workloads. In contrast, Tenstorrent hardware is built for tile-based computation from the start—both the vector and matrix units operate natively on 32×32 tiles. This approach leads to more predictable performance and a simpler programming model. For detailed performance numbers, see the [Matrix Multiplication performance report](https://github.com/tenstorrent/tt-metal/blob/main/tech_reports/GEMM_FLOPS/GEMM_FLOPS.md) as well as the [Convolution Networks on Tenstorrent Chips](https://github.com/tenstorrent/tt-metal/blob/main/tech_reports/CNNs/ttcnn.md) report.
 
@@ -273,19 +264,15 @@ Tenstorrent takes a different approach by using standard Ethernet connectivity. 
 
 The Wormhole n300 card illustrates this design with two Wormhole chips connected via Ethernet. The chip with direct PCIe host connectivity (L chip - Local) communicates with the secondary chip (R chip - Remote) through this Ethernet link. The SDK abstracts this topology, allowing developers to program both chips uniformly for memory allocation, kernel execution, and data transfer operations.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-wormhole-board-connective-diagram.webp">
 
 This architecture scales efficiently beyond two chips. The QuietBox configuration contains 8 Wormhole or 4 Blackhole™ processors connected in a mesh topology. Data can be transferred between processors using specialized code called EDM (Ethernet Data Movers) that handles traffic routing over the Ethernet interconnects.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-wormhole-quietbox-topology.webp">
 
 While 8 chips provides substantial computational capacity, larger configurations are required for training the most demanding models. The same interconnect architecture scales to configurations of up to 32 chips connected on a single host system.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-galaxy-32-wh.webp">
 
 Multiple 32-chip boxes can be connected together to form a mesh spanning several hosts. These meshes can then be linked, with traffic routed between them using the tt-Fabric firmware. This approach allows scaling to data center configurations while keeping the same programming model, API, and development concerns as a single machine.
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-fabric-scale-out-machine.webp">
 
 Please refer to the [tt-Fabric technical report](tech_reports/TT-Fabric/TT-Fabric-Architecture.md) for more details on the interconnect architecture and how it enables efficient scaling across multiple chips and hosts. And [Basic Ethernet Multichip](https://github.com/tenstorrent/tt-metal/blob/main/tech_reports/EthernetMultichip/BasicEthernetGuide.md) for a guide on Ethernet performance on Wormhole processors.
 
@@ -421,7 +408,6 @@ As described earlier, the RISC-V cores in each Tensix are mainly responsible for
 
 The diagram below shows the register layout and data flow for the SFPU and FPU units:
 
-<img width="900" alt="image" src="docs/source/common/images/tenstorrent-sfpu-fpu-dst-register-diagram-and-dataflow.webp">
 
 Some APIs, such as the `add_tiles` function shown earlier, operate directly on circular buffers and handle register management automatically. For other operations - like trigonometric or more complex elementwise functions - you need to explicitly move data between buffers and registers. The exact approach depends on the operation and the API you are using.
 
@@ -682,10 +668,7 @@ The following image illustrates the connection between the different components 
 >
 > Furthermore, the unpacker, packer, SFPU, and FPU are not processing cores and cannot make control flow decisions on their own. The RISC-V cores issue commands to the compute engines and manage data flow between them. Explicit synchronization may be needed to ensure the engines have finished their work before the RISC-V cores proceed.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-sfpu-fpu-dst-register-diagram-and-dataflow.webp" alt="/images/tenstorrent-sfpu-fpu-dst-register-diagram-and-dataflow.webp" />
-<figcaption>The connection between the unpacker, packer, SFPU, FPU, and the various registers is crucial for efficient data processing within the Tensix architecture.</figcaption>
-</figure>
+*Figure: The connection between the unpacker, packer, SFPU, FPU, and the various registers is crucial for efficient data processing within the Tensix architecture.*
 
 The data format within the compute registers can differ from the format used for storage in SRAM. The unpacker and packer are responsible for converting between these formats in hardware. This allows compute kernels to work with standard data types, like floating-point or integers, while data in SRAM can remain in a more compact representation, such as a block floating-point format.
 
@@ -933,12 +916,6 @@ This section provides an overview of the details of the Tensix architecture and 
 
 ## Hardware implications and the effects
 
-<div class="toctree">
-
-tiles memory_for_kernel_developers compute_engines_and_dataflow_within_tensix
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/advanced_topics/memory_for_kernel_developers.rst
 
 # Memory from a kernel developer's perspective
@@ -983,27 +960,17 @@ void kernel_main() {
 
 The memory blocks and related peripherals within the Tensix core can be visualized with the following diagram. Compute-related blocks are not shown as they are consumers of the memory system rather than part of the memory hierarchy discussed here.
 
-<figure>
-<img src="/images/tensix-memory-diagram.webp" alt="/images/tensix-memory-diagram.webp" />
-</figure>
-
 ### DRAM tiles
 
 Tensix tiles are one type of tile on the NoC. Each Tensix tile contains 1.5MB of SRAM. DRAM tiles, in contrast, connect to memory controllers that interface with off-chip GDDR memory. This provides significantly more storage capacity but with higher latency and lower bandwidth compared to SRAM.
 
 For example, Wormhole has 6 DRAM controllers, each connected to 2GB of GDDR6 memory (2 channels, 1GB per channel). The following image shows Wormhole's NoC grid with DRAM tiles labeled D1 to D6, corresponding to controllers 1-6. Multiple DRAM tiles can connect to the same controller to improve NoC connectivity. The DRAM tile placement is optimized for physical routing constraints rather than uniform distribution.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-wormhole-logical-noc-diagram.webp" style="width:65.0%" alt="/images/tenstorrent-wormhole-logical-noc-diagram.webp" />
-<figcaption>The NoC grid of the Tenstorrent Wormhole processor (D = DRAM, T = Tensix, E = Ethernet, A = ARC/management, P = PCIe).</figcaption>
-</figure>
+*Figure: The NoC grid of the Tenstorrent Wormhole processor (D = DRAM, T = Tensix, E = Ethernet, A = ARC/management, P = PCIe).*
 
 For Wormhole, within each DRAM tile, the 1st channel is mapped to address 0 and the 2nd channel is mapped from address 1GB.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-wormhole-dram-tile-connect-gddr.webp" style="width:65.0%" alt="/images/tenstorrent-wormhole-dram-tile-connect-gddr.webp" />
-<figcaption>The DRAM tile connection to GDDR memory. Each DRAM tile has 2 channels, each with 1GB of memory.</figcaption>
-</figure>
+*Figure: The DRAM tile connection to GDDR memory. Each DRAM tile has 2 channels, each with 1GB of memory.*
 
 ### Memory access via the NoC
 
@@ -1064,17 +1031,11 @@ Due to the lack of a linear, flat address space, data placement (onto each memor
 
 In row-major layout, a single row of the tensor occupies one page, enabling simpler programming and lower logic overhead for common patterns of data access.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-row-major-memory-layout.webp" alt="/images/tenstorrent-row-major-memory-layout.webp" />
-<figcaption>The row-major memory layout of a tensor. The data is stored in a single contiguous block of memory, with the last dimension varying the fastest.</figcaption>
-</figure>
+*Figure: The row-major memory layout of a tensor. The data is stored in a single contiguous block of memory, with the last dimension varying the fastest.*
 
 In contrast, the tiled layout provides optimal performance for computations on the Tensix core. It divides the tensor into smaller tiles, typically 2D tiles of size 32x32 (padded as needed). Each tile is stored in a separate page, enabling efficient access patterns that align with the Tensix core's internal compute units. See `Tile documentation<Tiles>` for details on the tile layout and its implications.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-tile-memory-layout.webp" alt="/images/tenstorrent-tile-memory-layout.webp" />
-<figcaption>The tiled memory layout of a tensor.</figcaption>
-</figure>
+*Figure: The tiled memory layout of a tensor.*
 
 ## Memory placement
 
@@ -1093,10 +1054,7 @@ Each generation of Tenstorrent processors has a different memory configuration. 
 
 Lock-step allocation solves this problem. For DRAM allocation, the buffer size is divided and rounded up by the number of DRAM tiles. Allocation assumes the processor has only 1/N of the total memory. The resulting address is then shared across all DRAM tiles, effectively multiplying the available space and restoring the allocated area to the requested amount. This approach ensures that a single pointer (plus the memory type, which is known before kernel execution) can uniquely identify an object, regardless of the underlying memory configuration. The same applies to SRAM allocation, where the address is shared across all Tensix cores.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-lock-step-allocation-cross-banks.webp" alt="/images/tenstorrent-lock-step-allocation-cross-banks.webp" />
-<figcaption>The lock-step where single address can be used across multiple DRAM tiles. At the cost of some memory waste.</figcaption>
-</figure>
+*Figure: The lock-step where single address can be used across multiple DRAM tiles. At the cost of some memory waste.*
 
 Lock step allocation has inherent trade-offs. When allocating X bytes on one DRAM controller, all other controllers must reserve the same amount. Additionally, if the allocation size is not evenly divisible by the number of controllers, some banks will contain unused space. Despite these limitations, the programming model simplification justifies the overhead - kernels receive a single address parameter instead of N hardware-dependent pointers, at the cost of some memory waste and explicit specification of the storage pattern.
 
@@ -1127,10 +1085,7 @@ TensorAccessorArgs(*src0_dram_buffer).append_to(compile_time_args);
 
 The above code allocates 64 tiles of size 2KiB each, for a total of 128KiB. Across DRAM controllers. We can visualize the allocation (as a 1D array) as follows:
 
-<figure class="align-center">
-<img src="/images/tenstorrent-interleaved-allocation-64-tiles-wh.webp" style="width:65.0%" alt="/images/tenstorrent-interleaved-allocation-64-tiles-wh.webp" />
-<figcaption>Allocation of 64 tiles of bfloat16 in interleaved memory on Wormhole (6 DRAM controllers). Each tile is 1024 elements of bfloat16, or 2KiB. The allocation round-robins across the 6 DRAM controllers.</figcaption>
-</figure>
+*Figure: Allocation of 64 tiles of bfloat16 in interleaved memory on Wormhole (6 DRAM controllers). Each tile is 1024 elements of bfloat16, or 2KiB. The allocation round-robins across the 6 DRAM controllers.*
 
 As interleaved memory is the most common allocation scheme. Instead of manually calculating the address and tile coordinates, utilities are provided to enable easy access. `TensorAccessor` enables efficient, random access to interleaved memory. Allowing tile/page sized granularity for read and writes.
 
@@ -1195,10 +1150,7 @@ for (uint32_t i = 0; i < n_tiles; i++) {
 
 Interleaved memory, while simple and generic, does not always provide optimal performance for all kernels. It can lead to NoC contention since each link can only carry one packet at a time. When multiple packets attempt to traverse the same link, one must wait, causing delays and reduced throughput. The problem is true for both Interleaved DRAM and SRAM buffers. This is particularly problematic for high-bandwidth kernels with predictable access patterns, such as matrix multiplication or convolution. In these cases, more advanced memory allocation schemes that reduce contention and improve data locality often provide better performance.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-wormhole-interleaved-noc-path-congestion.webp" alt="/images/tenstorrent-wormhole-interleaved-noc-path-congestion.webp" />
-<figcaption>It is possible to have contention on the NoC when multiple packets try to traverse the same link.</figcaption>
-</figure>
+*Figure: It is possible to have contention on the NoC when multiple packets try to traverse the same link.*
 
 Sharded memory is a more advanced allocation scheme that allows for, but not necessarily makes, a more efficient memory access pattern. It is used for kernels that require more control over data placement and access patterns. Sharded memory allows you to specify which tiles should store which data, and how the data should be partitioned across those tiles.
 
@@ -1250,10 +1202,7 @@ A tile's memory footprint depends on the underlying element's data type. For 32-
 
 Tiles are fixed-size data structures, so matrices and tensors must be aligned to tile boundaries. When data dimensions don't align naturally, they must be padded to the nearest tile boundary. As tiles are 2D structures, padding is only needed in the last two dimensions. Higher-dimensional tensors (3D or more) only require padding in their final two dimensions. Most operations do not care about the specific value of padding as eventually they are disregarded when converted back into row-major. However, some, including matrix multiplication do. Thus it is advised to pad with zeros.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-tile-memory-layout.webp" alt="/images/tenstorrent-tile-memory-layout.webp" />
-<figcaption>A 1024x48 matrix would be padded to 1024x64 to ensure that each row of 32 elements is aligned to a tile boundary.</figcaption>
-</figure>
+*Figure: A 1024x48 matrix would be padded to 1024x64 to ensure that each row of 32 elements is aligned to a tile boundary.*
 
 > [!WARNING]
 > The Tensix Processor is a little-endian architecture. Though all officially host architectures supported by Metalium are all little-endian, extra care must be taken when the host system may be big-endian.
@@ -1262,17 +1211,11 @@ Tiles are fixed-size data structures, so matrices and tensors must be aligned to
 
 Most tiles are not stored as a simple flat array. Instead, a 32x32 tile is subdivided into four 16x16 faces, where each face is stored as a contiguous block in memory. The faces are arranged sequentially in memory, creating a hierarchical structure that enables efficient access patterns for the matrix and vector engines in each Tensix core.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-32x32tile-16x16face-structure.webp" alt="/images/tenstorrent-32x32tile-16x16face-structure.webp" />
-<figcaption>A 32x32 tile is organized into four 16x16 faces.</figcaption>
-</figure>
+*Figure: A 32x32 tile is organized into four 16x16 faces.*
 
 For example, consider a bfloat16 tile starting at address `0x1000` with a size of `0x800` (2KB). The tile occupies memory from `0x1000` to `0x17FF`, with the four 16x16 faces located at addresses `0x1000`, `0x1200`, `0x1400`, and `0x1600` respectively.
 
-<figure class="align-center">
-<img src="/images/tenstorrent-32x32tile-16x16face-memory-layout.webp" alt="/images/tenstorrent-32x32tile-16x16face-memory-layout.webp" />
-<figcaption>Memory layout of a 32x32 tile with 16x16 faces with address of each face annotated.</figcaption>
-</figure>
+*Figure: Memory layout of a 32x32 tile with 16x16 faces with address of each face annotated.*
 
 > [!NOTE]
 > Other face sizes, orientation and count are possible but with limited support. The 32x32 tile with four 16x16 faces stored in a 2D array format is the most common and well supported configuration of tiles.
@@ -1770,7 +1713,7 @@ auto compute = CreateKernel(
     ComputeConfig{.math_fidelity = MathFidelity::HiFi4});
 ```
 
-Notice the `ComputeConfig` object. This indicates to the framework that a compute kernel should be created. There's a plethora of settings that can be set here. The most important one is the `math_fidelity` setting. This controls how accurate certain floating point operations are on the FPU specifically. Other operations (like the ones in the vector engine) are <span id="not">not</span>\_ affected by this setting.
+Notice the `ComputeConfig` object. This indicates to the framework that a compute kernel should be created. There's a plethora of settings that can be set here. The most important one is the `math_fidelity` setting. This controls how accurate certain floating point operations are on the FPU specifically. Other operations (like the ones in the vector engine) are not\_ affected by this setting.
 
 Now let's look at the kernels. First the reader kernel. This kernel reads both input buffers from DRAM and pushes them into the circular buffers (will discuss in the following section) for the compute kernel to consume. For now, consider the circular buffers as a pipe. Data can be pushed into the pipe and read out of it. And both ends must ensure there is space to do so.
 
@@ -2170,12 +2113,6 @@ This is the step to execute computation on the SFPU. Next we will introduce more
 
 # Programming Examples
 
-<div class="toctree">
-
-dram_loopback eltwise_binary eltwise_sfpu matmul_single_core matmul_multi_core matmul_multi_core_optimized
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/examples/matmul_multi_core.rst
 
 # Matmul (Multi Core)
@@ -2258,10 +2195,6 @@ Tenstorrent's AI processors support multiple parallelization strategies. The gri
 > The SPMD strategy is a standard approach in parallel computing and works well for many workloads. However, for matrix multiplication, the most efficient method on Tenstorrent's AI processors is to use a systolic array pattern, and use a subset of cores to read in and reuse the read data. This example does not cover that approach. See `MatMul_Multi_Core_example` for further optimizations, at the cost of genericity. SPMD remains a flexible and general-purpose strategy, making it suitable for a variety of tasks in Metalium.
 
 For a matrix of size `288 x 288` (9 tiles along each dimension, with each tile being 32x32), and 11 cores available, the work is divided as evenly as possible. In the example case, 10 cores are assigned 8 output tiles each, and the 11th core processes the remaining tile. The diagram below shows how the output tiles are distributed among the cores. Each color corresponds to a different core, and each tile is handled by only one core:
-
-<figure>
-<img src="/images/matmul-spmd-core-works-distribution.webp" alt="/images/matmul-spmd-core-works-distribution.webp" />
-</figure>
 
 Metalium includes utilities to simplify work distribution across cores. The `tt::tt_metal::split_work_to_cores(core_grid, num_work)` function calculates how many tiles each core should process, based on the total amount of work and the number of available cores. It distributes the work as evenly as possible, even if the number of tiles does not divide evenly among the cores. The function returns several values:
 
@@ -2611,7 +2544,7 @@ For those interested in learning more about parallel programming concepts, we re
 
 ## Source: docs/source/tt-metalium/tt_metal/examples/matmul_multi_core_optimizations/data_mcast.rst
 
-# Data Multicasting in <span class="title-ref">matmul_multicore_reuse_mcast</span>
+# Data Multicasting in `matmul_multicore_reuse_mcast`
 
 **Note**: This example only works on Grayskull.
 
@@ -2793,8 +2726,8 @@ auto mm_kernel_id = tt_metal::CreateKernel(
 
 1.  **Flow Control through Conditionals**
 
-    > - When bias fusion is enabled (<span class="title-ref">FUSE_BIAS</span>), intermediate results are directly packed and may not require reloading for subsequent operations within the same batch, indicated by <span class="title-ref">enable_reload = false</span>. We can employ this as a means of minimizing mem-to-mem operations.
-    > - For kernels without bias fusion or when the <span class="title-ref">PACKER_L1_ACC</span> is not defined, we determine whether intermediate results need to be reloaded based on the computation phase (ie. our <span class="title-ref">spill</span> condition and the current <span class="title-ref">block</span>). This ensures that for operations that accumulate results over multiple blocks, intermediate data is correctly managed across iterations.
+    > - When bias fusion is enabled (`FUSE_BIAS`), intermediate results are directly packed and may not require reloading for subsequent operations within the same batch, indicated by `enable_reload = false`. We can employ this as a means of minimizing mem-to-mem operations.
+    > - For kernels without bias fusion or when the `PACKER_L1_ACC` is not defined, we determine whether intermediate results need to be reloaded based on the computation phase (ie. our `spill` condition and the current `block`). This ensures that for operations that accumulate results over multiple blocks, intermediate data is correctly managed across iterations.
 
 2.  **Bias Broadcasting Mechanism**
 
@@ -2957,7 +2890,7 @@ else {
 
 ## Source: docs/source/tt-metalium/tt_metal/examples/matmul_multi_core_optimizations/data_reuse.rst
 
-# Data Reuse in <span class="title-ref">matmul_multicore_reuse</span>
+# Data Reuse in `matmul_multicore_reuse`
 
 ## Fine-Grained Block Size Control
 
@@ -2973,7 +2906,7 @@ uint32_t out_subblock_h = std::get<2>(matmul_params);
 uint32_t out_subblock_w = std::get<3>(matmul_params);
 ```
 
-Take note of the example's use of "subblocks" above. Recall that until now, we have optimized matmul by dividing matrices into blocks and subdivided those into tiles, which are laid out neatly on our compute cores. A key optimization here in <span class="title-ref">matmul_multicore_reuse</span> is the introduction of an intermediate subdivision of blocks, called subblocks. Below are some optimal subblock layouts already provided for you in the header, which run efficiently on our hardware.
+Take note of the example's use of "subblocks" above. Recall that until now, we have optimized matmul by dividing matrices into blocks and subdivided those into tiles, which are laid out neatly on our compute cores. A key optimization here in `matmul_multicore_reuse` is the introduction of an intermediate subdivision of blocks, called subblocks. Below are some optimal subblock layouts already provided for you in the header, which run efficiently on our hardware.
 
 ``` cpp
 constexpr std::array<std::tuple<uint32_t, uint32_t>, 20> SUBBLOCK_HW_CHOICES = {{
@@ -3190,12 +3123,6 @@ The Tensix core architecture's secret weapon is its full user control over memor
     ./build/programming_examples/matmul_multi_core_reuse
     ./build/programming_examples/matmul_multi_core_reuse_mcast
 
-<div class="toctree">
-
-matmul_multi_core_optimizations/data_reuse matmul_multi_core_optimizations/data_mcast
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/examples/matmul_single_core.rst
 
 # Matmul (Single Core)
@@ -3244,7 +3171,7 @@ CoreCoord core({0, 0});  // Single core at position {0, 0}
 
 Before touching the matrix multiplication on the device, the host program performs several important steps:
 
-1.  **Input Data Generation**: Two input vectors, <span class="title-ref">src0_vec</span> (for matrix A) and <span class="title-ref">src1_vec</span> (for matrix B), are populated with random <span class="title-ref">bfloat16</span> values
+1.  **Input Data Generation**: Two input vectors, `src0_vec` (for matrix A) and `src1_vec` (for matrix B), are populated with random `bfloat16` values
 
     ``` cpp
     std::mt19937 rng(std::random_device{}());
@@ -3260,14 +3187,14 @@ Before touching the matrix multiplication on the device, the host program perfor
     }
     ```
 
-2.  **Golden Reference Calculation**: A reference implementation of matrix multiplication, <span class="title-ref">golden_matmul</span>, is executed on the CPU. This produces a <span class="title-ref">golden_vec</span> which serves as the ground truth for verifying the correctness of the accelerator's output.
+2.  **Golden Reference Calculation**: A reference implementation of matrix multiplication, `golden_matmul`, is executed on the CPU. This produces a `golden_vec` which serves as the ground truth for verifying the correctness of the accelerator's output.
 
     ``` cpp
     std::vector<bfloat16> golden_vec(M * N, 0);
     golden_matmul(src0_vec, src1_vec, golden_vec, M, N, K);
     ```
 
-3.  **Data Tilization**: The input vectors, which are initially in a row-major format, are converted into a tiled layout using the <span class="title-ref">tilize_nfaces</span> function. This is a necessary step because the Tenstorrent hardware operates on data in 32x32 tiles.
+3.  **Data Tilization**: The input vectors, which are initially in a row-major format, are converted into a tiled layout using the `tilize_nfaces` function. This is a necessary step because the Tenstorrent hardware operates on data in 32x32 tiles.
 
     ``` cpp
     src0_vec = tilize_nfaces(src0_vec, M, K);
@@ -3558,7 +3485,7 @@ EnqueueReadBuffer(cq, dst_dram_buffer, output.data(), true);
 
 After the program execution, the `output.data()` (which is `result_vec` in the `main` function of the C++ example) contains the result matrix C from the device's DRAM. However, this data is still in the tiled format used by the Tenstorrent hardware. To verify its correctness against the `golden_vec` (which is in a standard row-major format), two steps are necessary:
 
-1.  **Data Untilization**: The <span class="title-ref">untilize_nfaces</span> function is used to convert the tiled output data back into a row-major format. This is the inverse operation of `tilize_nfaces` performed on the input data.
+1.  **Data Untilization**: The `untilize_nfaces` function is used to convert the tiled output data back into a row-major format. This is the inverse operation of `tilize_nfaces` performed on the input data.
 
     ``` cpp
     // Reverse the tilization to get the result in the row-major format
@@ -3589,12 +3516,6 @@ Next we will explore the `MatMul_Multi_Core example <MatMul_Multi_Core example>`
 
 Circular buffers are used for communication between threads of the Tensix core. They act as limited capacity double-ended queues with producers pushing tiles to the back of the queue and consumers popping tiles off the front of the queue.
 
-<div class="toctree">
-
-cb_pages_available_at_front cb_wait_front cb_pages_reservable_at_back cb_reserve_back cb_push_back cb_pop_front get_read_ptr get_write_ptr
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/compute/compute.rst
 
 # Compute APIs
@@ -3609,185 +3530,61 @@ For details on function parameters and their meanings, see the `Compute Engines 
 
 ## Synchronization
 
-<div class="toctree">
-
-acquire_dst release_dst reg_api
-
-</div>
-
 ## Compute
 
 ### Initialization
 
-<div class="toctree">
-
-init_functions binary_op_init_funcs
-
-</div>
-
 ### Compute (FPU/matrix engine)
-
-<div class="toctree">
-
-add_tiles sub_tiles mul_tiles add_tiles_bcast sub_tiles_bcast mul_tiles_bcast
-
-matmul_tiles matmul_block reduce_tile transpose_wh_tile
-
-tilize untilize
-
-</div>
-
-<div class="only">
-
-not html
-
-</div>
 
 ### Compute (SFPU/vector engine)
 
 #### Basic arithmetic operations
 
-<div class="toctree">
-
-add_binary_tile sub_binary_tile mul_binary_tile div_binary_tile rsub_tile rsub_binary_tile power_tile power_binary_tile square_tile sqrt_tile rsqrt_tile recip_tile abs_tile negative_tile binop_with_scalar_tile tiled_prod_tile
-
-</div>
-
 #### Integer operations
-
-<div class="toctree">
-
-add_int_tile sub_int_tile mul_int_tile rsub_int32_tile gcd_tile lcm_tile remainder_tile fmod_tile
-
-</div>
 
 #### Exponential and logarithmic functions
 
-<div class="toctree">
-
-exp_tile exp2_tile expm1_tile log_tile log1p_tile log_with_base_tile xlogy_binary_tile
-
-</div>
-
 #### Comparison and logical operations
-
-<div class="toctree">
-
-unary_eq_tile unary_ne_tile unary_gt_tile unary_ge_tile unary_lt_tile unary_le_tile unary_max_tile unary_min_tile max_tile binary_max_tile binary_min_tile ltz_tile lez_tile gtz_tile gez_tile eqz_tile nez_tile logical_not_unary_tile isinf_tile isnan_tile heaviside_tile
-
-</div>
 
 #### Bitwise operations
 
-<div class="toctree">
-
-bitwise_and_tile bitwise_or_tile bitwise_xor_tile bitwise_not_tile bitwise_and_binary_tile bitwise_or_binary_tile bitwise_xor_binary_tile left_shift_tile right_shift_tile binary_shift_tile
-
-</div>
-
 #### Rounding and ceiling functions
-
-<div class="toctree">
-
-ceil_tile round_tile clamp_tile threshold_tile sign_tile signbit_tile
-
-</div>
 
 #### Hyperbolic functions
 
-<div class="toctree">
-
-asinh_tile atanh_tile
-
-</div>
-
 #### Special mathematical functions
-
-<div class="toctree">
-
-i0_tile i1_tile cumsum_tile alt_complex_rotate90_tile
-
-</div>
 
 #### Initialization and utilities
 
-<div class="toctree">
-
-compute_kernel_hw_startup
-
-</div>
-
 #### Trigonometric functions
-
-<div class="toctree">
-
-erf_tile erfc_tile erfinv_tile
-
-tanh_tile tan_tile sin_tile cos_tile asin_tile atan_tile acos_tile acosh_tile
-
-</div>
 
 #### Activation functions
 
-<div class="toctree">
-
-relu_tile elu_tile gelu_tile sigmoid_tile celu_tile silu_tile prelu_tile softplus_tile softsign_tile hardsigmoid_tile hardtanh_tile
-
-</div>
-
 #### Data manipulation and processing
 
-<div class="toctree">
-
-fill_tile identity_tile mask_tile where_tile reshuffle_rows_tile typecast_tile dropout_tile rand_tile
-
-</div>
-
 #### Quantization operations
-
-<div class="toctree">
-
-quant_tile requant_tile dequant_tile
-
-</div>
 
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/compute/init_functions.rst
 
 # any_init
 
-Most compute API calls have an <span class="title-ref">\*\_init</span> paired API call (for example <span class="title-ref">exp_tile_init</span> and <span class="title-ref">exp_tile</span>). Invoking this <span class="title-ref">\*\_init</span> API configures the compute unit for execution of the subsequent paired call.
+Most compute API calls have an `*_init` paired API call (for example `exp_tile_init` and `exp_tile`). Invoking this `*_init` API configures the compute unit for execution of the subsequent paired call.
 
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/data_movement/data_movement.rst
 
 # Data Movement APIs
 
-<div class="toctree">
-
-noc_async_read noc_async_read_set_state noc_async_read_with_state noc_async_read_one_packet noc_async_read_one_packet_set_state noc_async_read_one_packet_with_state noc_async_read_page noc_async_read_shard
-
-noc_async_write noc_async_write_multicast noc_async_write_multicast_loopback_src noc_async_write_one_packet noc_async_write_one_packet_set_state noc_async_write_one_packet_with_state noc_async_write_multicast_one_packet noc_async_write_page noc_async_write_shard
-
-noc_inline_dw_write noc_inline_dw_write_set_state noc_inline_dw_write_with_state
-
-noc_async_read_barrier noc_async_write_barrier noc_async_atomic_barrier noc_async_full_barrier noc_async_read_barrier_with_trid noc_async_write_barrier_with_trid noc_async_writes_flushed noc_async_posted_writes_flushed
-
-get_semaphore noc_semaphore_set noc_semaphore_set_remote noc_semaphore_set_multicast noc_semaphore_set_multicast_loopback_src noc_semaphore_inc noc_semaphore_wait noc_semaphore_wait_min
-
-get_noc_addr get_noc_addr_from_bank_id get_noc_multicast_addr ordering
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/data_movement/ordering.rst
 
 # Ordering (NOC, CMD_BUF, VC)
 
-NoC requests/responses are usually asynchronous, but they can have an implicit ordering, or you could enforce an explicit ordering. In this section, we will go over command buffers (<span class="title-ref">CMD_BUF</span>), virtual channels (<span class="title-ref">VC</span>), and allocation of virtual channels.
+NoC requests/responses are usually asynchronous, but they can have an implicit ordering, or you could enforce an explicit ordering. In this section, we will go over command buffers (`CMD_BUF`), virtual channels (`VC`), and allocation of virtual channels.
 
-There are two NoCs (NoC-0 and NoC-1) that are completely phyiscally replicated and separated. The only communication between these NoCs is through software or L1 memory. For each NoC, we have 4 command buffers: <span class="title-ref">RD_CMD_BUF</span>, <span class="title-ref">WR_CMD_BUF</span>, <span class="title-ref">WR_REG_CMD_BUF</span>, <span class="title-ref">AT_CMD_BUF</span>. We usually use the <span class="title-ref">WR_CMD_BUF</span> for all writes, except for the atomic ones where we use <span class="title-ref">AT_CMD_BUF</span>, e.g. <span class="title-ref">noc_semaphore_inc</span> uses <span class="title-ref">AT_CMD_BUF</span>.
+There are two NoCs (NoC-0 and NoC-1) that are completely phyiscally replicated and separated. The only communication between these NoCs is through software or L1 memory. For each NoC, we have 4 command buffers: `RD_CMD_BUF`, `WR_CMD_BUF`, `WR_REG_CMD_BUF`, `AT_CMD_BUF`. We usually use the `WR_CMD_BUF` for all writes, except for the atomic ones where we use `AT_CMD_BUF`, e.g. `noc_semaphore_inc` uses `AT_CMD_BUF`.
 
-For each NoC, we have 6 <span class="title-ref">VC</span> (numbered 0-5). Each <span class="title-ref">VC</span> is usually used for a different purpose. For example, all unicast writes go on <span class="title-ref">NOC_UNICAST_WRITE_VC</span>, which is <span class="title-ref">VC</span> 1, and all multicast writes go on <span class="title-ref">NOC_MULTICAST_WRITE_VC</span>, which is <span class="title-ref">VC</span> 4.
+For each NoC, we have 6 `VC` (numbered 0-5). Each `VC` is usually used for a different purpose. For example, all unicast writes go on `NOC_UNICAST_WRITE_VC`, which is `VC` 1, and all multicast writes go on `NOC_MULTICAST_WRITE_VC`, which is `VC` 4.
 
-We can allocate <span class="title-ref">VC</span> either statically or dynamically. We can allocate <span class="title-ref">VC</span> statically using <span class="title-ref">NOC_CMD_STATIC_VC</span>, which is usually the case for noc writes. For noc reads, the read requests can use a statically allocated <span class="title-ref">VC</span>, as for read responses, we always use dynamically allocated <span class="title-ref">VC</span>. So there's really no way to control ordering for data reads.
+We can allocate `VC` either statically or dynamically. We can allocate `VC` statically using `NOC_CMD_STATIC_VC`, which is usually the case for noc writes. For noc reads, the read requests can use a statically allocated `VC`, as for read responses, we always use dynamically allocated `VC`. So there's really no way to control ordering for data reads.
 
 As for ordering of the NoC writes:
 
@@ -3799,23 +3596,11 @@ As for ordering of the NoC writes:
 
 # Kernel Argument APIs
 
-<div class="toctree">
-
-get_arg_addr get_arg_val get_common_arg_addr get_common_arg_val get_compile_time_arg_val
-
-</div>
-
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/pack_unpack/packing_apis.rst
 
 # Packing APIs
 
 Packing and Unpacking APIs allow reinterpreting or construct/reading of buffers as specific integer or floating point data types.
-
-<div class="toctree">
-
-copy_tile pack_tile pack_untilize reconfig_data_format
-
-</div>
 
 ## Source: docs/source/tt-metalium/tt_metal/apis/kernel_apis/sfpu/llk.rst
 

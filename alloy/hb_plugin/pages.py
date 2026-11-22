@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -23,6 +24,8 @@ __all__ = ["COMPUTE_API", "DATAFLOW_API", "DOCS", "MANIFEST", "RULE", "SKILLS", 
 
 SKILLS = pathlib.Path(__file__).parent / "skills"
 MANIFEST = pathlib.Path(__file__).parent / "docs_manifest.json"
+#: The pandoc filter docs-md converts through: no navigation, no figures the agent cannot see (docs.lua).
+FILTER = pathlib.Path(__file__).parent / "docs.lua"
 
 #: What docs-md holds: one rule, fixed before any eval run (fairness F17), not what a pilot needed.
 RULE = """\
@@ -31,7 +34,9 @@ RULE = """\
   * tt-metal-dataflow-api: tt_metal/hw/inc/dataflow_api.h, verbatim;
   * tt-metal-docs: METALIUM_GUIDE.md, then every page of docs/source/tt-metalium/tt_metal/ under programming_model/,
     advanced_topics/, examples/ and apis/kernel_apis/, in path order, converted from reStructuredText by pandoc
-    (gfm); a page that is only doxygen directives is left out, since its text is the header's doc comment above.
+    (gfm, through docs.lua: Sphinx navigation and images dropped, a figure kept as its caption; the guide's HTML
+    images dropped too); a page that is only doxygen directives is left out, since its text is the header's doc
+    comment above.
 The tree is tt-metal v0.63.0 with tt-llk at the commit it pins (identical to the ttnn 0.63.0 wheel's sources the card
 compiles against).
 """
@@ -131,9 +136,14 @@ def doxygen_only(text: str) -> bool:
 
 
 def converted(path: pathlib.Path) -> str:
-    done = subprocess.run(["pandoc", "--from", "rst", "--to", "gfm", "--wrap", "none", str(path)],
-                          capture_output=True, text=True, check=True, timeout=120)  # fmt: skip
+    command = ["pandoc", "--from", "rst", "--to", "gfm", "--wrap", "none", "--lua-filter", str(FILTER), str(path)]
+    done = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120)
     return done.stdout
+
+
+def without_images(markdown: str) -> str:
+    """A Markdown page without its lines that are only an HTML image, which an agent reading the text cannot see."""
+    return "\n".join(line for line in markdown.splitlines() if not re.fullmatch(r"\s*<img [^>]*>\s*", line)) + "\n"
 
 
 def doc_sources(tree: pathlib.Path) -> list[pathlib.Path]:
@@ -144,7 +154,7 @@ def doc_sources(tree: pathlib.Path) -> list[pathlib.Path]:
 def docs_body(tree: pathlib.Path, sources: list[pathlib.Path]) -> str:
     out = ["# tt-metal v0.63.0 documentation on writing kernels", ""]
     for path in sources:
-        text = path.read_text() if path.suffix == ".md" else converted(path)
+        text = without_images(path.read_text()) if path.suffix == ".md" else converted(path)
         out += [f"## Source: {path.relative_to(tree)}", "", text.rstrip("\n"), ""]
     return "\n".join(out)
 

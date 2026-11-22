@@ -1,5 +1,5 @@
 {
- "rule": "  * tt-metal-compute-api: tt_metal/include/compute_kernel_api.h and every file under tt_metal/include/compute_kernel_api/,\n    verbatim, doc comments included;\n  * tt-metal-dataflow-api: tt_metal/hw/inc/dataflow_api.h, verbatim;\n  * tt-metal-docs: METALIUM_GUIDE.md, then every page of docs/source/tt-metalium/tt_metal/ under programming_model/,\n    advanced_topics/, examples/ and apis/kernel_apis/, in path order, converted from reStructuredText by pandoc\n    (gfm); a page that is only doxygen directives is left out, since its text is the header's doc comment above.\nThe tree is tt-metal v0.63.0 with tt-llk at the commit it pins (identical to the ttnn 0.63.0 wheel's sources the card\ncompiles against).\n",
+ "rule": "  * tt-metal-compute-api: tt_metal/include/compute_kernel_api.h and every file under tt_metal/include/compute_kernel_api/,\n    verbatim, doc comments included;\n  * tt-metal-dataflow-api: tt_metal/hw/inc/dataflow_api.h, verbatim;\n  * tt-metal-docs: METALIUM_GUIDE.md, then every page of docs/source/tt-metalium/tt_metal/ under programming_model/,\n    advanced_topics/, examples/ and apis/kernel_apis/, in path order, converted from reStructuredText by pandoc\n    (gfm, through docs.lua: Sphinx navigation and images dropped, a figure kept as its caption; the guide's HTML\n    images dropped too); a page that is only doxygen directives is left out, since its text is the header's doc comment above.\nThe tree is tt-metal v0.63.0 with tt-llk at the commit it pins (identical to the ttnn 0.63.0 wheel's sources the card\ncompiles against).\n",
  "tree_commit": "5143b856ebeecd8562933b8c744b78f313203efe",
  "pandoc": "pandoc 3.7.0.2",
  "pages": {
@@ -96,7 +96,7 @@
    }
   },
   "tt-metal-docs": {
-   "bytes": 245331,
+   "bytes": 236278,
    "sources": {
     "METALIUM_GUIDE.md": "c26fbe3e355708ae",
     "docs/source/tt-metalium/tt_metal/programming_model/index.rst": "d1b3d22204d839f1",
