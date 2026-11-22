@@ -187,7 +187,7 @@ class Linker:
                 (("compiler", "extra_cmake_args"), cmake_args(self.matrix)),
             ):
                 stack.enter_context(set_temporary(*path, value=value))
-            sdfg.compile()
+            sdfg.compile(return_program_handle=False)  # the timer's child loads it: its BLAS team fits the child
         return pathlib.Path(sdfg.build_folder)
 
     def write_best(self, winners: dict[str, Build]) -> Best:
@@ -282,5 +282,5 @@ class Linker:
             set_temporary("compiler", "build_plugin", value=""),
             set_temporary("compiler", "extra_cmake_args", value=cmake_args(self.matrix)),
         ):
-            sdfg.compile()
+            sdfg.compile(return_program_handle=False)  # the timer's child loads it: its BLAS team fits the child
         return pathlib.Path(sdfg.build_folder)

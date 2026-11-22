@@ -1,7 +1,7 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""The Alloy adapter's inner tier without a judge: the stub ranking keeps each scope's fastest candidate over the
-best prefix so far, survives a failing stub, stops when the budget does, reads a stub's time from either profile, and
-a rendered library asks for the scratch its entry carves transients from."""
+"""The Alloy adapter's inner tier without a judge: a pick is delivered only when the judge grades it correct and no
+slower than the plain program, a GPU stub's time is read from either profile, the profile budget scales by E1b's
+factor, and a rendered library asks for the scratch its entry carves transients from."""
 
 import dataclasses
 import pathlib
@@ -34,9 +34,7 @@ from alloy.hb_plugin.adapter import (
     faster_correct,
     graded_pick,
     pipeline_sdfg,
-    ranked,
     rendered,
-    stub_affordable,
     stub_time,
     verified,
 )
@@ -52,50 +50,6 @@ def always() -> bool:
     return True
 
 
-def test_each_scope_keeps_its_fastest_stub_over_the_best_prefix() -> None:
-    start = {"r0": Fake("r0.ref"), "r1": Fake("r1.ref")}
-    candidates = {"r0": [Fake("r0.fast"), Fake("r0.slow")], "r1": [Fake("r1.fast")]}
-    cost = {"r0.ref": 5.0, "r0.fast": 1.0, "r0.slow": 9.0, "r1.ref": 4.0, "r1.fast": 2.0}
-    prefixes: list[str] = []
-
-    def time_stub(selection: dict[str, Fake], symbol: str) -> float:
-        if symbol == "r1":
-            prefixes.append(selection["r0"].name)
-        return cost[selection[symbol].name]
-
-    sut, times = ranked(["r0", "r1"], start, candidates, time_stub, always)
-
-    assert {s: b.name for s, b in sut.items()} == {"r0": "r0.fast", "r1": "r1.fast"}
-    assert times == {"r0": {"r0.ref": 5.0, "r0.fast": 1.0, "r0.slow": 9.0}, "r1": {"r1.ref": 4.0, "r1.fast": 2.0}}
-    assert set(prefixes) == {"r0.fast"}, "the later scope's stubs run over the earlier scope's winner"
-
-
-def test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail() -> None:
-    start = {"r0": Fake("r0.ref")}
-
-    def time_stub(selection: dict[str, Fake], symbol: str) -> float:
-        raise RuntimeError("stub did not build")
-
-    sut, _ = ranked(["r0"], start, {"r0": [Fake("r0.a")]}, time_stub, always)
-
-    assert sut["r0"].name == "r0.ref"
-
-
-def test_the_ranking_stops_when_the_budget_does() -> None:
-    start = {"r0": Fake("r0.ref"), "r1": Fake("r1.ref")}
-    timed: list[str] = []
-
-    def time_stub(selection: dict[str, Fake], symbol: str) -> float:
-        timed.append(selection[symbol].name)
-        return 1.0
-
-    sut, times = ranked(["r0", "r1"], start, {"r1": [Fake("r1.fast")]}, time_stub, lambda: len(timed) < 1)
-
-    assert timed == ["r0.ref"]
-    assert sut == start
-    assert times == {"r0": {"r0.ref": 1.0}, "r1": {}}, "the record keeps the stubs timed before the budget ran out"
-
-
 def test_the_profile_budget_is_the_agents_budget_scaled_by_the_e1b_factor(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = BenchSpec.load("tsvc_2_vpv")
     agent = float(resolve_kernel_timeout(spec))
@@ -106,15 +60,6 @@ def test_the_profile_budget_is_the_agents_budget_scaled_by_the_e1b_factor(monkey
     monkeypatch.setenv(adapter.BUDGET_SCALE_ENV, "0")
     with pytest.raises(ValueError):
         adapter.budget(spec)
-
-
-def test_a_stub_is_timed_only_while_the_picks_grade_still_fits_after_it() -> None:
-    """Stubs of 10 s and a /score of 100 s (the plain program's, graded first): on ault a /score took 110 to 490 s
-    and a stub 9 s, so a reserve of a few stub costs left no time to grade the pick (job 920743)."""
-    costs = [8.0, 10.0]
-
-    assert stub_affordable(111.0, costs, 100.0)
-    assert not stub_affordable(109.0, costs, 100.0)
 
 
 def test_a_pick_is_compared_to_the_plain_programs_grade_when_it_is_given_without_grading_it_again() -> None:
@@ -335,9 +280,6 @@ def test_a_grade_slower_than_one_judge_call_is_still_read(monkeypatch: pytest.Mo
 
 
 if __name__ == "__main__":
-    test_each_scope_keeps_its_fastest_stub_over_the_best_prefix()
-    test_a_failing_stub_drops_out_and_the_start_build_stays_when_all_fail()
-    test_the_ranking_stops_when_the_budget_does()
     test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count()
     test_a_gpu_stub_time_is_the_device_time_per_repetition()
     test_a_profile_without_a_time_is_refused()

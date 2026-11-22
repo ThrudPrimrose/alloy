@@ -12,7 +12,6 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
-from typing import Protocol
 
 import dace
 from dace.config import set_temporary
@@ -48,7 +47,7 @@ from alloy.backend import intrinsics
 from alloy.backend.build import Build
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
-from alloy.evaluate.link import Linker, execution_order
+from alloy.evaluate.link import Linker
 from alloy.evaluate.verify import Verdict
 from alloy.frontend import inputs, scopes
 from alloy.hb_plugin.episode import PLAIN, EpisodeScope, EpisodeSeconds, Keep, episode, keep_episode, scope_record
@@ -58,7 +57,6 @@ __all__ = [
     "DIALECT",
     "Deliver",
     "FAST_SIZE",
-    "Named",
     "PROFILE_REPS",
     "fast_size",
     "generated",
@@ -68,7 +66,6 @@ __all__ = [
     "optimize",
     "pipeline_sdfg",
     "plain",
-    "ranked",
     "record_episode",
     "scope_records",
     "reference",
@@ -194,11 +191,15 @@ def generated(
     out: pathlib.Path,
     mode: Mode = Mode.PROFILE,
     running: dict[str, int] | None = None,
+    *,
+    time_locally: bool = False,
 ) -> api.Result:
-    """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision`` and timed by nobody here; in
-    speculative mode each scope's pick is the prediction's at the ``running`` sizes."""
+    """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision``; in profile mode timed here when
+    ``time_locally``, in speculative mode each scope's pick the prediction's at the ``running`` sizes."""
     manifest = manifest_of(spec, precision)
-    result = api.generate(sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=False, running=running)
+    result = api.generate(
+        sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=time_locally, running=running
+    )
     if result.verification is None:
         raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
     return result
@@ -265,13 +266,6 @@ def stub_time(answer: ProfileAnswer) -> float:
     raise ValueError(f"no stub time in a {type(report).__name__} profile")
 
 
-class Named(Protocol):
-    """A candidate build, as :func:`ranked` sees it."""
-
-    @property
-    def name(self) -> str: ...
-
-
 #: Scales the kernel's agent-run budget for profile mode (E1b, the tuning-budget curve); 1 is the agent's budget.
 BUDGET_SCALE_ENV = "ALLOY_BUDGET_SCALE"
 
@@ -282,40 +276,6 @@ def budget(spec: BenchSpec) -> float:
     if not scale > 0:
         raise ValueError(f"{BUDGET_SCALE_ENV}={scale}: a positive factor")
     return scale * float(resolve_kernel_timeout(spec))
-
-
-def stub_affordable(left: float, costs: Sequence[float], score_cost: float) -> bool:
-    """Whether one more stub fits in ``left`` seconds and still leaves the pick's ``/score``, which takes about
-    ``score_cost`` (the plain program's grade): a ranking cut by the budget otherwise has no time to grade its pick."""
-    return left - max(costs, default=0.0) > score_cost
-
-
-def ranked[B: Named](
-    order: Sequence[str],
-    start: dict[str, B],
-    candidates: dict[str, list[B]],
-    time_stub: Callable[[dict[str, B], str], float],
-    affordable: Callable[[], bool],
-) -> tuple[dict[str, B], dict[str, dict[str, float]]]:
-    """Scope by scope in execution ``order``, each candidate timed as a stub over the best of the scopes before
-    it, the fastest kept; stops when no longer ``affordable``. Returns the pick and every stub time per scope."""
-    chosen = dict(start)
-    timed: dict[str, dict[str, float]] = {}
-    for symbol in order:
-        times = timed.setdefault(symbol, {})
-        for build in [chosen[symbol], *(b for b in candidates.get(symbol, []) if b is not chosen[symbol])]:
-            if not affordable():
-                print(f"alloy: {symbol}: time budget spent, later stubs stay untimed", file=sys.stderr, flush=True)
-                return chosen, timed
-            try:
-                times[build.name] = time_stub({**chosen, symbol: build}, symbol)
-            except Exception as exc:
-                print(f"alloy: stub {symbol}/{build.name} dropped: {exc}", file=sys.stderr, flush=True)
-        pool = {b.name: b for b in [chosen[symbol], *candidates.get(symbol, [])]}
-        print(f"alloy: {symbol}: {len(times)} stubs timed", file=sys.stderr, flush=True)
-        if times:
-            chosen[symbol] = pool[min(times, key=times.__getitem__)]
-    return chosen, timed
 
 
 def judge_client() -> JudgeClient:
@@ -342,8 +302,8 @@ def optimize(
     task: Task, pipeline: str, deliver: Deliver, keep: Keep, *, reference_fp: bool = False,
     folder: pathlib.Path | None = None,
 ) -> Submission:  # fmt: skip
-    """Alloy on ``task``'s kernel after ``pipeline``: the stub-timed selection if ``/score`` grades it correct and no
-    slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
+    """Alloy on ``task``'s kernel after ``pipeline``: the selection Alloy's timer picks (the alloy_profile tool's) if
+    ``/score`` grades it correct and no slower than the plain program (:func:`plain`, CPF's default rendering with no scope), else the plain program. A
     GPU task's device maps take profiled threadblock shapes instead (:func:`profile_gpu`). ``reference_fp`` searches
     only the reference's FP semantics (:func:`configuration_matrix.at_reference_fp`)."""
     if target_of(task) is Target.GPU:
@@ -361,62 +321,44 @@ def optimize(
         return submission
     out = scratch_folder(spec)
     generating = time.monotonic()
-    result = generated(sdfg, spec, task.precision, matrix, out)
+    # Alloy's own timer, as the alloy_profile tool's: every verified candidate in one process on shared buffers
+    result = generated(sdfg, spec, task.precision, matrix, out, time_locally=True)
     generate = time.monotonic() - generating
-    verification = result.verification
-    assert verification is not None, "generated() refuses an unverified result"
     linker, judge = Linker(result.program, matrix, out), judge_client()
-    size = fast_size(config.current().service.preset)
-
-    # the plain program's grade first: the pick is compared to it, and its cost is what the pick's grade will take
-    scoring = time.monotonic()
-    plain_grade = public_grade(judge, plain(task, spec, pipeline, deliver), task.kernel)
-    score_cost = time.monotonic() - scoring
-    stub_costs: list[float] = []
-
-    def affordable_stub() -> bool:
-        return plain_grade is not None and stub_affordable(deadline - time.monotonic(), stub_costs, score_cost)
-
-    def time_stub(selection: dict[str, Build], symbol: str) -> float:
-        start = time.monotonic()
-        try:
-            stub = rendered(task, spec, linker.stub(selection, symbol), deliver)
-            # one configuration, the slot's width (the judge clamps to it): the default sweep stops at 4 threads
-            return stub_time(
-                judge.profile(stub, task.kernel, threads=[os.cpu_count() or 1], reps=PROFILE_REPS, size=size)
-            )
-        finally:
-            stub_costs.append(time.monotonic() - start)
-
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
-    candidates = {rep.scope.symbol: verified(rep, verification.verdicts[rep.scope.symbol]) for rep in result.scopes}
-    ranking = time.monotonic()
-    chosen, timed = ranked(execution_order(result.program.sdfg), references, candidates, time_stub, affordable_stub)
-    picking = time.monotonic()
+    chosen = {**references, **(result.winners or {})}
+    scoring = time.monotonic()
     delivered = None
-    if plain_grade is not None and deadline - picking > score_cost:
-        delivered = graded_pick(
-            judge,
-            chosen,
-            references,
-            lambda selection: library(task, spec, linker, selection, deliver),
-            lambda: plain(task, spec, pipeline, deliver),
-            task.kernel,
-            baseline=plain_grade,
-        )
-    score = score_cost + time.monotonic() - picking
+    if chosen != references:
+        # the plain program's grade first: the pick is compared to it, and its cost is what the pick's grade takes
+        plain_grade = public_grade(judge, plain(task, spec, pipeline, deliver), task.kernel)
+        score_cost = time.monotonic() - scoring
+        if plain_grade is not None and deadline - time.monotonic() > score_cost:
+            delivered = graded_pick(
+                judge,
+                chosen,
+                references,
+                lambda selection: library(task, spec, linker, selection, deliver),
+                lambda: plain(task, spec, pipeline, deliver),
+                task.kernel,
+                baseline=plain_grade,
+            )
     score = time.monotonic() - scoring
     # every deliver builds the same .so path, so the returned library is built last
     submission = delivery(task, spec, pipeline, linker, delivered, deliver)
+    timed = {
+        symbol: {arm: m.median * 1e9 for arm, m in scope.screen.items()}
+        for symbol, scope in (result.timings.scopes.items() if result.timings is not None else ())
+    }
     record_episode(
         keep,
         Mode.PROFILE.value,
         task,
         started,
         generate,
-        picking - ranking,
+        0.0,
         score,
-        len(stub_costs),
+        sum(map(len, timed.values())),  # every arm the timer measured, the reference among them
         scope_records(result, matrix, delivered, timed),
     )
     return submission
