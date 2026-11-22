@@ -22,6 +22,7 @@ from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.judge_wire import ScorePreview
 from hpcagent_bench.harness.profile_wire import DeviceTraceReport, LinuxperfReport, ProfileAnswer
+from hpcagent_bench.harness.scoring import resolve_kernel_timeout
 from hpcagent_bench.harness.task import Task
 from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
@@ -97,7 +98,7 @@ def test_the_ranking_stops_when_the_budget_does() -> None:
 
 def test_the_profile_budget_is_the_agents_budget_scaled_by_the_e1b_factor(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = BenchSpec.load("tsvc_2_vpv")
-    agent = adapter.resolve_kernel_timeout(spec)
+    agent = float(resolve_kernel_timeout(spec))
 
     monkeypatch.setenv(adapter.BUDGET_SCALE_ENV, "3")
 
