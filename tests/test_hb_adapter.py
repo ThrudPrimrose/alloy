@@ -95,6 +95,18 @@ def test_the_ranking_stops_when_the_budget_does() -> None:
     assert times == {"r0": {"r0.ref": 1.0}, "r1": {}}, "the record keeps the stubs timed before the budget ran out"
 
 
+def test_the_profile_budget_is_the_agents_budget_scaled_by_the_e1b_factor(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = BenchSpec.load("tsvc_2_vpv")
+    agent = adapter.resolve_kernel_timeout(spec)
+
+    monkeypatch.setenv(adapter.BUDGET_SCALE_ENV, "3")
+
+    assert adapter.budget(spec) == 3 * agent
+    monkeypatch.setenv(adapter.BUDGET_SCALE_ENV, "0")
+    with pytest.raises(ValueError):
+        adapter.budget(spec)
+
+
 def test_a_stub_is_timed_only_while_the_picks_grade_still_fits_after_it() -> None:
     """Stubs of 10 s and a /score of 100 s (the plain program's, graded first): on ault a /score took 110 to 490 s
     and a stub 9 s, so a reserve of a few stub costs left no time to grade the pick (job 920743)."""

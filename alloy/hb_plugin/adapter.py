@@ -272,6 +272,18 @@ class Named(Protocol):
     def name(self) -> str: ...
 
 
+#: Scales the kernel's agent-run budget for profile mode (E1b, the tuning-budget curve); 1 is the agent's budget.
+BUDGET_SCALE_ENV = "ALLOY_BUDGET_SCALE"
+
+
+def budget(spec: BenchSpec) -> float:
+    """The seconds profile mode may spend on ``spec``: the kernel's agent-run budget times $ALLOY_BUDGET_SCALE."""
+    scale = float(os.environ.get(BUDGET_SCALE_ENV, "1"))
+    if not scale > 0:
+        raise ValueError(f"{BUDGET_SCALE_ENV}={scale}: a positive factor")
+    return scale * float(resolve_kernel_timeout(spec))
+
+
 def stub_affordable(left: float, costs: Sequence[float], score_cost: float) -> bool:
     """Whether one more stub fits in ``left`` seconds and still leaves the pick's ``/score``, which takes about
     ``score_cost`` (the plain program's grade): a ranking cut by the budget otherwise has no time to grade its pick."""
@@ -339,7 +351,7 @@ def optimize(
     started = time.monotonic()
     refuse_restricted(task)
     spec = BenchSpec.load(task.kernel)
-    deadline = started + resolve_kernel_timeout(spec)
+    deadline = started + budget(spec)
     matrix = configuration_matrix.load()
     matrix = configuration_matrix.at_reference_fp(matrix) if reference_fp else matrix
     sdfg = pipeline_sdfg(spec, pipeline, task.precision, target_of(task))
@@ -651,7 +663,7 @@ def profile_gpu(task: Task, pipeline: str, keep: Keep, folder: pathlib.Path | No
     blocks, else those."""
     started = time.monotonic()
     spec = BenchSpec.load(task.kernel)
-    deadline = started + resolve_kernel_timeout(spec)
+    deadline = started + budget(spec)
     dialect, run = gpu_dialect(task), gpu_pipeline(task, spec, pipeline)
     judge, size = judge_client(), fast_size(config.current().service.preset)
     default = device_submission(task, spec, run({}), form_dialect(task), folder)
