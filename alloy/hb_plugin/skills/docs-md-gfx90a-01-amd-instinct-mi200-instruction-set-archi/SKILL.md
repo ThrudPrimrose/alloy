@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-01-amd-instinct-mi200-instruction-set-archi
 description: "AMD CDNA2 ISA: \"AMD Instinct MI200\" Instruction Set Architecture: Reference Guide (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: \"AMD Instinct MI200\" Instruction Set Architecture: Reference Guide while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: \"AMD Instinct MI200\" Instruction Set Architecture: Reference Guide while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 

@@ -12,5 +12,6 @@ repos:
     hooks:
       - id: check-added-large-files
         args: [--maxkb=500]
+        exclude: ^alloy/hb_plugin/skills/docs-md-  # a vendor manual's chapter, written by alloy.hb_plugin.pages
       - id: end-of-file-fixer
       - id: trailing-whitespace

@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-10-chapter-7-matrix-arithmetic-instructions
 description: "AMD CDNA2 ISA: Chapter 7. Matrix Arithmetic Instructions (MAI) (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 7. Matrix Arithmetic Instructions (MAI) while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 7. Matrix Arithmetic Instructions (MAI) while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-07-chapter-4-program-flow-control
 description: "AMD CDNA2 ISA: Chapter 4. Program Flow Control (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 4. Program Flow Control while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 4. Program Flow Control while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

@@ -105,21 +105,80 @@ skills = ["tt-metal-compute-api", "tt-metal-dataflow-api", "tt-metal-docs"]
 [packets.docs-md-x86]
 name = "Docs (x86 AVX2, AVX-512 and AVX-512 FP16)"
 skills = [
+    "docs-md-x86-01-chapter-1-about-this-manual",
+    "docs-md-x86-02-chapter-2-instruction-format",
+    "docs-md-x86-03-chapter-3-instruction-set-reference-a-l",
+    "docs-md-x86-04-chapter-4-instruction-set-reference-m-u",
+    "docs-md-x86-05-chapter-5-instruction-set-reference-v",
+    "docs-md-x86-06-chapter-6-instruction-set-reference-w-z",
+    "docs-md-x86-07-chapter-7-safer-mode-extensions-referenc",
+    "docs-md-x86-08-chapter-8-instruction-set-reference-uniq",
+    "docs-md-x86-09-appendix-a-opcode-map",
+    "docs-md-x86-10-appendix-b-instruction-formats-and-encod",
+    "docs-md-x86-11-appendix-c-intel-c-c-compiler-intrinsics",
 ]
 
 [packets.docs-md-arm]
 name = "Docs (Arm NEON, SVE and SME)"
 skills = [
+    "docs-md-arm-01-latex-specific-variables",
+    "docs-md-arm-02-jekyll-specific-variables",
+    "docs-md-arm-03-preface",
+    "docs-md-arm-04-introduction",
+    "docs-md-arm-05-c-language-extensions",
+    "docs-md-arm-06-architecture-and-cpu-names",
+    "docs-md-arm-07-feature-test-macros",
+    "docs-md-arm-08-attributes-and-pragmas",
+    "docs-md-arm-09-synchronization-barrier-and-hint-intrins",
+    "docs-md-arm-10-data-processing-intrinsics",
+    "docs-md-arm-11-custom-datapath-extension",
+    "docs-md-arm-12-memory-tagging-intrinsics",
+    "docs-md-arm-13-guarded-control-stack-intrinsics",
+    "docs-md-arm-14-state-management",
+    "docs-md-arm-15-latex-specific-variables",
+    "docs-md-arm-16-jekyll-specific-variables",
+    "docs-md-arm-17-preface",
+    "docs-md-arm-18-list-of-intrinsics",
 ]
 
 [packets.docs-md-sm90]
 name = "Docs (NVIDIA sm90 (PTX))"
 skills = [
+    "docs-md-sm90-01-introduction",
+    "docs-md-sm90-02-programming-model",
+    "docs-md-sm90-03-ptx-machine-model",
+    "docs-md-sm90-04-syntax",
+    "docs-md-sm90-05-state-spaces-types-and-variables",
+    "docs-md-sm90-06-instruction-operands",
+    "docs-md-sm90-07-abstracting-the-abi",
+    "docs-md-sm90-08-memory-consistency-model",
+    "docs-md-sm90-09-instruction-set",
+    "docs-md-sm90-10-special-registers",
+    "docs-md-sm90-11-directives",
+    "docs-md-sm90-12-descriptions-of-pragma-strings",
+    "docs-md-sm90-13-release-notes",
+    "docs-md-sm90-14-notices",
 ]
 
 [packets.docs-md-gfx942]
 name = "Docs (AMD gfx942 (CDNA3))"
 skills = [
+    "docs-md-gfx942-01-amd-instinct-mi300-instruction-set-archi",
+    "docs-md-gfx942-02-contents",
+    "docs-md-gfx942-03-preface",
+    "docs-md-gfx942-04-chapter-1-introduction",
+    "docs-md-gfx942-05-chapter-2-program-organization",
+    "docs-md-gfx942-06-chapter-3-kernel-state",
+    "docs-md-gfx942-07-chapter-4-program-flow-control",
+    "docs-md-gfx942-08-chapter-5-scalar-alu-operations",
+    "docs-md-gfx942-09-chapter-6-vector-alu-operations",
+    "docs-md-gfx942-10-chapter-7-matrix-arithmetic-instructions",
+    "docs-md-gfx942-11-chapter-8-scalar-memory-operations",
+    "docs-md-gfx942-12-chapter-9-vector-memory-operations",
+    "docs-md-gfx942-13-chapter-10-flat-memory-instructions",
+    "docs-md-gfx942-14-chapter-11-data-share-operations",
+    "docs-md-gfx942-15-chapter-12-instructions",
+    "docs-md-gfx942-16-chapter-13-microcode-formats",
 ]
 
 [packets.docs-md-gfx90a]
@@ -146,6 +205,8 @@ skills = [
 [packets.docs-md-softhier]
 name = "Docs (SoftHier v1)"
 skills = [
+    "docs-md-softhier-01-all",
+    "docs-md-softhier-02-softhier-sdk",
 ]
 # END docs-md packets
 

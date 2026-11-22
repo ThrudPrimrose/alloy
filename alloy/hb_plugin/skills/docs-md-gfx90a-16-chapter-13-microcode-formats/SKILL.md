@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-16-chapter-13-microcode-formats
 description: "AMD CDNA2 ISA: Chapter 13. Microcode Formats (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 13. Microcode Formats while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 13. Microcode Formats while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-08-chapter-5-scalar-alu-operations
 description: "AMD CDNA2 ISA: Chapter 5. Scalar ALU Operations (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 5. Scalar ALU Operations while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 5. Scalar ALU Operations while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

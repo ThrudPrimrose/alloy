@@ -132,22 +132,136 @@
     "https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/instruction-set-architectures/instinct-mi200-cdna2-instruction-set-architecture.pdf": "6c8b6e86fddb489437765c1d4c290c223e7668576bbd2ea9c2ebb4d45e3e2212"
    },
    "pages": {
-    "docs-md-gfx90a-01-amd-instinct-mi200-instruction-set-archi": 9017,
-    "docs-md-gfx90a-02-contents": 24244,
-    "docs-md-gfx90a-03-preface": 5296,
-    "docs-md-gfx90a-04-chapter-1-introduction": 5573,
-    "docs-md-gfx90a-05-chapter-2-program-organization": 6419,
-    "docs-md-gfx90a-06-chapter-3-kernel-state": 23862,
-    "docs-md-gfx90a-07-chapter-4-program-flow-control": 11867,
-    "docs-md-gfx90a-08-chapter-5-scalar-alu-operations": 13739,
-    "docs-md-gfx90a-09-chapter-6-vector-alu-operations": 17354,
-    "docs-md-gfx90a-10-chapter-7-matrix-arithmetic-instructions": 7079,
-    "docs-md-gfx90a-11-chapter-8-scalar-memory-operations": 8521,
-    "docs-md-gfx90a-12-chapter-9-vector-memory-operations": 44545,
-    "docs-md-gfx90a-13-chapter-10-flat-memory-instructions": 12022,
-    "docs-md-gfx90a-14-chapter-11-data-share-operations": 8462,
-    "docs-md-gfx90a-15-chapter-12-instructions": 199846,
-    "docs-md-gfx90a-16-chapter-13-microcode-formats": 70392
+    "docs-md-gfx90a-01-amd-instinct-mi200-instruction-set-archi": 9021,
+    "docs-md-gfx90a-02-contents": 24248,
+    "docs-md-gfx90a-03-preface": 5300,
+    "docs-md-gfx90a-04-chapter-1-introduction": 5577,
+    "docs-md-gfx90a-05-chapter-2-program-organization": 6423,
+    "docs-md-gfx90a-06-chapter-3-kernel-state": 23866,
+    "docs-md-gfx90a-07-chapter-4-program-flow-control": 11871,
+    "docs-md-gfx90a-08-chapter-5-scalar-alu-operations": 13743,
+    "docs-md-gfx90a-09-chapter-6-vector-alu-operations": 17358,
+    "docs-md-gfx90a-10-chapter-7-matrix-arithmetic-instructions": 7083,
+    "docs-md-gfx90a-11-chapter-8-scalar-memory-operations": 8525,
+    "docs-md-gfx90a-12-chapter-9-vector-memory-operations": 44549,
+    "docs-md-gfx90a-13-chapter-10-flat-memory-instructions": 12026,
+    "docs-md-gfx90a-14-chapter-11-data-share-operations": 8466,
+    "docs-md-gfx90a-15-chapter-12-instructions": 199850,
+    "docs-md-gfx90a-16-chapter-13-microcode-formats": 70396
+   }
+  },
+  "gfx942": {
+   "sources": {
+    "https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/instruction-set-architectures/amd-instinct-mi300-cdna3-instruction-set-architecture.pdf": "0cec4237cd93ce7dd76ee8502771429eb2308ab47dfa389f5bcc34f5903a6e2a"
+   },
+   "pages": {
+    "docs-md-gfx942-01-amd-instinct-mi300-instruction-set-archi": 9758,
+    "docs-md-gfx942-02-contents": 28792,
+    "docs-md-gfx942-03-preface": 3550,
+    "docs-md-gfx942-04-chapter-1-introduction": 5087,
+    "docs-md-gfx942-05-chapter-2-program-organization": 6309,
+    "docs-md-gfx942-06-chapter-3-kernel-state": 24025,
+    "docs-md-gfx942-07-chapter-4-program-flow-control": 13116,
+    "docs-md-gfx942-08-chapter-5-scalar-alu-operations": 13835,
+    "docs-md-gfx942-09-chapter-6-vector-alu-operations": 17901,
+    "docs-md-gfx942-10-chapter-7-matrix-arithmetic-instructions": 45278,
+    "docs-md-gfx942-11-chapter-8-scalar-memory-operations": 8749,
+    "docs-md-gfx942-12-chapter-9-vector-memory-operations": 28658,
+    "docs-md-gfx942-13-chapter-10-flat-memory-instructions": 11651,
+    "docs-md-gfx942-14-chapter-11-data-share-operations": 7663,
+    "docs-md-gfx942-15-chapter-12-instructions": 600045,
+    "docs-md-gfx942-16-chapter-13-microcode-formats": 70618
+   }
+  },
+  "arm": {
+   "sources": {
+    "https://raw.githubusercontent.com/ARM-software/acle/74fa229b09d1c5af533a88e387e470c26494953f/main/acle.md": "9a2e040630d99217265480923f3d10ec80d86b1a274ca4fe1357eafd0b83aee5",
+    "https://raw.githubusercontent.com/ARM-software/acle/74fa229b09d1c5af533a88e387e470c26494953f/neon_intrinsics/advsimd.md": "722dcf758d7a6dbbab54210d55bbce73a6db7691bb4092112375bf096563fd73"
+   },
+   "pages": {
+    "docs-md-arm-01-latex-specific-variables": 381,
+    "docs-md-arm-02-jekyll-specific-variables": 785,
+    "docs-md-arm-03-preface": 39631,
+    "docs-md-arm-04-introduction": 2193,
+    "docs-md-arm-05-c-language-extensions": 22983,
+    "docs-md-arm-06-architecture-and-cpu-names": 5540,
+    "docs-md-arm-07-feature-test-macros": 88066,
+    "docs-md-arm-08-attributes-and-pragmas": 32122,
+    "docs-md-arm-09-synchronization-barrier-and-hint-intrins": 20412,
+    "docs-md-arm-10-data-processing-intrinsics": 40788,
+    "docs-md-arm-11-custom-datapath-extension": 5372,
+    "docs-md-arm-12-memory-tagging-intrinsics": 5780,
+    "docs-md-arm-13-guarded-control-stack-intrinsics": 2206,
+    "docs-md-arm-14-state-management": 483504,
+    "docs-md-arm-15-latex-specific-variables": 447,
+    "docs-md-arm-16-jekyll-specific-variables": 859,
+    "docs-md-arm-17-preface": 7025,
+    "docs-md-arm-18-list-of-intrinsics": 2100995
+   }
+  },
+  "sm90": {
+   "sources": {
+    "https://docs.nvidia.com/cuda/pdf/ptx_isa_9.4.pdf": "3851871026ca5bc81d85189cd3a70a2f9a9a4bb32208d927b3f0cd03c7b16e4e"
+   },
+   "pages": {
+    "docs-md-sm90-01-introduction": 9224,
+    "docs-md-sm90-02-programming-model": 9148,
+    "docs-md-sm90-03-ptx-machine-model": 7492,
+    "docs-md-sm90-04-syntax": 15725,
+    "docs-md-sm90-05-state-spaces-types-and-variables": 78195,
+    "docs-md-sm90-06-instruction-operands": 14465,
+    "docs-md-sm90-07-abstracting-the-abi": 9837,
+    "docs-md-sm90-08-memory-consistency-model": 37461,
+    "docs-md-sm90-09-instruction-set": 1136008,
+    "docs-md-sm90-10-special-registers": 31508,
+    "docs-md-sm90-11-directives": 64037,
+    "docs-md-sm90-12-descriptions-of-pragma-strings": 7387,
+    "docs-md-sm90-13-release-notes": 69239,
+    "docs-md-sm90-14-notices": 5667
+   }
+  },
+  "x86": {
+   "sources": {
+    "https://cdrdv2-public.intel.com/671110/325383-sdm-vol-2abcd.pdf": "f117cb21ce1f3b6258f5ce5f786e91665a133bf55e7bc2dc8cae843b56e4fb8e"
+   },
+   "pages": {
+    "docs-md-x86-01-chapter-1-about-this-manual": 28004,
+    "docs-md-x86-02-chapter-2-instruction-format": 161802,
+    "docs-md-x86-03-chapter-3-instruction-set-reference-a-l": 1268426,
+    "docs-md-x86-04-chapter-4-instruction-set-reference-m-u": 1532854,
+    "docs-md-x86-05-chapter-5-instruction-set-reference-v": 1499473,
+    "docs-md-x86-06-chapter-6-instruction-set-reference-w-z": 126716,
+    "docs-md-x86-07-chapter-7-safer-mode-extensions-referenc": 107218,
+    "docs-md-x86-08-chapter-8-instruction-set-reference-uniq": 76207,
+    "docs-md-x86-09-appendix-a-opcode-map": 62175,
+    "docs-md-x86-10-appendix-b-instruction-formats-and-encod": 276449,
+    "docs-md-x86-11-appendix-c-intel-c-c-compiler-intrinsics": 89027
+   }
+  },
+  "softhier": {
+   "sources": {
+    "https://github.com/riscv/riscv-v-spec/releases/download/v1.0/riscv-v-spec-1.0.pdf": "af851c0cab7bda6404e728d4c3f18cc322288680fea555a4222d96aee33ff3f4"
+   },
+   "tree_commit": "c32f3eba212e5f44e9a65610836991729c0c58ce",
+   "tree_sources": {
+    "README.md": "04d15127da27d3d7",
+    "runtime/runtime/include/flex_alloc.h": "1efc1d09ccc5daa7",
+    "runtime/runtime/include/flex_annotation.h": "a466bc24c8adb2a9",
+    "runtime/runtime/include/flex_cluster_arch.h": "826caddfa00d4196",
+    "runtime/runtime/include/flex_cluster_arch.inc": "728cb7f590e642ca",
+    "runtime/runtime/include/flex_dma_pattern.h": "929798b09b9cfaf8",
+    "runtime/runtime/include/flex_dump.h": "1a5444add0cdac17",
+    "runtime/runtime/include/flex_group_barrier.h": "2148d0eff2754b49",
+    "runtime/runtime/include/flex_libfp16.h": "2ee32e80ff477ef9",
+    "runtime/runtime/include/flex_libfp8.h": "f33dae372291e540",
+    "runtime/runtime/include/flex_printf.h": "d105d9adfe3e68fd",
+    "runtime/runtime/include/flex_redmule.h": "a95c8e0d186fc21b",
+    "runtime/runtime/include/flex_runtime.h": "84373ebbeaaee772",
+    "runtime/runtime/include/flex_transpose_engine.h": "d5d48763964b6e7f"
+   },
+   "pages": {
+    "docs-md-softhier-01-all": 240629,
+    "docs-md-softhier-02-softhier-sdk": 121752
    }
   }
  }

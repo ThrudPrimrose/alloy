@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-06-chapter-3-kernel-state
 description: "AMD CDNA2 ISA: Chapter 3. Kernel State (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 3. Kernel State while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 3. Kernel State while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-13-chapter-10-flat-memory-instructions
 description: "AMD CDNA2 ISA: Chapter 10. Flat Memory Instructions (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 10. Flat Memory Instructions while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 10. Flat Memory Instructions while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture

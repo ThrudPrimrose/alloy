@@ -297,7 +297,8 @@ def isa_pages(packet: str, tree: pathlib.Path | None) -> tuple[dict[str, str], J
         built[name] = skill(name, "softhier-sdk's README.md and runtime headers, verbatim (vendor documentation for "
                             "SoftHier v1).", "before writing a SoftHier kernel or calling a flex_* runtime function.",
                             verbatim_body(tree, "softhier-sdk", sdk))  # fmt: skip
-        manifest |= {"tree_commit": tree_commit(tree), "tree_sources": digests(tree, sdk)}
+        manifest["tree_commit"] = tree_commit(tree)
+        manifest["tree_sources"] = digests(tree, sdk)
     manifest["pages"] = {name: len(text.encode()) for name, text in built.items()}
     return built, manifest
 

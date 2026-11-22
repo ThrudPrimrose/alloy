@@ -1,7 +1,7 @@
 ---
 name: docs-md-gfx90a-09-chapter-6-vector-alu-operations
 description: "AMD CDNA2 ISA: Chapter 6. Vector ALU Operations (vendor documentation for AMD gfx90a (CDNA2))."
-when: "when you need AMD CDNA2 ISA: Chapter 6. Vector ALU Operations while writing a AMD gfx90a (CDNA2) kernel."
+when: "when you need AMD CDNA2 ISA: Chapter 6. Vector ALU Operations while writing a kernel for AMD gfx90a (CDNA2)."
 ---
 
 "AMD Instinct MI200" Instruction Set Architecture
