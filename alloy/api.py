@@ -113,7 +113,7 @@ def timed_winners(reports: list[ScopeReport], timings: Timings) -> dict[str, Bui
     """Each scope's fastest; every default build when the fastest together leave the band, as scopes each in it can."""
     if not timings.program.arms["alloy_full"].verdict.ok:
         return {rep.scope.symbol: rep.builds[0] for rep in reports}
-    return {rep.scope.symbol: winning_build(rep, timings.scopes[rep.scope.symbol].winner) for rep in reports}
+    return {rep.scope.symbol: winning_build(rep, timings.winner(rep.scope.symbol)) for rep in reports}
 
 
 def selected(
@@ -128,6 +128,7 @@ def selected(
     *,
     finite_inputs: bool,
     time_locally: bool,
+    deadline: float | None = None,
 ) -> tuple[dict[str, Build], Timings | None, Predictions | None]:
     """Each scope's build in ``mode``, with the timings or the predictions it was picked by: the reference build
     (reference), the predicted fastest verified build (speculative), or the fastest timed one (profile, when it times
@@ -140,7 +141,7 @@ def selected(
         predicted = predict.predictions(reports, matrix, sizes, known is not None)
         return predicted_winners(reports, verification, predicted, matrix, finite_inputs=finite_inputs), None, predicted
     if verification is not None and manifest is not None and time_locally:
-        timings = timing.time_program(linker, reports, verification, manifest)
+        timings = timing.time_program(linker, reports, verification, manifest, deadline)
         return timed_winners(reports, timings), timings, None
     return {}, None, None
 
@@ -153,6 +154,7 @@ def generate(
     matrix: Matrix | None = None,
     finite_inputs: bool = False,
     time_locally: bool = True,
+    deadline: float | None = None,
     mode: Mode = Mode.PROFILE,
     running: dict[str, int] | None = None,
     sources: Mapping[str, pathlib.Path] | None = None,
@@ -160,7 +162,7 @@ def generate(
     """Outline ``sdfg`` into scopes and build every candidate under ``out``, then verify them on the manifest's
     fuzz draws (without a manifest, on draws derived from ``sdfg`` when any value is a valid input:
     :func:`test_cases`). In profile mode (a manifest is required), when ``time_locally``, time the survivors and link
-    the fastest; a caller that times elsewhere (a benchmark's judge) passes ``time_locally=False``. In speculative mode
+    the fastest, leaving untimed the scopes reached after ``deadline`` (``time.monotonic()``); a caller that times elsewhere (a benchmark's judge) passes ``time_locally=False``. In speculative mode
     link the ones :func:`predict.choose` picks, untimed, or each scope's default build when nothing was verified.
     ``finite_inputs`` declares no input is NaN or Inf, which opens the FP levels that need it; the manifest's input
     ``domain`` entries are the declared ranges a ``relaxed`` rung must be proven under (:mod:`.heuristics.ranges`). ``running`` declares
@@ -192,7 +194,7 @@ def generate(
     linker = Linker(program, matrix, out)
     winners, timings, predicted = selected(
         mode, program, reports, verification, linker, matrix, manifest, running,
-        finite_inputs=finite_inputs, time_locally=time_locally,
+        finite_inputs=finite_inputs, time_locally=time_locally, deadline=deadline,
     )  # fmt: skip
     if winners:
         picked = {symbol: b.name for symbol, b in winners.items()}

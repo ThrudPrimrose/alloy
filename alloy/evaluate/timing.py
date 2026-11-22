@@ -71,10 +71,14 @@ class ProgramTiming:
 
 @pydantic.dataclasses.dataclass(slots=True, frozen=True, config=RECORD)
 class Timings:
-    """Every scope's timing, and alloy-full against DaCe's default codegen."""
+    """Every scope's timing (a scope past the deadline has none), and alloy-full against DaCe's default codegen."""
 
     scopes: dict[str, ScopeTiming]
     program: ProgramTiming
+
+    def winner(self, symbol: str) -> str:
+        """The scope's timed winner, the reference for a scope left untimed."""
+        return self.scopes[symbol].winner if symbol in self.scopes else REFERENCE
 
 
 @dataclass(slots=True, frozen=True)
@@ -282,10 +286,27 @@ def length(linker: Linker, sizes: dict[str, int]) -> int:
     return accumulation_length(linker.program, sizes)
 
 
-def time_program(linker: Linker, reports: list[ScopeReport], verification: Verification, manifest: Manifest) -> Timings:
-    """Every scope's timing, then alloy-full against DaCe's default codegen on every core."""
-    scopes = {rep.scope.symbol: time_scope(linker, rep, verification, manifest) for rep in reports}
-    winners = {rep.scope.symbol: winning_build(rep, scopes[rep.scope.symbol].winner) for rep in reports}
+def time_program(
+    linker: Linker,
+    reports: list[ScopeReport],
+    verification: Verification,
+    manifest: Manifest,
+    deadline: float | None = None,
+) -> Timings:
+    """Every scope's timing, then alloy-full against DaCe's default codegen on every core. A scope reached at or
+    after ``deadline`` (``time.monotonic()``) is not timed and keeps its reference; the whole-program check runs
+    regardless, since it guards the mix of FP levels."""
+    scopes: dict[str, ScopeTiming] = {}
+    for rep in reports:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        scopes[rep.scope.symbol] = time_scope(linker, rep, verification, manifest)
+    winners = {
+        rep.scope.symbol: winning_build(
+            rep, scopes[rep.scope.symbol].winner if rep.scope.symbol in scopes else REFERENCE
+        )
+        for rep in reports
+    }
     candidates = frozenset(b.candidate for b in winners.values())
     archives = {symbol: b.archive for symbol, b in winners.items() if b.archive}
     arms = Arms(

@@ -2,6 +2,7 @@
 import dataclasses
 import math
 import pathlib
+import time
 
 import pytest
 
@@ -137,6 +138,26 @@ def test_alloy_full_runs_the_build_each_scope_timing_named(
     sut = timing.time_program(Linker(program, FEW_REPS, tmp_path / "out"), [report], verification, manifest)
 
     assert sut.program.arms["alloy_full"].verdict.status == "fail"
+
+
+def test_a_scope_reached_after_the_deadline_is_not_timed_and_links_its_reference(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
+    (scope,) = program.scopes
+    good = build(scope, Candidate("c", "gcc"), FEW_REPS, tmp_path / "good", {})
+    wrong = handwritten_archive(tmp_path, scope, "for (int64_t i = 0; i < N; ++i) out[i] = 3.0 * a[i];")
+    report = ScopeReport(scope, (good, dataclasses.replace(good, name="wrong", archive=wrong, object_hash="wrong")))
+    verification = verify.verify(program, FEW_REPS, [report], cases, tmp_path / "out")
+    monkeypatch.setattr(timing, "time_scope", lambda *_: timing.ScopeTiming({}, {}, "wrong", {"N": 64}, {"N": 64}))
+    manifest = write_manifest(tmp_path, "scale", SCALE_MANIFEST)
+
+    sut = timing.time_program(
+        Linker(program, FEW_REPS, tmp_path / "out"), [report], verification, manifest, deadline=time.monotonic()
+    )
+
+    assert (sut.scopes, sut.winner(scope.symbol)) == ({}, timing.REFERENCE)
+    assert sut.program.arms["alloy_full"].verdict.ok
 
 
 def test_a_sum_that_rounded_alike_on_every_draw_stays_a_candidate_at_the_larger_timing_size(

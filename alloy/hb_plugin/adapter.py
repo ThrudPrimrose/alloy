@@ -193,12 +193,20 @@ def generated(
     running: dict[str, int] | None = None,
     *,
     time_locally: bool = False,
+    deadline: float | None = None,
 ) -> api.Result:
     """Alloy on ``sdfg`` under ``out``, every candidate verified at ``precision``; in profile mode timed here when
-    ``time_locally``, in speculative mode each scope's pick the prediction's at the ``running`` sizes."""
+    ``time_locally`` until ``deadline``, in speculative mode each scope's pick the prediction's at the ``running`` sizes."""
     manifest = manifest_of(spec, precision)
     result = api.generate(
-        sdfg, out, manifest=manifest, matrix=matrix, mode=mode, time_locally=time_locally, running=running
+        sdfg,
+        out,
+        manifest=manifest,
+        matrix=matrix,
+        mode=mode,
+        time_locally=time_locally,
+        deadline=deadline,
+        running=running,
     )
     if result.verification is None:
         raise RuntimeError(f"Alloy verified nothing for {spec.short_name}")
@@ -319,31 +327,31 @@ def optimize(
         submission = rendered(task, spec, sdfg, deliver)
         record_episode(keep, Mode.PROFILE.value, task, started)
         return submission
-    out = scratch_folder(spec)
+    out, judge = scratch_folder(spec), judge_client()
+    # the plain program's grade first: the pick is compared to it, and its cost is what the pick's grade will take
+    scoring = time.monotonic()
+    plain_grade = public_grade(judge, plain(task, spec, pipeline, deliver), task.kernel)
+    score_cost = time.monotonic() - scoring
     generating = time.monotonic()
-    # Alloy's own timer, as the alloy_profile tool's: every verified candidate in one process on shared buffers
-    result = generated(sdfg, spec, task.precision, matrix, out, time_locally=True)
+    # Alloy's own timer, as the alloy_profile tool's, stopped in time to grade the pick
+    result = generated(sdfg, spec, task.precision, matrix, out, time_locally=True, deadline=deadline - score_cost)
     generate = time.monotonic() - generating
-    linker, judge = Linker(result.program, matrix, out), judge_client()
+    linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}
     chosen = {**references, **(result.winners or {})}
-    scoring = time.monotonic()
+    picking = time.monotonic()
     delivered = None
-    if chosen != references:
-        # the plain program's grade first: the pick is compared to it, and its cost is what the pick's grade takes
-        plain_grade = public_grade(judge, plain(task, spec, pipeline, deliver), task.kernel)
-        score_cost = time.monotonic() - scoring
-        if plain_grade is not None and deadline - time.monotonic() > score_cost:
-            delivered = graded_pick(
-                judge,
-                chosen,
-                references,
-                lambda selection: library(task, spec, linker, selection, deliver),
-                lambda: plain(task, spec, pipeline, deliver),
-                task.kernel,
-                baseline=plain_grade,
-            )
-    score = time.monotonic() - scoring
+    if chosen != references and plain_grade is not None and deadline - time.monotonic() > score_cost:
+        delivered = graded_pick(
+            judge,
+            chosen,
+            references,
+            lambda selection: library(task, spec, linker, selection, deliver),
+            lambda: plain(task, spec, pipeline, deliver),
+            task.kernel,
+            baseline=plain_grade,
+        )
+    score = score_cost + time.monotonic() - picking
     # every deliver builds the same .so path, so the returned library is built last
     submission = delivery(task, spec, pipeline, linker, delivered, deliver)
     timed = {

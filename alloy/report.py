@@ -371,7 +371,7 @@ def final(
     configs = tuple(dict.fromkeys(config for row in rows for config in row.cells))
     chosen = dict(picked or {})
     for rep in reports:
-        winner = timing.scopes[rep.scope.symbol].winner if timing else REFERENCE
+        winner = timing.winner(rep.scope.symbol) if timing else REFERENCE
         chosen.setdefault(rep.scope.symbol, rep.builds[0].name if winner == REFERENCE else winner)
     program = None
     if timing is not None:
