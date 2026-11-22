@@ -288,7 +288,7 @@ def isa_pages(packet: str, tree: pathlib.Path | None) -> tuple[dict[str, str], J
             part = f"{source.title}: {title}" if title else source.title
             built[name] = skill(name, f"{part} (vendor documentation for {targets}).",
                                 f"when you need {part} while writing a kernel for {targets}.", body)  # fmt: skip
-    manifest: dict[str, Json] = {"sources": recorded}
+    manifest: Json = {"sources": recorded}
     if packet == "softhier":
         if tree is None:
             raise SystemExit("softhier: pass the softhier-sdk tree")
