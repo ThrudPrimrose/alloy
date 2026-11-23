@@ -1408,3 +1408,9 @@ def test_an_mma_off_its_blocks_is_refused_with_the_zero_padding_fix() -> None:
                                       "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
 
     assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE and "pad A and B with zeros" in sut.fix
+
+
+def test_a_cpu_proxy_fence_refusal_speaks_of_the_cpu_not_of_gpu_shared_memory() -> None:
+    sut = ask(Request("sme", "fence", kind="proxy"))
+
+    assert isinstance(sut, Infeasible) and "program order" in sut.reason and "__syncthreads" not in sut.reason

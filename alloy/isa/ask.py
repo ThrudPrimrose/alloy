@@ -468,6 +468,8 @@ NO_FENCE = {
     "proxy": "has one memory proxy: a barrier (__syncthreads) orders shared-memory writes before other threads' reads",
     "operand": "orders its matrix unit's operands in hardware: no fence comes before the next mma",
 }
+#: Why a CPU (SME included) needs no proxy fence: it has no shared memory and no asynchronous copy engine.
+NO_PROXY = "issues no asynchronous copies into another memory proxy: its loads and stores are ordered by program order"
 #: The completion of each asynchronous unit's work, per target.
 COMPLETIONS = {
     ("sm90", "tma"): Completion("mbarrier", "wait on=mbarrier", ("fence kind=proxy",)),
@@ -534,7 +536,8 @@ def fence_answer(request: Request) -> Answer:
         return bad(request, Why.OPERANDS, "fence names its kind", *(f"fence kind={k}" for k in NO_FENCE))
     fences = FENCES.get(request.target, {})
     if request.kind not in fences:
-        return no(request, Why.NO_ROW, f"{request.target} {NO_FENCE[request.kind]}")
+        why = NO_FENCE[request.kind] if request.target in tile.GPU_TILES or request.kind != "proxy" else NO_PROXY
+        return no(request, Why.NO_ROW, f"{request.target} {why}")
     spelling, what = fences[request.kind]
     code = device_code(gpu_helpers(request.target), f"void alloy_fence_{request.kind}()", spelling)
     return Feasible(request, "thread", (Step("thread", spelling),), {"build": gpu_build(request.target)}, code,
