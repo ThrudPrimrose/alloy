@@ -20,6 +20,7 @@ repos:
         args: [--maxkb=500]
         exclude: ^alloy/hb_plugin/skills/docs-md-  # a vendor manual's chapter, written by alloy.hb_plugin.pages
       - id: end-of-file-fixer
+        exclude: ^complexipy-snapshot\.json$  # complexipy writes it without a final newline
       - id: trailing-whitespace
   - repo: local
     hooks:
