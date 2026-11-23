@@ -12,3 +12,6 @@ documentation tree), and one folder per study with its SPEC.md, tasks.json, brie
 
 Configurations: `none`, `docs`, `tool` (and `facts` for the Tenstorrent pilot). The E3 ablation's budget is 2.5M
 tokens per run for every configuration (owner, 11-23). `python agents/test_run_agent.py` is the runner's self-check.
+
+`agents/e3.sh softhier|tensix ENDPOINT_RUN_DIR [TASKS...]` runs the whole E3 grid for one study as one ault job
+against a vLLM endpoint (`/scratch/ybudanaz/vllm/serve.sbatch`); its header says where the outputs go.
