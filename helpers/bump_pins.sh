@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Moves the hpcagent_bench pin in pyproject.toml to the head of its main branch (BENCH_BRANCH overrides) and the
+# Moves the hpcagent-bench pin ([tool.uv.sources]) in pyproject.toml to the head of its main branch (BENCH_BRANCH overrides) and the
 # [tool.uv] dace override (development and CI; the dependency is bare) to the dace commit that bench commit pins,
 # then relocks. The bench owns the dace pin, so Alloy grades on the dace the bench runs.
 set -euo pipefail
@@ -14,7 +14,7 @@ dace=$(curl -fsSL "https://raw.githubusercontent.com/spcl/HPCAgent-Bench/${bench
     python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["tool"]["uv"]["sources"]["dace"]["rev"])')
 [[ $dace =~ ^[0-9a-f]{40}$ ]] || { echo "the bench's dace pin not found" >&2; exit 1; }
 
-sed -i -E "s#(${dace_url}@)[0-9a-f]{40}#\1${dace}#g; s#(${bench_url}@)[0-9a-f]{40}#\1${bench}#" "$root/pyproject.toml"
+sed -i -E "s#(${dace_url}@)[0-9a-f]{40}#\1${dace}#g; s#(${bench_url}\", rev = \")[0-9a-f]{40}#\1${bench}#" "$root/pyproject.toml"
 (cd "$root" && uv lock)
 
 echo "bench ${bench}"

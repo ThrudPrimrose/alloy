@@ -26,7 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@a4395e3c5c7d69832f456b715575ef6c29d24463"]
+bench = ["hpcagent-bench>=1.0.0"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["alloy-compiler[bench]", "cupy-cuda13x"]
 amdgpu = ["alloy-compiler[bench]", "cupy ; platform_machine == 'x86_64'"]
@@ -62,6 +62,10 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
 no-binary-package = ["cupy"]
 # Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
 override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@77ecd2bcc3bd04197e04770fa65e55428ad71f22"]
+
+# PyPI metadata carries plain names; checkouts and CI take the bench at its pinned commit.
+[tool.uv.sources]
+hpcagent-bench = { git = "https://github.com/spcl/HPCAgent-Bench.git", rev = "a4395e3c5c7d69832f456b715575ef6c29d24463" }
 
 [tool.mypy]
 # Strict static typing for Alloy's own code, as in a statically typed language. The untyped libraries it calls (DaCe,
