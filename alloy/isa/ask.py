@@ -1192,6 +1192,11 @@ def misplaced(target: str, a: Operand, b: Operand, c: Operand) -> tuple[Why, str
     return None
 
 
+#: How a caller finishes an mma whose extents are not whole blocks: zeros add nothing to D = A x B + C.
+PAD = ("pad A and B with zeros to the nearest multiple (K too) and C to its rows and columns, run the tile, and read "
+       "back the m x n corner")  # fmt: skip
+
+
 def cpu_target(isa: str) -> str:
     """The tile target of an mma asked on ``isa``: a vector ISA's own FMA tile, the compiler-vectorized fallback for the
     other CPU names (avx512_fp16), the ISA itself elsewhere."""
@@ -1228,7 +1233,8 @@ def mma(request: Request, verify: bool) -> Answer:
         code = Why.SHAPE if (a.dtype, c.dtype) in tile.TYPES[target] else Why.ELEMENT_TYPE
         gpu_shape = code is Why.SHAPE and target in tile.GPU_TILES
         block = (*next(iter(tile.GPU_TILES[target])), tile.k_block(a.dtype)) if gpu_shape else ()
-        return no(request, code, str(exc.args[0]), *nearest, block=block)
+        fix = PAD if code is Why.SHAPE else ""
+        return no(request, code, str(exc.args[0]), *nearest, fix=fix, block=block)
     if misplaced_ := misplaced(target, a, b, c):
         return no(request, *misplaced_[:2], *nearest, fix=misplaced_[2])
     if verify:

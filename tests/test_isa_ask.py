@@ -1400,3 +1400,11 @@ def test_a_kernel_fences_each_kind_once_and_refuses_a_third_copy_into_an_mma() -
 
     assert isinstance(two, Combined) and sum(o.startswith("fence kind=proxy") for o in two.order) == 1
     assert isinstance(three, Infeasible) and three.why is Why.COMBINE and "third copy" in three.reason
+
+
+def test_an_mma_off_its_blocks_is_refused_with_the_zero_padding_fix() -> None:
+    sut = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
+                                      "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
+                                      "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE and "pad A and B with zeros" in sut.fix
