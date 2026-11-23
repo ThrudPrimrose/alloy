@@ -16,4 +16,4 @@ ignore = ["UP031","C408","PYI041","PYI042","PYI016","PERF203","FURB136"]
 "agents/softhier/alloy_v1.py" = ["ANN"]
 
 [format]
-exclude = ["*.ipynb", "*.md"]  # pages under alloy/hb_plugin/skills are generated
+exclude = ["*.ipynb", "*.md", "agents/softhier/alloy_v1.py"]  # generated: skill pages, the SoftHier arch file

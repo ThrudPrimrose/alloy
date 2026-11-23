@@ -335,9 +335,11 @@ def test_the_build_plugin_compiles_a_gpu_sdfg_with_the_block_the_report_ranks_fi
     def dace_build(program: dace.SDFG, **_: object) -> str:
         from dace.config import Config
 
-        compiled.append(
-            ([tuple(e.map.gpu_block_size) for e in gpu.device_maps(program)], Config.get("compiler", "build_plugin"))
-        )
+        blocks: list[gpu.Shape] = [
+            (e.map.gpu_block_size[0], e.map.gpu_block_size[1], e.map.gpu_block_size[2])
+            for e in gpu.device_maps(program)
+        ]
+        compiled.append((blocks, str(Config.get("compiler", "build_plugin"))))
         return "compiled"
 
     monkeypatch.setattr(dace.SDFG, "compile", dace_build)
