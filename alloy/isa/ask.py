@@ -22,6 +22,7 @@ import dataclasses
 import difflib
 import enum
 import math
+import re
 from collections.abc import Sequence
 from typing import Literal, get_args
 
@@ -187,6 +188,10 @@ class Request:
     #: ``wait``: the completion token waited on; ``fence``: the fence's kind (``proxy``, ``operand``).
     on: str = ""
     kind: str = ""
+    #: ``wait`` on a group token: how many groups may stay in flight (0 waits for all).
+    depth: int = 0
+    #: ``copy`` in an ``ask-all`` list: the shared-memory stage it fills, 0 or 1 (a two-stage pipeline).
+    stage: int = 0
 
 
 @dataclass(config=STRICT)
@@ -411,7 +416,12 @@ def ask(request: Request, verify: bool = True) -> Answer:
     """The answer to ``request``; ``verify`` runs the check the surface has (on the host, ttsim's record, a compile).
     A pinned unit that does not run the operation is infeasible, with the unit that does; ``on`` and ``kind`` on an
     operation other than ``wait`` (``on``) and ``fence`` or ``barrier`` (``kind``) are invalid, so a flag is never silently dropped."""
-    for flag, value, owners in (("on", request.on, ("wait",)), ("kind", request.kind, ("fence", "barrier"))):
+    for flag, value, owners in (
+        ("on", request.on, ("wait",)),
+        ("kind", request.kind, ("fence", "barrier")),
+        ("depth", request.depth, ("wait",)),
+        ("stage", request.stage, ("copy",)),
+    ):
         if value and request.op not in owners:
             return bad(
                 request,
@@ -451,6 +461,10 @@ WAITS: dict[str, dict[str, tuple[str, str]]] = {
     "lgkmcnt": ('asm volatile("s_waitcnt lgkmcnt(0)" ::: "memory"); __syncthreads();',
                 "the wave's LDS writes have landed, and the barrier lets every wave of the block read them"),
 })  # fmt: skip
+#: The tokens that count groups of asynchronous work, so a wait may leave the newest ``depth`` of them in flight.
+GROUP_TOKENS = frozenset({"bulk_group", "cp_async_group", "wgmma_group", "vmcnt", "lgkmcnt"})
+#: The count a group wait spells: ``wait_group[.read|.sync.aligned] 0`` and ``s_waitcnt vmcnt(0)``/``lgkmcnt(0)``.
+DEPTH = re.compile(r"((?:wait_group(?:\.read|\.sync\.aligned)? )|(?:(?:vmcnt|lgkmcnt)\())0(;|\))")
 #: Per target and fence kind: the fence's spelling and what it orders. Only sm90 splits the generic and the async
 #: proxy, and only wgmma reads registers asynchronously.
 FENCES: dict[str, dict[str, tuple[str, str]]] = {
@@ -522,6 +536,12 @@ def wait_answer(request: Request) -> Answer:
                   else f"{request.target} issues no asynchronous work to wait on")  # fmt: skip
         return no(request, Why.NO_ROW, reason, *(f"wait on={t}" for t in tokens))
     spelling, what = tokens[request.on]
+    if request.depth:
+        if request.on not in GROUP_TOKENS:
+            return no(request, Why.NO_ROW, f"{request.on} completes all at once (a barrier phase or a count of one): "
+                      "it has no depth; give each pipeline stage its own", f"wait on={request.on}")  # fmt: skip
+        spelling = DEPTH.sub(lambda m: f"{m.group(1)}{request.depth}{m.group(2)}", spelling)
+        what = f"{what}; up to {request.depth} newer groups stay in flight (a {request.depth + 1}-stage pipeline)"
     code, setup = spelling, {}
     if request.target in DIALECT:
         mbarrier = "uint64_t& bar, uint32_t& phase" if "&bar" in spelling else ""
@@ -1564,8 +1584,8 @@ def asked(
 def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infeasible | Invalid:
     """The answers to ``requests`` as one kernel on one target. On a GPU, a copy into shared memory must write one K
     block that the list's mma loads, from the global matrix it loads; the copy and the mma then carry the check of the
-    tile program that runs both. The tile programs run one mma each, so a list holds at most one. A refused request
-    is refused with its index."""
+    tile program that runs both. The tile programs run one mma each, so a list holds at most one; copies with
+    ``stage=1`` make it the double-buffered tile program. A refused request is refused with its index."""
     if not requests:
         return bad(None, Why.OPERANDS, "a kernel names at least one request", "a list of requests")
     targets = sorted({r.target for r in requests})
@@ -1586,6 +1606,11 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
         answers = asked(requests, True, {i: answers[i] for i in fed})
         if not isinstance(answers, list):
             return answers
+    if any(requests[i].stage for i in fed):
+        staged = two_stage(requests[mmas[0]], answers[mmas[0]], verify)
+        if not isinstance(staged, Feasible):
+            return staged
+        answers[mmas[0]] = staged
     for i in fed:
         answers[i] = carried(answers[i], answers[mmas[0]].check, mmas[0])
     order = ordering(requests, answers, fed, mmas)
@@ -1595,6 +1620,24 @@ def ask_all(requests: Sequence[Request], verify: bool = True) -> Combined | Infe
     basis = combined_basis(requests, answers, fed, mmas)
     return Combined(tuple(answers), tuple(f"copy {i} fills {name} of mma {mmas[0]}" for i, name in fed.items()),
                     Check(weakest.status, basis), order)  # fmt: skip
+
+
+def two_stage(request: Request, answer: Feasible, verify: bool) -> Answer:
+    """The mma of a list whose copies fill two shared-memory stages: the double-buffered tile kernel's program and
+    check in place of the one-stage kernel's."""
+    a, c = request.operands["a"], request.operands["c"]
+    m, k, n = a.shape[0], a.shape[1], c.shape[1]
+    try:
+        found = tile.gpu_plan(request.target, m, n, k, a.dtype, c.dtype, stages=2)
+    except KeyError as exc:
+        return no(request, Why.COMBINE, str(exc.args[0]), *mma_nearest(request.target, 64, 64, 64, a.dtype))
+    if verify:
+        found = tile.verify(found)
+        if found.verified == "failed":
+            return no(request, Why.CHECK_FAILED, f"the two-stage tile program failed its check: {found.detail}")
+    steps = (*answer.steps, Step(answer.unit, found.steps[-1]))  # the one-stage steps, then how the stages alternate
+    return dataclasses.replace(answer, steps=steps, setup=dict(found.descriptors), code=found.program,
+                               check=Check(found.verified, found.detail))  # type: ignore[arg-type]  # fmt: skip
 
 
 def carried(copy: Feasible, mma_check: Check, mma: int) -> Feasible:
@@ -1629,7 +1672,7 @@ def ordering(
     needed: list[str] = []
     fenced: set[str] = set()  # a fence orders every later request, so each kind goes before the first that needs it
     for i, answer in enumerate(answers):
-        readers = [mmas[0]] if i in fed else []
+        readers = [mmas[0]] if i in fed and not requests[i].stage else []  # stage 1 feeds the next K block
         if readers and readers[0] < i:
             return no(requests[readers[0]], Why.ORDER, f"request {readers[0]} (mma) comes before request {i} (copy), "
                       "which fills its input", fix=f"move request {i} before request {readers[0]}")  # fmt: skip
@@ -1672,6 +1715,7 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
     }
     nearest = tuple(dict.fromkeys(f"copy {spell(src=src, dst=dst)}" for src, dst in blocks.values()))
     fed: dict[int, str] = {}
+    filled: set[tuple[str, int]] = set()
     for i, request in enumerate(requests):
         src, dst = request.operands.get("src"), request.operands.get("dst")
         if request.op != "copy" or src is None or dst is None or dst.space != "shared":
@@ -1684,11 +1728,21 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
             fix = (f"copy one K block of {kb} per step: A from the {m} x {k} matrix, and B from Bt ({n} rows of {k}) "
                    "in global memory, since the mma reads B transposed")  # fmt: skip
             return no(request, Why.COMBINE, reason, *nearest, fix=fix)
-        if len(fed) == len(blocks):  # every input already has its copy: this one fills nothing the mma reads
-            return no(request, Why.COMBINE, f"request {i} is a third copy into shared memory; the tile program of "
-                      f"request {j} (mma) loads two blocks, A and Bt, one copy each", *nearest,
-                      fix=f"drop request {i}")  # fmt: skip
-        fed[i] = " or ".join(names)
+        if request.stage > 1:
+            return no(request, Why.COMBINE, f"request {i} fills stage {request.stage}; the two-stage tile program "
+                      "has stages 0 and 1", *nearest, fix=f"give request {i} stage=0 or stage=1")  # fmt: skip
+        free = [name for name in names if (name, request.stage) not in filled]
+        if not free:  # every input of this stage already has its copy: this one fills nothing the mma reads
+            return no(request, Why.COMBINE, f"request {i} is a second copy of {' and '.join(names)} into stage "
+                      f"{request.stage}; the tile program of request {j} (mma) loads A and Bt once per stage",
+                      *nearest, fix=f"drop request {i}, or give it the other stage")  # fmt: skip
+        filled.add((free[0], request.stage))
+        fed[i] = free[0] + (f" (stage {request.stage})" if request.stage else "")
+    if any(stage for _, stage in filled):
+        missing = [f"{name} (stage {s})" for name in blocks for s in (0, 1) if (name, s) not in filled]
+        if missing:
+            return no(requests[j], Why.COMBINE, f"a two-stage list copies A and Bt into both stages; "
+                      f"{', '.join(missing)} has no copy", *nearest, fix="add a copy per input and stage")  # fmt: skip
     return fed
 
 
@@ -1959,17 +2013,28 @@ def parsed_request(target: str, text: str) -> Request:
         raise KeyError("an empty request: op name=operand ...")
     op, *fields = text.split()
     operands: dict[str, Operand] = {}
-    unit, max_ulp, on, kind = "", None, "", ""
+    unit, max_ulp, on, kind, depth, stage = "", None, "", "", 0, 0
     for field in fields:
         name, sep, value = field.partition("=")
         if not sep or not value:
-            raise KeyError(f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, or kind=K")
+            raise KeyError(
+                f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, kind=K, "
+                "depth=N, or stage=S"
+            )
         if name == "unit":
             unit = value.lower()
         elif name == "on":
             on = value.lower()
         elif name == "kind":
             kind = value.lower()
+        elif name == "depth":
+            if not value.isdigit():
+                raise KeyError(f"{field!r} in {text!r}: depth is a count of groups, 0 or more")
+            depth = int(value)
+        elif name == "stage":
+            if not value.isdigit():
+                raise KeyError(f"{field!r} in {text!r}: stage is the shared-memory stage a copy fills, 0 or 1")
+            stage = int(value)
         elif name == "max_ulp":
             try:
                 max_ulp = float(value)
@@ -1977,4 +2042,4 @@ def parsed_request(target: str, text: str) -> Request:
                 raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
         else:
             operands[name] = Operand.parse(value)
-    return Request(target, op.lower(), operands, unit, max_ulp, on, kind)
+    return Request(target, op.lower(), operands, unit, max_ulp, on, kind, depth, stage)

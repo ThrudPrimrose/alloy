@@ -428,10 +428,12 @@ def encoding(target: str, in_type: str) -> tuple[int, int, int]:
     return FP8_FORMATS[target][in_type] if in_type in ("e4m3", "e5m2") else HALF_FORMATS[in_type]
 
 
-def gpu_program(target: str, bm: int, bn: int, m: int, n: int, k: int, in_type: str) -> str:
+def gpu_program(target: str, bm: int, bn: int, m: int, n: int, k: int, in_type: str, stages: int = 1) -> str:
     """A program that runs the tile kernel over an m x n x k product once and checks it against an f64 reference.
     The inputs are multiples of 1/8 that every input type holds exactly, encoded on the host by bit layout."""
-    kernel, threads = f"{GPU_TILES[target][bm, bn]}<{ELEM[in_type]}>", GPU_THREADS[target, bm]
+    staged = frozenset({"2stage"} if stages == 2 else ())
+    kernel = f"{GPU_TILES[target][bm, bn]}{'_2stage' if stages == 2 else ''}<{ELEM[in_type]}>"
+    threads = GPU_THREADS[target, bm]
     api = "cuda" if target == "sm90" else "hip"
     size, (e, mant, bias) = GPU_BYTES[in_type], encoding(target, in_type)
     if target == "sm90":
@@ -442,11 +444,11 @@ def gpu_program(target: str, bm: int, bn: int, m: int, n: int, k: int, in_type: 
     return 2;
   }}
   {kernel}<<<dim3((N + {bn - 1}) / {bn}, (M + {bm - 1}) / {bm}), {threads}>>>(ta, tb, dC, M, N, K);"""
-        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type, f"n{bn}", f"{bm}x{bn}"}))
+        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type, f"n{bn}", f"{bm}x{bn}"}) | staged)
         include += "\n#include <cuda_runtime.h>"
     else:
         setup = f"  {kernel}<<<dim3(N / {bn}, M / {bm}), {threads}>>>(dA, dB, dC, N, K);"
-        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type}))
+        include = inlined(GPU_HEADER[target], frozenset({"mma", in_type}) | staged)
     return f"""{include}
 #include <math.h>
 #include <stdio.h>
@@ -522,28 +524,45 @@ def gpu_block(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tupl
     return max(fitting)
 
 
-def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
+def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str, stages: int = 1) -> TilePlan:
     """A GEMM on sm_90 or CDNA (gfx90a, gfx942) tiled by the target's tile kernel for the input type; refuses what the
-    kernels do not cover."""
+    kernels do not cover. ``stages=2`` runs the double-buffered 64 x 64 kernel: K block kb + 1 loads while kb
+    multiplies."""
     tiles = GPU_TILES[target]
     if (in_type, acc_type) not in TYPES[target]:
         legal = ", ".join(f"--in {i} --acc {a}" for i, a in TYPES[target])
         raise KeyError(f"{target} tiles take {legal} (the kernels the table checks); got {in_type}, {acc_type}")
     bm, bn = gpu_block(target, m, n, k, in_type)
+    if stages == 2 and (in_type == "f64" or m % 64 or n % 64):
+        raise KeyError(f"{target}: the two-stage kernel is 64 x 64 per block, M and N multiples of 64, input types "
+                       f"{', '.join(i for i, _ in TYPES[target] if i != 'f64')}; got {m}x{n}x{k} {in_type}")  # fmt: skip
+    if stages == 2:
+        bm, bn = 64, 64
     if in_type == "f64":
         return cdna_f64_plan(target, m, n, k)
     steps, layout, descriptors = gpu_steps(target, bm, bn, k, in_type)
+    if stages == 2:
+        steps = (*steps, TWO_STAGES[target == "sm90"])
     if m % bm or n % bn or k % k_block(in_type):
         partial = (
             f"partial tiles: the grid rounds up; TMA zero-fills the A and B boxes past the {m}x{k} and {n}x{k} "
             "edges (still counted on the mbarrier), and every C read and write is guarded by row < M, col < N"
         )
         steps = (*steps, partial)
-    kernel = f"{tiles[bm, bn]}<{ELEM[in_type]}>"
+    kernel = f"{tiles[bm, bn]}{'_2stage' if stages == 2 else ''}<{ELEM[in_type]}>"
     descriptors = {"tile": f"{kernel}, {bm} x {bn} per block, {GPU_THREADS[target, bm]} threads"} | descriptors
-    return TilePlan(
-        target, m, n, k, in_type, acc_type, steps, layout, gpu_program(target, bm, bn, m, n, k, in_type), descriptors
-    )
+    program = gpu_program(target, bm, bn, m, n, k, in_type, stages)
+    return TilePlan(target, m, n, k, in_type, acc_type, steps, layout, program, descriptors)
+
+
+#: The two-stage kernels' extra step, CDNA (False) and sm90 (True).
+TWO_STAGES = (
+    ("two LDS stages: each thread loads K block kb + 1 into registers before the MFMAs of block kb and writes them "
+     "into the other stage after them; one __syncthreads per block"),
+    ("two stages, each with its own mbarrier and phase: thread 0 issues the TMA loads of K block kb + 1 into the other "
+     "stage before waiting on stage kb % 2; a stage is reloaded only after wgmma.wait_group 0 and the __syncthreads "
+     "behind it"),
+)  # fmt: skip
 
 
 def cdna_f64_plan(target: str, m: int, n: int, k: int) -> TilePlan:

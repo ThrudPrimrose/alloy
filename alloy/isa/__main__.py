@@ -230,6 +230,7 @@ def parser() -> Parser:
     ask_p.add_argument("--unit", default="", help="pin the implementation (tma, warpgroup, mfma, vector, ...)")
     ask_p.add_argument("--on", default="", help="wait: the completion token (mbarrier, wgmma_group, lgkmcnt, ...)")
     ask_p.add_argument("--kind", default="", help="fence: proxy or operand")
+    ask_p.add_argument("--depth", type=int, default=0, help="wait on a group token: groups left in flight")
     ask_p.add_argument("--max-ulp", type=float, help="for a math function: the cheapest rung within this bound")
     ask_p.add_argument("--no-verify", action="store_true", help="skip the check")
     ask_p.add_argument("--json", action="store_true", help="the Feasible, Infeasible, or Invalid answer as JSON")
@@ -240,7 +241,11 @@ def parser() -> Parser:
         "dst=shared:f16:64x64:row_major:b128' 'mma a=... b=... c=...'",
     )
     all_p.add_argument("target", help=", ".join(ask.TARGETS))
-    all_p.add_argument("requests", nargs="+", help="op name=operand ... [unit=U] [max_ulp=X], one request per argument")
+    all_p.add_argument(
+        "requests",
+        nargs="+",
+        help="op name=operand ... [unit=U] [max_ulp=X] [on=T] [kind=K] [depth=N] [stage=S], one request per argument",
+    )
     all_p.add_argument("--no-verify", action="store_true", help="skip the check")
     all_p.add_argument("--json", action="store_true", help="the Combined, Infeasible, or Invalid answer as JSON")
     return cli
@@ -808,7 +813,7 @@ def ask_command(args: argparse.Namespace) -> int:
         answer = ask.bad(None, ask.Why.MALFORMED, str(exc.args[0]), "space:dtype[:RxC or N][:layout][:swizzle]")
     else:
         request = ask.Request(
-            args.target, args.op, operands, args.unit, args.max_ulp, args.on.lower(), args.kind.lower()
+            args.target, args.op, operands, args.unit, args.max_ulp, args.on.lower(), args.kind.lower(), args.depth
         )
         answer = ask.ask(request, verify=not args.no_verify)
     code = {"feasible": 0, "infeasible": 2, "invalid": USAGE}[answer.status]

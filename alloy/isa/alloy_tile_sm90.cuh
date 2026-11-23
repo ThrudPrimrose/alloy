@@ -173,6 +173,65 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
 
 // alloy-end
 
+// alloy-only: mma n64 2stage
+// Two stages: while the warpgroup multiplies K block kb from stage kb % 2, thread 0 has the TMA load block kb + 1 into
+// the other stage. Each stage has its own mbarrier and phase; a stage is reloaded only after the wgmma that read it
+// completed (wait_group 0) and every thread passed the __syncthreads behind it.
+template <int E>
+__global__ void __launch_bounds__(128) alloy_gemm_64x64_2stage(const __grid_constant__ CUtensorMap tmA,
+                                                             const __grid_constant__ CUtensorMap tmB,
+                                                             float* __restrict__ C, int M, int N, int K) {
+  __shared__ alignas(1024) uint8_t sA[2][ALLOY_BM * ALLOY_ROW];
+  __shared__ alignas(1024) uint8_t sB[2][ALLOY_BN * ALLOY_ROW];
+  __shared__ alignas(8) uint64_t bar[2];
+  const int tid = threadIdx.x, m0 = blockIdx.y * ALLOY_BM, n0 = blockIdx.x * ALLOY_BN;
+  const int warp = tid / 32, lane = tid % 32;
+  const int r = m0 + 16 * warp + lane / 4;
+  float d[32];
+#pragma unroll
+  for (int i = 0; i < ALLOY_BN / 8; ++i) {  // the accumulators start as C: D = A x B + C
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    d[4 * i + 0] = alloy_c_at(C, M, N, r, c), d[4 * i + 1] = alloy_c_at(C, M, N, r, c + 1);
+    d[4 * i + 2] = alloy_c_at(C, M, N, r + 8, c), d[4 * i + 3] = alloy_c_at(C, M, N, r + 8, c + 1);
+  }
+  constexpr int block = ALLOY_ROW / alloy_bytes<E>;  // elements of K per block
+  const int blocks = (K + block - 1) / block;
+  if (tid == 0) {
+    alloy_mbar_init(&bar[0], 1);
+    alloy_mbar_init(&bar[1], 1);
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    alloy_mbar_arrive_expect_tx(&bar[0], (ALLOY_BM + ALLOY_BN) * ALLOY_ROW);  // stage 0: K block 0
+    alloy_tma_load_2d(sA[0], &tmA, &bar[0], 0, m0);
+    alloy_tma_load_2d(sB[0], &tmB, &bar[0], 0, n0);
+  }
+  __syncthreads();
+  uint32_t phase[2] = {0, 0};
+  for (int kb = 0; kb < blocks; ++kb) {
+    const int s = kb & 1;
+    if (tid == 0 && kb + 1 < blocks) {  // the other stage: free since the end of block kb - 1
+      alloy_mbar_arrive_expect_tx(&bar[s ^ 1], (ALLOY_BM + ALLOY_BN) * ALLOY_ROW);
+      alloy_tma_load_2d(sA[s ^ 1], &tmA, &bar[s ^ 1], (kb + 1) * block, m0);
+      alloy_tma_load_2d(sB[s ^ 1], &tmB, &bar[s ^ 1], (kb + 1) * block, n0);
+    }
+    alloy_mbar_wait(&bar[s], phase[s]);
+    phase[s] ^= 1;
+    const uint64_t da = alloy_desc_kmajor_sw128(alloy_smem_u32(sA[s])), db = alloy_desc_kmajor_sw128(alloy_smem_u32(sB[s]));
+    asm volatile("wgmma.fence.sync.aligned;" ::: "memory");
+#pragma unroll
+    for (int kk = 0; kk < ALLOY_ROW / 32; ++kk) alloy_wgmma<E>(d, da + (kk * 32 >> 4), db + (kk * 32 >> 4));
+    asm volatile("wgmma.commit_group.sync.aligned;" ::: "memory");
+    asm volatile("wgmma.wait_group.sync.aligned 0;" ::: "memory");
+    __syncthreads();
+  }
+#pragma unroll
+  for (int i = 0; i < ALLOY_BN / 8; ++i) {
+    const int c = n0 + 8 * i + 2 * (lane % 4);
+    alloy_c_put(C, M, N, r, c, d[4 * i + 0]), alloy_c_put(C, M, N, r, c + 1, d[4 * i + 1]);
+    alloy_c_put(C, M, N, r + 8, c, d[4 * i + 2]), alloy_c_put(C, M, N, r + 8, c + 1, d[4 * i + 3]);
+  }
+}
+// alloy-end
+
 // alloy-only: mma n128 128x128
 // 128x128 tile, rows of 128 bytes, two consumer warpgroups (256 threads); warpgroup g computes rows [64g, 64g+64).
 template <int E>

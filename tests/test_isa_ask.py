@@ -976,7 +976,8 @@ def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has
 
 @pytest.mark.parametrize(("request_",), [
     (Request("gfx942", "mma", kind="16x16x16"),), (Request("sme", "mma", kind="f16"),),
-    (Request("sm90", "copy", on="mbarrier"),),
+    (Request("sm90", "copy", on="mbarrier"),), (Request("sm90", "fence", kind="proxy", depth=1),),
+    (Request("sm90", "mma", stage=1),),
 ])  # fmt: skip
 def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_: Request) -> None:
     sut = ask(request_)
@@ -1401,7 +1402,7 @@ def test_a_kernel_fences_each_kind_once_and_refuses_a_third_copy_into_an_mma() -
     three = ask_all(requests("sm90", TMA_COPY, TMA_COPY, TMA_COPY, WGMMA), verify=False)
 
     assert isinstance(two, Combined) and sum(o.startswith("fence kind=proxy") for o in two.order) == 1
-    assert isinstance(three, Infeasible) and three.why is Why.COMBINE and "third copy" in three.reason
+    assert isinstance(three, Infeasible) and three.why is Why.COMBINE and "second copy" in three.reason
 
 
 def test_an_mma_off_its_blocks_is_refused_with_the_zero_padding_fix() -> None:
@@ -1445,3 +1446,56 @@ def test_an_sm90_mma_of_a_partial_tile_is_feasible_and_a_k_off_16_bytes_is_refus
     assert isinstance(partial, Feasible) and any("partial tiles" in s.spelling for s in partial.steps)
     assert partial.steps[0].spelling.startswith("C 100x72 is a grid of 2 x 2 thread blocks")
     assert isinstance(odd, Infeasible) and "multiple of 16" in odd.reason
+
+
+@pytest.mark.parametrize(("target", "on", "depth", "spelled"), [
+    ("sm90", "wgmma_group", 1, "wgmma.wait_group.sync.aligned 1;"), ("sm90", "bulk_group", 2, "wait_group.read 2;"),
+    ("gfx942", "vmcnt", 3, "vmcnt(3)"),
+])  # fmt: skip
+def test_a_wait_with_a_depth_leaves_that_many_groups_in_flight(target: str, on: str, depth: int, spelled: str) -> None:
+    sut = ask(Request(target, "wait", on=on, depth=depth))
+
+    assert isinstance(sut, Feasible) and spelled in sut.code, sut
+
+
+def test_a_wait_on_an_mbarrier_has_no_depth() -> None:
+    sut = ask(Request("sm90", "wait", on="mbarrier", depth=1))
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.NO_ROW and "own" in sut.reason
+
+
+@pytest.mark.parametrize(("target", "copy", "mma"), [
+    ("sm90", TMA_COPY, WGMMA),
+    ("gfx942", "copy src=global:f16:64x256 dst=shared:f16:64x64:row_major:xor:8",
+     "mma a=shared:f16:64x256:row_major:xor:8 b=shared:f16:256x64:col_major:xor:8 c=register:f32:64x64"),
+])  # fmt: skip
+def test_copies_into_two_stages_run_the_double_buffered_tile_kernel(target: str, copy: str, mma: str) -> None:
+    sut = ask_all(requests(target, copy, copy, f"{copy} stage=1", f"{copy} stage=1", mma), verify=False)
+
+    assert isinstance(sut, Combined), sut
+    assert "alloy_gemm_64x64_2stage<ALLOY_F16><<<" in sut.answers[4].code
+    assert sut.feeds[2:] == ("copy 2 fills a (stage 1) of mma 4", "copy 3 fills b (stage 1) of mma 4")
+    assert any(o.endswith("after request 3") for o in sut.order)  # stage 1 is read by the next K block, not this mma
+
+
+def test_a_one_stage_tile_program_leaves_the_two_stage_kernel_out() -> None:
+    sut = ask_all(requests("sm90", TMA_COPY, TMA_COPY, WGMMA), verify=False)
+
+    assert isinstance(sut, Combined) and "2stage" not in sut.answers[2].code
+
+
+def test_a_two_stage_list_missing_a_stage_copy_is_refused_with_the_missing_input() -> None:
+    sut = ask_all(requests("sm90", TMA_COPY, TMA_COPY, f"{TMA_COPY} stage=1", WGMMA), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.COMBINE and "b (stage 1) has no copy" in sut.reason
+
+
+def test_an_explicit_two_stage_list_waits_on_stage_1_after_the_mma() -> None:
+    texts = ("fence kind=proxy", TMA_COPY, TMA_COPY, "wait on=mbarrier", f"{TMA_COPY} stage=1", f"{TMA_COPY} stage=1",
+             "fence kind=operand", WGMMA, "wait on=wgmma_group", "wait on=mbarrier")  # fmt: skip
+
+    sut = ask_all(requests("sm90", *texts), verify=False)
+    unfinished = ask_all(requests("sm90", *texts[:-1]), verify=False)
+
+    assert isinstance(sut, Combined), sut
+    assert isinstance(unfinished, Infeasible) and unfinished.why is Why.ORDER and "request 4" in unfinished.reason

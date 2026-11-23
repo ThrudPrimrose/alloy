@@ -98,6 +98,72 @@ __global__ __launch_bounds__(256) void alloy_gemm_64x64(const void* __restrict__
 }
 // alloy-end
 
+// alloy-only: mma 2stage
+// Two LDS stages: each thread loads its chunks of K block kb + 1 from global memory into registers before the MFMAs of
+// block kb, and writes them into the other stage after them; one __syncthreads per block separates the stages.
+template <int E>
+__global__ __launch_bounds__(256) void alloy_gemm_64x64_2stage(const void* __restrict__ A,
+                                                              const void* __restrict__ Bt, float* __restrict__ C,
+                                                              int N, int K) {
+  constexpr int bytes = E <= ALLOY_BF16 ? 2 : 1;
+  constexpr int block = 128 / bytes;
+  __shared__ alloy_long2 sA[2][64 * 8];
+  __shared__ alloy_long2 sB[2][64 * 8];
+  const char* a = static_cast<const char*>(A);
+  const char* b = static_cast<const char*>(Bt);
+  const long row_bytes = static_cast<long>(K) * bytes;
+  const int tid = threadIdx.x, wave = tid / 64, lane = tid % 64;
+  const int wm = wave / 2, wn = wave % 2, m0 = blockIdx.y * 64, n0 = blockIdx.x * 64;
+  alloy_floatx16 acc;
+#pragma unroll
+  for (int g = 0; g < 16; ++g)  // the accumulators start as C: D = A x B + C
+    acc[g] = C[(m0 + 32 * wm + 8 * (g / 4) + 4 * (lane / 32) + g % 4) * N + n0 + 32 * wn + lane % 32];
+  alloy_long2 nextA[2], nextB[2];
+  const auto fetch = [&](int k0) {  // this thread's 2 chunks per operand of the K block at k0
+#pragma unroll
+    for (int it = 0; it < 2; ++it) {
+      const int idx = tid + 256 * it, r = idx / 8, c = idx % 8;
+      const long at = static_cast<long>(k0) * bytes + 16 * c;
+      nextA[it] = *reinterpret_cast<const alloy_long2*>(a + (m0 + r) * row_bytes + at);  // global_load_dwordx4
+      nextB[it] = *reinterpret_cast<const alloy_long2*>(b + (n0 + r) * row_bytes + at);
+    }
+  };
+  const auto stage = [&](int s) {  // ds_write_b128 of the fetched chunks into stage s, XOR-swizzled
+#pragma unroll
+    for (int it = 0; it < 2; ++it) {
+      const int idx = tid + 256 * it, r = idx / 8, c = idx % 8;
+      sA[s][r * 8 + (c ^ (r & 7))] = nextA[it];
+      sB[s][r * 8 + (c ^ (r & 7))] = nextB[it];
+    }
+  };
+  fetch(0);
+  stage(0);
+  __syncthreads();
+  const int blocks = K / block;
+  for (int kb = 0; kb < blocks; ++kb) {
+    const int s = kb & 1;
+    if (kb + 1 < blocks) fetch((kb + 1) * block);  // in flight during the MFMAs below
+    const int i = lane % 32, h = lane / 32, ra = 32 * wm + i, rb = 32 * wn + i;
+#pragma unroll
+    for (int p = 0; p < 4; ++p) {
+      const int ch = 2 * p + h;
+      const alloy_long2 ca = sA[s][ra * 8 + (ch ^ (ra & 7))];
+      const alloy_long2 cb = sB[s][rb * 8 + (ch ^ (rb & 7))];
+      acc = alloy_mfma<E>(ca.x, cb.x, acc);
+      acc = alloy_mfma<E>(ca.y, cb.y, acc);
+    }
+    if (kb + 1 < blocks) stage(s ^ 1);  // the other stage: every wave left it at the last __syncthreads
+    __syncthreads();
+  }
+#pragma unroll
+  for (int g = 0; g < 16; ++g) {
+    const int row = m0 + 32 * wm + 8 * (g / 4) + 4 * (lane / 32) + g % 4;
+    const int col = n0 + 32 * wn + lane % 32;
+    C[row * N + col] = acc[g];
+  }
+}
+// alloy-end
+
 // alloy-only: f64
 // f64 on CDNA (gfx90a, gfx942): one 64 x 64 block of C per 256 threads, each wave64 a 32 x 32 sub-tile of 2 x 2
 // v_mfma_f64_16x16x4f64 tiles accumulating in f64. A K block is 16 doubles (128 bytes of a row), staged in LDS with the

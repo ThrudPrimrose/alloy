@@ -73,7 +73,11 @@ before the wait is a race, and issuing without the fence reads stale data.
 - In `ask-all`, list the waits and fences between the requests (`"fence kind=proxy"`, `"wait on=mbarrier"`). A list
   that states none gets them back in order (`order:` lines); a list that states some must state all, and a request
   that reads before its wait, or issues without its fence, is refused with the missing request and where it goes.
-  Double buffering is two copies into two tiles, each waited on just before the mma that reads it.
+- Double buffering: give each copy `stage=0` or `stage=1` (`"copy src=... dst=... stage=1"`), A and Bt once per
+  stage. The mma then runs the two-stage tile kernel: stage 1 loads while stage 0 multiplies, so a stage-1 copy's wait
+  goes after the mma. A wait on a group token (`bulk_group`, `cp_async_group`, `wgmma_group`, `vmcnt`, `lgkmcnt`)
+  takes `depth=N` (`--depth N` in `ask`): N newer groups stay in flight. An `mbarrier` has no depth; each stage has
+  its own.
 
 ## What each target runs
 
