@@ -1319,7 +1319,7 @@ provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "softhier", "dev-nvidia", 
 [[package]]
 name = "dace-extended"
 version = "1.0.0"
-source = { git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0#af3976e11329532423967976afcb14d93e384658" }
+source = { git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0#736d231446eb0aa8423d1ad4c87c8c65b8537672" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
