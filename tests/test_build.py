@@ -2,6 +2,7 @@
 import pathlib
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 import dace
 import pytest
@@ -9,7 +10,7 @@ from dace.sdfg import nodes
 
 from alloy import configuration_matrix
 from alloy.backend import runtime, sweep
-from alloy.backend.build import compile_source, masked_lines, parse_remarks
+from alloy.backend.build import compile_source, masked_lines, parse_remarks, render
 from alloy.backend.candidates import Candidate
 from alloy.frontend import scopes
 from helpers import MATRIX, build, gcc_only, outlined, scope_with, variant
@@ -292,3 +293,20 @@ def test_only_a_reassociating_level_vectorizes_a_sum(
     source = "double f(int n, double *a) { double s = 0; for (int i = 0; i < n; i++) s += a[i]; return s; }"
 
     assert ("vaddpd" in compiled_asm(tmp_path, source, compiler, level)) is packed
+
+
+def test_renders_from_threads_equal_the_serial_renders() -> None:
+    """predict renders every build from a thread pool; CPF's process-wide configuration must not leak between them."""
+    scope = scope_with(outlined(), libm=False, reduction=False)
+    candidates = [
+        Candidate(lang, "gcc", knobs=((knob, value),))
+        for lang in ("c", "cpp")
+        for knob, values in MATRIX.knobs.items()
+        for value in values
+    ]
+    serial = [render(scope, c, MATRIX) for c in candidates]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        threaded = list(pool.map(lambda c: render(scope, c, MATRIX), candidates * 4))
+
+    assert threaded == serial * 4

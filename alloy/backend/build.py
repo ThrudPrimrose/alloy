@@ -6,6 +6,7 @@ import hashlib
 import pathlib
 import re
 import subprocess
+import threading
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 
@@ -69,12 +70,17 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
     return approximation.prelude(candidate.approx, called) + code if called else code
 
 
+#: CPF renders under process-wide DaCe configuration (the codegen knobs, its own scopes); two renders at once leak each
+#: other's settings into their units (a DaCe header in a self-contained one), so one renders at a time.
+RENDER_LOCK = threading.Lock()
+
+
 def rendering(scope: Scope, candidate: Candidate, matrix: Matrix) -> tuple[cpf.Rendering, str]:
     """CPF's rendering of the SDFG ``candidate`` renders (:func:`rendered_sdfg`), and the header line its unit needs.
     The rendering's ``sdfg`` is CPF's prepared copy, whose tasklet labels the unit's line comments carry."""
     sdfg, header = rendered_sdfg(scope, candidate, matrix)
     sdfg = sve_loops(sdfg) if candidate.render(matrix) == "sve" else sdfg
-    with ExitStack() as stack:
+    with RENDER_LOCK, ExitStack() as stack:
         for knob, value in candidate.codegen_params(matrix).items():
             stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
         out = cpf.render(
