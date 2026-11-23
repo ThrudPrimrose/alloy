@@ -1,0 +1,3 @@
+# gitleaks false positives, by fingerprint (gitleaks git --log-opts=--all).
+# The Intel SDM text "AM_STRUCT.KEYID" in the vendored x86 manual chapter.
+934780141237150fb840c0ca4277ea4bb757f453:alloy/hb_plugin/skills/docs-md-x86-04-chapter-4-instruction-set-reference-m-u/SKILL.md:generic-api-key:8768
