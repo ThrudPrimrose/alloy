@@ -102,7 +102,7 @@ All axes live in `alloy/configuration_matrix.toml` (validated by the pydantic da
 
 ## Sweep axes (GPU)
 
-Status: built (`alloy/gpu.py`, `alloy/gpu_build.py`, `alloy/gpu_matrix.toml`) for HPCAgent-Bench CUDA and HIP tasks; DaCe `SDFG.compile` build plugin on GPU remains open.
+Status: built (`alloy/gpu.py`, `alloy/gpu_build.py`, `alloy/gpu_matrix.toml`) for HPCAgent-Bench CUDA and HIP tasks; DaCe's `SDFG.compile` build plugin (`alloy-speculative`) gives an SDFG with GPU device maps the same speculated threadblocks (`dace_backend.gpu_speculative`).
 
 - Thread-block dimensions (`rank 1`: 64--1024 threads; `rank >= 2`: 32x4, 32x8, 16x16, 64x4, 32x16, 128x2), `scalar_decl` (`eager` vs. `late`), and `intrinsic` device-map rendering (`gpu_build.py`).
 - NVIDIA (`cuda`): `nvcc -Xptxas -v` register/spill and occupancy ranking.
@@ -226,7 +226,7 @@ reductions, masks, math functions) and looks up the spelling per target instead 
   (`gpu.descend`): each map tries its next three ranked shapes with the others held, timed by the judge's
   `/profile`, and keeps one only when the program runs faster; a shape that fails to launch is dropped; it stops
   when the kernel's time is short; the result is delivered if `/score` grades it correct and no slower than the
-  pipeline's own blocks. The DaCe build plugin on GPU is not done.
+  pipeline's own blocks. `SDFG.compile` with `compiler.build_plugin = alloy-speculative` takes the same compile-only picks on this machine's GPU, then DaCe's own build (`dace_backend.gpu_speculative`).
 - Packets `alloy-profile`, `alloy-speculative`, `alloy`, `alloy-full`, `alloy-full-reference`, and `alloy-isa` (plus the ablation's docs-md packets `docs-md-{tensix,softhier,x86,arm,sm90,gfx942,gfx90a}`, the vendor's documentation as pages written by `python -m alloy.hb_plugin.pages`, and the tool packets `alloy-isa-{tensix,softhier}`; see `alloy/hb_plugin/plugin.toml`):
   - `alloy_profile`, `alloy_speculative`, and `alloy_reference` post `/alloy/<mode>` (`alloy/hb_plugin/workbench.py`), running Alloy on the episode's kernel after `canon_cpu` (or `canon_gpu` for `hip`/`cuda`) in a spawned process holding a device slot. On CPU tasks it returns plain unbuilt C/C++ sources that the agent builds without DaCe (`best/program.c`, `best/scopes/<symbol>.<ext>`, `best/Makefile`, `best/advice/<symbol>.md`, and `report.md`); the judge verifies that a scratch copy builds (`checked_sha256`) without placing the `.so` in the agent's folder (owner decision, 2026-11-17). On GPU tasks it writes `best/program.{hip,cu}` and `best/device.{hip,cu}` with compile-only ranked threadblock picks (`gpu.speculate`) and `report.md` (profile coordinate descent runs in the tuner flavor).
   - `alloy_sweep` posts `/alloy/sweep` with the agent's edited `best/scopes/<symbol>.c` translation units, re-sweeping compilers, FP levels, vector math libraries, and ISA flags over the edits, verifying against the kernel's reference, and returning a fresh `best/` folder, `Makefile`, and ranked report.

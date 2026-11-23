@@ -1,11 +1,13 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
-"""Alloy as DaCe's CPU backend: an SDFG in, a ``CompiledSDFG`` out with the SDFG's own signature, every scope linked
+"""Alloy as DaCe's backend: an SDFG in, a ``CompiledSDFG`` out with the SDFG's own signature, every CPU scope linked
 from the build Alloy picked. ``SDFG.compile`` calls :func:`speculative` when DaCe's ``compiler.build_plugin`` names
 ``alloy-speculative`` (an entry point of ``dace.build_plugins``); profile mode needs a manifest, so it goes through
-:func:`compile`. The work runs in a process of its own, so a plain script needs no ``__main__`` guard: Alloy's worker
+:func:`compile`. An SDFG with GPU device maps takes :func:`gpu_speculative` instead: each device map at the
+threadblock its compiler report ranks first, then DaCe's own GPU build. The work runs in a process of its own, so a plain script needs no ``__main__`` guard: Alloy's worker
 processes re-import ``__main__``, and the worker's is this module. A build is kept under ``out`` and loaded again while
 :func:`build_key` stands, so calling a program twice sweeps once."""
 
+import copy
 import dataclasses
 import hashlib
 import importlib.metadata
@@ -25,7 +27,7 @@ from dace.codegen import compiler
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.config import Config, set_temporary
 
-from alloy import api, configuration_matrix, machine
+from alloy import api, configuration_matrix, gpu, machine
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate.link import Linker, built
 from alloy.frontend.inputs import Manifest
@@ -195,8 +197,34 @@ class CompileArgs(TypedDict, total=False):
     return_program_handle: bool
 
 
+def gpu_speculative(
+    sdfg: dace.SDFG, output_file: str | None = None, validate: bool = True, return_program_handle: bool = True
+) -> CompiledSDFG | None:
+    """A program with GPU device maps on this machine's GPU (:func:`gpu.native_dialect`, :func:`gpu.native_arch`):
+    every device map takes the threadblock shape its compiler report ranks first (:func:`gpu.speculate`, compile-only,
+    nothing runs), then DaCe builds the program. The SDFG itself is left as it was."""
+    dialect = gpu.native_dialect()
+    arch = gpu.native_arch(dialect)
+
+    def pipeline(shapes: dict[int, gpu.Shape]) -> dace.SDFG:
+        program = copy.deepcopy(sdfg)
+        maps = gpu.device_maps(program)
+        for ordinal, shape in shapes.items():
+            if ordinal < len(maps):
+                maps[ordinal].map.gpu_block_size = list(shape)
+        return program
+
+    program, _ = gpu.speculate(pipeline, dialect, arch)
+    with set_temporary("compiler", "build_plugin", value=""):
+        return program.compile(output_file=output_file, validate=validate, return_program_handle=return_program_handle)
+
+
 def speculative(sdfg: dace.SDFG, **compile_args: Unpack[CompileArgs]) -> CompiledSDFG | None:
-    """``alloy-speculative``: every scope's pick predicted, verified when no input needs a manifest."""
+    """``alloy-speculative``: every scope's pick predicted, verified when no input needs a manifest; a program with
+    GPU device maps gets its threadblocks speculated (:func:`gpu_speculative`; manifest, matrix and sizes do not apply)."""
+    if gpu.device_maps(sdfg):
+        given = {k: compile_args[k] for k in ("output_file", "validate", "return_program_handle") if k in compile_args}
+        return gpu_speculative(sdfg, **given)  # type: ignore[arg-type]
     return compile(sdfg, mode=Mode.SPECULATIVE, **compile_args)
 
 

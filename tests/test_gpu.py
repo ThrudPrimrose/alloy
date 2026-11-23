@@ -319,3 +319,35 @@ def test_the_gpu_tool_answers_the_ranked_hip_form_the_bench_builds(tmp_path: pat
     assert (tmp_path / "best" / "device.hip").read_text().count("__global__") >= 1
     report = pathlib.Path(sut.report).read_text()
     assert "| Map | Picked |" in report and "| 0 |" in report
+
+
+def test_the_build_plugin_compiles_a_gpu_sdfg_with_the_block_the_report_ranks_first(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alloy import dace_backend
+
+    recorded_compiler(tmp_path, "nvcc", NVCC_RECORDED.replace("8 bytes spill stores", "SPILL bytes spill stores"), 64)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
+    monkeypatch.setattr(gpu, "native_dialect", lambda: "cuda")
+    monkeypatch.setattr(gpu, "native_arch", lambda dialect: "8.9")
+    compiled: list[tuple[list[gpu.Shape], str]] = []
+
+    def dace_build(program: dace.SDFG, **_: object) -> str:
+        from dace.config import Config
+
+        compiled.append(
+            ([tuple(e.map.gpu_block_size) for e in gpu.device_maps(program)], Config.get("compiler", "build_plugin"))
+        )
+        return "compiled"
+
+    monkeypatch.setattr(dace.SDFG, "compile", dace_build)
+    sdfg = device_pipeline({})
+    before = [tuple(e.map.gpu_block_size) for e in gpu.device_maps(sdfg)]
+
+    with set_temporary("compiler", "build_plugin", value="alloy-speculative"):
+        result = dace_backend.speculative(sdfg)
+
+    assert result == "compiled"
+    ((shapes, plugin),) = compiled
+    assert shapes != [(64, 1, 1)] and plugin == "", "the spilling 64-thread block is replaced; DaCe builds it"
+    assert [tuple(e.map.gpu_block_size) for e in gpu.device_maps(sdfg)] == before, "the caller's SDFG is unchanged"
