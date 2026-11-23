@@ -75,6 +75,21 @@ def test_a_task_line_with_a_temporary_becomes_one_c_statement_per_line(host: Mod
     assert "const float s = (b[i] + (c[i] * d[i])); a[i] = (s * s);" in kernel
 
 
+@pytest.mark.parametrize("name", ["tsvc_2_va", "tsvc_2_s311"])
+def test_an_output_that_is_no_input_links_into_hbm_with_the_inputs(host: ModuleType, name: str) -> None:
+    task = host.TASKS[name]
+    program = host.program(task, "", host.inputs(task))
+
+    assert '__attribute__((section(".data"))) uint32_t alloy_out[' in program  # in .bss GVSoC cannot reach it
+
+
+def test_the_reference_carries_its_own_math_since_the_cores_cannot_run_libm(host: ModuleType) -> None:
+    kernel = host.reference_kernel(host.TASKS["transc_log_sincos_sum"])
+
+    assert "alloy_ref_logf(x[i])" in kernel and "alloy_ref_cosf(t[i])" in kernel and "alloy_ref_sinf(t[i])" in kernel
+    assert "#include <math.h>" not in kernel
+
+
 def test_the_runner_reads_each_studys_spec_and_tasks(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sys.path.insert(0, str(AGENTS))
     run_agent = loaded(AGENTS / "run_agent.py")

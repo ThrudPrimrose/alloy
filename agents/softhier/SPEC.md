@@ -10,7 +10,9 @@ back, and compares it with a float64 reference. The `run` tool runs exactly that
 - 2 x 2 clusters (cluster id 0 to 3, `flex_get_cluster_id()`), 3 Snitch RISC-V cores each (`flex_get_core_id()` 0 to
   2). Core 0 drives the cluster's Spatz vector unit (RVV 1.0, VLEN 256; GCC 14's `riscv_vector.h`) and its RedMulE
   matrix unit; the last core (`flex_is_dm_core()`) issues iDMA transfers. Every core runs scalar C (built with
-  `-march=rv32imafdv_zfh_zvfh -O3 -ffast-math`, linked with `-lm`).
+  `-march=rv32imafdv_zfh_zvfh -O3 -ffast-math`). There is no libm: newlib's math functions read
+  tables and state that the linker places beside the code, where no core can load, so write any `exp`, `log`, `sin`
+  you need yourself (`sqrtf` and `fabsf` compile to single instructions).
 - Each cluster has 1 MiB of TCDM at `local(offset)`, offset 0 to 0xFFFFF. A core loads and stores only its own
   cluster's TCDM; HBM and other clusters' TCDM are reached through iDMA alone (`flex_dma_async_1d(dst, src, bytes)` and
   the other `flex_dma_*` calls of the SDK headers, then `flex_dma_async_wait_all()` on the DM core). A core's own load or store to HBM is out

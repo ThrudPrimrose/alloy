@@ -35,7 +35,39 @@ FLAGS = ["-mabi=ilp32d", "-mcmodel=medlow", "-march=rv32imafdv_zfh_zvfh", "-O3",
          "-fno-tree-vectorize", "-fno-common", "-ffunction-sections"]  # fmt: skip
 TARGET = "pulp.chips.soft_hier_old.flex_cluster"
 BUILD_TIMEOUT, RUN_TIMEOUT = 300, 3600
-CALLS = {"exp": "expf", "log": "logf", "sqrt": "sqrtf", "sin": "sinf", "cos": "cosf", "tanh": "tanhf", "abs": "fabsf"}
+# The tasks' calls in the reference's C. Newlib's libm reads tables and errno state that the linker places beside the
+# code, where the cores cannot load (the simulation stops at once), so the reference carries its own (REFERENCE_MATH)
+# and the judge links no libm.
+CALLS = {"log": "alloy_ref_logf", "sin": "alloy_ref_sinf", "cos": "alloy_ref_cosf", "sqrt": "__builtin_sqrtf",
+         "abs": "__builtin_fabsf"}  # fmt: skip
+REFERENCE_MATH = """static inline float alloy_ref_sin_poly(float r) {  // |r| <= pi/4: Taylor to r^9
+    const float r2 = r * r;
+    return r * (1.0f + r2 * (-1.6666667e-1f + r2 * (8.3333333e-3f + r2 * (-1.9841270e-4f + r2 * 2.7557319e-6f))));
+}
+static inline float alloy_ref_cos_poly(float r) {  // |r| <= pi/4: Taylor to r^8
+    const float r2 = r * r;
+    return 1.0f + r2 * (-0.5f + r2 * (4.1666667e-2f + r2 * (-1.3888889e-3f + r2 * 2.4801587e-5f)));
+}
+static inline float alloy_ref_trig(float x, int cosine) {  // Cody-Waite: x = k pi/2 + r, quadrant k mod 4
+    const float t = x * 0.63661977f;
+    const int k = (int)(t + (t >= 0.0f ? 0.5f : -0.5f));
+    const float r = (x - (float)k * 1.5707964f) + (float)k * 4.3711388e-8f;
+    const int q = (k + cosine) & 3;
+    return q == 0 ? alloy_ref_sin_poly(r) : q == 1 ? alloy_ref_cos_poly(r) : q == 2 ? -alloy_ref_sin_poly(r)
+                                                                              : -alloy_ref_cos_poly(r);
+}
+static inline float alloy_ref_sinf(float x) { return alloy_ref_trig(x, 0); }
+static inline float alloy_ref_cosf(float x) { return alloy_ref_trig(x, 1); }
+static inline float alloy_ref_logf(float x) {  // x > 0: x = m 2^e, m in [sqrt(1/2), sqrt(2)), log m = 2 atanh(s)
+    union { float f; uint32_t u; } v = {x};
+    int e = (int)(v.u >> 23) - 127;
+    v.u = (v.u & 0x7fffffu) | 0x3f800000u;
+    float m = v.f;
+    if (m > 1.4142135f) { m *= 0.5f; e += 1; }
+    const float s = (m - 1.0f) / (m + 1.0f), s2 = s * s;
+    return (float)e * 0.69314718f + 2.0f * s * (1.0f + s2 * (3.3333333e-1f + s2 * (0.2f + s2 * (1.4285714e-1f + s2 * 1.1111111e-1f))));
+}
+"""
 
 
 def f32(x: float) -> float:
@@ -60,7 +92,7 @@ def inputs(task: dict) -> dict[str, list[float]]:
 
 def evaluate(expression: str, values: dict[str, float]) -> float:
     """One element of a task expression in float64 (names are the task's inputs; calls as in CALLS)."""
-    scope = {name: getattr(math, name) for name in CALLS if name != "abs"} | {"abs": abs} | values
+    scope = {"log": math.log, "sin": math.sin, "cos": math.cos, "sqrt": math.sqrt, "abs": abs} | values
     return float(eval(expression, {"__builtins__": {}}, scope))
 
 
@@ -113,7 +145,8 @@ def program(task: dict, kernel: str, data: dict[str, list[float]]) -> str:
             lines.append(f"uint16_t alloy_in_{output}[{count}] = {{{', '.join(map(hex, bits))}}};")
     else:
         out = "alloy_out"
-        lines.append(f"uint{width}_t alloy_out[{count}] = {{0}};")
+        # .data like the inputs: a zero-initialized array would go to .bss, which GVSoC can neither preload nor reach
+        lines.append(f'__attribute__((section(".data"))) uint{width}_t alloy_out[{count}] = {{0}};')
     chunk = min(count * width // 8, 0x40000)
     return f"""#include <stdint.h>
 #include <stddef.h>
@@ -185,7 +218,7 @@ def toolchain(folder: pathlib.Path, source: str) -> str:
     sdk = pathlib.Path(os.environ["SOFTHIER_SDK"], "runtime", "runtime")
     (folder / "program.c").write_text(source)
     argv = ["riscv32-unknown-elf-gcc", "-I", str(sdk / "include"), "-T", str(sdk / "flex_memory.ld"), "-nostartfiles",
-            *FLAGS, "-Wl,--gc-sections", "-o", "softhier.elf", str(sdk / "flex_start.s"), "program.c", "-lm"]  # fmt: skip
+            *FLAGS, "-Wl,--gc-sections", "-o", "softhier.elf", str(sdk / "flex_start.s"), "program.c"]  # fmt: skip
     done = subprocess.run(argv, cwd=folder, capture_output=True, text=True, check=False, timeout=BUILD_TIMEOUT)
     if done.returncode == 0:
         return ""
@@ -221,6 +254,8 @@ def grade(name: str, folder: pathlib.Path) -> dict:
     if code != 0:
         return verdict | {"error": f"gvsoc exit {code}: {output[-1500:]}"}
     words = [int(line.split()[1], 16) for line in output.splitlines() if line.startswith("ALLOY ")]
+    if not words:
+        return verdict | {"error": f"no output printed; the simulator said: {output[-1500:]}"}
     ok, ratio, why = compare(task, words, reference(task, data))
     return verdict | {"ok": ok, "error_ratio": ratio, "ns": int(timed.group(1)) if timed else None, "error": why}
 
@@ -300,8 +335,9 @@ void alloy_kernel(uint64_t a, uint64_t b, uint64_t in2, uint64_t c, uint32_t n) 
         flex_dma_async_1d(out_hbm + 4 * first, local({4 * out_at} * part), 4 * part);
         flex_dma_async_wait_all();
     }}"""
-    return f"""#include <math.h>
-// Scalar reference of {task["name"]}: each cluster's share of the {"sum" if reduce else "elements"} on its two compute cores.
+    return (
+        REFERENCE_MATH
+        + f"""// Scalar reference of {task["name"]}: each cluster's share of the {"sum" if reduce else "elements"} on its two compute cores.
 void alloy_kernel({", ".join(params)}, uint64_t out_hbm, uint32_t n) {{
     const uint32_t part = n / {CLUSTERS}, first = flex_get_cluster_id() * part;
 {views}{out_view}    if (flex_is_dm_core()) {{
@@ -312,6 +348,7 @@ void alloy_kernel({", ".join(params)}, uint64_t out_hbm, uint32_t n) {{
     flex_intra_cluster_sync();
 }}
 """
+    )
 
 
 def main(argv: list[str]) -> int:
