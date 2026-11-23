@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Moves the hpcagent-bench pin ([tool.uv.sources]) in pyproject.toml to the head of its main branch (BENCH_BRANCH overrides) and the
 # [tool.uv] dace override (development and CI; the dependency is bare) to the dace commit that bench commit pins,
-# then relocks. The bench owns the dace pin, so Alloy grades on the dace the bench runs.
+# then relocks. The bench owns the dace pin, so Alloy grades on the dace the bench runs. Each sibling package's
+# `>=` bound in [project] moves to its latest PyPI release (a package not on PyPI yet keeps its bound).
 set -euo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -15,6 +16,13 @@ dace=$(curl -fsSL "https://raw.githubusercontent.com/spcl/HPCAgent-Bench/${bench
 [[ $dace =~ ^[0-9a-f]{40}$ ]] || { echo "the bench's dace pin not found" >&2; exit 1; }
 
 sed -i -E "s#(${dace_url}@)[0-9a-f]{40}#\1${dace}#g; s#(${bench_url}\", rev = \")[0-9a-f]{40}#\1${bench}#" "$root/pyproject.toml"
+for package in hpcagent-bench dace-extended dace-relayout; do
+    latest=$(curl -fsSL "https://pypi.org/pypi/${package}/json" 2>/dev/null |
+        python3 -c 'import sys, json; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null) || latest=""
+    [[ -z $latest ]] && { echo "${package}: not on PyPI, bound kept"; continue; }
+    sed -i -E "s#\"${package}>=[^\";]*#\"${package}>=${latest}#g" "$root/pyproject.toml"
+    echo "${package} >= ${latest}"
+done
 (cd "$root" && uv lock)
 
 echo "bench ${bench}"
