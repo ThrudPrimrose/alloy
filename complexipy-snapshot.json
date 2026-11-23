@@ -1,0 +1,412 @@
+[
+  {
+    "path": "agents/run_agent.py",
+    "file_name": "run_agent.py",
+    "functions": [
+      {
+        "name": "main",
+        "complexity": 17
+      },
+      {
+        "name": "call",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "agents/tensix/agents/host.py",
+    "file_name": "host.py",
+    "functions": [
+      {
+        "name": "run",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "agents/tensix/agents/job.py",
+    "file_name": "job.py",
+    "functions": [
+      {
+        "name": "main",
+        "complexity": 20
+      }
+    ]
+  },
+  {
+    "path": "agents/tools/helptool.py",
+    "file_name": "helptool.py",
+    "functions": [
+      {
+        "name": "docs",
+        "complexity": 20
+      }
+    ]
+  },
+  {
+    "path": "alloy/backend/intrinsics.py",
+    "file_name": "intrinsics.py",
+    "functions": [
+      {
+        "name": "loop_plan",
+        "complexity": 16
+      },
+      {
+        "name": "offer",
+        "complexity": 17
+      },
+      {
+        "name": "tasklets",
+        "complexity": 18
+      },
+      {
+        "name": "checked_writes",
+        "complexity": 20
+      },
+      {
+        "name": "admit",
+        "complexity": 21
+      },
+      {
+        "name": "Body::translated",
+        "complexity": 24
+      }
+    ]
+  },
+  {
+    "path": "alloy/evaluate/timing.py",
+    "file_name": "timing.py",
+    "functions": [
+      {
+        "name": "time_arms",
+        "complexity": 16
+      }
+    ]
+  },
+  {
+    "path": "alloy/frontend/cnumpy.py",
+    "file_name": "cnumpy.py",
+    "functions": [
+      {
+        "name": "matmul",
+        "complexity": 17
+      },
+      {
+        "name": "pointer_value",
+        "complexity": 18
+      },
+      {
+        "name": "declaration",
+        "complexity": 21
+      },
+      {
+        "name": "canonical_range",
+        "complexity": 24
+      },
+      {
+        "name": "assignment",
+        "complexity": 25
+      },
+      {
+        "name": "statement",
+        "complexity": 29
+      },
+      {
+        "name": "expression",
+        "complexity": 30
+      },
+      {
+        "name": "symbolic",
+        "complexity": 30
+      },
+      {
+        "name": "is_integer",
+        "complexity": 35
+      }
+    ]
+  },
+  {
+    "path": "alloy/frontend/scopes.py",
+    "file_name": "scopes.py",
+    "functions": [
+      {
+        "name": "accumulates",
+        "complexity": 20
+      }
+    ]
+  },
+  {
+    "path": "alloy/hb_plugin/eval_set.py",
+    "file_name": "eval_set.py",
+    "functions": [
+      {
+        "name": "element",
+        "complexity": 30
+      },
+      {
+        "name": "statements",
+        "complexity": 33
+      }
+    ]
+  },
+  {
+    "path": "alloy/heuristics/prune.py",
+    "file_name": "prune.py",
+    "functions": [
+      {
+        "name": "feeds_add",
+        "complexity": 17
+      }
+    ]
+  },
+  {
+    "path": "alloy/heuristics/ranges.py",
+    "file_name": "ranges.py",
+    "functions": [
+      {
+        "name": "evaluate",
+        "complexity": 17
+      },
+      {
+        "name": "binary",
+        "complexity": 20
+      },
+      {
+        "name": "sweep",
+        "complexity": 25
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/__main__.py",
+    "file_name": "__main__.py",
+    "functions": [
+      {
+        "name": "print_kernels",
+        "complexity": 16
+      },
+      {
+        "name": "print_hits",
+        "complexity": 17
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/ask.py",
+    "file_name": "ask.py",
+    "functions": [
+      {
+        "name": "feeds",
+        "complexity": 16
+      },
+      {
+        "name": "cpu_copy",
+        "complexity": 17
+      },
+      {
+        "name": "one_register",
+        "complexity": 17
+      },
+      {
+        "name": "tile_call",
+        "complexity": 18
+      },
+      {
+        "name": "answered",
+        "complexity": 19
+      },
+      {
+        "name": "off_register",
+        "complexity": 19
+      },
+      {
+        "name": "mma",
+        "complexity": 22
+      },
+      {
+        "name": "parsed_request",
+        "complexity": 22
+      },
+      {
+        "name": "thread_op",
+        "complexity": 28
+      },
+      {
+        "name": "vector_op",
+        "complexity": 28
+      },
+      {
+        "name": "ordering",
+        "complexity": 29
+      },
+      {
+        "name": "softhier_copy",
+        "complexity": 39
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/hints.py",
+    "file_name": "hints.py",
+    "functions": [
+      {
+        "name": "op_uses",
+        "complexity": 20
+      },
+      {
+        "name": "expression_ops",
+        "complexity": 28
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/render.py",
+    "file_name": "render.py",
+    "functions": [
+      {
+        "name": "render_kernels",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/softhier_harness.py",
+    "file_name": "softhier_harness.py",
+    "functions": [
+      {
+        "name": "program",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/table.py",
+    "file_name": "table.py",
+    "functions": [
+      {
+        "name": "entry_hits",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/tensix_kernels.py",
+    "file_name": "tensix_kernels.py",
+    "functions": [
+      {
+        "name": "tasklet_ops",
+        "complexity": 23
+      }
+    ]
+  },
+  {
+    "path": "alloy/isa/validate.py",
+    "file_name": "validate.py",
+    "functions": [
+      {
+        "name": "validate",
+        "complexity": 18
+      },
+      {
+        "name": "integer_inputs",
+        "complexity": 21
+      }
+    ]
+  },
+  {
+    "path": "alloy/softhiergen/library/collectives.py",
+    "file_name": "collectives.py",
+    "functions": [
+      {
+        "name": "collective_tasklet",
+        "complexity": 18
+      }
+    ]
+  },
+  {
+    "path": "alloy/softhiergen/library/dma.py",
+    "file_name": "dma.py",
+    "functions": [
+      {
+        "name": "dma_call",
+        "complexity": 16
+      }
+    ]
+  },
+  {
+    "path": "alloy/softhiergen/passes.py",
+    "file_name": "passes.py",
+    "functions": [
+      {
+        "name": "select_implementations",
+        "complexity": 16
+      },
+      {
+        "name": "expand_whole_array_nodes",
+        "complexity": 19
+      },
+      {
+        "name": "kernel_states",
+        "complexity": 22
+      },
+      {
+        "name": "insert_sync",
+        "complexity": 25
+      }
+    ]
+  },
+  {
+    "path": "alloy/tensixgen/__main__.py",
+    "file_name": "__main__.py",
+    "functions": [
+      {
+        "name": "main",
+        "complexity": 16
+      }
+    ]
+  },
+  {
+    "path": "alloy/tensixgen/backend.py",
+    "file_name": "backend.py",
+    "functions": [
+      {
+        "name": "place",
+        "complexity": 16
+      },
+      {
+        "name": "rule",
+        "complexity": 21
+      }
+    ]
+  },
+  {
+    "path": "helpers/cnumpy_roundtrip.py",
+    "file_name": "cnumpy_roundtrip.py",
+    "functions": [
+      {
+        "name": "call_lifted",
+        "complexity": 19
+      }
+    ]
+  },
+  {
+    "path": "helpers/isacost.py",
+    "file_name": "isacost.py",
+    "functions": [
+      {
+        "name": "measured",
+        "complexity": 34
+      }
+    ]
+  },
+  {
+    "path": "tests/test_isa.py",
+    "file_name": "test_isa.py",
+    "functions": [
+      {
+        "name": "test_every_recipe_step_reverses_to_its_own_row",
+        "complexity": 19
+      }
+    ]
+  }
+]

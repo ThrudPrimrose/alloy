@@ -384,7 +384,7 @@ def c_type(scope: Scope, node: Node) -> str:
     return DTYPES[name]
 
 
-def is_integer(scope: Scope, node: Node) -> bool:
+def is_integer(scope: Scope, node: Node) -> bool:  # noqa: C901
     """Whether a C expression has an integer type (C's ``/`` and ``%`` truncate on integers)."""
     kind = node.type
     if kind == "parenthesized_expression":
@@ -481,7 +481,7 @@ def number(scope: Scope, node: Node) -> str:
     return value.rstrip("fl")
 
 
-def expression(scope: Scope, node: Node) -> str:
+def expression(scope: Scope, node: Node) -> str:  # noqa: C901
     """A C expression as Python source."""
     kind = node.type
     if kind == "parenthesized_expression":
@@ -879,7 +879,7 @@ def assignment(scope: Scope, node: Node) -> list[str]:
     return [f"{target} {op} {value}"]
 
 
-def statement(scope: Scope, node: Node) -> list[str]:
+def statement(scope: Scope, node: Node) -> list[str]:  # noqa: C901
     """A C statement as Python lines (four spaces per level)."""
     kind = node.type
     if kind == "compound_statement":

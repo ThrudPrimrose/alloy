@@ -2,8 +2,13 @@ line-length = 120
 target-version = "py312"
 
 [lint]
-select = ["ANN", "F", "UP", "I", "FLY", "Q", "C4", "DTZ", "T10", "EXE", "INT", "ISC", "PYI", "RSE", "TID", "W", "PERF", "FURB", "RUF100"]
+select = ["ANN", "F", "UP", "I", "FLY", "Q", "C4", "C90", "DTZ", "T10", "EXE", "INT", "ISC", "PYI", "RSE", "TID", "W", "PERF", "FURB", "RUF100"]
 ignore = ["UP031","C408","PYI041","PYI042","PYI016","PERF203","FURB136"]
+
+# Cyclomatic complexity at most 15 (cognitive: complexipy in pre-commit); the functions over it on 2026-11-23 carry
+# `# noqa: C901` until they are refactored, and RUF100 flags each one that no longer needs it.
+[lint.mccabe]
+max-complexity = 15
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "F405", "I"]

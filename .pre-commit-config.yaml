@@ -21,3 +21,13 @@ repos:
         exclude: ^alloy/hb_plugin/skills/docs-md-  # a vendor manual's chapter, written by alloy.hb_plugin.pages
       - id: end-of-file-fixer
       - id: trailing-whitespace
+  - repo: local
+    hooks:
+      # Cognitive complexity at most 15 (cyclomatic: ruff C901); complexipy-snapshot.json holds the functions over it on
+      # 2026-11-23, which may only get simpler until they are refactored.
+      - id: complexipy
+        name: complexipy
+        entry: uvx complexipy==9.0.0 . --max-complexity-allowed 15 --quiet
+        language: system
+        pass_filenames: false
+        types: [python]
