@@ -1414,3 +1414,10 @@ def test_a_cpu_proxy_fence_refusal_speaks_of_the_cpu_not_of_gpu_shared_memory() 
     sut = ask(Request("sme", "fence", kind="proxy"))
 
     assert isinstance(sut, Infeasible) and "program order" in sut.reason and "__syncthreads" not in sut.reason
+
+
+def test_an_f16_load_on_plain_avx512_points_at_the_converting_load_first() -> None:
+    sut = ask(Request("avx512", "load", {"x": Operand("vector", "f16", (32,))}), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.nearest == ("avx512 load_f16 --x vector:f32:16", "target avx512_fp16")
+    assert "_mm512_cvtph_ps" in sut.reason

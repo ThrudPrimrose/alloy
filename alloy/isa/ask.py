@@ -655,7 +655,10 @@ def vector_op(request: Request, verify: bool) -> Answer:
     try:
         gate(isa, dtype)
     except KeyError as exc:
-        return no(request, Why.ELEMENT_TYPE, str(exc.args[0]), f"target {GATED[isa, dtype]}")
+        lanes32 = table.isa(isa).lanes["f32"]
+        convert = {"load": "load_f16", "store": "store_f16"}.get(request.op)  # f16 storage, f32 arithmetic
+        widened = (f"{isa} {convert} --x vector:f32:{lanes32}",) if convert and dtype == "f16" else ()
+        return no(request, Why.ELEMENT_TYPE, str(exc.args[0]), *widened, f"target {GATED[isa, dtype]}")
     # a broadcast's source is one scalar: register:<dtype> or register:<dtype>:1
     scalar = request.op == "broadcast" and all(o.shape in ((), (1,)) for o in request.operands.values())
     shapes = set() if scalar else {operand.shape for operand in request.operands.values() if operand.shape}

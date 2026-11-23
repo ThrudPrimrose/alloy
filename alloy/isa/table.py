@@ -516,7 +516,8 @@ def gate(isa: str, dtype: str) -> None:
     if feature := GATED.get((isa, dtype)):
         raise KeyError(
             f"{isa}/{dtype}: {dtype} arithmetic needs AVX512-FP16, which plain AVX-512 (Zen 4, Skylake-X, Ice Lake) "
-            f"lacks: use target {feature} (Sapphire Rapids and later), or avx2 (F16C converts to f32)"
+            f"lacks: keep f16 in memory and compute in f32 with {isa} load_f16 / store_f16 f32 (_mm512_cvtph_ps, "
+            f"_mm512_cvtps_ph), or use target {feature} (Sapphire Rapids and later)"
         )
 
 
