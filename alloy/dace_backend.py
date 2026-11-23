@@ -114,7 +114,7 @@ def build_key(
         "matrix": dataclasses.asdict(matrix),
         "compilers": [compiler_version(e) for e in executables],
         "manifest": None if manifest is None else (manifest.path, manifest.raw, manifest.datatype),
-        "packages": (installed("dace"), installed("hpcagent-bench"), alloy_sources()),
+        "packages": (installed("dace-extended"), installed("hpcagent-bench"), alloy_sources()),
         "host": sorted(machine.cpu_flags()),
         "search": [os.environ.get(name) for name in LIBRARY_SEARCH],
         "dace": Config.get("compiler"),

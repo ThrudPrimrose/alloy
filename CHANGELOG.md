@@ -6,8 +6,8 @@ The first release, published on PyPI as `dace-alloy`. The import name is `alloy`
 
     pip install dace-alloy
 
-Alloy needs DaCe's `extended` branch, which has no PyPI release. HPCAgent-Bench's setup command installs it at the
-pinned commit; a checkout of https://github.com/ThrudPrimrose/dace-alloy installs it with `uv sync --extra dev`.
+Alloy runs on DaCe extended, published on PyPI as `dace-extended` (import name `dace`), which pip installs with it; a
+checkout of https://github.com/ThrudPrimrose/dace-alloy installs the same release with `uv sync --extra dev`.
 
 What it contains:
 

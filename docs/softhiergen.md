@@ -18,7 +18,7 @@ returns one C++ unit; `write_folder` adds the data unit and a build-and-run scri
 
 ## 2. Pinned sources
 
-DaCe is Alloy's pin (`[tool.uv] override-dependencies` in `pyproject.toml`). The simulator, the SDK and the
+DaCe is the `dace-extended` release in `uv.lock`. The simulator, the SDK and the
 toolchain are the SoftHier v1 stack of `alloy/isa/softhier_pins.toml` (GVSoC with the gvsoc-pulp model
 `pulp/chips/soft_hier_old` at `6a00247dc3`, the softhier-sdk at `c32f3eba21`, GCC 14.2.0); the gate runs in the
 image `helpers/build_softhier_image.sh` builds from it.

@@ -4,19 +4,19 @@ requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and platform_machine != 'ARM64' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.14.*' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and platform_machine != 'ARM64' and sys_platform == 'win32'",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'ARM64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.13' and platform_machine == 'ARM64' and sys_platform == 'win32'",
     "python_full_version < '3.13' and platform_machine != 'ARM64' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version < '3.13' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 conflicts = [[
@@ -34,7 +34,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "dace", git = "https://github.com/spcl/dace.git?rev=77ecd2bcc3bd04197e04770fa65e55428ad71f22" }]
+overrides = [{ name = "dace", marker = "sys_platform == 'never'" }]
 
 [[package]]
 name = "accelerate"
@@ -1115,8 +1115,8 @@ name = "cupy"
 version = "14.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "numpy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/10/059a92d40b161ea24607c9e41a75098812ca7021f2b565524f87beba15c9/cupy-14.2.0.tar.gz", hash = "sha256:cfed725e612178cfbdbf62f4a3a598b60edecbbca718c0d4580c21a16ae4a62c", size = 4057114, upload-time = "2026-08-20T02:42:12.036Z" }
 
@@ -1159,36 +1159,33 @@ wheels = [
 [[package]]
 name = "dace"
 version = "2.0.0b2"
-source = { git = "https://github.com/spcl/dace.git?rev=77ecd2bcc3bd04197e04770fa65e55428ad71f22#77ecd2bcc3bd04197e04770fa65e55428ad71f22" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astunparse" },
-    { name = "click" },
-    { name = "cmake" },
-    { name = "dill" },
-    { name = "fparser" },
-    { name = "islpy" },
-    { name = "ml-dtypes" },
-    { name = "networkx" },
-    { name = "ninja" },
-    { name = "numpy" },
-    { name = "ordered-set" },
-    { name = "packaging" },
-    { name = "ply" },
-    { name = "pygments" },
-    { name = "pyreadline", marker = "sys_platform == 'win32' or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
-    { name = "pyyaml" },
-    { name = "scikit-build" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
-    { name = "z3-solver" },
+    { name = "astunparse", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "click", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "cmake", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "dill", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "fparser", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "ml-dtypes", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "networkx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "ninja", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "ordered-set", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "packaging", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "ply", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "scikit-build", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "sympy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'emscripten' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (sys_platform == 'win32' and extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/39/c0f134464d714b06dedcbbc8d17e509f249a4a2626a8aa68af01abdc92f0/dace-2.0.0b2.tar.gz", hash = "sha256:831fd753e55e94e1ce20cb3246a4724a9832da47af31e6a3ae8c9d08692c4714", size = 7210560, upload-time = "2026-11-16T15:21:32.771Z" }
 
 [[package]]
 name = "dace-alloy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "dace" },
+    { name = "dace-extended" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-core" },
@@ -1275,12 +1272,12 @@ requires-dist = [
     { name = "beautifulsoup4", marker = "extra == 'softhier'", specifier = "==4.15.0" },
     { name = "cupy", marker = "platform_machine == 'x86_64' and extra == 'amdgpu'" },
     { name = "cupy-cuda13x", marker = "extra == 'nvgpu'" },
-    { name = "dace" },
     { name = "dace-alloy", extras = ["bench"], marker = "extra == 'amdgpu'" },
     { name = "dace-alloy", extras = ["bench"], marker = "extra == 'dev'" },
     { name = "dace-alloy", extras = ["bench"], marker = "extra == 'nvgpu'" },
     { name = "dace-alloy", extras = ["dev", "amdgpu"], marker = "extra == 'dev-amd'" },
     { name = "dace-alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
+    { name = "dace-extended", git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0" },
     { name = "hjson", marker = "extra == 'softhier'", specifier = "==3.1.0" },
     { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=a4395e3c5c7d69832f456b715575ef6c29d24463" },
     { name = "html2text", marker = "extra == 'softhier'", specifier = "==2025.4.15" },
@@ -1318,6 +1315,33 @@ requires-dist = [
     { name = "tree-sitter-language-pack" },
 ]
 provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "softhier", "dev-nvidia", "dev-amd"]
+
+[[package]]
+name = "dace-extended"
+version = "1.0.0"
+source = { git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0#af3976e11329532423967976afcb14d93e384658" }
+dependencies = [
+    { name = "astunparse" },
+    { name = "click" },
+    { name = "cmake" },
+    { name = "dill" },
+    { name = "fparser" },
+    { name = "islpy" },
+    { name = "ml-dtypes" },
+    { name = "networkx" },
+    { name = "ninja" },
+    { name = "numpy" },
+    { name = "ordered-set" },
+    { name = "packaging" },
+    { name = "ply" },
+    { name = "pygments" },
+    { name = "pyreadline", marker = "sys_platform == 'win32' or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
+    { name = "pyyaml" },
+    { name = "scikit-build" },
+    { name = "sympy" },
+    { name = "typing-extensions" },
+    { name = "z3-solver" },
+]
 
 [[package]]
 name = "dataproperty"
@@ -1895,7 +1919,7 @@ dependencies = [
     { name = "apache-tvm" },
     { name = "cffi" },
     { name = "crawl4ai" },
-    { name = "dace" },
+    { name = "dace", marker = "sys_platform == 'never' or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
     { name = "datasets" },
     { name = "einops" },
     { name = "fastapi" },
@@ -4785,7 +4809,7 @@ name = "relayout"
 version = "0.1.0"
 source = { git = "https://github.com/ThrudPrimrose/relayout.git?rev=bae86a7ada1ad0342bdfb5429ec99ea1cb5070aa#bae86a7ada1ad0342bdfb5429ec99ea1cb5070aa" }
 dependencies = [
-    { name = "dace" },
+    { name = "dace", marker = "sys_platform == 'never' or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-amdgpu' and extra == 'extra-10-dace-alloy-nvgpu') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-dev-nvidia') or (extra == 'extra-10-dace-alloy-dev-amd' and extra == 'extra-10-dace-alloy-nvgpu')" },
     { name = "islpy" },
     { name = "numpy" },
     { name = "pydantic" },

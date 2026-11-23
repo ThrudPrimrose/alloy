@@ -15,9 +15,8 @@ keywords = ["dace", "sdfg", "code-generation", "compilers", "autotuning", "hpc"]
 dependencies = [
     "numpy",
     "pydantic>=2",
-    # Bare: DaCe extended pins Alloy through its `alloy` extra (pip install "dace[alloy] @ git+...@extended"), so
-    # Alloy cannot pin DaCe back. A standalone install needs DaCe extended installed first.
-    "dace",
+    # DaCe extended (import name dace); its `alloy` extra names dace-alloy back.
+    "dace-extended>=1.0.0",
     "sympy",
     "pydantic-core",
     # C to NumPy (alloy.frontend.cnumpy) parses C with tree-sitter's grammar
@@ -64,12 +63,14 @@ conflicts = [[{ extra = "nvgpu" }, { extra = "amdgpu" }], [{ extra = "dev-nvidia
     [{ extra = "nvgpu" }, { extra = "dev-amd" }], [{ extra = "amdgpu" }, { extra = "dev-nvidia" }]]
 # No ROCm wheel exists: cupy builds from its sdist for HIP (CUPY_INSTALL_USE_HIP=1 at install time).
 no-binary-package = ["cupy"]
-# Development and CI only (uv): HPCAgent-Bench's dace pin, which helpers/bump_pins.sh copies.
-override-dependencies = ["dace @ git+https://github.com/spcl/dace.git@77ecd2bcc3bd04197e04770fa65e55428ad71f22"]
+# The pinned bench still names a bare `dace`; dropped, so dace-extended alone installs the `dace` package.
+override-dependencies = ["dace ; sys_platform == 'never'"]
 
 # PyPI metadata carries plain names; checkouts and CI take the bench at its pinned commit.
 [tool.uv.sources]
 hpcagent-bench = { git = "https://github.com/spcl/HPCAgent-Bench.git", rev = "a4395e3c5c7d69832f456b715575ef6c29d24463" }
+# shortcut: the release tag until dace-extended 1.0.0 is on PyPI; then this line goes and uv resolves it from PyPI.
+dace-extended = { git = "https://github.com/ThrudPrimrose/dace.git", tag = "extended-v1.0.0" }
 
 [tool.mypy]
 # Strict static typing for Alloy's own code, as in a statically typed language. The untyped libraries it calls (DaCe,

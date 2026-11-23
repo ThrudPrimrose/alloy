@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# Moves the hpcagent-bench pin ([tool.uv.sources]) in pyproject.toml to the head of its main branch (BENCH_BRANCH overrides) and the
-# [tool.uv] dace override (development and CI; the dependency is bare) to the dace commit that bench commit pins,
-# then relocks. The bench owns the dace pin, so Alloy grades on the dace the bench runs. Each sibling package's
-# `>=` bound in [project] moves to its latest PyPI release (a package not on PyPI yet keeps its bound).
+# Moves the hpcagent-bench pin ([tool.uv.sources]) in pyproject.toml to the head of its main branch (BENCH_BRANCH
+# overrides), moves each sibling package's `>=` bound in [project] to its latest PyPI release (a package not on PyPI
+# yet keeps its bound), then relocks: uv installs the released versions pip installs.
 set -euo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-dace_url=https://github.com/spcl/dace.git
 bench_url=https://github.com/spcl/HPCAgent-Bench.git
 
 bench=$(git ls-remote "$bench_url" "refs/heads/${BENCH_BRANCH:-main}" | cut -f1)
 [[ -n $bench ]] || { echo "bench branch head not found" >&2; exit 1; }
-dace=$(curl -fsSL "https://raw.githubusercontent.com/spcl/HPCAgent-Bench/${bench}/pyproject.toml" |
-    python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["tool"]["uv"]["sources"]["dace"]["rev"])')
-[[ $dace =~ ^[0-9a-f]{40}$ ]] || { echo "the bench's dace pin not found" >&2; exit 1; }
 
-sed -i -E "s#(${dace_url}@)[0-9a-f]{40}#\1${dace}#g; s#(${bench_url}\", rev = \")[0-9a-f]{40}#\1${bench}#" "$root/pyproject.toml"
+sed -i -E "s#(${bench_url}\", rev = \")[0-9a-f]{40}#\1${bench}#" "$root/pyproject.toml"
 for package in hpcagent-bench dace-extended dace-relayout; do
     latest=$(curl -fsSL "https://pypi.org/pypi/${package}/json" 2>/dev/null |
         python3 -c 'import sys, json; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null) || latest=""
@@ -26,4 +21,3 @@ done
 (cd "$root" && uv lock)
 
 echo "bench ${bench}"
-echo "dace  ${dace}"
