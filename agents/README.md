@@ -15,3 +15,6 @@ tokens per run for every configuration (owner, 11-23). `python agents/test_run_a
 
 `agents/e3.sh softhier|tensix ENDPOINT_RUN_DIR [TASKS...]` runs the whole E3 grid for one study as one ault job
 against a vLLM endpoint (`/scratch/ybudanaz/vllm/serve.sbatch`); its header says where the outputs go.
+
+`softhier/baseline_ns.json`: the scalar reference's simulated time per task (ns), every reference passing the judge
+on GVSoC (ault jobs 921970, 922070, 922085, 11-23).

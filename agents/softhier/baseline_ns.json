@@ -1,0 +1,17 @@
+{
+ "gemm64": 477473,
+ "mat_scaled_add": 91034,
+ "neg_stride_rev": 101527,
+ "transc_log_sincos_sum": 1313676,
+ "transc_sin_small": 468890,
+ "transc_sin_wide": 479791,
+ "tsvc_2_s1351": 99233,
+ "tsvc_2_s251": 163108,
+ "tsvc_2_s311": 69062,
+ "tsvc_2_s313": 88765,
+ "tsvc_2_s4121": 121597,
+ "tsvc_2_va": 71488,
+ "tsvc_2_vpvpv": 132516,
+ "tsvc_2_vtv": 118340,
+ "tsvc_2_vtvtv": 132516
+}
