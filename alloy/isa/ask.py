@@ -80,6 +80,7 @@ DIALECT = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: (col_major, that is Bt as N rows of K), and SME's outer products read A with K leading (col_major, At as K rows of M).
 MMA_OPERANDS: dict[str, tuple[tuple[str, ...], str, tuple[str, ...], tuple[str, str, str]]] = {
     "cpu": (("global",), "none", ("global",), ("row_major", "row_major", "row_major")),
+    **dict.fromkeys(tile.SIMD, (("global",), "none", ("global",), ("row_major", "row_major", "row_major"))),
     "sme": (("global",), "none", ("tile_register", "global"), ("col_major", "row_major", "row_major")),
     "sm90": (("shared",), "b128", ("register", "tile_register"), ("row_major", "col_major", "row_major")),
     "gfx942": (("shared",), "xor:8", ("register", "tile_register"), ("row_major", "col_major", "row_major")),
@@ -1089,6 +1090,10 @@ def mma_nearest(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tu
 
     if target == "cpu":
         return tuple(request(i, o, m, n, k) for i, o in tile.CPU_TYPES)
+    if target in tile.SIMD:
+        rows = -(-m // tile.CPU_MR) * tile.CPU_MR
+        return tuple(request(d, d, rows, -(-n // tile.simd_lanes(target, d)) * tile.simd_lanes(target, d), k)
+                     for d in ("f32", "f64"))  # fmt: skip
     if target == "sme":
         return (request("f32", "f32", m, n, k),)
     if target == "tensix":
@@ -1105,6 +1110,7 @@ INTO_SPACE = {
     "gfx942": "load it into LDS first: ask copy with src global and dst shared:<type>:<rows>x<128 bytes of the type: "
     "64 f16 or bf16, 128 e4m3 or e5m2>:row_major:xor:8",
     "cpu": "the fallback reads memory through pointers: pass the arrays as global",
+    **dict.fromkeys(tile.SIMD, "the FMA tile reads memory through pointers: pass the arrays as global"),
     "sme": "FMOPA reads its vectors from memory: pass the arrays as global",
     "tensix": "the reader kernel sends each tile into a circular buffer: pass tiles as tile_register",
 }
@@ -1155,16 +1161,22 @@ def misplaced(target: str, a: Operand, b: Operand, c: Operand) -> tuple[Why, str
     return None
 
 
+def cpu_target(isa: str) -> str:
+    """The tile target of an mma asked on ``isa``: a vector ISA's own FMA tile, the compiler-vectorized fallback for the
+    other CPU names (avx512_fp16), the ISA itself elsewhere."""
+    return isa if isa in tile.SIMD or isa not in CPU else "cpu"
+
+
 def mma(request: Request, verify: bool) -> Answer:
     """D = A x B + C on tiles, from the tile plans: the CPU fallback, SME's FMOPA, sm_90's wgmma, gfx942's MFMA, or
     Tensix's matmul_tiles. The inputs share one element type and sit where the target's instruction reads them."""
     ops = request.operands
     if not {"a", "b", "c"} <= ops.keys():
-        target = "cpu" if request.target in CPU else request.target
+        target = cpu_target(request.target)
         return bad(request, Why.OPERANDS, "mma takes operands a (M x K), b (K x N), and c (M x N)",
                    *mma_nearest(target, 64, 64, 64, next(iter(ops.values())).dtype if ops else "f16"))  # fmt: skip
     a, b, c = ops["a"], ops["b"], ops["c"]
-    target = "cpu" if request.target in CPU else request.target
+    target = cpu_target(request.target)
     if len(a.shape) != 2 or len(b.shape) != 2 or a.shape[1] != b.shape[0] or c.shape != (a.shape[0], b.shape[1]):
         reason = f"shapes do not chain: a {a.shape}, b {b.shape}, c {c.shape}; a is M x K, b K x N, c M x N"
         return bad(request, Why.CHAIN, reason, *mma_nearest(target, 64, 64, 64, a.dtype))
@@ -1192,7 +1204,11 @@ def mma(request: Request, verify: bool) -> Answer:
         found = tile.verify(found)
         if found.verified == "failed":
             return no(request, Why.CHECK_FAILED, f"the tile program failed its check: {found.detail}")
-    unit = ({"cpu": "vector", "sme": "za", "sm90": "warpgroup"} | dict.fromkeys(tile.CDNA, "mfma"))[target]
+    unit = (
+        {"cpu": "vector", "sme": "za", "sm90": "warpgroup"}
+        | dict.fromkeys(tile.CDNA, "mfma")
+        | dict.fromkeys(tile.SIMD, "vector")
+    )[target]
     check = Check(found.verified, found.detail)  # type: ignore[arg-type]
     steps = tuple(Step(unit, s) for s in found.steps)
     return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))

@@ -18,6 +18,10 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 
+from alloy.isa.schedules import lanes_of
+from alloy.isa.table import load
+from alloy.isa.validate import c_compiler, c_flags, emulated, host_can_run
+
 __all__ = [
     "CPU_TYPES",
     "GPU_BYTES",
@@ -54,7 +58,7 @@ GPU_TYPES = {
 #: The (input, accumulator) element types each tile target's checked kernels take.
 TYPES: dict[str, tuple[tuple[str, str], ...]] = {
     "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"),),
-} | GPU_TYPES  # fmt: skip
+} | GPU_TYPES | dict.fromkeys(("avx2", "avx512", "neon", "sve"), (("f32", "f32"), ("f64", "f64")))  # fmt: skip
 #: The FP8 encodings per target (exponent bits, mantissa bits, bias): sm_90 reads OCP E4M3 (E4M3FN) and E5M2;
 #: gfx942 reads the FNUZ variants (no infinity, no negative zero, one more in the bias).
 FP8_FORMATS = {
@@ -90,6 +94,15 @@ def k_block(in_type: str) -> int:
 
 #: Rows of A one CPU micro-kernel step keeps in registers.
 CPU_MR = 4
+#: The CPU vector ISAs whose mma is the row-wise FMA tile in their own intrinsics (the table's load, broadcast, fma,
+#: and store entries): a block of CPU_MR rows of C, one vector register per row.
+SIMD = ("avx2", "avx512", "neon", "sve")
+VECTOR_TYPE = {
+    ("avx2", "f32"): "__m256", ("avx2", "f64"): "__m256d", ("avx512", "f32"): "__m512", ("avx512", "f64"): "__m512d",
+    ("neon", "f32"): "float32x4_t", ("neon", "f64"): "float64x2_t", ("sve", "f32"): "svfloat32_t",
+    ("sve", "f64"): "svfloat64_t",
+}  # fmt: skip
+SIMD_HEADER = {"avx2": "immintrin.h", "avx512": "immintrin.h", "neon": "arm_neon.h", "sve": "arm_sve.h"}
 #: Relative error a product may show against the f64 reference, per accumulator type.
 TOLERANCE = {"f32": 1e-5, "f64": 1e-12}
 TIMEOUT = 300
@@ -176,10 +189,90 @@ def cpu_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     return TilePlan("cpu", m, n, k, in_type, acc_type, steps, layout, program, {"build": BUILD["cpu"]})
 
 
-def cpu_program(m: int, n: int, k: int, a_type: str, c_type: str, in_type: str, acc_type: str) -> str:
+def simd_kernel(isa: str, dtype: str) -> str:
+    """``alloy_mma_<isa>_<dtype>``: C += A x B on row-major tiles in blocks of CPU_MR rows x one vector of columns; each k
+    broadcasts A[i][k] of the rows and multiply-adds row k of B into one accumulator register per row. SVE runs any n
+    under a while-less-than predicate; the fixed-width ISAs take n in whole vectors."""
+    table = load()
+    ld, bc, fm, st = (table.entry(isa, op, dtype).intrinsic for op in ("load", "broadcast", "fma", "store"))
+    s, v, sve = CPU_TYPES[dtype, dtype][0], VECTOR_TYPE[isa, dtype], isa == "sve"
+    pg = "pg, " if sve else ""
+    rows = range(CPU_MR)
+
+    def fma(r: int) -> str:
+        a = f"{bc}(a[(i + {r}) * lda + p])"
+        return {"neon": f"{fm}(c{r}, {a}, bp)", "sve": f"{fm}(pg, c{r}, {a}, bp)"}.get(isa, f"{fm}({a}, bp, c{r})")
+
+    mask = f"\n      svbool_t pg = {table.entry(isa, 'gen_mask', dtype).intrinsic}(j, n);" if sve else ""
+    return "\n".join((
+        f"#include <{SIMD_HEADER[isa]}>",
+        f"static inline void alloy_mma_{isa}_{dtype}(int m, int n, int k, const {s} *restrict a, int lda,",
+        f"                                    const {s} *restrict b, int ldb, {s} *restrict c, int ldc) {{",
+        f"  for (int i = 0; i < m; i += {CPU_MR})",
+        f"    for (int j = 0; j < n; j += {lanes_of(table, isa, dtype)[1]}) {{{mask}",
+        *(f"      {v} c{r} = {ld}({pg}&c[(i + {r}) * ldc + j]);" for r in rows),
+        "      for (int p = 0; p < k; ++p) {",
+        f"        {v} bp = {ld}({pg}&b[p * ldb + j]);",
+        *(f"        c{r} = {fma(r)};" for r in rows),
+        "      }",
+        *(f"      {st}({pg}&c[(i + {r}) * ldc + j], c{r});" for r in rows),
+        "    }",
+        "}",
+    ))  # fmt: skip
+
+
+def simd_lanes(isa: str, dtype: str) -> int:
+    """The columns of C a tile of ``isa`` takes in whole multiples: one vector, or 1 on SVE (predicated)."""
+    return 1 if isa == "sve" else lanes_of(load(), isa, dtype)[0]
+
+
+def simd_plan(isa: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
+    """The row-wise FMA tile of a CPU vector ISA; a shape off its blocks is a ``KeyError`` naming the nearest."""
+    if (in_type, acc_type) not in TYPES[isa]:
+        raise KeyError(f"{isa} tiles take --in f32 --acc f32 or --in f64 --acc f64; the cpu target mixes f32 and f64")
+    lanes = simd_lanes(isa, in_type)
+    if m % CPU_MR or n % lanes:
+        up_m, up_n = -(-m // CPU_MR) * CPU_MR, -(-n // lanes) * lanes
+        raise KeyError(f"{isa} {in_type} tiles are blocks of {CPU_MR} rows x {lanes} lanes: M a multiple of {CPU_MR} "
+                       f"and N of {lanes}; got {m}x{n}x{k}, nearest {up_m}x{up_n}x{k} (pad C)")  # fmt: skip
+    table = load()
+    ld, bc, fm, st = (table.entry(isa, op, in_type).intrinsic for op in ("load", "broadcast", "fma", "store"))
+    steps = (
+        f"for each block of {CPU_MR} rows of C and one vector of columns: {ld} the {CPU_MR} rows into accumulators",
+        f"for each k: {ld} row k of B, then {CPU_MR} x {fm} with {bc}(A[i][k]) of each row",
+        f"{st} the {CPU_MR} accumulators back to C",
+    )
+    layout = "row-major A, B, and C with leading dimensions lda, ldb, ldc; unaligned loads, no swizzle"
+    ctype = CPU_TYPES[in_type, acc_type]
+    program = cpu_program(m, n, k, *ctype, in_type, acc_type, simd_kernel(isa, in_type), f"alloy_mma_{isa}_{in_type}")
+    build = f"cc -O3 {' '.join(c_flags(isa, in_type))} -std=c11 tile.c -o tile -lm".replace("  ", " ")
+    return TilePlan(isa, m, n, k, in_type, acc_type, steps, layout, program, {"build": build})
+
+
+def simd_verify(plan_: TilePlan) -> TilePlan:
+    """``plan_`` run here, natively or under qemu for an Arm ISA; ``unverified`` when this host runs neither."""
+    isa, dtype = plan_.target, plan_.in_type
+    emulator = None if host_can_run(isa, dtype) else emulated(isa)
+    if emulator is None and not host_can_run(isa, dtype):
+        return replace_check(plan_, "unverified", f"this host runs no {isa} code, natively or under qemu")
+    cc, extra, launcher = emulator or (c_compiler(), (), ())
+    with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
+        binary = pathlib.Path(folder) / "tile"
+        (pathlib.Path(folder) / "tile.c").write_text(plan_.program)
+        argv = [str(cc), "-O3", *c_flags(isa, dtype), *extra, "-std=c11", "tile.c", "-o", "tile", "-lm"]
+        built = subprocess.run(argv, cwd=folder, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+        if built.returncode != 0:
+            return replace_check(plan_, "failed", f"did not compile: {built.stderr.strip()[-500:]}")
+        ran = subprocess.run([*launcher, str(binary)], capture_output=True, text=True, check=False, timeout=TIMEOUT)
+    return replace_check(plan_, *outcome(ran))
+
+
+def cpu_program(m: int, n: int, k: int, a_type: str, c_type: str, in_type: str, acc_type: str, tiles: str = "",
+                function: str = "") -> str:  # fmt: skip
     """A program that runs the tile once on deterministic inputs and prints the largest relative error against an
-    f64 reference; it exits 1 above the accumulator's tolerance."""
-    tiles = inlined("alloy_tile_cpu.h", frozenset({f"{in_type}_{acc_type}"}))
+    f64 reference; it exits 1 above the accumulator's tolerance. ``tiles`` defaults to the fallback's header."""
+    tiles = tiles or inlined("alloy_tile_cpu.h", frozenset({f"{in_type}_{acc_type}"}))
+    function = function or f"alloy_mma_{in_type}_{acc_type}"
     return f"""#include <math.h>
 #include <stdio.h>
 {tiles}
@@ -199,7 +292,7 @@ int main(void) {{
       for (int p = 0; p < K; ++p) s += (double)A[i * K + p] * (double)B[p * N + j];
       want[i * N + j] = s;
     }}
-  alloy_mma_{in_type}_{acc_type}(M, N, K, A, K, B, N, C, N);
+  {function}(M, N, K, A, K, B, N, C, N);
   double worst = 0.0;
   for (int i = 0; i < M * N; ++i) {{
     double rel = fabs((double)C[i] - want[i]) / fmax(1.0, fabs(want[i]));
@@ -218,6 +311,8 @@ def verify(plan_: TilePlan) -> TilePlan:
         return gpu_verify(plan_)
     if plan_.target == "sme":
         return sme_verify(plan_)
+    if plan_.target in SIMD:
+        return simd_verify(plan_)
     with tempfile.TemporaryDirectory(prefix="alloy_tile_") as folder:
         binary = pathlib.Path(folder) / "tile"
         (pathlib.Path(folder) / "tile.c").write_text(plan_.program)
@@ -551,8 +646,12 @@ def plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -> Ti
         raise KeyError(f"a tile has positive extents; got {m}x{n}x{k}")
     if target == "cpu":
         return cpu_plan(m, n, k, in_type, acc_type)
+    if target in SIMD:
+        return simd_plan(target, m, n, k, in_type, acc_type)
     if target in GPU_TILES:
         return gpu_plan(target, m, n, k, in_type, acc_type)
     if target == "sme":
         return sme_plan(m, n, k, in_type, acc_type)
-    raise KeyError(f"tile targets: cpu, sme, sm90 (GH200), gfx942 (MI300A), gfx90a (MI250X); got {target!r}")
+    raise KeyError(
+        f"tile targets: cpu, avx2, avx512, neon, sve, sme, sm90 (GH200), gfx942 (MI300A), gfx90a (MI250X); got {target!r}"
+    )

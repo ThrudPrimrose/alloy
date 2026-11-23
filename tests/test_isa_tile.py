@@ -10,6 +10,8 @@ import pytest
 
 from alloy.isa import tile
 from alloy.isa.__main__ import main
+from alloy.isa.table import load
+from alloy.isa.validate import emulated, host_can_run
 
 
 @pytest.mark.parametrize(("m", "n", "k", "in_type", "acc_type"), [(64, 64, 64, "f32", "f32"), (13, 7, 5, "f64", "f64"),
@@ -204,3 +206,27 @@ def test_the_tile_command_exits_0_for_a_program_that_compiled_for_a_device_this_
 
     assert main(["tile", "sm90", "gemm", "128", "128", "64", "--in", "f16", "--acc", "f32"]) == code
     assert f"check: {verified} (stub)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("isa", tile.SIMD)
+@pytest.mark.parametrize("dtype", ["f32", "f64"])
+def test_a_vector_isa_tile_is_the_row_wise_fma_in_its_own_intrinsics_and_runs_where_the_host_can(
+    isa: str, dtype: str
+) -> None:
+    """avx2, avx512, neon, and sve answer an mma with 4 rows of C x one vector, spelled from the table's entries."""
+    table = load()
+    sut = tile.verify(tile.plan(isa, 64, 64, 64, dtype, dtype))
+
+    runs = host_can_run(isa, dtype) or emulated(isa) is not None
+    assert sut.verified == ("run" if runs else "unverified"), sut.detail
+    for op in ("load", "broadcast", "fma", "store"):
+        assert table.entry(isa, op, dtype).intrinsic in sut.program
+
+
+def test_a_vector_isa_tile_off_its_blocks_is_refused_with_the_nearest_and_sve_takes_any_n() -> None:
+    with pytest.raises(KeyError, match="nearest 64x112x64"):
+        tile.plan("avx512", 64, 100, 64, "f32", "f32")
+
+    sut = tile.verify(tile.plan("sve", 8, 33, 9, "f64", "f64"))
+
+    assert sut.verified == ("run" if host_can_run("sve", "f64") or emulated("sve") else "unverified"), sut.detail

@@ -206,7 +206,10 @@ def parser() -> Parser:
     skeleton_p.add_argument("--no-verify", action="store_true", help="skip the compile and run against a reference")
 
     tile_p = commands.add_parser("tile", help="a matrix tile's plan and checked program: tile cpu gemm 64 64 64")
-    tile_p.add_argument("target", help="cpu, sme, sm90 (GH200), gfx942 (MI300A), or gfx90a (MI250X)")
+    tile_p.add_argument(
+        "target",
+        help="cpu (compiler-vectorized), avx2, avx512, neon, sve (FMA intrinsics), sme, sm90 (GH200), gfx942 (MI300A), or gfx90a (MI250X)",
+    )
     tile_p.add_argument("operation", choices=["gemm"])
     tile_p.add_argument("m", type=int)
     tile_p.add_argument("n", type=int)

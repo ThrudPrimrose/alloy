@@ -84,8 +84,10 @@ before the wait is a race, and issuing without the fence reads stale data.
   over many registers combines lane-wise, then once across lanes; a scan carries the last lane of each register into
   the next. On `sve` the lane count is known at run time only: a request for N elements (`vector:f64:64`) is
   answered as one `svwhilelt` loop. `reduce_add` and `scan_add` reassociate, so they need permission to; min and max
-  are exact. A CPU has no matrix unit: `mma` is an FMA loop the compiler vectorizes, on row-major arrays in global
-  memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C).
+  are exact. A CPU has no matrix unit: `mma` is a row-wise FMA tile in the ISA's own intrinsics (4 rows of C, one
+  vector register per row; each k broadcasts A[i][k] and multiply-adds row k of B), on row-major arrays in global
+  memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C). M takes multiples of 4
+  and N whole vectors (any N on `sve`).
 - **`sme`.** FMOPA outer products into ZA, f32. No evaluated CPU has SME, so the answer is checked by compiling and
   under an emulator.
 - **`sm90`** (GH200). `copy` from global to shared is a TMA load: a tensor map, a 128B swizzle (`b128`), an
