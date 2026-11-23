@@ -54,6 +54,13 @@ __device__ __forceinline__ void alloy_tma_load_2d(void* dst, const CUtensorMap* 
       "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%3, %4}], [%2];"
       :: "r"(alloy_smem_u32(dst)), "l"(reinterpret_cast<uint64_t>(tm)), "r"(alloy_smem_u32(bar)), "r"(c0), "r"(c1) : "memory");
 }
+// One box of shared memory into the global tile of the tensor map (TMA store), the reverse of alloy_tma_load_2d: the
+// threads' writes to src reach the async proxy first (fence.proxy.async.shared::cta), and src is reused only after
+// cp.async.bulk.commit_group and cp.async.bulk.wait_group.read 0. A box crossing the global edge writes its inside only.
+__device__ __forceinline__ void alloy_tma_store_2d(const CUtensorMap* tm, const void* src, int c0, int c1) {
+  asm volatile("cp.async.bulk.tensor.2d.global.shared::cta.bulk_group [%0, {%2, %3}], [%1];"
+               :: "l"(reinterpret_cast<uint64_t>(tm)), "r"(alloy_smem_u32(src)), "r"(c0), "r"(c1) : "memory");
+}
 
 // alloy-only: mma
 #define D8(i) "+f"(d[i]), "+f"(d[i+1]), "+f"(d[i+2]), "+f"(d[i+3]), "+f"(d[i+4]), "+f"(d[i+5]), "+f"(d[i+6]), "+f"(d[i+7])
@@ -103,11 +110,22 @@ template <int E> __device__ __forceinline__ void alloy_wgmma(float (&d)[64], uin
 }
 // alloy-end
 
+// alloy-only: mma
+// C inside the M x N matrix: a partial tile at the edge reads zeros past it and writes nothing there, while TMA
+// zero-fills the A and B boxes that cross the edge (OOB_FILL_NONE) and still counts their bytes on the mbarrier.
+__device__ __forceinline__ float alloy_c_at(const float* C, int M, int N, int r, int c) {
+  return r < M && c < N ? C[r * N + c] : 0.0f;
+}
+__device__ __forceinline__ void alloy_c_put(float* C, int M, int N, int r, int c, float v) {
+  if (r < M && c < N) C[r * N + c] = v;
+}
+// alloy-end
+
 // alloy-only: mma n64 64x64
 template <int E>
 __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ CUtensorMap tmA,
                                                      const __grid_constant__ CUtensorMap tmB,
-                                                     float* __restrict__ C, int N, int K) {
+                                                     float* __restrict__ C, int M, int N, int K) {
   __shared__ alignas(1024) uint8_t sA[ALLOY_BM * ALLOY_ROW];
   __shared__ alignas(1024) uint8_t sB[ALLOY_BN * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
@@ -118,8 +136,8 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
 #pragma unroll
   for (int i = 0; i < ALLOY_BN / 8; ++i) {  // the accumulators start as C: D = A x B + C
     const int c = n0 + 8 * i + 2 * (lane % 4);
-    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
-    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+    d[4 * i + 0] = alloy_c_at(C, M, N, r, c), d[4 * i + 1] = alloy_c_at(C, M, N, r, c + 1);
+    d[4 * i + 2] = alloy_c_at(C, M, N, r + 8, c), d[4 * i + 3] = alloy_c_at(C, M, N, r + 8, c + 1);
   }
   if (tid == 0) {
     alloy_mbar_init(&bar, 1);
@@ -148,8 +166,8 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
 #pragma unroll
   for (int i = 0; i < ALLOY_BN / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);
-    *reinterpret_cast<float2*>(&C[r * N + c]) = make_float2(d[4 * i + 0], d[4 * i + 1]);
-    *reinterpret_cast<float2*>(&C[(r + 8) * N + c]) = make_float2(d[4 * i + 2], d[4 * i + 3]);
+    alloy_c_put(C, M, N, r, c, d[4 * i + 0]), alloy_c_put(C, M, N, r, c + 1, d[4 * i + 1]);
+    alloy_c_put(C, M, N, r + 8, c, d[4 * i + 2]), alloy_c_put(C, M, N, r + 8, c + 1, d[4 * i + 3]);
   }
 }
 
@@ -160,7 +178,7 @@ __global__ void __launch_bounds__(128) alloy_gemm_64x64(const __grid_constant__ 
 template <int E>
 __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant__ CUtensorMap tmA,
                                                        const __grid_constant__ CUtensorMap tmB,
-                                                       float* __restrict__ C, int N, int K) {
+                                                       float* __restrict__ C, int M, int N, int K) {
   __shared__ alignas(1024) uint8_t sA[128 * ALLOY_ROW];
   __shared__ alignas(1024) uint8_t sB[128 * ALLOY_ROW];
   __shared__ alignas(8) uint64_t bar;
@@ -171,8 +189,8 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
 #pragma unroll
   for (int i = 0; i < 128 / 8; ++i) {  // the accumulators start as C: D = A x B + C
     const int c = n0 + 8 * i + 2 * (lane % 4);
-    d[4 * i + 0] = C[r * N + c], d[4 * i + 1] = C[r * N + c + 1];
-    d[4 * i + 2] = C[(r + 8) * N + c], d[4 * i + 3] = C[(r + 8) * N + c + 1];
+    d[4 * i + 0] = alloy_c_at(C, M, N, r, c), d[4 * i + 1] = alloy_c_at(C, M, N, r, c + 1);
+    d[4 * i + 2] = alloy_c_at(C, M, N, r + 8, c), d[4 * i + 3] = alloy_c_at(C, M, N, r + 8, c + 1);
   }
   if (tid == 0) { alloy_mbar_init(&bar, 1); asm volatile("fence.proxy.async.shared::cta;" ::: "memory"); }
   __syncthreads();
@@ -198,8 +216,8 @@ __global__ void __launch_bounds__(256) alloy_gemm_128x128(const __grid_constant_
 #pragma unroll
   for (int i = 0; i < 128 / 8; ++i) {
     const int c = n0 + 8 * i + 2 * (lane % 4);
-    *reinterpret_cast<float2*>(&C[r * N + c]) = make_float2(d[4 * i + 0], d[4 * i + 1]);
-    *reinterpret_cast<float2*>(&C[(r + 8) * N + c]) = make_float2(d[4 * i + 2], d[4 * i + 3]);
+    alloy_c_put(C, M, N, r, c, d[4 * i + 0]), alloy_c_put(C, M, N, r, c + 1, d[4 * i + 1]);
+    alloy_c_put(C, M, N, r + 8, c, d[4 * i + 2]), alloy_c_put(C, M, N, r + 8, c + 1, d[4 * i + 3]);
   }
 }
 // alloy-end

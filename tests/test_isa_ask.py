@@ -18,6 +18,7 @@ from alloy.isa.ask import (
     UNITS,
     Check,
     Combined,
+    Completion,
     Feasible,
     Infeasible,
     Invalid,
@@ -372,8 +373,9 @@ REGISTER = Operand("vector", "f64", (4,))
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f32", (64, 64)),
                                     "b": Operand("shared", "f32", (64, 64), "col_major")}), Why.ELEMENT_TYPE),
     (Request("sm90", "fma", {"x": Operand("register", "f64")}), Why.ELEMENT_TYPE),
-    (Request("sm90", "mma", {"a": Operand("shared", "f16", (48, 64), "row_major", "b128"), "b": TILE["b"],
-                             "c": Operand("register", "f32", (48, 64))}), Why.SHAPE),
+    (Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
+                             "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
+                             "c": Operand("register", "f32", (64, 64))}), Why.SHAPE),
     (Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}), Why.SHAPE),
     (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), Why.SPACE),
     (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), Why.SPACE),
@@ -1421,3 +1423,25 @@ def test_an_f16_load_on_plain_avx512_points_at_the_converting_load_first() -> No
 
     assert isinstance(sut, Infeasible) and sut.nearest == ("avx512 load_f16 --x vector:f32:16", "target avx512_fp16")
     assert "_mm512_cvtph_ps" in sut.reason
+
+
+def test_an_sm90_tma_store_completes_on_its_bulk_group_after_a_proxy_fence() -> None:
+    sut = ask(Request("sm90", "copy", {"src": Operand("shared", "f16", (64, 64), "row_major", "b128"),
+                                       "dst": Operand("global", "f16", (100, 72))}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Feasible) and sut.unit == "tma_store", sut
+    assert "alloy_tma_store_2d" in sut.code and "cp.async.bulk.tensor.2d.global.shared::cta" in sut.code
+    assert sut.completion == Completion("bulk_group", "wait on=bulk_group", ("fence kind=proxy",))
+
+
+def test_an_sm90_mma_of_a_partial_tile_is_feasible_and_a_k_off_16_bytes_is_refused() -> None:
+    partial = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (100, 40), "row_major", "b128"),
+                                          "b": Operand("shared", "f16", (40, 72), "col_major", "b128"),
+                                          "c": Operand("register", "f32", (100, 72))}), verify=False)  # fmt: skip
+    odd = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
+                                      "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
+                                      "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
+
+    assert isinstance(partial, Feasible) and any("partial tiles" in s.spelling for s in partial.steps)
+    assert partial.steps[0].spelling.startswith("C 100x72 is a grid of 2 x 2 thread blocks")
+    assert isinstance(odd, Infeasible) and "multiple of 16" in odd.reason

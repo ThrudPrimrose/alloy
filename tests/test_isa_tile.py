@@ -61,8 +61,8 @@ def test_a_cdna_plan_swizzles_lds_runs_eight_mfma_per_k_block_and_builds_for_its
 
 
 @pytest.mark.parametrize(("target", "shape", "types", "reason"), [
-    ("sm90", (64, 64, 100), ("f16", "f32"), "K a multiple of 64"),
-    ("sm90", (32, 64, 64), ("f16", "f32"), "64x64 blocks, 128x128 blocks"),
+    ("sm90", (64, 64, 100), ("f16", "f32"), "K x 2 bytes a multiple of 16"),
+    ("gfx942", (32, 64, 64), ("f16", "f32"), "64x64 blocks"),
     ("gfx942", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
     ("gfx90a", (64, 64, 64), ("f32", "f32"), "--in f16 --acc f32"),
 ])  # fmt: skip
@@ -242,3 +242,14 @@ def test_an_f64_cdna_tile_accumulates_in_f64_with_the_f64_mfma_over_blocks_of_16
     assert any("v_mfma_f64_16x16x4f64" in step for step in sut.steps)
     assert "alloy_gemm_64x64_f64<<<dim3(N / 64, M / 64), 256>>>" in sut.program
     assert "alloy_mfma<" not in sut.program and "TOLERANCE" not in sut.program
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("in_type", ["f16", "e4m3"])
+def test_the_sm90_tma_store_and_a_partial_gemm_compile_and_run_where_there_is_a_gh200(in_type: str) -> None:
+    """A partial tile: the grid rounds up, TMA zero-fills the boxes past the edge, C is guarded."""
+    store = tile.verify(tile.tma_store_plan(in_type))
+    gemm = tile.verify(tile.plan("sm90", 100, 72, 2 * tile.k_block(in_type), in_type, "f32"))
+
+    assert store.verified in ("compiled", "run") and gemm.verified in ("compiled", "run"), (store.detail, gemm.detail)
+    assert any("partial tiles" in step for step in gemm.steps)

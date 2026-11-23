@@ -80,7 +80,8 @@ INSTRUCTION_HOME = {
     ),
     **dict.fromkeys(
         ("tma_store",),
-        "a shared-to-global tile copy, which no checked row covers yet: write it as plain per-thread stores",
+        "a shared-to-global tile copy (TMA store): ask sm90 copy --src shared:f16:64x64:row_major:b128 --dst "
+        "global:f16:RxC",
     ),
     **dict.fromkeys(
         (

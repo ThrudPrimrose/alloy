@@ -64,7 +64,7 @@ UNITS: dict[str, tuple[str, ...]] = {
     "neon": ("vector", "scalar"),
     "sve": ("vector", "scalar"),
     "sme": ("streaming_vector", "za"),
-    "sm90": ("thread", "warp", "warpgroup", "tma", "cp_async"),
+    "sm90": ("thread", "warp", "warpgroup", "tma", "tma_store", "cp_async"),
     "gfx942": ("thread", "wave", "mfma", "lds_dma", "lds"),
     "gfx90a": ("thread", "wave", "mfma", "lds_dma", "lds"),
     "tensix": ("sfpu", "fpu", "noc"),
@@ -473,6 +473,7 @@ NO_PROXY = "issues no asynchronous copies into another memory proxy: its loads a
 #: The completion of each asynchronous unit's work, per target.
 COMPLETIONS = {
     ("sm90", "tma"): Completion("mbarrier", "wait on=mbarrier", ("fence kind=proxy",)),
+    ("sm90", "tma_store"): Completion("bulk_group", "wait on=bulk_group", ("fence kind=proxy",)),
     ("sm90", "warpgroup"): Completion("wgmma_group", "wait on=wgmma_group", ("fence kind=operand",)),
 } | {(arch, "lds"): Completion("lgkmcnt", "wait on=lgkmcnt") for arch in tile.CDNA}
 
@@ -1266,7 +1267,7 @@ def block_grid(target: str, m: int, n: int, k: int, dtype: str) -> str:
     if (m, n) == (bm, bn):
         return ""
     return (
-        f"C {m}x{n} is a grid of {m // bm} x {n // bn} thread blocks, each computing a {bm}x{bn} tile; no checked "
+        f"C {m}x{n} is a grid of {-(-m // bm)} x {-(-n // bn)} thread blocks, each computing a {bm}x{bn} tile; no checked "
         f"kernel holds all of C in one block's registers"
     )
 
@@ -1339,6 +1340,8 @@ def copy(request: Request, verify: bool) -> Answer:
     source = Operand("global", dtype, covering(src, box, width, dtype))
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
+    if request.target == "sm90" and (src.space, dst.space) == ("shared", "global"):
+        return tma_store(request, src, dst, verify)
     if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
         return lds_copy(request, src, dst, Operand("shared", dtype, (64, width), "row_major", "xor:8"), source,
                         verify)  # fmt: skip
@@ -1460,6 +1463,47 @@ def tma_copy(request: Request, src: Operand, dst: Operand, source: Operand, veri
     if (check := copy_check("sm90", verify, dtype)) is None:
         return no(request, Why.CHECK_FAILED, "the sm90 tile program that runs this copy failed its check")
     return Feasible(request, "tma", steps, setup, code, check)
+
+
+def tma_store(request: Request, src: Operand, dst: Operand, verify: bool) -> Answer:
+    """sm_90's TMA store: one 128B-swizzled shared box (64 or 128 rows of 128 bytes) into a row-major global tile, the
+    reverse of the TMA load through the same tensor map. A box crossing the global edge writes its inside only."""
+    taken = [i for i, _ in tile.TYPES["sm90"] if i in tile.F32_ACC]
+    dtype = src.dtype if src.dtype in taken else "f16"
+    width = tile.k_block(dtype)
+    rows = src.shape[0] if len(src.shape) == 2 and src.shape[0] in (64, 128) else 64
+    box = Operand("shared", dtype, (rows, width), "row_major", "b128")
+    nearest = spell(src=box, dst=Operand("global", dtype, (256, 256)))
+    if src.dtype != dst.dtype:
+        return bad(request, Why.MIXED_TYPES, f"TMA converts nothing: src is {src.dtype}, dst is {dst.dtype}", nearest)
+    if src.dtype not in taken:
+        return no(request, Why.ELEMENT_TYPE, f"the checked TMA store moves {', '.join(taken)} boxes, not {src.dtype}",
+                  nearest)  # fmt: skip
+    if src.swizzle != "b128" or src.shape != (rows, width):
+        return no(request, Why.SHAPE, f"a TMA box here is 64 or 128 rows of 128 bytes ({width} {dtype}) with the 128B "
+                  "swizzle", nearest)  # fmt: skip
+    if len(dst.shape) != 2 or dst.shape[1] * tile.GPU_BYTES[dtype] % 16 or dst.layout != "row_major":
+        return no(request, Why.SHAPE, "the tensor map describes a row-major two-dimensional global tile whose rows "
+                  "are a whole multiple of 16 bytes", nearest)  # fmt: skip
+    setup = tma_setup(dtype, rows) | {"build": gpu_build("sm90")}
+    del setup["barrier"]  # a store completes through its bulk group, not an mbarrier
+    setup["launch"] = (
+        "one elected thread (threadIdx.x == 0) issues the store, after the block's writes to the tile and a __syncthreads"
+    )
+    steps = (Step("tma_store", "cp.async.bulk.tensor.2d.global.shared::cta.bulk_group"),)
+    issue = "if (threadIdx.x == 0) alloy_tma_store_2d(map, tile, k0, row0);"
+    code = device_code(gpu_helpers("sm90"), "void alloy_store_tma(const CUtensorMap* map, const void* tile, int k0, "
+                       "int row0)", issue)  # fmt: skip
+    if verify:
+        found = tile.verify(tile.tma_store_plan(dtype))
+        if found.verified == "failed":
+            return no(request, Why.CHECK_FAILED, f"the sm90 TMA store program failed its check: {found.detail}")
+        check = Check(found.verified, f"the sm90 TMA load-and-store program of {dtype} boxes: {found.detail}")  # type: ignore[arg-type]
+    else:
+        check = Check("unverified", "the sm90 TMA load-and-store program; not checked (verify off)")
+    notes = (("a box crossing the global edge writes its inside only; the shared tile is free again after wait "
+              "on=bulk_group (cp.async.bulk.wait_group.read 0)"),)  # fmt: skip
+    return Feasible(request, "tma_store", steps, setup, code, check, notes)
 
 
 #: Check statuses from the weakest.

@@ -366,7 +366,7 @@ def type_note(target: str, in_type: str) -> str:
 def gpu_steps(target: str, bm: int, bn: int, k: int, in_type: str) -> tuple[tuple[str, ...], str, dict[str, str]]:
     """The instruction loop, the layout, and the descriptors of a ``bm x bn`` tile with f32 accumulation."""
     kb = k_block(in_type)
-    blocks = k // kb
+    blocks = -(-k // kb)  # sm90 takes a partial last K block (TMA zero-fills it)
     if target == "sm90":
         step = 16 if GPU_BYTES[in_type] == 2 else 32
         shape = f"m64n{bn}k{step}"
@@ -441,7 +441,7 @@ def gpu_program(target: str, bm: int, bn: int, m: int, n: int, k: int, in_type: 
     printf("tensor map refused\\n");
     return 2;
   }}
-  {kernel}<<<dim3(N / {bn}, M / {bm}), {threads}>>>(ta, tb, dC, N, K);"""
+  {kernel}<<<dim3((N + {bn - 1}) / {bn}, (M + {bm - 1}) / {bm}), {threads}>>>(ta, tb, dC, M, N, K);"""
         include = inlined(GPU_HEADER[target], frozenset({"mma", in_type, f"n{bn}", f"{bm}x{bn}"}))
         include += "\n#include <cuda_runtime.h>"
     else:
@@ -508,6 +508,11 @@ def gpu_block(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tupl
     """The (BM, BN) block of the tile kernel an ``m x n x k`` product runs on ``target``: the largest that divides M
     and N. Each block loads K in blocks of 128 bytes of a row: A as BM rows and Bt as BN rows."""
     tiles, kb = GPU_TILES[target], k_block(in_type)
+    if target == "sm90":  # TMA zero-fills boxes past the edge and the kernel guards C: any M and N, K in 16-byte rows
+        if k * GPU_BYTES[in_type] % 16:
+            raise KeyError(f"sm90: K x {GPU_BYTES[in_type]} bytes a multiple of 16 (the tensor map's row stride) for "
+                           f"{in_type}; got {m}x{n}x{k}")  # fmt: skip
+        return (128, 128) if m % 128 == 0 and n % 128 == 0 else (64, 64)
     fitting = [(bm, bn) for bm, bn in tiles if m % bm == 0 and n % bn == 0]
     if not fitting or k % kb:
         legal = ", ".join(f"{bm}x{bn} blocks" for bm, bn in tiles)
@@ -528,6 +533,12 @@ def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -
     if in_type == "f64":
         return cdna_f64_plan(target, m, n, k)
     steps, layout, descriptors = gpu_steps(target, bm, bn, k, in_type)
+    if m % bm or n % bn or k % k_block(in_type):
+        partial = (
+            f"partial tiles: the grid rounds up; TMA zero-fills the A and B boxes past the {m}x{k} and {n}x{k} "
+            "edges (still counted on the mbarrier), and every C read and write is guarded by row < M, col < N"
+        )
+        steps = (*steps, partial)
     kernel = f"{tiles[bm, bn]}<{ELEM[in_type]}>"
     descriptors = {"tile": f"{kernel}, {bm} x {bn} per block, {GPU_THREADS[target, bm]} threads"} | descriptors
     return TilePlan(
@@ -596,6 +607,69 @@ int main(void) {{
   return worst <= {TOLERANCE["f64"]} ? 0 : 1;
 }}
 """
+
+
+def tma_store_plan(in_type: str) -> TilePlan:
+    """The check of sm90's TMA store: a program that TMA-loads 64-row boxes of a 100 x 72-element (two-byte types) or
+    100 x 144 (FP8) global tile, whose last boxes cross the edge, and TMA-stores each box into a second tile; the two
+    tiles must match byte for byte (the load zero-fills past the edge, the store writes the inside only)."""
+    kb, size = k_block(in_type), GPU_BYTES[in_type]
+    cols = 144 // size
+    program = f"""{inlined(GPU_HEADER["sm90"], frozenset())}
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <string.h>
+
+enum {{ ROWS = 100, K = {cols}, BYTES = {size} }};
+
+__global__ void roundtrip(const __grid_constant__ CUtensorMap in, const __grid_constant__ CUtensorMap out) {{
+  __shared__ alignas(1024) uint8_t box[64 * ALLOY_ROW];
+  __shared__ alignas(8) uint64_t bar;
+  const int k0 = blockIdx.x * {kb}, row0 = blockIdx.y * 64;
+  if (threadIdx.x == 0) {{
+    alloy_mbar_init(&bar, 1);
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    alloy_mbar_arrive_expect_tx(&bar, 64 * ALLOY_ROW);
+    alloy_tma_load_2d(box, &in, &bar, k0, row0);
+  }}
+  __syncthreads();
+  alloy_mbar_wait(&bar, 0);
+  if (threadIdx.x == 0) {{
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    alloy_tma_store_2d(&out, box, k0, row0);
+    asm volatile("cp.async.bulk.commit_group;");
+    asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+  }}
+}}
+
+int main(void) {{
+  static unsigned char host[ROWS * K * BYTES], back[ROWS * K * BYTES];
+  for (int i = 0; i < ROWS * K * BYTES; ++i) host[i] = (unsigned char)(i * 37 + 11);
+  void *din, *dout;
+  cudaMalloc(&din, sizeof host);
+  cudaMalloc(&dout, sizeof host);
+  cudaMemcpy(din, host, sizeof host, cudaMemcpyHostToDevice);
+  cudaMemset(dout, 0, sizeof host);
+  CUtensorMap tin, tout;
+  if (alloy_make_tmap<{ELEM[in_type]}>(&tin, din, ROWS, K, 64) != CUDA_SUCCESS ||
+      alloy_make_tmap<{ELEM[in_type]}>(&tout, dout, ROWS, K, 64) != CUDA_SUCCESS) {{
+    printf("tensor map refused\\n");
+    return 2;
+  }}
+  roundtrip<<<dim3((K + {kb - 1}) / {kb}, (ROWS + 63) / 64), 32>>>(tin, tout);
+  if (cudaDeviceSynchronize() != cudaSuccess) {{
+    printf("launch failed\\n");
+    return 2;
+  }}
+  cudaMemcpy(back, dout, sizeof back, cudaMemcpyDeviceToHost);
+  const int same = memcmp(host, back, sizeof host) == 0;
+  printf("%.3e\\n", same ? 0.0 : 1.0);
+  return same ? 0 : 1;
+}}
+"""
+    steps = ("TMA load of each 64-row box, then fence.proxy.async.shared::cta and the TMA store of the box",)
+    return TilePlan("sm90", 100, cols, 0, in_type, in_type, steps, "128B-swizzled shared box", program,
+                    {"build": BUILD["sm90"]})  # fmt: skip
 
 
 def native_gpu() -> str:
