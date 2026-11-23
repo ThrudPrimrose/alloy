@@ -644,8 +644,10 @@ def sme_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
                        f"SME_F64F64); got {in_type}, {acc_type}")  # fmt: skip
     bits, ctype, tile_ = in_type[1:], CPU_TYPES[in_type, acc_type][0], "za0.s" if in_type == "f32" else "za0.d"
     steps = (
-        f"for each SVL/{bits} x SVL/{bits} block of C: svld1_hor_za{bits} loads its rows into {tile_} (predicated at "
-        "the edges)",
+        (
+            f"for each SVL/{bits} x SVL/{bits} block of C: svld1_hor_za{bits} loads its rows into {tile_} (predicated "
+            "at the edges)"
+        ),
         f"  {k} x svmopa_za{bits}_{in_type}_m: the outer product of a column of A (from at, contiguous) and a row of B",
         f"  svst1_hor_za{bits} stores the rows back; the function runs in streaming mode (__arm_locally_streaming)",
     )
