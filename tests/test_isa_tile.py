@@ -177,7 +177,7 @@ def test_an_fp8_tile_needs_k_in_blocks_of_128() -> None:
 
 
 @pytest.mark.parametrize(("target", "starts_as_c"), [
-    ("sm90", "d[4 * i + 0] = C[r * N + c]"),
+    ("sm90", "d[4 * i + 0] = alloy_c_at(C, M, N, r, c)"),
     ("gfx942", "acc[g] = C[(m0 + 32 * wm"),
 ])  # fmt: skip
 def test_a_gpu_tile_program_feeds_a_nonzero_c_and_checks_a_times_b_plus_c(target: str, starts_as_c: str) -> None:
