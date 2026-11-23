@@ -274,6 +274,9 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> 
                               "c": Operand("tile_register", "f32", (32, 32))}),
     Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}),
     Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}),
+    Request("gfx942", "copy", {"src": Operand("global", "f16", (128, 64)),
+                               "dst": Operand("shared", "f16", (128, 64), "row_major", "xor:8")}),
+    Request("sm90", "reduce_add", {"x": Operand("register", "f32", (1000,))}),
     Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
     Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}),
     Request("sm90", "fma", {"x": Operand("register", "f64")}),
@@ -976,7 +979,7 @@ def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has
 def test_on_or_kind_on_an_op_other_than_wait_or_fence_is_invalid_instead_of_dropped(request_: Request) -> None:
     sut = ask(request_)
 
-    assert isinstance(sut, Invalid)
+    assert isinstance(sut, Invalid) and sut.why is Why.FLAG
     assert "applies to" in sut.reason
 
 
@@ -1352,3 +1355,48 @@ def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one(
     assert isinstance(sut, Feasible)
     assert sut.notes[0].startswith("rung fast")
     assert "other rungs" in sut.notes[1] and "relaxed 0.9108 ulp" in sut.notes[1] and "--max-ulp" in sut.notes[1]
+
+
+@pytest.mark.parametrize(("target", "lanes"), [("sm90", 32), ("gfx942", 64)])
+def test_a_warp_reduction_takes_one_value_per_lane_and_refuses_a_longer_one_with_the_block_recipe(
+    target: str, lanes: int
+) -> None:
+    one = ask(Request(target, "reduce_add", {"x": Operand("register", "f32", (lanes,))}), verify=False)
+    longer = ask(Request(target, "reduce_add", {"x": Operand("register", "f32", (1000,))}), verify=False)
+
+    assert isinstance(one, Feasible), one
+    assert isinstance(longer, Infeasible) and longer.why is Why.SHAPE and "shared memory" in longer.fix
+    assert f"x register:f32:{lanes}" in longer.nearest
+
+
+def test_an_instruction_name_points_at_its_operation_and_an_unknown_name_at_no_unrelated_row() -> None:
+    wgmma = ask(Request("sm90", "wgmma"))
+    unknown = ask(Request("sm90", "frobnicate"))
+
+    assert isinstance(wgmma, Infeasible) and wgmma.nearest == ("sm90 mma",)
+    assert isinstance(unknown, Infeasible) and unknown.nearest == ()
+
+
+def test_a_refused_cdna_copy_names_a_nearest_request_other_than_itself() -> None:
+    dst = Operand("shared", "f16", (128, 64), "row_major", "xor:8")
+
+    sut = ask(Request("gfx942", "copy", {"src": Operand("global", "f16", (128, 64)), "dst": dst}), verify=False)
+
+    assert isinstance(sut, Infeasible) and "dst shared:f16:64x64:row_major:xor:8" in sut.nearest[0]
+
+
+def test_an_mma_larger_than_one_block_says_first_that_it_is_a_grid_of_blocks() -> None:
+    sut = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
+                                      "b": Operand("shared", "f16", (64, 256), "col_major", "b128"),
+                                      "c": Operand("register", "f32", (64, 256))}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    assert sut.steps[0].spelling.startswith("C 64x256 is a grid of 1 x 4 thread blocks")
+
+
+def test_a_kernel_fences_each_kind_once_and_refuses_a_third_copy_into_an_mma() -> None:
+    two = ask_all(requests("sm90", TMA_COPY, TMA_COPY, WGMMA), verify=False)
+    three = ask_all(requests("sm90", TMA_COPY, TMA_COPY, TMA_COPY, WGMMA), verify=False)
+
+    assert isinstance(two, Combined) and sum(o.startswith("fence kind=proxy") for o in two.order) == 1
+    assert isinstance(three, Infeasible) and three.why is Why.COMBINE and "third copy" in three.reason

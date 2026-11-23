@@ -107,6 +107,7 @@ class Why(enum.StrEnum):
     CHAIN = "shapes_do_not_chain"
     MIXED_TYPES = "mixed_element_types"
     BOUND = "bound_not_applicable"
+    FLAG = "flag_not_applicable"
     MIXED_TARGETS = "mixed_targets"
 
     UNIT = "unit_does_not_run_it"
@@ -125,7 +126,7 @@ class Why(enum.StrEnum):
 
 #: The reasons of an invalid request; every other reason is an infeasible one.
 INVALID = frozenset({Why.TARGET, Why.UNIT_NAME, Why.OPERATION, Why.OPERANDS, Why.MALFORMED, Why.CHAIN,
-                     Why.MIXED_TYPES, Why.BOUND, Why.MIXED_TARGETS})  # fmt: skip
+                     Why.MIXED_TYPES, Why.BOUND, Why.FLAG, Why.MIXED_TARGETS})  # fmt: skip
 
 
 @dataclass(config=STRICT)
@@ -414,7 +415,7 @@ def ask(request: Request, verify: bool = True) -> Answer:
         if value and request.op not in owners:
             return bad(
                 request,
-                Why.OPERANDS,
+                Why.FLAG,
                 f"--{flag} applies to {' and '.join(owners)} only; {request.op} has no {flag}",
                 f"ask {request.target} {owners[0]} --{flag} ...",
                 f"ask {request.target} {request.op} without --{flag}",
@@ -837,6 +838,16 @@ def moves(row: simt.Row) -> bool:
     return row.answers().split("_")[0] in ("load", "store")
 
 
+#: Instruction names an agent asks for that the lookup answers under an operation instead.
+INSTRUCTION_OP = {
+    **dict.fromkeys(("wgmma", "mma_sync", "ldmatrix", "mfma", "wmma", "smstart", "fmopa"), "mma"),
+    **dict.fromkeys(("tma", "tma_load", "tma_store", "cp_async", "cp_async_bulk", "buffer_load", "ds_read_b128",
+                     "ds_write_b128", "lds_dma", "global_load_dwordx4"), "copy"),
+    **dict.fromkeys(("s_waitcnt", "mbarrier", "wait_group", "commit_group"), "wait"),
+    **dict.fromkeys(("sched_barrier", "s_barrier", "syncthreads", "__syncthreads"), "barrier"),
+}  # fmt: skip
+
+
 def thread_op(request: Request) -> Answer:
     """A GPU operation of one thread or one warp: its SIMT row at the request's element type, with the recorded check.
     A load or store of N elements in global memory takes the widest row whose elements per thread divide N."""
@@ -846,9 +857,12 @@ def thread_op(request: Request) -> Answer:
     if request.op in ("load", "store"):  # the family: scalar, pair, and 16-byte rows
         named = [r for r in rows if moves(r) and r.answers().startswith(request.op)]
     if not named:
+        if request.op in INSTRUCTION_OP:
+            op = INSTRUCTION_OP[request.op]
+            return no(request, Why.NO_ROW, f"{request.op} is an instruction of the {op} operation: ask {op} with its "
+                      "operands", f"{request.target} {op}")  # fmt: skip
         names = list(dict.fromkeys(r.answers() for r in rows))
-        related = [op for op in names if request.op in op] or difflib.get_close_matches(request.op, names, n=3)
-        nearest = related or names  # the related rows, else every row
+        nearest = [op for op in names if request.op in op] or difflib.get_close_matches(request.op, names, n=3)
         tail = "a GPU loop tail is a per-thread bounds check (if (i < n)); ballot_count counts the lanes of a predicate"
         fix = tail if request.op == "gen_mask" else ""
         return no(request, Why.NO_ROW, f"no {dialect} row for {request.op}",
@@ -885,9 +899,26 @@ def thread_op(request: Request) -> Answer:
     return Feasible(request, unit, (Step(unit, spelling, count),), setup, row_code(row, dialect), check, notes)
 
 
+#: Lanes of a warp (CUDA) or a wavefront (CDNA, wave64).
+WARP_LANES = {"cuda": 32, "hip": 64}
+#: How a reduction or scan longer than one warp finishes: per warp, then across the warps of a block, then blocks.
+BLOCK_REDUCTION = ("reduce each warp with this row, write lane 0's result to shared memory, __syncthreads, and reduce "
+                   "those partials with the row again in the first warp; across blocks, atomicAdd the block results "
+                   "or launch a second pass")  # fmt: skip
+
+
 def off_register(request: Request, row: simt.Row, dialect: str) -> Infeasible | None:
-    """The refusal of an operand that is no scalar in a register, for a SIMT row that computes on registers; None."""
+    """The refusal of an operand that is no scalar in a register, for a SIMT row that computes on registers, or of a
+    warp row's operand longer or shorter than one warp; None."""
     scalar = Operand("register", row.dtype)
+    lanes = WARP_LANES[dialect]
+    for operand in request.operands.values():
+        if row.kind == "warp" and len(operand.shape) == 1 and operand.shape != (lanes,):
+            group = "wavefront" if dialect == "hip" else "warp"
+            return no(request, Why.SHAPE, f"the {request.op} row combines one register per lane of a {group}: "
+                      f"{lanes} values on {request.target}, not {operand.shape[0]}",
+                      spell(x=Operand("register", row.dtype, (lanes,))), spell(x=scalar), fix=BLOCK_REDUCTION,
+                      block=(lanes,))  # fmt: skip
     for operand in request.operands.values():
         if len(operand.shape) >= 2 or operand.swizzle != "none":
             return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
@@ -1211,7 +1242,21 @@ def mma(request: Request, verify: bool) -> Answer:
     )[target]
     check = Check(found.verified, found.detail)  # type: ignore[arg-type]
     steps = tuple(Step(unit, s) for s in found.steps)
+    if target in tile.GPU_TILES and (grid := block_grid(target, m, n, k, a.dtype)):
+        steps = (Step(unit, grid), *steps)
     return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))
+
+
+def block_grid(target: str, m: int, n: int, k: int, dtype: str) -> str:
+    """The first step of a GPU mma whose C is larger than one thread block's tile, so the answer never passes a grid
+    of blocks off as one block holding all of C; ``""`` when C is one block."""
+    bm, bn = tile.gpu_block(target, m, n, k, dtype)
+    if (m, n) == (bm, bn):
+        return ""
+    return (
+        f"C {m}x{n} is a grid of {m // bm} x {n // bn} thread blocks, each computing a {bm}x{bn} tile; no checked "
+        f"kernel holds all of C in one block's registers"
+    )
 
 
 def tensix_mma(request: Request, m: int, n: int, k: int, nearest: tuple[str, ...]) -> Answer:
@@ -1283,7 +1328,7 @@ def copy(request: Request, verify: bool) -> Answer:
     if request.target == "sm90" and src.space == "global":
         return tma_copy(request, src, dst, source, verify)
     if request.target in tile.CDNA and (src.space, dst.space) == ("global", "shared"):
-        return lds_copy(request, src, dst, Operand("shared", dtype, (box[0], width), "row_major", "xor:8"), source,
+        return lds_copy(request, src, dst, Operand("shared", dtype, (64, width), "row_major", "xor:8"), source,
                         verify)  # fmt: skip
     return no(
         request,
@@ -1526,6 +1571,7 @@ def ordering(
     answer's ``order``."""
     explicit = any(r.op in ("wait", "fence") for r in requests)
     needed: list[str] = []
+    fenced: set[str] = set()  # a fence orders every later request, so each kind goes before the first that needs it
     for i, answer in enumerate(answers):
         readers = [mmas[0]] if i in fed else []
         if readers and readers[0] < i:
@@ -1539,7 +1585,9 @@ def ordering(
             if explicit and not any(r.op == "fence" and r.kind == kind for r in requests[:i]):
                 return no(requests[i], Why.ORDER, f"request {i} ({requests[i].op} on {answer.unit}) needs `{fence}` "
                           "before it", fence, fix=f"put `{fence}` before request {i}")  # fmt: skip
-            needed.append(f"{fence} before request {i}")
+            if kind not in fenced:
+                needed.append(f"{fence} before request {i}")
+                fenced.add(kind)
         waits = [j for j in range(i + 1, len(requests)) if requests[j].op == "wait" and requests[j].on == done.token]
         if explicit and not waits:
             return no(requests[i], Why.ORDER, f"request {i} ({requests[i].op} on {answer.unit}) is never completed: "
@@ -1580,6 +1628,10 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
             fix = (f"copy one K block of {kb} per step: A from the {m} x {k} matrix, and B from Bt ({n} rows of {k}) "
                    "in global memory, since the mma reads B transposed")  # fmt: skip
             return no(request, Why.COMBINE, reason, *nearest, fix=fix)
+        if len(fed) == len(blocks):  # every input already has its copy: this one fills nothing the mma reads
+            return no(request, Why.COMBINE, f"request {i} is a third copy into shared memory; the tile program of "
+                      f"request {j} (mma) loads two blocks, A and Bt, one copy each", *nearest,
+                      fix=f"drop request {i}")  # fmt: skip
         fed[i] = " or ".join(names)
     return fed
 
