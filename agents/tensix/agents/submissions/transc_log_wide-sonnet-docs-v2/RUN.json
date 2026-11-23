@@ -1,0 +1,9 @@
+{
+ "pilot": "v2-dev",
+ "arm": "docs",
+ "model": "claude-sonnet-5-5",
+ "tool_commit": null,
+ "docs_tree": "tt-metal v0.63.0 + tt-llk da2f082 (= ttnn 0.63.0 wheel sources)",
+ "brief_digest": "36ef13cea844",
+ "limits": "40 tool calls, 30 min"
+}

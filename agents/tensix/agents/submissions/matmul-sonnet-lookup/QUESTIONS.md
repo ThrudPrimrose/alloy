@@ -1,0 +1,1 @@
+- May fidelity drop to HiFi2/LoFi for speed? Needs a device run to confirm the 1e-2 Frobenius bound.

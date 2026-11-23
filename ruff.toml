@@ -9,6 +9,11 @@ ignore = ["UP031","C408","PYI041","PYI042","PYI016","PERF203","FURB136"]
 "__init__.py" = ["F401", "F403", "F405", "I"]
 # Test doubles stand in for real objects by duck typing.
 "tests/*" = ["ANN401"]
+# The card judge and row harness of the Tenstorrent study, frozen at the 11-19 freeze (agents/tensix/export.sh copies
+# them to alloy-tenstorrent verbatim); the architecture file is generated (python -m alloy.isa.softhier arch).
+"agents/tensix/agents/host.py" = ["ANN", "F841"]
+"agents/tensix/rows/*" = ["ANN"]
+"agents/softhier/alloy_v1.py" = ["ANN"]
 
 [format]
 exclude = ["*.ipynb", "*.md"]  # pages under alloy/hb_plugin/skills are generated

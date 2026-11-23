@@ -1,0 +1,81 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "transc_sin_small",
+ "kind": "map",
+ "inputs": [
+  [
+   "x",
+   -0.7853981633974483,
+   0.7853981633974483
+  ]
+ ],
+ "output": "out",
+ "program": [
+  "out = sin(x)"
+ ],
+ "reduce": "",
+ "options": {
+  "dst_block": 4,
+  "cores": 32,
+  "placement": "sharded"
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ],
+  "placement": [
+   "interleaved",
+   "sharded"
+  ]
+ },
+ "placement": {
+  "x": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "out": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  }
+ },
+ "circular_buffers": {
+  "0": [
+   8,
+   "float32"
+  ],
+  "16": [
+   8,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "x_addr"
+ ],
+ "writer_args": [
+  "num_tiles",
+  "start_tile",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "sin": "row sin SFPU (unary), ttsim rel 1.11e-07, card rel 1.64e-07 (task transc_sin_small)"
+ }
+}

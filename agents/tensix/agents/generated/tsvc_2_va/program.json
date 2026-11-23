@@ -1,0 +1,60 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "tsvc_2_va",
+ "kind": "map",
+ "inputs": [
+  [
+   "b",
+   0.0,
+   1.0
+  ]
+ ],
+ "output": "a",
+ "program": [
+  "a = b"
+ ],
+ "reduce": "",
+ "options": {
+  "dst_block": 4,
+  "cores": 0
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ]
+ },
+ "circular_buffers": {
+  "0": [
+   8,
+   "float32"
+  ],
+  "16": [
+   8,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "b_addr"
+ ],
+ "writer_args": [
+  "num_tiles",
+  "start_tile",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {}
+}

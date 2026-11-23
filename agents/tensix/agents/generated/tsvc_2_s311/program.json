@@ -1,0 +1,66 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "tsvc_2_s311",
+ "kind": "reduce",
+ "inputs": [
+  [
+   "a",
+   0.0,
+   1.0
+  ]
+ ],
+ "output": "sum_out",
+ "program": [
+  "sum_out = sum(a)"
+ ],
+ "reduce": "add",
+ "options": {
+  "dst_block": 4,
+  "cores": 0
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ]
+ },
+ "circular_buffers": {
+  "0": [
+   8,
+   "float32"
+  ],
+  "16": [
+   8,
+   "float32"
+  ],
+  "24": [
+   2,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "a_addr"
+ ],
+ "writer_args": [
+  "1",
+  "core_index",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "add": "row add SFPU (binary_sfpu), ttsim rel 5.96e-08, card rel 5.96e-08 (task tsvc_2_s1351)"
+ }
+}

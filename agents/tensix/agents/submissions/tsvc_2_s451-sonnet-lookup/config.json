@@ -1,0 +1,1 @@
+{"fp32_dest_acc_en": true, "math_approx_mode": false, "math_fidelity": "HiFi4", "unpack_to_dest_fp32": [0, 1], "extra_cbs": []}

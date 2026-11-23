@@ -1,0 +1,303 @@
+[
+ {
+  "name": "mat_scaled_add",
+  "kind": "map",
+  "inputs": [
+   [
+    "A",
+    0.0,
+    1.0
+   ],
+   [
+    "B",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "B",
+  "program": [
+   "B = (B + (2.0 * A))"
+  ]
+ },
+ {
+  "name": "neg_stride_rev",
+  "kind": "map",
+  "inputs": [
+   [
+    "b",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = (b + 1.0)"
+  ]
+ },
+ {
+  "name": "transc_log_sincos_sum",
+  "kind": "reduce",
+  "inputs": [
+   [
+    "t",
+    0.0,
+    1.5707963267948966
+   ],
+   [
+    "x",
+    1.0,
+    10.0
+   ]
+  ],
+  "output": "out",
+  "program": [
+   "out = sum(((log(x) * cos(t)) + sin(t)))"
+  ]
+ },
+ {
+  "name": "transc_sin_small",
+  "kind": "map",
+  "inputs": [
+   [
+    "x",
+    -0.7853981633974483,
+    0.7853981633974483
+   ]
+  ],
+  "output": "out",
+  "program": [
+   "out = sin(x)"
+  ]
+ },
+ {
+  "name": "transc_sin_wide",
+  "kind": "map",
+  "inputs": [
+   [
+    "x",
+    -100.0,
+    100.0
+   ]
+  ],
+  "output": "out",
+  "program": [
+   "out = sin(x)"
+  ]
+ },
+ {
+  "name": "tsvc_2_s1351",
+  "kind": "map",
+  "inputs": [
+   [
+    "b",
+    0.0,
+    1.0
+   ],
+   [
+    "c",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = (b + c)"
+  ]
+ },
+ {
+  "name": "tsvc_2_s251",
+  "kind": "map",
+  "inputs": [
+   [
+    "b",
+    0.0,
+    1.0
+   ],
+   [
+    "c",
+    0.0,
+    1.0
+   ],
+   [
+    "d",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "s = (b + (c * d))",
+   "a = (s * s)"
+  ]
+ },
+ {
+  "name": "tsvc_2_s311",
+  "kind": "reduce",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "sum_out",
+  "program": [
+   "sum_out = sum(a)"
+  ]
+ },
+ {
+  "name": "tsvc_2_s313",
+  "kind": "reduce",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ],
+   [
+    "b",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "dot",
+  "program": [
+   "dot = sum((a * b))"
+  ]
+ },
+ {
+  "name": "tsvc_2_s4121",
+  "kind": "map",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ],
+   [
+    "b",
+    0.0,
+    1.0
+   ],
+   [
+    "c",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = (a + (b * c))"
+  ]
+ },
+ {
+  "name": "tsvc_2_va",
+  "kind": "map",
+  "inputs": [
+   [
+    "b",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = b"
+  ]
+ },
+ {
+  "name": "tsvc_2_vpvpv",
+  "kind": "map",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ],
+   [
+    "b",
+    0.0,
+    1.0
+   ],
+   [
+    "c",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = ((a + b) + c)"
+  ]
+ },
+ {
+  "name": "tsvc_2_vtv",
+  "kind": "map",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ],
+   [
+    "b",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = (a * b)"
+  ]
+ },
+ {
+  "name": "tsvc_2_vtvtv",
+  "kind": "map",
+  "inputs": [
+   [
+    "a",
+    0.0,
+    1.0
+   ],
+   [
+    "b",
+    0.0,
+    1.0
+   ],
+   [
+    "c",
+    0.0,
+    1.0
+   ]
+  ],
+  "output": "a",
+  "program": [
+   "a = ((a * b) * c)"
+  ]
+ },
+ {
+  "name": "gemm64",
+  "kind": "gemm",
+  "inputs": [
+   [
+    "A",
+    -1.0,
+    1.0
+   ],
+   [
+    "B",
+    -1.0,
+    1.0
+   ],
+   [
+    "C",
+    -1.0,
+    1.0
+   ]
+  ],
+  "output": "C",
+  "program": [
+   "C = C + A @ B"
+  ]
+ }
+]

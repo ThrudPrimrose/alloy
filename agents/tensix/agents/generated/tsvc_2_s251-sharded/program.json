@@ -1,0 +1,113 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "tsvc_2_s251",
+ "kind": "map",
+ "inputs": [
+  [
+   "b",
+   0.0,
+   1.0
+  ],
+  [
+   "c",
+   0.0,
+   1.0
+  ],
+  [
+   "d",
+   0.0,
+   1.0
+  ]
+ ],
+ "output": "a",
+ "program": [
+  "s = (b + (c * d))",
+  "a = (s * s)"
+ ],
+ "reduce": "",
+ "options": {
+  "dst_block": 2,
+  "cores": 32,
+  "placement": "sharded"
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ],
+  "placement": [
+   "interleaved",
+   "sharded"
+  ]
+ },
+ "placement": {
+  "b": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "c": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "d": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "a": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  }
+ },
+ "circular_buffers": {
+  "0": [
+   4,
+   "float32"
+  ],
+  "1": [
+   4,
+   "float32"
+  ],
+  "2": [
+   4,
+   "float32"
+  ],
+  "16": [
+   4,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "b_addr",
+  "c_addr",
+  "d_addr"
+ ],
+ "writer_args": [
+  "num_tiles",
+  "start_tile",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "mul": "row mul SFPU (binary_sfpu), ttsim rel 5.68e-08, card rel 5.96e-08 (task tsvc_2_vtv)",
+  "add": "row add SFPU (binary_sfpu), ttsim rel 5.96e-08, card rel 5.96e-08 (task tsvc_2_s1351)"
+ }
+}

@@ -1,0 +1,8 @@
+{
+ "task": "transc_log_wide",
+ "config": "tool",
+ "model": "openai/gpt-oss-120b",
+ "turns": 22,
+ "tokens": 99404,
+ "ended": "no tool call"
+}

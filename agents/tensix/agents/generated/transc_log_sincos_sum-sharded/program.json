@@ -1,0 +1,103 @@
+{
+ "contract": 2,
+ "tt_metal": "v06",
+ "name": "transc_log_sincos_sum",
+ "kind": "reduce",
+ "inputs": [
+  [
+   "t",
+   0.0,
+   1.5707963267948966
+  ],
+  [
+   "x",
+   1.0,
+   10.0
+  ]
+ ],
+ "output": "out",
+ "program": [
+  "out = sum(((log(x) * cos(t)) + sin(t)))"
+ ],
+ "reduce": "add",
+ "options": {
+  "dst_block": 2,
+  "cores": 32,
+  "placement": "sharded"
+ },
+ "axes": {
+  "dst_block": [
+   1,
+   2
+  ],
+  "cores": [
+   0,
+   64,
+   32,
+   8
+  ],
+  "placement": [
+   "interleaved",
+   "sharded"
+  ]
+ },
+ "placement": {
+  "t": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "x": {
+   "kind": "sharded",
+   "cores": 32,
+   "tiles": 32,
+   "map": "Placement(nodes=32, SymbolicLambda((i) -> Mod(floor(i/floor(LEN_1D/32)), 32)))"
+  },
+  "out": {
+   "kind": "interleaved",
+   "cores": 0,
+   "tiles": 0,
+   "map": "Placement(nodes=NB, SymbolicLambda((i) -> Mod(floor(i/1024), NB)))"
+  }
+ },
+ "circular_buffers": {
+  "0": [
+   4,
+   "float32"
+  ],
+  "1": [
+   4,
+   "float32"
+  ],
+  "16": [
+   4,
+   "float32"
+  ],
+  "24": [
+   2,
+   "float32"
+  ]
+ },
+ "reader_args": [
+  "num_tiles",
+  "start_tile",
+  "t_addr",
+  "x_addr"
+ ],
+ "writer_args": [
+  "1",
+  "core_index",
+  "out_addr"
+ ],
+ "compute_args": [
+  "num_tiles"
+ ],
+ "rows": {
+  "log": "rung alloy_log_f32_sfpi (3.79 ulp on the card; the row's card rel inf)",
+  "cos": "row cos SFPU (unary), ttsim rel 1.11e-07, card rel 1.53e-08 (task transc_log_sincos_sum)",
+  "mul": "row mul SFPU (binary_sfpu), ttsim rel 5.68e-08, card rel 5.96e-08 (task tsvc_2_vtv)",
+  "sin": "row sin SFPU (unary), ttsim rel 1.11e-07, card rel 1.64e-07 (task transc_sin_small)",
+  "add": "row add SFPU (binary_sfpu), ttsim rel 5.96e-08, card rel 5.96e-08 (task tsvc_2_s1351)"
+ }
+}

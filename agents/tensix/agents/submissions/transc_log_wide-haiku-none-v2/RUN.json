@@ -1,0 +1,9 @@
+{
+ "pilot": "v2-dev",
+ "arm": "none",
+ "model": "claude-haiku-5-5",
+ "tool_commit": null,
+ "docs_tree": null,
+ "brief_digest": "36ef13cea844",
+ "limits": "40 tool calls, 30 min"
+}

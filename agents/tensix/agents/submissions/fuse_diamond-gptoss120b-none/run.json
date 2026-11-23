@@ -1,0 +1,8 @@
+{
+ "task": "fuse_diamond",
+ "config": "none",
+ "model": "openai/gpt-oss-120b",
+ "turns": 11,
+ "tokens": 43914,
+ "ended": "no tool call"
+}

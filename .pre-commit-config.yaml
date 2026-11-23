@@ -1,5 +1,7 @@
 # Setup: uv sync --extra dev && pre-commit install
 # Every file: pre-commit run --all-files
+# Recorded agent outputs and the card's row file stay verbatim (alloy-tenstorrent exports them byte for byte).
+exclude: ^agents/tensix/(agents/(submissions|probes|reference|generated|stock)/|rows/rows\.json$)
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.6

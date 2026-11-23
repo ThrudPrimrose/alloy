@@ -1,0 +1,5 @@
+{"fp32_dest_acc_en": true, "math_approx_mode": false, "math_fidelity": "HiFi2",
+ "unpack_to_dest_fp32": [],
+ "extra_cbs": [{"index": 0, "tiles": 32, "format": "bfloat16"},
+               {"index": 1, "tiles": 256, "format": "bfloat16"},
+               {"index": 16, "tiles": 8, "format": "float32"}]}
