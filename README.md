@@ -5,7 +5,11 @@ Alloy splits it into scopes, renders each scope under many codegen knobs, compil
 verifies every candidate, times the survivors, and links the best into one program plus a report. On
 HPCAgent-Bench it is a user plugin (`alloy/hb_plugin`): agents give a manifest with C or NumPy and read the report.
 
-    uv sync --extra dev
+    pip install alloy-compiler      # imports as `alloy`; DaCe extended comes first (below)
+    uv sync --extra dev             # a checkout of https://github.com/ThrudPrimrose/alloy-compiler
+
+Alloy needs DaCe's `extended` branch, which has no PyPI release: HPCAgent-Bench's setup command installs it at the
+pinned commit, and a checkout's `uv sync` takes the pin from `[tool.uv] override-dependencies`.
 
 ```python
 import pathlib
