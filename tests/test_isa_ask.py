@@ -791,9 +791,9 @@ def test_whole_tensix_tiles_are_one_call_each_and_a_partial_tile_names_the_tile(
 
 
 @pytest.mark.parametrize(("refused", "block"), [
-    (Request("sm90", "mma", {"a": Operand("shared", "f16", (100, 64), "row_major", "b128"),
-                             "b": Operand("shared", "f16", (64, 64), "col_major", "b128"),
-                             "c": Operand("register", "f32", (100, 64))}), (64, 64, 64)),
+    (Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
+                             "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
+                             "c": Operand("register", "f32", (64, 64))}), (64, 64, 64)),
     (Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)),
                                "b": Operand("tile_register", "f32", (48, 32)),
                                "c": Operand("tile_register", "f32", (32, 32))}), (32, 32, 32)),
@@ -1436,15 +1436,15 @@ def test_an_sm90_tma_store_completes_on_its_bulk_group_after_a_proxy_fence() -> 
 
 
 def test_an_sm90_mma_of_a_partial_tile_is_feasible_and_a_k_off_16_bytes_is_refused() -> None:
-    partial = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (100, 40), "row_major", "b128"),
+    partial = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (200, 40), "row_major", "b128"),
                                           "b": Operand("shared", "f16", (40, 72), "col_major", "b128"),
-                                          "c": Operand("register", "f32", (100, 72))}), verify=False)  # fmt: skip
+                                          "c": Operand("register", "f32", (200, 72))}), verify=False)  # fmt: skip
     odd = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
                                       "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
                                       "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
 
     assert isinstance(partial, Feasible) and any("partial tiles" in s.spelling for s in partial.steps)
-    assert partial.steps[0].spelling.startswith("C 100x72 is a grid of 2 x 2 thread blocks")
+    assert partial.steps[0].spelling.startswith("C 200x72 is a grid of 2 x 1 thread blocks")
     assert isinstance(odd, Infeasible) and "multiple of 16" in odd.reason
 
 

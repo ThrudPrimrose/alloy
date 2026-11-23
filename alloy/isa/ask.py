@@ -1287,9 +1287,9 @@ def mma(request: Request, verify: bool) -> Answer:
 
 def block_grid(target: str, m: int, n: int, k: int, dtype: str) -> str:
     """The first step of a GPU mma whose C is larger than one thread block's tile, so the answer never passes a grid
-    of blocks off as one block holding all of C; ``""`` when C is one block."""
+    of blocks off as one block holding all of C; ``""`` when one block covers C."""
     bm, bn = tile.gpu_block(target, m, n, k, dtype)
-    if (m, n) == (bm, bn):
+    if m <= bm and n <= bn:
         return ""
     return (
         f"C {m}x{n} is a grid of {-(-m // bm)} x {-(-n // bn)} thread blocks, each computing a {bm}x{bn} tile; no checked "
