@@ -94,13 +94,15 @@ def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target: str, 
     not (shutil.which("aarch64-linux-gnu-gcc") and shutil.which("clang")),
     reason="needs clang and the aarch64 cross compiler",
 )
-def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else() -> None:
-    """No evaluated CPU has SME: CI runs the FMOPA tile under qemu (-cpu max,sme=on), a box without qemu compiles it."""
-    sut = tile.verify(tile.plan("sme", 70, 33, 9, "f32", "f32"))
+@pytest.mark.parametrize(("dtype", "bits"), [("f32", "32"), ("f64", "64")])
+def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else(dtype: str, bits: str) -> None:
+    """No evaluated CPU has SME: CI runs the FMOPA tile under qemu (-cpu max,sme=on), a box without qemu compiles it.
+    f64 accumulates in za0.d (SME_F64F64)."""
+    sut = tile.verify(tile.plan("sme", 70, 33, 9, dtype, dtype))
 
     expected = "run" if (shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")) else "compiled"
     assert sut.verified == expected, sut.detail
-    assert any("svmopa_za32_f32_m" in step for step in sut.steps)
+    assert any(f"svmopa_za{bits}_{dtype}_m" in step for step in sut.steps)
 
 
 @pytest.mark.parametrize("arch", tile.CDNA)

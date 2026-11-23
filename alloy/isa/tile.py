@@ -59,7 +59,7 @@ GPU_TYPES = {
 }
 #: The (input, accumulator) element types each tile target's checked kernels take.
 TYPES: dict[str, tuple[tuple[str, str], ...]] = {
-    "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"),),
+    "cpu": tuple(CPU_TYPES), "sme": (("f32", "f32"), ("f64", "f64")),
 } | GPU_TYPES | dict.fromkeys(("avx2", "avx512", "neon", "sve"), (("f32", "f32"), ("f64", "f64")))  # fmt: skip
 #: The FP8 encodings per target (exponent bits, mantissa bits, bias): sm_90 reads OCP E4M3 (E4M3FN) and E5M2;
 #: gfx942 reads the FNUZ variants (no infinity, no negative zero, one more in the bias).
@@ -160,7 +160,7 @@ def inlined(header: str, keep: frozenset[str]) -> str:
 BUILD = {
     "cpu": "cc -O3 -march=native -std=c11 tile.c -o tile -lm",
     "sm90": "nvcc -gencode arch=compute_90a,code=sm_90a -std=c++17 -O2 tile.cu -o tile -lcuda",
-    "sme": "clang --target=aarch64-linux-gnu -march=armv9-a+sme -O2 -c tile.c -o tile.o",
+    "sme": "clang --target=aarch64-linux-gnu -march=armv9-a+sme+sme-f64f64 -O2 -c tile.c -o tile.o",
 } | {arch: f"hipcc --offload-arch={arch} -O2 tile.hip -o tile" for arch in ("gfx90a", "gfx942")}
 #: SME's link: the aarch64 cross compiler's libgcc has the SME ABI routines (gcc 14 or later).
 SME_LINK = "aarch64-linux-gnu-gcc -static tile.o -o tile -lm"
@@ -640,25 +640,28 @@ CROSS_CC = "aarch64-linux-gnu-gcc"
 def sme_plan(m: int, n: int, k: int, in_type: str, acc_type: str) -> TilePlan:
     """SME: outer products (FMOPA) into the ZA tile za0.s, A given transposed (``alloy_tile_sme.h``)."""
     if (in_type, acc_type) not in TYPES["sme"]:
-        raise KeyError(f"an SME tile here takes --in f32 --acc f32 (FMOPA into za0.s); got {in_type}, {acc_type}")
+        raise KeyError(f"an SME tile here takes --in f32 --acc f32 (FMOPA into za0.s) or --in f64 --acc f64 (za0.d, "
+                       f"SME_F64F64); got {in_type}, {acc_type}")  # fmt: skip
+    bits, ctype, tile_ = in_type[1:], CPU_TYPES[in_type, acc_type][0], "za0.s" if in_type == "f32" else "za0.d"
     steps = (
-        "for each SVL/32 x SVL/32 block of C: svld1_hor_za32 loads its rows into za0.s (predicated at the edges)",
-        f"  {k} x svmopa_za32_f32_m: the outer product of a column of A (from at, contiguous) and a row of B",
-        "  svst1_hor_za32 stores the rows back; the function runs in streaming mode (__arm_locally_streaming)",
+        f"for each SVL/{bits} x SVL/{bits} block of C: svld1_hor_za{bits} loads its rows into {tile_} (predicated at "
+        "the edges)",
+        f"  {k} x svmopa_za{bits}_{in_type}_m: the outer product of a column of A (from at, contiguous) and a row of B",
+        f"  svst1_hor_za{bits} stores the rows back; the function runs in streaming mode (__arm_locally_streaming)",
     )
     layout = "A transposed (k x m row-major), B k x n row-major, C m x n row-major; ZA holds one block of C; no swizzle"
-    tiles = inlined("alloy_tile_sme.h", frozenset())
+    tiles = inlined("alloy_tile_sme.h", frozenset({in_type}))
     program = f"""#include <math.h>
 #include <stdio.h>
 {tiles}
 
 enum {{ M = {m}, N = {n}, K = {k} }};
-static float AT[K * M], B[K * N], C[M * N];
+static {ctype} AT[K * M], B[K * N], C[M * N];
 
 int main(void) {{
-  for (int i = 0; i < K * M; ++i) AT[i] = (float)((i % 13) - 6) / 8;
-  for (int i = 0; i < K * N; ++i) B[i] = (float)((i % 7) - 3) / 4;
-  for (int i = 0; i < M * N; ++i) C[i] = (float)((i % 5) - 2);
+  for (int i = 0; i < K * M; ++i) AT[i] = ({ctype})((i % 13) - 6) / 8;
+  for (int i = 0; i < K * N; ++i) B[i] = ({ctype})((i % 7) - 3) / 4;
+  for (int i = 0; i < M * N; ++i) C[i] = ({ctype})((i % 5) - 2);
   static double want[M * N];
   for (int i = 0; i < M; ++i)
     for (int j = 0; j < N; ++j) {{
@@ -666,14 +669,14 @@ int main(void) {{
       for (int p = 0; p < K; ++p) s += (double)AT[p * M + i] * (double)B[p * N + j];
       want[i * N + j] = s;
     }}
-  alloy_mma_sme_f32(M, N, K, AT, M, B, N, C, N);
+  alloy_mma_sme_{in_type}(M, N, K, AT, M, B, N, C, N);
   double worst = 0.0;
   for (int i = 0; i < M * N; ++i) {{
     double rel = fabs((double)C[i] - want[i]) / fmax(1.0, fabs(want[i]));
     if (rel > worst) worst = rel;
   }}
   printf("%.3e\\n", worst);
-  return worst <= {TOLERANCE["f32"]} ? 0 : 1;
+  return worst <= {TOLERANCE[in_type]} ? 0 : 1;
 }}
 """
     descriptors = {"build": BUILD["sme"], "link": SME_LINK,

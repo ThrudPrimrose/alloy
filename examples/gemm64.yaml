@@ -11,8 +11,8 @@ parameters:
     NJ: [32, 128]
     NK: [32, 128]
 args:
-  alpha: {value: 1.5, dtype: float32}  # PolyBench gemm
-  beta: {value: 1.2, dtype: float32}
-  C: {shape: "(NI, NJ)", dtype: float32, out: true}
-  A: {shape: "(NI, NK)", dtype: float32}
-  B: {shape: "(NK, NJ)", dtype: float32}
+  alpha: {value: 1.5}  # PolyBench gemm; draw at float32 (inputs.load(..., datatype="float32"))
+  beta: {value: 1.2}
+  C: {shape: "(NI, NJ)", out: true}
+  A: (NI, NK)
+  B: (NK, NJ)

@@ -1132,7 +1132,7 @@ def mma_nearest(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tu
         return tuple(request(d, d, rows, -(-n // tile.simd_lanes(target, d)) * tile.simd_lanes(target, d), k)
                      for d in ("f32", "f64"))  # fmt: skip
     if target == "sme":
-        return (request("f32", "f32", m, n, k),)
+        return tuple(request(i, o, m, n, k) for i, o in tile.TYPES["sme"])
     if target == "tensix":
         up = [max(32, -(-extent // 32) * 32) for extent in (m, n, k)]
         return tuple(request(d, d, *up) for d in tensix.dtypes())

@@ -88,7 +88,7 @@ before the wait is a race, and issuing without the fence reads stale data.
   vector register per row; each k broadcasts A[i][k] and multiply-adds row k of B), on row-major arrays in global
   memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C). M takes multiples of 4
   and N whole vectors (any N on `sve`).
-- **`sme`.** FMOPA outer products into ZA, f32. No evaluated CPU has SME, so the answer is checked by compiling and
+- **`sme`.** FMOPA outer products into ZA, f32 (`za0.s`) or f64 (`za0.d`, SME_F64F64). No evaluated CPU has SME, so the answer is checked by compiling and
   under an emulator.
 - **`sm90`** (GH200). `copy` from global to shared is a TMA load: a tensor map, a 128B swizzle (`b128`), an
   mbarrier, and 1024-byte alignment. `mma` is `wgmma` on one warpgroup (128 threads) per 64 rows. B is held
