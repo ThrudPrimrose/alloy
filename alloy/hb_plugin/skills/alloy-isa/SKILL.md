@@ -96,7 +96,9 @@ before the wait is a race, and issuing without the fence reads stale data.
   under an emulator.
 - **`sm90`** (GH200). `copy` from global to shared is a TMA load: a tensor map, a 128B swizzle (`b128`), an
   mbarrier, and 1024-byte alignment. `mma` is `wgmma` on one warpgroup (128 threads) per 64 rows. B is held
-  transposed (N rows of K) because wgmma reads both inputs K-contiguous.
+  transposed (N rows of K) because wgmma reads both inputs K-contiguous. Two kernels (64x64 on m64n64, 128x128 on
+  m64n128); the answer ranks them for the asked shape (least padding, then fewest wgmma, then fewest accumulator
+  registers) and runs the first. The rank is derived from the shapes, not measured.
 - **`gfx90a`** (MI200) **and `gfx942`** (MI300A). `copy` from global to LDS is two 16-byte loads per thread, each
   chunk c of row r stored at slot c ^ (r % 8) (`xor:8`). `mma` is a 32x32 MFMA per wave64, four waves per 64x64
   block. B is held transposed here too.

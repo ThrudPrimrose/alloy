@@ -1499,3 +1499,13 @@ def test_an_explicit_two_stage_list_waits_on_stage_1_after_the_mma() -> None:
 
     assert isinstance(sut, Combined), sut
     assert isinstance(unfinished, Infeasible) and unfinished.why is Why.ORDER and "request 4" in unfinished.reason
+
+
+def test_an_sm90_mma_answer_ranks_both_kernels_and_says_the_rank_is_derived() -> None:
+    sut = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
+                                      "b": Operand("shared", "f16", (64, 64), "col_major", "b128"),
+                                      "c": Operand("register", "f32", (64, 64))}), verify=False)  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    rank = next(note for note in sut.notes if note.startswith("ranked"))
+    assert "not measured" in rank and rank.index("1. 64x64") < rank.index("2. 128x128")

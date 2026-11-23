@@ -253,3 +253,13 @@ def test_the_sm90_tma_store_and_a_partial_gemm_compile_and_run_where_there_is_a_
 
     assert store.verified in ("compiled", "run") and gemm.verified in ("compiled", "run"), (store.detail, gemm.detail)
     assert any("partial tiles" in step for step in gemm.steps)
+
+
+@pytest.mark.parametrize(("m", "n", "block"), [
+    (64, 64, (64, 64)), (128, 128, (128, 128)), (100, 72, (128, 128)), (192, 192, (64, 64)),
+])  # fmt: skip
+def test_sm90_ranks_its_kernels_by_padding_then_wgmma_issued(m: int, n: int, block: tuple[int, int]) -> None:
+    sut = tile.ranked("sm90", m, n, 64, "f16")
+
+    assert sut[0].block == block and tile.gpu_block("sm90", m, n, 64, "f16") == block
+    assert sut[0].padding <= sut[1].padding

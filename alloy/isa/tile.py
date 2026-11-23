@@ -35,6 +35,7 @@ __all__ = [
     "k_block",
     "native_gpu",
     "plan",
+    "ranked",
     "verify",
 ]
 
@@ -507,14 +508,15 @@ int main(void) {{
 
 
 def gpu_block(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tuple[int, int]:
-    """The (BM, BN) block of the tile kernel an ``m x n x k`` product runs on ``target``: the largest that divides M
-    and N. Each block loads K in blocks of 128 bytes of a row: A as BM rows and Bt as BN rows."""
+    """The (BM, BN) block of the tile kernel an ``m x n x k`` product runs on ``target``: on sm90 the first of
+    ``ranked``, on CDNA the largest that divides M and N. Each block loads K in blocks of 128 bytes of a row: A as BM
+    rows and Bt as BN rows."""
     tiles, kb = GPU_TILES[target], k_block(in_type)
     if target == "sm90":  # TMA zero-fills boxes past the edge and the kernel guards C: any M and N, K in 16-byte rows
         if k * GPU_BYTES[in_type] % 16:
             raise KeyError(f"sm90: K x {GPU_BYTES[in_type]} bytes a multiple of 16 (the tensor map's row stride) for "
                            f"{in_type}; got {m}x{n}x{k}")  # fmt: skip
-        return (128, 128) if m % 128 == 0 and n % 128 == 0 else (64, 64)
+        return ranked(target, m, n, k, in_type)[0].block
     fitting = [(bm, bn) for bm, bn in tiles if m % bm == 0 and n % bn == 0]
     if not fitting or k % kb:
         legal = ", ".join(f"{bm}x{bn} blocks" for bm, bn in tiles)
@@ -522,6 +524,37 @@ def gpu_block(target: str, m: int, n: int, k: int, in_type: str = "f16") -> tupl
             f"{target}: M and N multiples of a tile ({legal}), K a multiple of {kb} for {in_type}; got {m}x{n}x{k}"
         )
     return max(fitting)
+
+
+@dataclass(frozen=True, slots=True)
+class Ranked:
+    """One tile kernel's cost on a product, as derived from its instruction shape (no device measured it)."""
+
+    block: tuple[int, int]
+    #: The wgmma issued over the whole product, padding included: fewer frees issue slots.
+    issued: int
+    #: f32 accumulator registers per thread.
+    registers: int
+    #: The share of the computed C that is padding.
+    padding: float
+
+    def spelled(self) -> str:
+        bm, bn = self.block
+        return (f"{bm}x{bn} (wgmma m64n{bn}): {self.issued} wgmma issued, {self.registers} f32 accumulators per thread, "
+                f"{self.padding:.0%} of C padding")  # fmt: skip
+
+
+def ranked(target: str, m: int, n: int, k: int, in_type: str) -> list[Ranked]:
+    """sm90's tile kernels for an ``m x n x k`` product, best first, by the rule of design item 14 as derived from the
+    shapes: every wgmma shape runs at one rate per FLOP, so the least padding (FLOPs computed) first, then the fewest
+    wgmma issued (more FLOPs per instruction), then the fewest accumulator registers per thread."""
+    blocks_k = -(-k // k_block(in_type))
+    costs = []
+    for bm, bn in GPU_TILES[target]:
+        grid_m, grid_n = -(-m // bm), -(-n // bn)
+        issued = grid_m * grid_n * blocks_k * 4 * (bm // 64)  # 4 wgmma per K block per warpgroup of 64 rows
+        costs.append(Ranked((bm, bn), issued, bn // 2, 1 - m * n / (grid_m * bm * grid_n * bn)))
+    return sorted(costs, key=lambda r: (round(r.padding, 9), r.issued, r.registers))
 
 
 def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str, stages: int = 1) -> TilePlan:

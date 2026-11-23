@@ -1277,7 +1277,12 @@ def mma(request: Request, verify: bool) -> Answer:
     steps = tuple(Step(unit, s) for s in found.steps)
     if target in tile.GPU_TILES and (grid := block_grid(target, m, n, k, a.dtype)):
         steps = (Step(unit, grid), *steps)
-    return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, (found.layout,))
+    notes: tuple[str, ...] = (found.layout,)
+    if target == "sm90":  # two kernels: say which ranks first and why, derived from the shapes
+        rank = tile.ranked(target, m, n, k, a.dtype)
+        notes += ("ranked, derived from the instruction shapes (not measured): "
+                  + "; ".join(f"{i + 1}. {r.spelled()}" for i, r in enumerate(rank)),)  # fmt: skip
+    return Feasible(request, unit, steps, dict(found.descriptors), found.program, check, notes)
 
 
 def block_grid(target: str, m: int, n: int, k: int, dtype: str) -> str:
