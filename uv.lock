@@ -1277,7 +1277,7 @@ requires-dist = [
     { name = "dace-alloy", extras = ["bench"], marker = "extra == 'nvgpu'" },
     { name = "dace-alloy", extras = ["dev", "amdgpu"], marker = "extra == 'dev-amd'" },
     { name = "dace-alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
-    { name = "dace-extended", git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0" },
+    { name = "dace-extended", specifier = ">=1.0.0" },
     { name = "hjson", marker = "extra == 'softhier'", specifier = "==3.1.0" },
     { name = "hpcagent-bench", marker = "extra == 'bench'", git = "https://github.com/spcl/HPCAgent-Bench.git?rev=a4395e3c5c7d69832f456b715575ef6c29d24463" },
     { name = "html2text", marker = "extra == 'softhier'", specifier = "==2025.4.15" },
@@ -1319,7 +1319,7 @@ provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "softhier", "dev-nvidia", 
 [[package]]
 name = "dace-extended"
 version = "1.0.0"
-source = { git = "https://github.com/ThrudPrimrose/dace.git?tag=extended-v1.0.0#8f94311c0b23a92db44d01d3710aebab02173831" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astunparse" },
     { name = "click" },
@@ -1341,6 +1341,10 @@ dependencies = [
     { name = "sympy" },
     { name = "typing-extensions" },
     { name = "z3-solver" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/77/f5d22bea269bd9dbff5f26a695ec796156c35c16a7ac0086c64a5c940e09/dace_extended-1.0.0.tar.gz", hash = "sha256:e400ccd5211ec3656e3604cd5dd4895bf9d8447041a6740b949a889093784119", size = 9173389, upload-time = "2026-11-23T16:19:30.534Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/41/8a456422f5dc378e6d3355a1251b9c922513d9e5a341f7d65ee3e27f52fc/dace_extended-1.0.0-py3-none-any.whl", hash = "sha256:5b230e739575de45a046da881ebd458090ce098e1218655a1699ef1b6a58381a", size = 10068641, upload-time = "2026-11-23T16:19:27.675Z" },
 ]
 
 [[package]]
