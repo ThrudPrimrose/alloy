@@ -1,0 +1,18 @@
+# HPCAgent-Bench manifest schema: the paper's running example, the 64 x 64 x 64 tile, fuzzed around it for checking.
+name: GEMM 64
+level: 1
+parameters:
+  S:
+    NI: 64
+    NJ: 64
+    NK: 64
+  fuzzed:
+    NI: [32, 128]
+    NJ: [32, 128]
+    NK: [32, 128]
+args:
+  alpha: {}
+  beta: {}
+  C: {shape: "(NI, NJ)", out: true}
+  A: (NI, NK)
+  B: (NK, NJ)
