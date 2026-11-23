@@ -940,7 +940,7 @@ def off_register(request: Request, row: simt.Row, dialect: str) -> Infeasible | 
     scalar = Operand("register", row.dtype)
     lanes = WARP_LANES[dialect]
     for operand in request.operands.values():
-        if row.kind == "warp" and len(operand.shape) == 1 and operand.shape != (lanes,):
+        if row.kind == "warp" and operand.space == "register" and len(operand.shape) == 1 and operand.shape != (lanes,):
             group = "wavefront" if dialect == "hip" else "warp"
             return no(request, Why.SHAPE, f"the {request.op} row combines one register per lane of a {group}: "
                       f"{lanes} values on {request.target}, not {operand.shape[0]}",

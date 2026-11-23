@@ -181,7 +181,7 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
 
 @pytest.mark.parametrize(("request_", "reason"), [
     (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f32", (7,))}),
-     "copies f16, bf16, e4m3, e5m2 tiles on gfx942, not f32"),
+     "copies f16, bf16, e4m3, e5m2, f64 tiles on gfx942, not f32"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), "xor:8"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (64, 64))}), "xor:8"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f64", (4,))}),
@@ -940,7 +940,7 @@ def test_gfx90a_refuses_an_fp8_copy_with_the_types_it_takes() -> None:
                                          "dst": Operand("shared", "e4m3", (64, 128), "row_major", "xor:8")}), verify=False)  # fmt: skip
 
     assert isinstance(sut, Infeasible) and sut.why == Why.ELEMENT_TYPE
-    assert "copies f16, bf16 tiles on gfx90a, not e4m3" in sut.reason
+    assert "copies f16, bf16, f64 tiles on gfx90a, not e4m3" in sut.reason
 
 
 # Design 2.9: wait and fence.
@@ -1336,7 +1336,7 @@ def test_a_wide_gpu_load_of_an_extent_it_does_not_divide_is_refused_with_the_blo
     assert sut.nearest == ("x global:f16:96", "x global:f16:104")
 
 
-@pytest.mark.parametrize("op", ["add", "fma", "load"])
+@pytest.mark.parametrize("op", ["add", "fma"])  # load: the converting load_f16 comes first, tested below
 def test_plain_avx512_refuses_f16_and_names_the_fp16_target(op: str) -> None:
     """Zen 4 runs AVX-512 without AVX512-FP16: an f16 answer for plain avx512 would not run there."""
     sut = ask(Request("avx512", op, {"x": Operand("vector", "f16", (32,))}), verify=False)
