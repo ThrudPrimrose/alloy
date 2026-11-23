@@ -16,6 +16,7 @@ typedef _Float16 alloy_half8 __attribute__((ext_vector_type(8)));
 typedef short alloy_short4 __attribute__((ext_vector_type(4)));
 typedef long alloy_long2 __attribute__((ext_vector_type(2)));  // one 16-byte chunk: 8 bytes lo, 8 bytes hi
 typedef float alloy_floatx16 __attribute__((ext_vector_type(16)));
+typedef double alloy_doublex4 __attribute__((ext_vector_type(4)));
 
 // The input element types of the tile kernels, as their template argument.
 enum alloy_elem { ALLOY_F16, ALLOY_BF16, ALLOY_E4M3, ALLOY_E5M2 };
@@ -94,5 +95,65 @@ __global__ __launch_bounds__(256) void alloy_gemm_64x64(const void* __restrict__
     const int col = n0 + 32 * wn + lane % 32;
     C[row * N + col] = acc[g];
   }
+}
+// alloy-end
+
+// alloy-only: f64
+// f64 on CDNA (gfx90a, gfx942): one 64 x 64 block of C per 256 threads, each wave64 a 32 x 32 sub-tile of 2 x 2
+// v_mfma_f64_16x16x4f64 tiles accumulating in f64. A K block is 16 doubles (128 bytes of a row), staged in LDS with the
+// XOR swizzle of the other types. In a 16x16x4 MFMA, lane l feeds A[l % 16][k + l / 16] and B[k + l / 16][l % 16], and
+// holds D[4 * (l / 16) + i][l % 16] in accumulator i.
+__global__ __launch_bounds__(256) void alloy_gemm_64x64_f64(const double* __restrict__ A,
+                                                           const double* __restrict__ Bt, double* __restrict__ C,
+                                                           int N, int K) {
+  __shared__ alloy_long2 sA[64 * 8];
+  __shared__ alloy_long2 sB[64 * 8];
+  const char* a = reinterpret_cast<const char*>(A);
+  const char* b = reinterpret_cast<const char*>(Bt);
+  const long row_bytes = static_cast<long>(K) * 8;
+  const int tid = threadIdx.x, wave = tid / 64, lane = tid % 64, r16 = lane % 16, q = lane / 16;
+  const int wm = wave / 2, wn = wave % 2, m0 = blockIdx.y * 64, n0 = blockIdx.x * 64;
+  alloy_doublex4 acc[2][2];
+#pragma unroll
+  for (int ti = 0; ti < 2; ++ti)
+#pragma unroll
+    for (int tj = 0; tj < 2; ++tj)
+#pragma unroll
+      for (int i = 0; i < 4; ++i)  // the accumulators start as C: D = A x B + C
+        acc[ti][tj][i] = C[(m0 + 32 * wm + 16 * ti + 4 * q + i) * N + n0 + 32 * wn + 16 * tj + r16];
+  for (int k0 = 0; k0 < K; k0 += 16) {
+#pragma unroll
+    for (int it = 0; it < 2; ++it) {  // 512 chunks of 16 bytes per operand / 256 threads
+      const int idx = tid + 256 * it, r = idx / 8, c = idx % 8;
+      const long at = static_cast<long>(k0) * 8 + 16 * c;
+      sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + (m0 + r) * row_bytes + at);
+      sB[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(b + (n0 + r) * row_bytes + at);
+    }
+    __syncthreads();
+#pragma unroll
+    for (int kk = 0; kk < 16; kk += 4) {  // 4 steps of K = 4 cover the block
+      const int k = kk + q, c = k / 2, half = k % 2;
+      double av[2], bv[2];
+#pragma unroll
+      for (int t = 0; t < 2; ++t) {
+        const int ra = 32 * wm + 16 * t + r16, rb = 32 * wn + 16 * t + r16;
+        av[t] = __builtin_bit_cast(double, sA[ra * 8 + (c ^ (ra & 7))][half]);
+        bv[t] = __builtin_bit_cast(double, sB[rb * 8 + (c ^ (rb & 7))][half]);
+      }
+#pragma unroll
+      for (int ti = 0; ti < 2; ++ti)
+#pragma unroll
+        for (int tj = 0; tj < 2; ++tj)
+          acc[ti][tj] = __builtin_amdgcn_mfma_f64_16x16x4f64(av[ti], bv[tj], acc[ti][tj], 0, 0, 0);
+    }
+    __syncthreads();
+  }
+#pragma unroll
+  for (int ti = 0; ti < 2; ++ti)
+#pragma unroll
+    for (int tj = 0; tj < 2; ++tj)
+#pragma unroll
+      for (int i = 0; i < 4; ++i)
+        C[(m0 + 32 * wm + 16 * ti + 4 * q + i) * N + n0 + 32 * wn + 16 * tj + r16] = acc[ti][tj][i];
 }
 // alloy-end

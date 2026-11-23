@@ -1307,7 +1307,7 @@ def copy_check(target: str, verify: bool, dtype: str = "f16") -> Check | None:
     if not verify:
         return Check("unverified", f"runs inside the {target} tile program; not checked (verify off)")
     k = tile.k_block(dtype)
-    found = tile.verify(tile.plan(target, 64, 64, k, dtype, "f32"))
+    found = tile.verify(tile.plan(target, 64, 64, k, dtype, "f64" if dtype == "f64" else "f32"))
     if found.verified == "failed":
         return None
     return Check(found.verified, f"the {target} 64x64x{k} {dtype} tile program that runs this copy: {found.detail}")  # type: ignore[arg-type]

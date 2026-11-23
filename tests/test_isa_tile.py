@@ -82,9 +82,9 @@ def test_the_sm90_program_of_each_input_type_compiles_for_sm90a(in_type: str) ->
 
 
 @pytest.mark.hip
-@pytest.mark.parametrize(("target", "in_type"), [(t, i) for t in tile.CDNA for i, _ in tile.TYPES[t]])
-def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target: str, in_type: str) -> None:
-    sut = tile.verify(tile.plan(target, 64, 64, 2 * tile.k_block(in_type), in_type, "f32"))
+@pytest.mark.parametrize(("target", "in_type", "acc_type"), [(t, i, a) for t in tile.CDNA for i, a in tile.TYPES[t]])
+def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target: str, in_type: str, acc_type: str) -> None:
+    sut = tile.verify(tile.plan(target, 64, 64, 2 * tile.k_block(in_type), in_type, acc_type))
 
     assert sut.verified in ("compiled", "run"), sut.detail
     assert target in sut.detail or sut.verified == "run"
@@ -163,9 +163,9 @@ def test_an_fp8_tile_names_the_encoding_its_target_reads_and_its_program_encodes
     assert "BYTES = 1" in sut.program
 
 
-def test_gfx90a_takes_f16_and_bf16_and_refuses_fp8_with_what_it_takes() -> None:
-    assert tile.TYPES["gfx90a"] == (("f16", "f32"), ("bf16", "f32"))
-    with pytest.raises(KeyError, match="gfx90a tiles take --in f16 --acc f32, --in bf16 --acc f32"):
+def test_gfx90a_takes_f16_bf16_and_f64_and_refuses_fp8_with_what_it_takes() -> None:
+    assert tile.TYPES["gfx90a"] == (("f16", "f32"), ("bf16", "f32"), ("f64", "f64"))
+    with pytest.raises(KeyError, match="gfx90a tiles take --in f16 --acc f32, --in bf16 --acc f32, --in f64 --acc f64"):
         tile.plan("gfx90a", 64, 64, 128, "e4m3", "f32")
 
 
@@ -230,3 +230,13 @@ def test_a_vector_isa_tile_off_its_blocks_is_refused_with_the_nearest_and_sve_ta
     sut = tile.verify(tile.plan("sve", 8, 33, 9, "f64", "f64"))
 
     assert sut.verified == ("run" if host_can_run("sve", "f64") or emulated("sve") else "unverified"), sut.detail
+
+
+@pytest.mark.parametrize("target", tile.CDNA)
+def test_an_f64_cdna_tile_accumulates_in_f64_with_the_f64_mfma_over_blocks_of_16(target: str) -> None:
+    sut = tile.plan(target, 64, 128, 32, "f64", "f64")
+
+    assert tile.k_block("f64") == 16 and sut.acc_type == "f64"
+    assert any("v_mfma_f64_16x16x4f64" in step for step in sut.steps)
+    assert "alloy_gemm_64x64_f64<<<dim3(N / 64, M / 64), 256>>>" in sut.program
+    assert "alloy_mfma<" not in sut.program and "TOLERANCE" not in sut.program

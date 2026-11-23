@@ -99,8 +99,10 @@ before the wait is a race, and issuing without the fence reads stale data.
 - **Matrix types on the GPUs.**
   - `--in f16` and `bf16` run on `sm90`, `gfx942`, and `gfx90a`.
   - `e4m3` and `e5m2` (FP8) run on `sm90` and `gfx942`; MI200 (`gfx90a`) has no FP8.
-  - The accumulator is f32. K is a multiple of 64 for the 16-bit types and of 128 for FP8: every K block is one row
-    of 128 bytes.
+  - `--in f64 --acc f64` runs on `gfx942` and `gfx90a` only: 2 x 2 `v_mfma_f64_16x16x4f64` per wave64, f64
+    accumulators, K a multiple of 16. Hopper's tensor cores have no f64 here.
+  - Otherwise the accumulator is f32. K is a multiple of 64 for the 16-bit types and of 128 for FP8: every K block is
+    one row of 128 bytes.
   - FP8 is encoded differently per GPU, and the answer names the encoding: gfx942 reads FNUZ (no infinity, no
     negative zero, bias 8 or 16), sm90 reads OCP (bias 7 or 15). Convert with the type the answer names
     (`__hip_fp8_e4m3_fnuz`, `__nv_fp8_e4m3`), never by reinterpreting bytes from the other GPU.

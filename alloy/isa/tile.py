@@ -48,12 +48,14 @@ CPU_TYPES = {
 #: The AMD CDNA targets: one tile kernel per input type (a 32x32 MFMA, plain LDS stores), built for each arch.
 CDNA = ("gfx90a", "gfx942")
 #: Bytes per element of a GPU tile input. A K block is 128 bytes of a row: 64 two-byte or 128 one-byte elements.
-GPU_BYTES = {"f16": 2, "bf16": 2, "e4m3": 1, "e5m2": 1}
+GPU_BYTES = {"f16": 2, "bf16": 2, "e4m3": 1, "e5m2": 1, "f64": 8}
+#: The input types of the f32-accumulating tile kernels; f64 is CDNA's own kernel (v_mfma_f64_16x16x4f64).
+F32_ACC = ("f16", "bf16", "e4m3", "e5m2")
 #: Each GPU input type with an f32 accumulator; gfx90a (MI250X) has no FP8 MFMA.
 GPU_TYPES = {
-    "sm90": tuple((t, "f32") for t in GPU_BYTES),
-    "gfx942": tuple((t, "f32") for t in GPU_BYTES),
-    "gfx90a": (("f16", "f32"), ("bf16", "f32")),
+    "sm90": tuple((t, "f32") for t in F32_ACC),
+    "gfx942": (*((t, "f32") for t in F32_ACC), ("f64", "f64")),
+    "gfx90a": (("f16", "f32"), ("bf16", "f32"), ("f64", "f64")),
 }
 #: The (input, accumulator) element types each tile target's checked kernels take.
 TYPES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -523,12 +525,77 @@ def gpu_plan(target: str, m: int, n: int, k: int, in_type: str, acc_type: str) -
         legal = ", ".join(f"--in {i} --acc {a}" for i, a in TYPES[target])
         raise KeyError(f"{target} tiles take {legal} (the kernels the table checks); got {in_type}, {acc_type}")
     bm, bn = gpu_block(target, m, n, k, in_type)
+    if in_type == "f64":
+        return cdna_f64_plan(target, m, n, k)
     steps, layout, descriptors = gpu_steps(target, bm, bn, k, in_type)
     kernel = f"{tiles[bm, bn]}<{ELEM[in_type]}>"
     descriptors = {"tile": f"{kernel}, {bm} x {bn} per block, {GPU_THREADS[target, bm]} threads"} | descriptors
     return TilePlan(
         target, m, n, k, in_type, acc_type, steps, layout, gpu_program(target, bm, bn, m, n, k, in_type), descriptors
     )
+
+
+def cdna_f64_plan(target: str, m: int, n: int, k: int) -> TilePlan:
+    """f64 on CDNA: ``alloy_gemm_64x64_f64``, 2 x 2 v_mfma_f64_16x16x4f64 tiles per wave64, f64 accumulators."""
+    steps = (
+        "every lane: load its 16 f64 accumulators from C (D = A x B + C), 4 per 16 x 16 tile, in the layout of the store",
+        f"for each of the {k // 16} K blocks of 16 (f64, 128 bytes of a row):",
+        ("  each of 256 threads: two global_load_dwordx4 per operand (16 bytes) and ds_write_b128 into LDS, chunk c of "
+         "row r at slot c ^ (r % 8); __syncthreads"),
+        ("  each wave64 owns a 32 x 32 sub-tile of 2 x 2 tiles of 16 x 16: 4 steps of K = 4, each one double of A and "
+         "of B per lane and 4 x v_mfma_f64_16x16x4f64 (__builtin_amdgcn_mfma_f64_16x16x4f64(a, b, acc, 0, 0, 0)); "
+         "__syncthreads"),
+        "store: accumulator i of a lane in a 16 x 16 tile is D[4 * (lane / 16) + i][lane % 16]",
+    )  # fmt: skip
+    layout = "LDS: 64 rows x 8 chunks of 16 bytes (2 doubles) per operand, XOR swizzle slot = chunk ^ (row % 8)"
+    descriptors = {"tile": "alloy_gemm_64x64_f64, 64 x 64 per block, 256 threads", "build": BUILD[target],
+                   "type": "f64, 8 bytes; f64 accumulators"}  # fmt: skip
+    return TilePlan(target, m, n, k, "f64", "f64", steps, layout, cdna_f64_program(target, m, n, k), descriptors)
+
+
+def cdna_f64_program(target: str, m: int, n: int, k: int) -> str:
+    """The f64 tile run once over an m x n x k product against a long double reference; exit 1 above the f64
+    tolerance."""
+    return f"""{inlined(GPU_HEADER[target], frozenset({"f64"}))}
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+enum {{ M = {m}, N = {n}, K = {k} }};
+
+int main(void) {{
+  double* hA = (double*)malloc(sizeof(double) * M * K);
+  double* hB = (double*)malloc(sizeof(double) * N * K);  // B transposed: N x K row-major
+  double* hC = (double*)malloc(sizeof(double) * M * N);
+  double* fC = (double*)malloc(sizeof(double) * M * N);  // C before the product: the kernel computes C = A x B + C
+  for (int i = 0; i < M * K; ++i) hA[i] = (double)((i % 13) - 6) / 8;
+  for (int i = 0; i < N * K; ++i) hB[i] = (double)((i % 7) - 3) / 4;
+  for (int i = 0; i < M * N; ++i) hC[i] = fC[i] = (double)((i % 5) - 2);
+  double *dA, *dB, *dC;
+  hipMalloc((void**)&dA, sizeof(double) * M * K);
+  hipMalloc((void**)&dB, sizeof(double) * N * K);
+  hipMalloc((void**)&dC, sizeof(double) * M * N);
+  hipMemcpy(dA, hA, sizeof(double) * M * K, hipMemcpyHostToDevice);
+  hipMemcpy(dB, hB, sizeof(double) * N * K, hipMemcpyHostToDevice);
+  hipMemcpy(dC, hC, sizeof(double) * M * N, hipMemcpyHostToDevice);
+  alloy_gemm_64x64_f64<<<dim3(N / 64, M / 64), 256>>>(dA, dB, dC, N, K);
+  if (hipDeviceSynchronize() != hipSuccess) {{
+    printf("launch failed\\n");
+    return 2;
+  }}
+  hipMemcpy(hC, dC, sizeof(double) * M * N, hipMemcpyDeviceToHost);
+  double worst = 0.0;
+  for (int i = 0; i < M; ++i)
+    for (int j = 0; j < N; ++j) {{
+      long double want = fC[i * N + j];
+      for (int p = 0; p < K; ++p) want += (long double)hA[i * K + p] * hB[j * K + p];
+      double rel = (double)(fabsl(hC[i * N + j] - want) / fmaxl(1.0L, fabsl(want)));
+      if (rel > worst) worst = rel;
+    }}
+  printf("%.3e\\n", worst);
+  return worst <= {TOLERANCE["f64"]} ? 0 : 1;
+}}
+"""
 
 
 def native_gpu() -> str:
