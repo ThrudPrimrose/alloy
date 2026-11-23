@@ -223,8 +223,12 @@ def speculative(sdfg: dace.SDFG, **compile_args: Unpack[CompileArgs]) -> Compile
     """``alloy-speculative``: every scope's pick predicted, verified when no input needs a manifest; a program with
     GPU device maps gets its threadblocks speculated (:func:`gpu_speculative`; manifest, matrix and sizes do not apply)."""
     if gpu.device_maps(sdfg):
-        given = {k: compile_args[k] for k in ("output_file", "validate", "return_program_handle") if k in compile_args}
-        return gpu_speculative(sdfg, **given)  # type: ignore[arg-type]
+        return gpu_speculative(
+            sdfg,
+            compile_args.get("output_file"),
+            compile_args.get("validate", True),
+            compile_args.get("return_program_handle", True),
+        )
     return compile(sdfg, mode=Mode.SPECULATIVE, **compile_args)
 
 

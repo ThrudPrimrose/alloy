@@ -63,7 +63,7 @@ def test_a_reduce_is_graded_on_the_sum_of_the_cluster_partials(host: ModuleType)
 
 
 @pytest.mark.parametrize("name", json.loads((AGENTS / "softhier" / "tasks.json").read_text()), ids=lambda t: t["name"])
-def test_every_task_has_a_scalar_reference_kernel(host: ModuleType, name: dict) -> None:
+def test_every_task_has_a_scalar_reference_kernel(host: ModuleType, name: dict[str, object]) -> None:
     kernel = host.reference_kernel(name)
 
     assert "void alloy_kernel(" in kernel and "flex_dma_async_wait_all();" in kernel
@@ -75,11 +75,11 @@ def test_a_task_line_with_a_temporary_becomes_one_c_statement_per_line(host: Mod
     assert "const float s = (b[i] + (c[i] * d[i])); a[i] = (s * s);" in kernel
 
 
-def test_the_runner_reads_each_studys_spec_and_tasks(tmp_path: pathlib.Path) -> None:
+def test_the_runner_reads_each_studys_spec_and_tasks(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sys.path.insert(0, str(AGENTS))
     run_agent = loaded(AGENTS / "run_agent.py")
 
     assert "tsvc_2_va" in run_agent.call("read_file", {"path": "agents/tasks.json"}, tmp_path)[0]
-    run_agent.STUDY = run_agent.STUDIES["softhier"]
+    monkeypatch.setattr(run_agent, "STUDY", run_agent.STUDIES["softhier"])
     assert "alloy_kernel" in run_agent.call("read_file", {"path": "SPEC.md"}, tmp_path)[0]
     assert run_agent.call("write_file", {"path": "../escape", "content": "x"}, tmp_path)[0].startswith("error")
