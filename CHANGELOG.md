@@ -2,12 +2,12 @@
 
 ## 0.1.0 (2026-11-23)
 
-The first release, published on PyPI as `alloy-compiler`. The import name is `alloy`.
+The first release, published on PyPI as `dace-alloy`. The import name is `alloy`.
 
-    pip install alloy-compiler
+    pip install dace-alloy
 
 Alloy needs DaCe's `extended` branch, which has no PyPI release. HPCAgent-Bench's setup command installs it at the
-pinned commit; a checkout of https://github.com/ThrudPrimrose/alloy-compiler installs it with `uv sync --extra dev`.
+pinned commit; a checkout of https://github.com/ThrudPrimrose/dace-alloy installs it with `uv sync --extra dev`.
 
 What it contains:
 

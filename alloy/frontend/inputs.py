@@ -55,7 +55,7 @@ class Manifest:
 def require_bench() -> None:
     """Manifest inputs and the tolerance band live in HPCAgent-Bench, an optional extra of Alloy."""
     if importlib.util.find_spec("hpcagent_bench") is None:
-        raise ImportError("manifest inputs and the tolerance band need HPCAgent-Bench: install alloy-compiler[bench]")
+        raise ImportError("manifest inputs and the tolerance band need HPCAgent-Bench: install dace-alloy[bench]")
 
 
 def load(path: pathlib.Path, program: str | None = None, datatype: str = "float64") -> Manifest:

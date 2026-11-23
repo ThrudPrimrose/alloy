@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "alloy-compiler"
+name = "dace-alloy"
 version = "0.1.0"
 description = "Speculative per-scope code generation backend for DaCe: sweep, verify, and report rendering candidates."
 readme = "README.md"
@@ -24,13 +24,17 @@ dependencies = [
     "tree-sitter-language-pack",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ThrudPrimrose/dace-alloy"
+Changelog = "https://github.com/ThrudPrimrose/dace-alloy/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
 bench = ["hpcagent-bench>=1.0.0"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
-nvgpu = ["alloy-compiler[bench]", "cupy-cuda13x"]
-amdgpu = ["alloy-compiler[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["alloy-compiler[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.17.6"]
+nvgpu = ["dace-alloy[bench]", "cupy-cuda13x"]
+amdgpu = ["dace-alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
+dev = ["dace-alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.17.6"]
 # What GVSoC's build and launcher (gapy) import, from gvsoc's requirement files without the documentation tools and
 # the build tools, at versions that agree with the rest of the lock; the SoftHier v1 image runs with exactly these (alloy/isa/softhier_pins.toml; helpers/build_softhier.sh installs it).
 softhier = ["argparse==1.4.0", "beautifulsoup4==4.15.0", "hjson==3.1.0", "html2text==2025.4.15",
@@ -38,8 +42,8 @@ softhier = ["argparse==1.4.0", "beautifulsoup4==4.15.0", "hjson==3.1.0", "html2t
     "pandas==3.0.6", "pexpect==4.9.0", "ppk2_api==0.9.2", "prettytable==3.19.0", "psutil==7.2.2",
     "pycryptodome==4.5.0", "pyelftools==0.33", "pytablewriter==1.2.1", "pyvcd==0.5.1", "pyyaml==6.0.3", "rich==15.0.0",
     "six==1.17.0", "tabulate==0.10.0"]
-dev-nvidia = ["alloy-compiler[dev,nvgpu]"]
-dev-amd = ["alloy-compiler[dev,amdgpu]"]
+dev-nvidia = ["dace-alloy[dev,nvgpu]"]
+dev-amd = ["dace-alloy[dev,amdgpu]"]
 
 # Alloy's optimizer flavor as an HPCAgent-Bench plugin (alloy/hb_plugin/plugin.toml).
 [project.entry-points."hpcagent_bench.plugins"]
