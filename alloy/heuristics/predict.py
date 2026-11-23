@@ -21,13 +21,13 @@ from pydantic.dataclasses import dataclass
 
 from alloy import machine
 from alloy.backend import runtime
-from alloy.backend.build import Build, rendered_sdfg
+from alloy.backend.build import Build, rendering
 from alloy.backend.sweep import ScopeReport
 from alloy.configuration_matrix import Matrix
 from alloy.evaluate import timing
 from alloy.evaluate.verify import Verdict
 from alloy.frontend.scopes import Scope
-from alloy.heuristics import fission, fp, prune
+from alloy.heuristics import fp, prune
 from alloy.heuristics.load import Load, load_of
 from alloy.records import RECORD, Strings
 
@@ -561,18 +561,17 @@ def predict(
     scope: Scope,
     matrix: Matrix,
     sizes: dict[str, int] | None = None,
-    sdfg: dace.SDFG | None = None,
     *,
     running: bool = False,
 ) -> Prediction | None:
     """``build``'s predicted cycles per element of ``scope`` (:class:`Prediction`), each source loop weighted by its
-    maps' iterations at ``sizes``; llvm-mca models the CPU the build targets (:func:`target_cpu`). ``sdfg`` is what
-    the build rendered (the scope's own by default). With ``running`` the scope will run at ``sizes``: a build pays for
+    maps' iterations at ``sizes``; llvm-mca models the CPU the build targets (:func:`target_cpu`). The maps come from
+    the SDFG CPF rendered (:func:`rendering`), whose tasklet labels the unit's lines carry. With ``running`` the scope will run at ``sizes``: a build pays for
     its regions on its real team. ``None`` without an object, when llvm-mca accepts no copy of some source loop, and
     for a serial build at a size that does not decide the scope."""
     if build.archive is None:
         return None
-    rendered = sdfg if sdfg is not None else scope.sdfg
+    rendered = rendering(scope, build.candidate, matrix)[0].sdfg
     cores = len(machine.physical_cores())
     load = load_of(rendered, sizes or {}, cores) if running else None
     if build.candidate.serial and load is None:
@@ -616,23 +615,10 @@ def predictions(
         for b in rep.builds
         if not (b.error or b.duplicate_of or (b.candidate.serial and not running))
     ]
-    cut = {  # what each scope's fission builds rendered, split once per scope
-        rep.scope.symbol: fission.fissioned(rep.scope.sdfg)
-        for rep in reports
-        if any(b.candidate.fission for owner, b in jobs if owner is rep)
-    }
-
-    def rendered(rep: ScopeReport, b: Build) -> dace.SDFG | None:
-        """What ``b`` rendered when not the scope's own SDFG: its cut maps or its intrinsic tasklets."""
-        if b.candidate.fission:
-            return cut[rep.scope.symbol]
-        if b.candidate.intrinsic:
-            return rendered_sdfg(rep.scope, b.candidate, matrix)[0]
-        return None
 
     def score(job: tuple[ScopeReport, Build]) -> Prediction | None:
         rep, b = job
-        return predict(b, rep.scope, matrix, sizes, rendered(rep, b), running=running)
+        return predict(b, rep.scope, matrix, sizes, running=running)
 
     with ThreadPoolExecutor(max_workers=machine.compile_jobs()) as pool:
         scored = list(pool.map(score, jobs))

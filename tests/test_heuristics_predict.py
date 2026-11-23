@@ -13,7 +13,7 @@ import sympy
 from dace.libraries.standard.nodes import Scan
 
 from alloy import api, machine
-from alloy.backend.build import Build, Remarks
+from alloy.backend.build import Build, Remarks, rendering
 from alloy.backend.candidates import Candidate
 from alloy.backend.sweep import ScopeReport
 from alloy.evaluate.verify import Verdict
@@ -499,7 +499,7 @@ def test_each_source_loop_of_a_scope_is_costed_and_weighted_by_its_share_of_the_
 ) -> None:
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
-    maps = predict.innermost_maps(scope.sdfg)
+    maps = predict.innermost_maps(rendering(scope, built.candidate, MATRIX)[0].sdfg)
     first = {maps[t]: n for n, t in sorted(predict.tasklet_lines(built.source).items(), reverse=True) if t in maps}
     assert len(first) == 2, "a statement line of each map"
     copy = (0x00, "vmovsd", "(%rdi,%rax,8), %xmm0"), (0x05, "vmovsd", "%xmm0, (%rsi,%rax,8)")
@@ -526,7 +526,7 @@ def test_a_build_with_a_source_loop_llvm_mca_rejects_every_copy_of_is_unranked(
     would look ten times cheaper and win the pick; it gets no prediction instead."""
     scope = only_scope(two_rows)
     built = build(scope, Candidate("c", "gcc"), MATRIX, tmp_path, {})
-    maps = predict.innermost_maps(scope.sdfg)
+    maps = predict.innermost_maps(rendering(scope, built.candidate, MATRIX)[0].sdfg)
     first = {maps[t]: n for n, t in sorted(predict.tasklet_lines(built.source).items(), reverse=True) if t in maps}
     assert len(first) == 2, "a statement line of each map"
     loops = {

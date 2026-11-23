@@ -59,25 +59,32 @@ def render(scope: Scope, candidate: Candidate, matrix: Matrix) -> str:
     candidate's unit starts with the inline kernels its libm calls go to (:func:`approximation.prelude`); an
     ``intrinsic`` candidate's innermost loop bodies are tasklets of its ISA's rows (:func:`intrinsics.rendered`) and
     its unit starts with their header."""
-    sdfg, header = rendered_sdfg(scope, candidate, matrix)
-    sdfg = sve_loops(sdfg) if candidate.render(matrix) == "sve" else sdfg
-    with ExitStack() as stack:
-        for knob, value in candidate.codegen_params(matrix).items():
-            stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
-        rendering = cpf.render(
-            sdfg,
-            language=matrix.languages[candidate.language].render,
-            signature=cpf.EntrySignature(order=list(scope.abi_order)),
-            check_compiles=False,
-            tasklet_labels=True,  # predict maps each line of the object's line table to its tasklet
-        )
-    code: str = rendering.code
+    rendered, header = rendering(scope, candidate, matrix)
+    code: str = rendered.code
     if header:
         return f"{header}\n{code}"
     if not candidate.approx:
         return code
     called = approximation.called_functions(code)
     return approximation.prelude(candidate.approx, called) + code if called else code
+
+
+def rendering(scope: Scope, candidate: Candidate, matrix: Matrix) -> tuple[cpf.Rendering, str]:
+    """CPF's rendering of the SDFG ``candidate`` renders (:func:`rendered_sdfg`), and the header line its unit needs.
+    The rendering's ``sdfg`` is CPF's prepared copy, whose tasklet labels the unit's line comments carry."""
+    sdfg, header = rendered_sdfg(scope, candidate, matrix)
+    sdfg = sve_loops(sdfg) if candidate.render(matrix) == "sve" else sdfg
+    with ExitStack() as stack:
+        for knob, value in candidate.codegen_params(matrix).items():
+            stack.enter_context(set_temporary("compiler", "cpu", "codegen_params", knob, value=value))
+        out = cpf.render(
+            sdfg,
+            language=matrix.languages[candidate.language].render,
+            signature=cpf.EntrySignature(order=list(scope.abi_order)),
+            check_compiles=False,
+            tasklet_labels=True,  # predict maps each line of the object's line table to its tasklet
+        )
+    return out, header
 
 
 def rendered_sdfg(scope: Scope, candidate: Candidate, matrix: Matrix) -> tuple[dace.SDFG, str]:

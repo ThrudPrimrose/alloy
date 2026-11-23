@@ -164,7 +164,7 @@ def test_a_fissioned_build_is_predicted_per_piece_and_pays_for_the_values_it_wid
 
     split = fission.fissioned(scope.sdfg)  # how many pieces follows the host's vector registers
 
-    whole, pieces = (predict.predict(b, scope, MATRIX, beyond, sdfg) for b, sdfg in ((plain, None), (cut, split)))
+    whole, pieces = (predict.predict(b, scope, MATRIX, beyond) for b in (plain, cut))
 
     assert whole is not None and pieces is not None
     assert len(maps(split)) > 1
