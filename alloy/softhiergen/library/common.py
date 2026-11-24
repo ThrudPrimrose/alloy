@@ -10,6 +10,7 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 
 from alloy.softhiergen.storage import TCDM
+from alloy.tilelower import Unsupported
 
 #: The core that drives Spatz and RedMulE (core 0) and the one that issues iDMA (the last core).
 COMPUTE_CORE = "dsh_is_compute_core()"
@@ -19,7 +20,7 @@ DMA_CORE = "dsh_is_dma_core()"
 RVV_SUFFIX = {dtypes.float32: "f32", dtypes.float16: "f16", dtypes.int32: "i32"}
 
 
-class LoweringError(ValueError):
+class LoweringError(Unsupported):
     """A node has no legal SoftHier lowering; the message says why."""
 
 

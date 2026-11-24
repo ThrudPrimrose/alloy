@@ -39,8 +39,7 @@ def task_of(case: Case) -> dict[str, object]:
 def lowered(case: Case) -> Program:
     """The case's Tensix program; raises :class:`Refused` (or DaCe's error) when the split does not take it."""
     sdfg = case.sdfg()
-    tilelower.fuse(sdfg)
-    tilelower.vectorize(sdfg, LANES, fuse_multiply_add=False)
+    tilelower.front(sdfg, LANES, fuse_multiply_add=False)
     scalars = {name: float(value) for name, value in case.inputs.items() if numpy.ndim(value) == 0}
     return program(task_of(case), sdfg, scalars, version="v08")  # ttsim's tt-metal
 

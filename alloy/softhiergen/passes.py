@@ -70,13 +70,7 @@ def tile_width(sdfg: SDFG, widest: int) -> int:
 
 def lower(sdfg: SDFG, tile: int = 256) -> None:
     """Lowers ``sdfg`` (all symbols specialized) for SoftHier; ``tile`` is the widest tile the vectorizer may use."""
-    tilelower.fuse(sdfg)
-    tile = tile_width(sdfg, tile)
-    try:
-        tilelower.vectorize(sdfg, tile, fuse_multiply_add=True)
-    except ValueError as error:
-        # A remainder tile would be masked, and no Spatz loop takes a mask
-        raise LoweringError(f"the tile width {tile} must divide every elementwise extent: {error}") from error
+    tilelower.front(sdfg, tile_width(sdfg, tile), fuse_multiply_add=True)
     for name, desc in sdfg.arrays.items():
         if isinstance(desc, data.Array):
             desc.storage = storage.HBM

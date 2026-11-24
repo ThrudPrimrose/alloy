@@ -10,6 +10,7 @@ from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.libraries.tileops import TileBinop, TileMMA, TileReduce, TileUnop
 from dace.memlet import Memlet
 
+from alloy import tilelower
 from alloy.softhiergen import passes, program, storage
 from alloy.softhiergen.library import collectives, dma, redmule, rvv, sync
 from alloy.softhiergen.library.common import LoweringError
@@ -344,13 +345,13 @@ def test_in_place_update_is_one_kernel_without_an_hbm_temporary() -> None:
 
 
 def test_length_the_tile_does_not_divide_is_a_lowering_error() -> None:
-    """1000 elements do not split into tiles of 256; the vectorizer's ValueError becomes a LoweringError."""
+    """1000 elements do not split into tiles of 256: the shared front refuses it, as it does for Tensix."""
 
     @dace.program
     def odd(A: dace.float32[1000], B: dace.float32[1000], C: dace.float32[1000]) -> None:
         C[:] = A + B
 
-    with pytest.raises(LoweringError, match="tile width 256"):
+    with pytest.raises(tilelower.Unsupported, match="tile width 256"):
         program.generate(odd.to_sdfg(simplify=True))
 
 

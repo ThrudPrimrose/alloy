@@ -12,6 +12,19 @@ from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 
+class Unsupported(ValueError):
+    """A program or node a tile backend does not lower; the message says why. Each backend's refusal is one."""
+
+
+def front(sdfg: SDFG, width: int, fuse_multiply_add: bool) -> None:
+    """:func:`fuse`, then :func:`vectorize` at ``width`` lanes: the tile nodes both backends expand."""
+    fuse(sdfg)
+    try:
+        vectorize(sdfg, width, fuse_multiply_add)
+    except ValueError as error:  # a remainder tile would be masked, and no backend takes a masked tile
+        raise Unsupported(f"the tile width {width} must divide every elementwise extent: {error}") from error
+
+
 def fuse(sdfg: SDFG) -> None:
     """``numpy.where`` becomes an elementwise map with a ternary (the vectorizer makes it a TileITE), elementwise maps
     fuse, and an in-place update (``y[:] = a * x + y``) writes y directly: folded while the map body is still a

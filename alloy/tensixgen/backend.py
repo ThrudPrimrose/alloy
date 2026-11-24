@@ -17,6 +17,7 @@ from dace.libraries.tileops.ops import CAST_OPS
 from dace.sdfg import nodes
 
 from alloy.isa import tensix
+from alloy.tilelower import Unsupported
 
 __all__ = [
     "CONNECTORS",
@@ -56,7 +57,7 @@ RUNG_FUNC, RUNG_DST = "_llk_math_eltwise_unary_sfpu_params_", 1
 DST_ARGS = {"unary": (0,), "binary_sfpu": (0, 1, 2), "fill": (0,), "ternary_sfpu": (0, 1, 2, 3)}
 
 
-class Refused(ValueError):
+class Refused(Unsupported):
     """A node or scope the Tensix backend does not compute; the message says why."""
 
 
