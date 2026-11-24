@@ -380,6 +380,15 @@ def test_int32_tiles_reach_the_spatz_loops_as_int32_t() -> None:
     assert "dsh_rvv_ge_i32(y_tile_out, (int32_t*)" in code
 
 
+def test_a_rooted_collective_keeps_the_copy_that_fills_its_output() -> None:
+    """Gather writes its output on the root only: the other clusters store what the init copy loaded, so the shared
+    front must not drop that copy as dead (dead-dataflow elimination did, and the gate's gather came out wrong)."""
+    from alloy.softhiergen.gate.programs import collective_cases
+
+    (gather,) = [case for case in collective_cases() if case.name == "gather"]
+    assert "init_dma" in program.generate(gather.sdfg())
+
+
 def test_cumsum_scans_each_share_and_adds_the_earlier_totals() -> None:
     """A cluster scans its share, the clusters allgather their totals, and each adds the totals before its own."""
     from alloy.softhiergen.gate.programs import cumsum

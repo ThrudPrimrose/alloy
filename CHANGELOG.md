@@ -32,6 +32,10 @@
 - SoftHier: `numpy.exp` and `numpy.log` on float32 tiles lower to scalar loops on the Spatz core over the ladder's
   strict kernels (`dsh_ladder.c`, which the program folder carries; the link adds newlib's libm for the strict
   kernels' out-of-range path). The gate gains softplus.
+- Tile backends share one front (`alloy.tilelower.front`: fuse, then vectorize) and one refusal class
+  (`alloy.tilelower.Unsupported`, the base of softhiergen's `LoweringError` and tensixgen's `Refused`); a length the
+  tile does not divide is refused alike on both. The front's simplify skips dead-dataflow elimination, which dropped
+  the copy that fills a rooted collective's output (the gate's gather and reduce came out wrong).
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

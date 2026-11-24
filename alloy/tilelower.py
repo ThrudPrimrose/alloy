@@ -33,7 +33,9 @@ def fuse(sdfg: SDFG) -> None:
         if isinstance(node, MergeLibraryNode):
             node.implementation = "pure"
             node.expand(state)
-    sdfg.simplify()  # the expansion's state joins its neighbors, so its map can fuse with theirs
+    # The expansion's state joins its neighbors, so its map can fuse with theirs. Dead-dataflow elimination would drop
+    # the copy that fills a rooted collective's output, which the collective writes on the root only
+    sdfg.simplify(skip={"DeadDataflowElimination"})
     sdfg.apply_transformations_repeated(MapFusionVertical)
     sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
 
