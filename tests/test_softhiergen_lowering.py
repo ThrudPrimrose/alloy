@@ -133,11 +133,16 @@ def unop_state(op: str) -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.LibraryNo
     return sdfg, state, node
 
 
-def test_sqrt_is_one_spatz_loop_and_exp_is_refused() -> None:
-    """sqrt maps to the vfsqrt loop; exp has no RVV instruction and no checked row, so it is a lowering error."""
+def test_sqrt_is_one_spatz_loop_exp_a_loop_over_the_ladder_kernel_and_sin_is_refused() -> None:
+    """sqrt maps to the vfsqrt loop; exp has no RVV instruction, so it is a scalar loop over the ladder's strict
+    float32 kernel in the C unit the folder carries; sin is in neither set, so it is a lowering error."""
     sdfg, state, node = unop_state("sqrt")
     assert "dsh_rvv_sqrt_f32(_c, _a, 64);" in rvv.ExpandUnopRVV.expansion(node, state, sdfg).code.as_string
     sdfg, state, node = unop_state("exp")
+    assert "dsh_scalar_exp_f32(_c, _a, 64);" in rvv.ExpandUnopRVV.expansion(node, state, sdfg).code.as_string
+    for fn in rvv.LADDER:
+        assert f"    for (int i = 0; i < n; ++i) z[i] = alloy_{fn}_f32_strict(x[i]);" in rvv.ladder_unit()
+    sdfg, state, node = unop_state("sin")
     with pytest.raises(LoweringError):
         rvv.ExpandUnopRVV.expansion(node, state, sdfg)
 
@@ -372,20 +377,6 @@ def test_int32_tiles_reach_the_spatz_loops_as_int32_t() -> None:
 
     code = program.generate(at_least.to_sdfg(simplify=True))
     assert "dsh_rvv_ge_i32(y_tile_out, (int32_t*)" in code
-
-
-def test_exp_and_log_are_scalar_loops_over_the_ladder_kernels_main_includes() -> None:
-    """No RVV instruction computes exp or log: each is a loop over the ladder's float32 kernel at the strict rung, in
-    the C unit the program folder carries."""
-    from alloy.softhiergen.gate.programs import softplus
-
-    code = program.generate(softplus.to_sdfg(simplify=True))
-    unit = rvv.ladder_unit()
-
-    assert "dsh_scalar_exp_f32(" in code and "dsh_scalar_log_f32(" in code
-    for fn in rvv.LADDER:
-        assert f"void dsh_scalar_{fn}_f32(float *z, const float *x, int n)" in unit
-        assert f"alloy_{fn}_f32_{rvv.LADDER_RUNG}(x[i])" in unit
 
 
 def test_cumsum_scans_each_share_and_adds_the_earlier_totals() -> None:

@@ -286,7 +286,8 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
     from alloy.tensixgen.gate import lowered
 
     by_name = {case.name: case for case in cases()}
-    for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)", "relu (a scalar arm)"):
+    for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)", "ladder exp and log (softplus)",
+                 "relu (a scalar arm)"):  # fmt: skip
         assert lowered(by_name[name]).compute
     where = lowered(by_name["compare and select (where)"]).compute
     assert "lt_binary_tile(" in where and "where_tile<DataFormat::Float32>(" in where
