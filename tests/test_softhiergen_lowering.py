@@ -141,8 +141,11 @@ def test_sqrt_is_one_spatz_loop_exp_a_loop_over_the_ladder_kernel_and_sin_is_ref
     assert "dsh_rvv_sqrt_f32(_c, _a, 64);" in rvv.ExpandUnopRVV.expansion(node, state, sdfg).code.as_string
     sdfg, state, node = unop_state("exp")
     assert "dsh_scalar_exp_f32(_c, _a, 64);" in rvv.ExpandUnopRVV.expansion(node, state, sdfg).code.as_string
+    unit = rvv.ladder_unit()
     for fn in rvv.LADDER:
-        assert f"    for (int i = 0; i < n; ++i) z[i] = alloy_{fn}_f32_strict(x[i]);" in rvv.ladder_unit()
+        assert f"    for (int i = 0; i < n; ++i) z[i] = alloy_{fn}_f32_strict(x[i]);" in unit
+    # newlib's rintf stops GVSoC: the unit rounds in one instruction, defined before the first kernel uses it
+    assert unit.index("#define __builtin_rintf dsh_rintf") < unit.index("__builtin_rintf(")
     sdfg, state, node = unop_state("sin")
     with pytest.raises(LoweringError):
         rvv.ExpandUnopRVV.expansion(node, state, sdfg)

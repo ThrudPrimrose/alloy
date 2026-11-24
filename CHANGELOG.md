@@ -31,7 +31,8 @@
   tsvc_2_vpv; one DaCe-backend test covers the build, its reuse, and a changed program (two sweeps for four).
 - SoftHier: `numpy.exp` and `numpy.log` on float32 tiles lower to scalar loops on the Spatz core over the ladder's
   strict kernels (`dsh_ladder.c`, which the program folder carries; the link adds newlib's libm for the strict
-  kernels' out-of-range path). The gate gains softplus.
+  kernels' out-of-range path; rounding is one `fcvt.w.s` because newlib's `rintf` stops GVSoC). The gate gains
+  softplus (correct on GVSoC, rel 3.2e-08).
 - Tile backends share one front (`alloy.tilelower.front`: fuse, then vectorize) and one refusal class
   (`alloy.tilelower.Unsupported`, the base of softhiergen's `LoweringError` and tensixgen's `Refused`); a length the
   tile does not divide is refused alike on both. The front's simplify skips dead-dataflow elimination, which dropped
