@@ -27,7 +27,7 @@ verified, and the best one per scope is linked. Two products share one core:
    (tools `alloy_profile`, `alloy_speculative`, `alloy_reference`, `alloy_sweep`, and `alloy_isa`, plus skills and flavors);
    the skill assumes the bench.
 
-Alloy also hosts two direct accelerator backends over DaCe tile SDFGs: `alloy/tensixgen/` (Tenstorrent Tensix compute/reader/writer generation from checked `tensix.toml` rows and SFPI rungs) and `alloy/softhiergen/` (SoftHier v1 RISC-V/Spatz/iDMA/RedMulE code generation; see [softhiergen.md](softhiergen.md)).
+Alloy also hosts two direct accelerator backends over DaCe tile SDFGs: `alloy/tensixgen/` (Tenstorrent Tensix compute/reader/writer generation from checked `tensix.toml` rows and SFPI rungs) and `alloy/softhiergen/` (SoftHier v1 RISC-V/Spatz/iDMA/RedMulE code generation; see [softhiergen.md](softhiergen.md)). [tile-backends.md](tile-backends.md) sets the two side by side: the shared front and gate, the differences, and what each refuses.
 
 Per run: the program is split into scopes (each top-level nest its own translation unit, compile command and static
 `.a`); Alloy sweeps candidates per scope, verifies them, times them (profile mode) or picks from the builds' reports

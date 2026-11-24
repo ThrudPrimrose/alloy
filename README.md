@@ -55,7 +55,7 @@ Layout:
   f32 tolerance.
 - `alloy/softhiergen/`: SoftHier v1 code generation as a DaCe target (importing it registers the storages, the
   schedule and the expansions); `program.generate` lowers an SDFG to one C++ unit, and `gate/` checks the programs on
-  GVSoC on ault. `docs/softhiergen.md` describes the code as built; update it with every change of behavior.
+  GVSoC on ault. `docs/softhiergen.md` describes the code as built, and `docs/tile-backends.md` compares it with tensixgen; update both with every change of behavior.
 - `alloy/`: `api` (`generate`, the entry point), `dace_backend` (Alloy behind `SDFG.compile`), `gpu` / `gpu_build` /
   `gpu_matrix.toml` (GPU threadblock speculation, `scalar_decl`, intrinsic maps, and profile coordinate descent),
   `guidance` (advice for the scopes left short), `machine` (cores, cache), `report` (builds `report.json` schema 8,

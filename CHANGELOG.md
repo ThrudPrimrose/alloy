@@ -37,6 +37,8 @@
   (`alloy.tilelower.Unsupported`, the base of softhiergen's `LoweringError` and tensixgen's `Refused`); a length the
   tile does not divide is refused alike on both. The front's simplify skips dead-dataflow elimination, which dropped
   the copy that fills a rooted collective's output (the gate's gather and reduce came out wrong).
+- `docs/tile-backends.md` sets softhiergen and tensixgen side by side: the shared front and gate, the differences,
+  what each refuses, and the known limits; `docs/softhiergen.md` follows the code again (front, compares, exp and log).
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

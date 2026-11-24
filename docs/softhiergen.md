@@ -173,11 +173,9 @@ tests/test_softhiergen_*.py  tests without the toolchain; the `softhier` marker 
 
 ## 6. Lowering: `passes.lower(sdfg, tile=256)`
 
-1. `MapFusionVertical`, `RedundantArray` and `RedundantSecondArray` (an in-place update such as
-   `y[:] = a * x + y` then writes `y` directly; after vectorizing, DaCe cannot prove the tile body elementwise),
-   then DaCe's vectorizer (`VectorizeCPUMultiDim`, widths `(tile,)`, `ISA.SCALAR`, `assume_even`, fused
-   multiply-add) turns elementwise maps into tile maps of tile nodes. An extent that `tile` does not divide is a
-   `LoweringError` (the remainder tile would need a mask).
+1. The shared front, `tilelower.front` ([tile-backends.md](tile-backends.md), section 1), at the widest
+   power-of-two tile up to `tile` that divides every elementwise extent (`tile_width`, minimum 16). A length no
+   such tile divides is refused with `tilelower.Unsupported` (the remainder tile would need a mask).
 2. Every global array goes to `SoftHier_HBM`. An array with a placement must pass `placement.check(shape,
    hbm_node_addr_space // itemsize, constants)` (every element its own node and offset, node ids exactly
    `0 .. nodes - 1`, each share fits one node), and `nodes` must not exceed the model's HBM nodes; otherwise
@@ -219,7 +217,10 @@ element-wise loop.
   block of the last dimension ends, one `dsh_dma_1d` per run, with node and offset computed per run; the other side
   must then be one run or rows of the placed side's row length.
 - **Tile nodes on Spatz** (`rvv.py`, `SoftHierRVV`). `TileBinop` (`+ - * / min max`, tile-tile and
-  tile-scalar forms, the reversed loop for scalar `-` or `/` tile), `TileUnop` (`neg`, `abs`, `sqrt`),
+  tile-scalar forms, the reversed loop for scalar `-` or `/` tile; comparisons into a bool tile), `TileITE` (select,
+  with a tile or a scalar arm), `TileScan` (cumsum), `TileUnop` (`neg`, `abs`, `sqrt`; `exp` and `log` on float32 as
+  a scalar loop over the ladder's strict kernel in `dsh_ladder.c`, which `write_folder` writes and `main.c`
+  includes). Compares and selects are scalar loops on the Spatz core, because GVSoC stops on mask instructions.
   `TileFMA`, `TileReduce` of a whole tile (`+`, `max`, `min`). Element types `float32`, `float16`, `int32`; no
   `/` on `int32`, no reversed `int32` subtraction, and no `float16` sum (the model has no widening reduction, and
   a `float16` accumulator loses the sum). Tile operands must be contiguous TCDM runs; masks are refused.
@@ -281,5 +282,5 @@ Each is marked `shortcut:` where it lives.
 single passes, and the `LoweringError` of each refused case. `tests/test_softhiergen_placement.py` compiles the iDMA
 code of copies to and from placed arrays with the host `g++` (transfers as `memcpy`) and compares the moved elements
 with NumPy; it skips without a host `g++`. The `softhier` marker builds a program with
-the RISC-V GCC and checks that no vector instruction lies outside a `dsh_rvv_*` function. The gate (`alloy/softhiergen/gate/`) compares simulator results with NumPy on ault:
+the RISC-V GCC and checks that no vector instruction lies outside a `dsh_rvv_*` function. The gate (`alloy/softhiergen/gate/`, shared with tensixgen through `alloy.gate`) compares simulator results with NumPy on ault:
 `python -m alloy.softhiergen.gate.run prepare <dir>`, `alloy/softhiergen/gate/ault.sh <dir> <name>`, `python -m alloy.softhiergen.gate.run check <dir>`.
