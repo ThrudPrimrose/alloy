@@ -28,7 +28,7 @@ import sympy
 from dace import dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.libraries.standard.nodes import Reduce
-from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileBinop
+from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileBinop, TileITE
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 
@@ -198,12 +198,18 @@ def placement_of(name: str, desc: dace.data.Array) -> int:
     return int(cores)
 
 
+def float32_tiles(state: dace.SDFGState, sdfg: dace.SDFG) -> None:
+    """Refuses a tile of another type; a comparison's bool result stays inside, as 0.0 and 1.0 in a DST tile."""
+    for n in state.data_nodes():
+        desc = sdfg.arrays[n.data]
+        if desc.dtype != dace.float32 and not (desc.dtype == dace.bool_ and desc.transient):
+            raise Refused(f"{n.data} is {desc.dtype}: contract v2 moves float32 tiles")
+
+
 def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: dict[str, float],
             version: str) -> Body:  # fmt: skip
     """The steps of one tile of the tile body ``state``; input k of ``inputs`` is read into CB k."""
-    for n in state.data_nodes():
-        if sdfg.arrays[n.data].dtype != dace.float32:
-            raise Refused(f"{n.data} is {sdfg.arrays[n.data].dtype}: contract v2 moves float32 tiles")
+    float32_tiles(state, sdfg)
     reads: dict[str, int] = {}
     for e in state.edges():
         if isinstance(e.src, nodes.AccessNode) and not e.data.is_empty():
@@ -304,27 +310,44 @@ class BodyBuilder:
         if "_src" in ins:  # a reduction: its source's DST tile stays taken for the fold
             self.one_output()
             self.result, self.fold, self.fold_op = slots.of[ins["_src"]], Step(init, call), op_of(node)
-        elif isinstance(node, TileBinop):  # a binary op: its output may take a dying operand's DST tile
-            for conn, kind, expr in (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b)):
-                if kind == "Symbol":  # a constant operand: a filled tile
-                    ins[conn] = f"{node.label}{conn}"
-                    self.fill(ins[conn], constant(node, expr))
-            a, b = slots.read(ins["_a"]), slots.read(ins["_b"])
-            k = next((x for x in (a, b) if slots.dead(x)), None)
-            k = slots.take(outs["_c"]) if k is None else slots.bind(outs["_c"], k)
-            self.steps.append(Step(init, call, (("_a", a), ("_b", b), ("_c", k))))
-        elif "_a" in ins:  # a unary op works in place on _c
-            a = slots.read(ins["_a"])
-            if slots.dead(a):
-                k = slots.bind(outs["_c"], a)
-            elif ins["_a"] in self.loaded:  # the operand is read again later: copy it from its CB once more
-                k = slots.take(outs["_c"])
-                self.steps.append(dataclasses.replace(copy(self.loaded[ins["_a"]], self.version), tiles=(("_o", k),)))
-            else:
-                raise Refused(f"{node.label}: its operand is read again, and no checked row copies DST to DST")
-            self.steps.append(Step(init, call, (("_c", k),)))
+        elif isinstance(node, TileBinop | TileITE):  # operands in DST tiles; the output may take a dying one's
+            self.operands(node, ins, init, call, outs["_c" if isinstance(node, TileBinop) else "_o"])
+        elif "_a" in ins:
+            self.unary(node, ins["_a"], init, call, outs["_c"])
         else:  # a filled tile
             self.steps.append(Step(init, call, (("_c", slots.take(outs["_c"])),)))
+
+    def operands(self, node: TileBinop | TileITE, ins: dict[str, str], init: str, call: str, out: str) -> None:
+        """A binary op (``_a``, ``_b`` into ``_c``) or a select (``_mask``, ``_t``, ``_e`` into ``_o``); a constant
+        operand is a filled tile."""
+        if isinstance(node, TileBinop):
+            given = (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b))
+        else:
+            given = (("_mask", node.kind_mask, node.expr_mask), ("_t", node.kind_t, node.expr_t),
+                     ("_e", node.kind_e, node.expr_e))  # fmt: skip
+        for conn, kind, expr in given:
+            if kind == "Symbol":
+                ins[conn] = f"{node.label}{conn}"
+                self.fill(ins[conn], constant(node, expr))
+            elif conn not in ins:
+                raise Refused(f"{node.label}: {conn} is a {kind}, not a tile or a constant")
+        read = [(conn, self.slots.read(ins[conn])) for conn, _, _ in given]
+        k = next((x for _, x in read if self.slots.dead(x)), None)
+        k = self.slots.take(out) if k is None else self.slots.bind(out, k)
+        self.steps.append(Step(init, call, (*read, ("_o" if isinstance(node, TileITE) else "_c", k))))
+
+    def unary(self, node: nodes.LibraryNode, operand: str, init: str, call: str, out: str) -> None:
+        """A unary op works in place on ``_c``: on its operand's DST tile when that dies here, else on a copy."""
+        slots = self.slots
+        a = slots.read(operand)
+        if slots.dead(a):
+            k = slots.bind(out, a)
+        elif operand in self.loaded:  # the operand is read again later: copy it from its CB once more
+            k = slots.take(out)
+            self.steps.append(dataclasses.replace(copy(self.loaded[operand], self.version), tiles=(("_o", k),)))
+        else:
+            raise Refused(f"{node.label}: its operand is read again, and no checked row copies DST to DST")
+        self.steps.append(Step(init, call, (("_c", k),)))
 
 
 def reduce_body(node: Reduce, state: dace.SDFGState, inputs: list[str], version: str) -> Body:

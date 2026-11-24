@@ -1,5 +1,5 @@
 # Written by `python -m alloy.isa.tensix verify`: every tensix.toml row run on ttsim (simulated Blackhole).
-run = "2026-11-19"
+run = "2026-11-24"
 image = "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64@sha256:254e24eea71325fe7c564dd8e5dd8568af1a402b6a668d6c9d9318c388a16b94"
 ttsim = "v1.16.0 sha256:74616dc119268c513725f91007736f4bfa055100f2966149892475c8353700c9"
 note = "SFPLOADMACRO disabled (ttsim does not model it); f32 SFPU rows ran with fp32_dest_acc_en and UnpackToDestFp32, every row at HiFi4"
@@ -291,6 +291,78 @@ unit = "SFPU"
 ok = true
 rel = 0.0
 digest = "796738ff1de473fc"
+
+[[verdicts]]
+op = "lt"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "04e4136fbc905aaf"
+
+[[verdicts]]
+op = "lt"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "f7665869bcf4ea5c"
+
+[[verdicts]]
+op = "gt"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "d853043e22a8f8d5"
+
+[[verdicts]]
+op = "gt"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "2fd2030ef5ce1e8c"
+
+[[verdicts]]
+op = "le"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "ef01e40a62a1c007"
+
+[[verdicts]]
+op = "le"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "77e2668c264bb9af"
+
+[[verdicts]]
+op = "ge"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "d9ecf021a56a9d68"
+
+[[verdicts]]
+op = "ge"
+dtype = "bf16"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "f02294c7c501f7e7"
+
+[[verdicts]]
+op = "select"
+dtype = "f32"
+unit = "SFPU"
+ok = true
+rel = 0.0
+digest = "46ea763437378883"
 
 [[verdicts]]
 op = "broadcast"

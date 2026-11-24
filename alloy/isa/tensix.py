@@ -76,6 +76,8 @@ class Row:
     note: str = ""
     #: Added after the last recorded ttsim run: the CI job runs it, and ``verify`` records it.
     pending: bool = False
+    #: The dtypes the row's call holds for (a templated data format); every dtype of the target when empty.
+    dtypes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))
@@ -187,6 +189,7 @@ def harness_rows() -> list[Json]:
          "domain": list(r.domain), "tol": TOLERANCE[d]}
         for r in rows()
         for d in dtypes()
+        if not r.dtypes or d in r.dtypes
     ]  # fmt: skip
 
 

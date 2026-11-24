@@ -20,6 +20,7 @@ def fuse(sdfg: SDFG) -> None:
         if isinstance(node, MergeLibraryNode):
             node.implementation = "pure"
             node.expand(state)
+    sdfg.simplify()  # the expansion's state joins its neighbors, so its map can fuse with theirs
     sdfg.apply_transformations_repeated(MapFusionVertical)
     sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
 

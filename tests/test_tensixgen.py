@@ -280,14 +280,16 @@ def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, Json], options: 
 
 
 def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -> None:
-    """The SoftHier gate's NumPy programs through the shared front and the Tensix split: elementwise maps and a sum
-    become programs, a float16 input is refused by name."""
+    """The SoftHier gate's NumPy programs through the shared front and the Tensix split: elementwise maps, a sum and
+    numpy.where (a comparison, then select) become programs, a float16 input is refused by name."""
     from alloy.softhiergen.gate.programs import cases
     from alloy.tensixgen.gate import lowered
 
     by_name = {case.name: case for case in cases()}
-    for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)"):
+    for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)", "relu (a scalar arm)"):
         assert lowered(by_name[name]).compute
+    where = lowered(by_name["compare and select (where)"]).compute
+    assert "lt_binary_tile(" in where and "where_tile<DataFormat::Float32>(" in where
     with pytest.raises(Refused, match="float16"):
         lowered(by_name["float16 multiply"])
 

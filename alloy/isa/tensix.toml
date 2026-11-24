@@ -162,6 +162,51 @@ call = "binary_max_tile(0, 1, 0)"
 domain = [-8.0, 8.0]
 note = "the elementwise maximum of two DST tiles; a max reduction over tiles folds each tile into a running maximum tile with it"
 
+# Comparisons of two DST tiles: 1.0 where the lane compares true, 0.0 elsewhere, in f32 (tt-metal 0.8x only: the
+# card's 0.63 has no binary comparison tile call). The result feeds `select` as its condition tile.
+[[ops.lt]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "lt_binary_tile_init()"
+call = "lt_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.gt]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "gt_binary_tile_init()"
+call = "gt_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.le]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "le_binary_tile_init()"
+call = "le_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+[[ops.ge]]
+kind = "binary_sfpu"
+unit = "SFPU"
+header = "eltwise_binary_sfpu.h"
+init = "ge_binary_tile_init()"
+call = "ge_binary_tile(0, 1, 0)"
+domain = [-8.0, 8.0]
+
+# m ? t : f per lane on three DST tiles, the condition a tile of 0.0 and nonzero (a comparison's result).
+[[ops.select]]
+kind = "ternary_sfpu"
+unit = "SFPU"
+header = "eltwise_unary/where.h"
+init = "where_tile_init()"
+call = "where_tile<DataFormat::Float32>(0, 1, 2, 0)"
+domain = [-8.0, 8.0]
+dtypes = ["f32"]
+note = "where_tile(cond, t, f, out): out = cond != 0 ? t : f, all four DST tiles; the template names the tiles' format"
+
 # A constant over a whole tile: the scalar operand of a binary op (2.0 * A) filled into a DST tile, which the binary
 # SFPU rows then read like any other operand.
 [[ops.broadcast]]

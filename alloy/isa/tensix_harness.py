@@ -112,6 +112,21 @@ def spelled(value: "str | Json", new: bool) -> str:
     return value if isinstance(value, str) else value["v08" if new else "v06"]
 
 
+#: How many operands an SFPU row on several tiles copies to DST tiles 0, 1, ... (binary: a, b; ternary: the
+#: condition and both arms).
+SFPU_OPERANDS = {"binary_sfpu": 2, "ternary_sfpu": 3}
+
+
+def sfpu_body(count: int, init: str, call: str, new: bool) -> "tuple[str, str, str]":
+    """The start-up, body and pops of an SFPU row on ``count`` operands, operand k copied from CB k to DST tile k."""
+    start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
+    copy = "copy_init" if new else "copy_tile_to_dst_init_short"
+    waits = "\n        ".join(f"cb_wait_front(c{k}, 1);" for k in range(count))
+    copies = "".join(f"\n        {copy}(c{k});\n        copy_tile(c{k}, 0, {k});" for k in range(count))
+    pops = "\n        ".join(f"cb_pop_front(c{k}, 1);" for k in range(count))
+    return start, f"{waits}{copies}\n        {init};\n        {call};", pops
+
+
 def body(row: Json, new: bool) -> "tuple[str, str, str]":
     """The start-up, the per-tile body and the pops of ``row``'s kind: a unary row copies its tile to DST for the
     SFPU; a binary SFPU row copies both operands to DST; a binary FPU row reads both from their CBs."""
@@ -129,15 +144,9 @@ def body(row: Json, new: bool) -> "tuple[str, str, str]":
             )
         steps = f"cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);\n        {init};\n        {call};"
         return start, steps, "cb_pop_front(c0, 1);"
+    if row["kind"] in SFPU_OPERANDS:
+        return sfpu_body(SFPU_OPERANDS[row["kind"]], init, call, new)
     pops = "cb_pop_front(c0, 1);\n        cb_pop_front(c1, 1);"
-    if row["kind"] == "binary_sfpu":
-        start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
-        copy = "copy_init" if new else "copy_tile_to_dst_init_short"
-        steps = (
-            f"cb_wait_front(c0, 1);\n        cb_wait_front(c1, 1);\n        {copy}(c0);\n        copy_tile(c0, 0, 0);"
-            f"\n        {copy}(c1);\n        copy_tile(c1, 0, 1);\n        {init};\n        {call};"
-        )
-        return start, steps, pops
     start = "compute_kernel_hw_startup(c0, c1, c16);" if new else "binary_op_init_common(c0, c1, c16);"
     steps = f"cb_wait_front(c0, 1);\n        cb_wait_front(c1, 1);\n        {init};\n        {call};"
     return start, steps, pops
@@ -158,6 +167,7 @@ def matmul_compute(row: Json, new: bool) -> str:
     uint32_t num_tiles = get_arg_val<uint32_t>(0);
     constexpr auto c0 = tt::CBIndex::c_0;
     constexpr auto c1 = tt::CBIndex::c_1;
+    constexpr auto c2 = tt::CBIndex::c_2;
     constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
     {spelled(row["init"], new)};
     cb_reserve_back(c16, 1);
@@ -199,6 +209,7 @@ def reduction_compute(row: Json, new: bool) -> str:
     uint32_t num_tiles = get_arg_val<uint32_t>(0);
     constexpr auto c0 = tt::CBIndex::c_0;
     constexpr auto c1 = tt::CBIndex::c_1;
+    constexpr auto c2 = tt::CBIndex::c_2;
     constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
     compute_kernel_hw_startup(c0, c1, c16);
     {init};
@@ -239,6 +250,7 @@ def compute(row: Json, new: bool) -> str:
     uint32_t num_tiles = get_arg_val<uint32_t>(0);
     constexpr auto c0 = tt::CBIndex::c_0;
     constexpr auto c1 = tt::CBIndex::c_1;
+    constexpr auto c2 = tt::CBIndex::c_2;
     constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
     {start}
     for (uint32_t i = 0; i < num_tiles; ++i) {{
@@ -308,6 +320,9 @@ def inputs(row: Json) -> list["torch.Tensor"]:
         scaler = torch.zeros(32, 32)
         scaler[0::16] = 1.0
         return [base.reshape(TILES * 32, 32), scaler]
+    if row["kind"] == "ternary_sfpu":  # a condition of 0.0 and 1.0 about half true, then two distinct arms
+        condition = (base.roll(31) > (lo + hi) / 2).to(torch.float32)
+        return [x.reshape(TILES * 32, 32) for x in (condition, base.roll(97), base.roll(194))]
     return [base.roll(k * 97).reshape(TILES * 32, 32) for k in range(count)]
 
 
@@ -345,6 +360,11 @@ def reference(op: str, xs: list["torch.Tensor"], call: str = "") -> "torch.Tenso
     y = xs[1].double()
     if op == "mma":  # apart from the elementwise rows, whose tiles do not chain as a product
         return x @ y
+    if op == "select":
+        return torch.where(x != 0, y, xs[2].double())
+    compares = {"lt": x < y, "gt": x > y, "le": x <= y, "ge": x >= y}
+    if op in compares:
+        return compares[op].double()
     return {"add": x + y, "sub": x - y, "mul": x * y, "div": x / y, "max": torch.maximum(x, y)}[op]
 
 

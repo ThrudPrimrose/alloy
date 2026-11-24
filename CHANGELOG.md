@@ -23,6 +23,11 @@
   runs the cases on ttsim (`python -m alloy.tensixgen.gate run`; the host takes a case's own inputs) and reports the
   cases it refuses; both backends share the front that fuses maps and vectorizes (`alloy.tilelower`). A Tensix sum
   reduction is recognized in any spelling of `a + b`.
+- Tensix: compare rows (`lt`, `gt`, `le`, `ge`) and `select` (`where_tile`, float32), verified on ttsim; tensixgen
+  lowers `numpy.where` and comparisons (bool tiles stay transient, a scalar arm becomes a filled tile), and the shared
+  front simplifies the SDFG before fusing.
+- Tests: dropped the profile-tool packet grade (14 min in CI) and the per-agent-folder final grade; the judge's
+  grading stays covered by the packet's other runs.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

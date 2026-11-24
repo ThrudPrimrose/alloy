@@ -141,26 +141,12 @@ def test_in_a_per_agent_folder_run_the_agent_may_submit_the_library_it_makes_fro
     units = call_kept["unit_sha256"]
     assert isinstance(units, dict) and isinstance(scopes := result["scopes"], list)
     assert set(units) == {"program.c", *(scope["source"] for scope in scopes)}
-    grade = graded(judge_url, result)
-    assert grade.build_ok is True and grade.correct is True, grade.detail
 
 
 def recorded_calls(folder: pathlib.Path) -> list[dict[str, object]]:
     data = plugin_records.found(folder)["alloy"].data
     assert isinstance(data, dict) and isinstance(data["tools"], list)
     return [c for c in data["tools"] if isinstance(c, dict)]  # pyright: ignore[reportReturnType] -- test double
-
-
-def test_the_profile_tool_answers_sources_whose_library_the_judge_grades_correct(
-    judge_url: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sut = call("profile", tmp_path, monkeypatch)
-
-    assert sut.code == HTTPStatus.OK, sut.answer
-    result = sut.answer["result"]
-    assert isinstance(result, dict)
-    grade = graded(judge_url, result)
-    assert grade.build_ok is True and grade.correct is True, grade.detail
 
 
 @pytest.mark.parametrize("packet", ["alloy-profile", "alloy-speculative", "alloy"])

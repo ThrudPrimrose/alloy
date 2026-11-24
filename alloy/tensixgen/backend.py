@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 
 import dace
-from dace.libraries.tileops.nodes import TileBinop, TileReduce, TileUnop
+from dace.libraries.tileops.nodes import TileBinop, TileITE, TileReduce, TileUnop
 from dace.libraries.tileops.ops import CAST_OPS
 from dace.sdfg import nodes
 
@@ -35,7 +35,8 @@ __all__ = [
 #: The contract's relative tolerance: a row the card measured above it is replaced by its SFPI rung.
 TASK_RTOL = 1e-3
 #: The tile ops' names -> the Tensix row ops.
-BINARY = {"+": "add", "-": "sub", "*": "mul", "/": "div", "max": "max"}
+BINARY = {"+": "add", "-": "sub", "*": "mul", "/": "div", "max": "max", "<": "lt", ">": "gt", "<=": "le",
+          ">=": "ge"}  # fmt: skip
 UNARY = {"neg": "neg", "abs": "abs", "exp": "exp", "log": "log", "sqrt": "sqrt", "sin": "sin", "cos": "cos",
          "tanh": "tanh"}  # fmt: skip
 REDUCE = {"+": "add"}  # contract v2's host sums a reduction's partial tiles
@@ -52,7 +53,7 @@ CARD_TASKS = {
 #: A rung's call passes the DST tile as this argument of this function.
 RUNG_FUNC, RUNG_DST = "_llk_math_eltwise_unary_sfpu_params_", 1
 #: The positions of a row's DST tile arguments, per row kind.
-DST_ARGS = {"unary": (0,), "binary_sfpu": (0, 1, 2), "fill": (0,)}
+DST_ARGS = {"unary": (0,), "binary_sfpu": (0, 1, 2), "fill": (0,), "ternary_sfpu": (0, 1, 2, 3)}
 
 
 class Refused(ValueError):
@@ -152,6 +153,8 @@ def op_of(node: nodes.LibraryNode) -> str:
         raise Refused(f"{node.label}: {node.op} of a {node.kind_a}, not of a tile")
     if isinstance(node, TileUnop) and node.op in UNARY:
         return UNARY[node.op]
+    if isinstance(node, TileITE):
+        return "select"
     if isinstance(node, TileReduce) and node.op in REDUCE and node.axis is None:
         return REDUCE[node.op]
     raise Refused(f"{node.label}: no Tensix row for this {type(node).__name__}")
@@ -189,11 +192,12 @@ CONNECTORS: dict[type[nodes.LibraryNode], tuple[str, ...]] = {
     TileBinop: ("_a", "_b", "_c"),
     TileUnop: ("_c",),
     TileReduce: ("_dst", "_src", "_dst"),
+    TileITE: ("_mask", "_t", "_e", "_o"),
 }
 
 
 #: The compute tile nodes Tensix runs.
-TILE_NODES = (TileBinop, TileUnop, TileReduce)
+TILE_NODES = (TileBinop, TileUnop, TileReduce, TileITE)
 
 
 def node_code(node: nodes.LibraryNode, version: str = "v06") -> tuple[str, str]:
