@@ -46,6 +46,7 @@ class FakeScope:
 class FakeReport:
     scope: FakeScope
     builds: tuple[FakeBuild, ...]
+    pruned: tuple[object, ...] = ()
 
 
 def built(candidate: Candidate, **fields: str) -> FakeBuild:
@@ -82,6 +83,16 @@ def test_a_scope_record_counts_the_search_and_keeps_each_axis_best_at_its_defaul
     assert sut.search.predicted_gain is None
     assert sut.search.fastest == (CON.name, BOT.name, REF.name, SER.name)
     assert sut.search.vectorized == 3
+    assert (sut.search.offered, sut.search.pruned) == (5, 0)  # every build but the reference, the duplicate included
+
+
+def test_a_scope_record_counts_the_cells_offered_and_pruned_before_building() -> None:
+    """E1 reports how many cells pruning retains per scope: offered counts the pruned cells too."""
+    report = FakeReport(FakeScope("s0"), (REF, SER, CON), pruned=("fission", "tail"))
+
+    sut = scope_record(report, MATRIX, CON, VERDICTS, TIMED)  # type: ignore[arg-type]
+
+    assert sut.search is not None and (sut.search.offered, sut.search.pruned) == (4, 2)
 
 
 def test_the_compiler_only_best_is_the_fastest_build_differing_from_the_reference_in_the_compiler_alone() -> None:

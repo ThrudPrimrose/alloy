@@ -73,7 +73,9 @@ class ScopeSearch:
     ``predicted_gain`` the reference's predicted cycles over the delivered build's, ``None``
     without both predictions; ``region_ns`` what the predictions charged a parallel region on this host (A15), ``None``
     when no predicted build of the scope has one; ``fastest`` the :data:`FASTEST` builds of the fewest stub ns, fastest first (E1's hit
-    rate at 1 and 5); ``vectorized`` the loops the compiler reports vectorized in the delivered build."""
+    rate at 1 and 5); ``vectorized`` the loops the compiler reports vectorized in the delivered build; ``offered`` the
+    matrix cells the scope was offered and ``pruned`` those dropped before building (both other than the reference;
+    added to schema 2 on 2026-11-24, absent from older records)."""
 
     built: int
     verified: int
@@ -86,6 +88,8 @@ class ScopeSearch:
     region_ns: float | None
     fastest: tuple[str, ...]
     vectorized: int
+    offered: int
+    pruned: int
 
 
 @dataclass(slots=True, frozen=True, config=RECORD)
@@ -190,6 +194,8 @@ def scope_record(
         region_ns=max((p.region_ns for p in (predicted or {}).values() if p.regions > 0), default=None),
         fastest=tuple(sorted(stubs, key=stubs.__getitem__)[:FASTEST]),
         vectorized=(delivered or reference).remarks.vectorized,
+        offered=len(rep.builds) - 1 + len(rep.pruned),
+        pruned=len(rep.pruned),
     )
     chosen, note = PLAIN if delivered is None else (delivered.name, delivered.candidate.note)
     delivered_axes = {} if delivered is None else axes(delivered.candidate, matrix)
