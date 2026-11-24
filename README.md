@@ -101,5 +101,5 @@ the code), `backend/sweep` and `build` (render and compile), `evaluate/verify` (
   packet in `plugin.toml`, prompt changes in `prompt/overlay.yaml`, and the agent-facing text in `skills/`. The judge
   half runs Alloy in a process of its own, because the judge's threads never fork.
 
-After any change to what a scope builds, run the whole suite: `uv run pytest -m "not icx" -n 3 --maxfail=10`, and
-`BENCH_BRANCH=<branch> bash helpers/bump_pins.sh` when the bench pin or a sibling release moves.
+After any change to what a scope builds, run the whole suite: `uv run pytest -m "not icx" -n 3 --maxfail=10`.
+`helpers/release_patch.sh` moves the pins when the bench or a sibling releases.
