@@ -5,6 +5,7 @@
 #define DSH_RVV_H
 
 #include <riscv_vector.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -167,5 +168,41 @@ DSH_RVV_COPY(uint8_t, vuint8m8_t, u8, 8)
 DSH_RVV_FILL(float, vfloat32m8_t, f32, 32, vfmv_v, f)
 DSH_RVV_FILL(dsh_f16, vfloat16m8_t, f16, 16, vfmv_v, f)
 DSH_RVV_FILL(int32_t, vint32m8_t, i32, 32, vmv_v, x)
+
+
+// Comparisons and selects are scalar loops on the Spatz core: GVSoC's Spatz model stops silently on the mask
+// instructions (vmflt/vmslt into a mask, vmsne, vmerge; probed 2026-11-24, ault job 923527), as on vfrdiv.
+// shortcut: no vector compare until the model takes masks; switch back to vm*/vmerge once a planted row checks them.
+// A bool tile holds one byte per lane, 0 or 1.
+#define DSH_RVV_CMP(NAME, T, S, OP)                                                                 \
+    DSH_RVV_FN void dsh_rvv_##NAME##_##S(bool* z, const T* x, const T* y, size_t n) {            \
+        for (size_t i = 0; i < n; ++i) z[i] = x[i] OP y[i];                                         \
+    }                                                                                               \
+    DSH_RVV_FN void dsh_rvv_##NAME##_s_##S(bool* z, const T* x, T s, size_t n) {                 \
+        for (size_t i = 0; i < n; ++i) z[i] = x[i] OP s;                                            \
+    }
+// z = c ? t : e per lane, c a bool tile; _ts: t one value, _es: e one value
+#define DSH_RVV_SELECT(T, S)                                                                        \
+    DSH_RVV_FN void dsh_rvv_select_##S(T* z, const bool* c, const T* t, const T* e, size_t n) {  \
+        for (size_t i = 0; i < n; ++i) z[i] = c[i] ? t[i] : e[i];                                   \
+    }                                                                                               \
+    DSH_RVV_FN void dsh_rvv_select_ts_##S(T* z, const bool* c, T t, const T* e, size_t n) {      \
+        for (size_t i = 0; i < n; ++i) z[i] = c[i] ? t : e[i];                                      \
+    }                                                                                               \
+    DSH_RVV_FN void dsh_rvv_select_es_##S(T* z, const bool* c, const T* t, T e, size_t n) {      \
+        for (size_t i = 0; i < n; ++i) z[i] = c[i] ? t[i] : e;                                      \
+    }
+#define DSH_RVV_COMPARES(T, S)                                                                      \
+    DSH_RVV_CMP(lt, T, S, <)                                                                        \
+    DSH_RVV_CMP(le, T, S, <=)                                                                       \
+    DSH_RVV_CMP(gt, T, S, >)                                                                        \
+    DSH_RVV_CMP(ge, T, S, >=)                                                                       \
+    DSH_RVV_CMP(eq, T, S, ==)                                                                       \
+    DSH_RVV_CMP(ne, T, S, !=)                                                                       \
+    DSH_RVV_SELECT(T, S)
+
+DSH_RVV_COMPARES(float, f32)
+DSH_RVV_COMPARES(dsh_f16, f16)
+DSH_RVV_COMPARES(int32_t, i32)
 
 #endif  // DSH_RVV_H

@@ -25,7 +25,8 @@ from dataclasses import dataclass
 
 import dace
 import sympy
-from dace import symbolic
+from dace import dtypes, symbolic
+from dace.frontend.operations import detect_reduction_type
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileBinop
 from dace.sdfg import nodes
@@ -333,7 +334,7 @@ def reduce_body(node: Reduce, state: dace.SDFGState, inputs: list[str], version:
     (edge,) = state.in_edges(node)
     desc = state.sdfg.arrays[edge.data.data]
     rank = len(desc.shape)
-    if node.wcr != "lambda a, b: a + b" or len(inputs) != 1:
+    if detect_reduction_type(node.wcr) != dtypes.ReductionType.Sum or len(inputs) != 1:  # any spelling of a + b
         raise Refused(f"{node.label}: only a sum of one input reduces on Tensix")
     if node.axes is not None and sorted(node.axes) != list(range(rank)):
         raise Refused(f"{node.label}: reduces axes {node.axes} of {rank}, not the whole input")

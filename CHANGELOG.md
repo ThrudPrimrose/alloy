@@ -6,6 +6,23 @@
   the strip-mined `rvv_vsetvl` schedule with its skeleton, and llvm-mca costs on SiFive X280. Every row except the
   transcendentals runs under qemu-riscv64 at VLEN 256 against the scalar reference, as SVE runs under qemu-aarch64.
 - `reverse` takes dotted RVV mnemonics (`vfmacc.vv`).
+- SoftHier: Spatz rows for sub, div, min, max, neg, abs, sqrt, and reduce_min, checked on GVSoC with a planted wrong
+  row each. softhiergen lowers `numpy.where` and comparisons (a compare into a bool tile, then a select, with a tile
+  or a scalar arm; both scalar loops on the Spatz core, because GVSoC's Spatz model stops on mask instructions),
+  `numpy.cumsum` (each cluster scans its share, then adds the allgathered totals of the clusters before it), and
+  lengths 256 does not divide (the widest power-of-two tile that divides them, down to 16). int32 tiles pass the Spatz
+  loops by cast (rv32 newlib's `int32_t` is `long`), and the image's compilers write temporaries in the bound folder
+  (`verify --image` failed under a host `TMPDIR`).
+- SoftHier waits complete their engine only (`alloy_wait_idma`, `alloy_wait_redmule`); the cluster barrier that lets
+  other cores read is its own step (`barrier kind=cluster`), so an agent can overlap. The iDMA rows state the 16
+  transfers in flight and that the wait completes all of them (no handle per transfer).
+- `ask tensix copy`: whole float32 tiles between DRAM and a core's circular buffer, in tensixgen's reader and writer
+  spelling, completed by `wait on=noc` (reads) or the new `wait on=noc_write` (writes).
+- One gate for both tile backends (`alloy.gate`): the same NumPy cases, one check per element
+  (`|out - ref| <= tol (|ref| + max |ref|)`, integers and bools exact) and a planted wrong program each. tensixgen
+  runs the cases on ttsim (`python -m alloy.tensixgen.gate run`; the host takes a case's own inputs) and reports the
+  cases it refuses; both backends share the front that fuses maps and vectorizes (`alloy.tilelower`). A Tensix sum
+  reduction is recognized in any spelling of `a + b`.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

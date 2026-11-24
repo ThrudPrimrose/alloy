@@ -347,3 +347,37 @@ def test_length_the_tile_does_not_divide_is_a_lowering_error() -> None:
 
     with pytest.raises(LoweringError, match="tile width 256"):
         program.generate(odd.to_sdfg(simplify=True))
+
+
+def test_ragged_length_takes_the_widest_tile_that_divides_it() -> None:
+    """4000 elements: no tile of 256 divides them, 32 does, so the kernel runs 125 Spatz loops of 32."""
+    from alloy.softhiergen.gate.programs import ragged
+
+    code = program.generate(ragged.to_sdfg(simplify=True))
+    assert "dsh_rvv_fma_f32(y_tile_out, x_tile, z_tile, x_tile_0, 32);" in code
+
+
+def test_where_is_a_spatz_compare_then_select() -> None:
+    """``numpy.where(x < z, x, z)`` compares into a bool tile and selects by it; ``relu`` selects a scalar arm."""
+    from alloy.softhiergen.gate.programs import relu, where
+
+    code = program.generate(where.to_sdfg(simplify=True))
+    assert "dsh_rvv_lt_f32(" in code and "dsh_rvv_select_f32(y_tile_out" in code
+    assert "dsh_rvv_select_es_f32(" in program.generate(relu.to_sdfg(simplify=True))
+
+
+def test_int32_tiles_reach_the_spatz_loops_as_int32_t() -> None:
+    """DaCe's int32 is ``int``, rv32 newlib's ``int32_t`` is ``long``: C++ refuses the pointer without the cast."""
+    from alloy.softhiergen.gate.programs import at_least
+
+    code = program.generate(at_least.to_sdfg(simplify=True))
+    assert "dsh_rvv_ge_i32(y_tile_out, (int32_t*)" in code
+
+
+def test_cumsum_scans_each_share_and_adds_the_earlier_totals() -> None:
+    """A cluster scans its share, the clusters allgather their totals, and each adds the totals before its own."""
+    from alloy.softhiergen.gate.programs import cumsum
+
+    code = program.generate(cumsum.to_sdfg(simplify=True))
+    assert "dsh_allgather(" in code
+    assert "dsh_rvv_add_s_f32(" in code

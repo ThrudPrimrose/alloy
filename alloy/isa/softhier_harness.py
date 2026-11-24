@@ -15,6 +15,7 @@ Environment: ``SOFTHIER_SDK`` (the softhier-sdk checkout), ``SOFTHIER_GVSOC`` (t
 
 import concurrent.futures
 import json
+import math
 import os
 import pathlib
 import random
@@ -36,7 +37,7 @@ TCDM = (0x1000, 0x20000, 0x40000, 0x60000)
 #: HBM offsets on west node 0.
 HBM = (0x1000, 0x100000)
 #: Inputs per op: the interval values are drawn from.
-DOMAIN = {"mma": (-1.0, 1.0)}
+DOMAIN = {"mma": (-1.0, 1.0), "sqrt": (0.0, 16.0), "div": (0.5, 4.0)}
 #: A reduction's input: the last TAIL elements (the tail strip at e32m8 and at e16m8: 300 = 4 x 64 + 44 = 2 x 128 + 44)
 #: are the largest, so a loop that drops the tail strip, or a few terms, is outside the bound.
 TAIL, BODY_DOMAIN, TAIL_DOMAIN = 44, (0.5, 1.0), (8.0, 16.0)
@@ -66,6 +67,8 @@ def value(word: int, dtype: str) -> float:
 
 def draw(op: str, dtype: str, count: int, seed: int) -> list[float]:
     generator = random.Random(seed)
+    if op == "reduce_min":  # the tail holds the smallest values, so a loop that drops it misses the minimum
+        return [-x for x in draw("reduce_max", dtype, count, seed)]
     if op in ("reduce_add", "reduce_max"):
         domains = [BODY_DOMAIN] * (count - TAIL) + [TAIL_DOMAIN] * TAIL
         return [rounded(generator.uniform(*domain), dtype) for domain in domains]
@@ -106,9 +109,9 @@ def program(row: dict) -> tuple[str, list[int]]:
     """The test program of ``row``, its code first, and the result words it must print, in order."""
     kind, op, dtype, name = row["kind"], row["op"], row["dtype"], row["name"]
     data, body = "", ""
-    if kind in ("binary", "fma", "move", "reduction"):
+    if kind in ("binary", "fma", "move", "reduction", "unary"):
         width = WORD[dtype][2]
-        arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1}[kind]
+        arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1, "unary": 1}[kind]
         inputs = vector_inputs(op, dtype, arity)
         for i, xs in enumerate(inputs):
             data += c_array(f"IN{i}", [bits(x, dtype) for x in xs], width)
@@ -137,8 +140,10 @@ def program(row: dict) -> tuple[str, list[int]]:
             "    flex_intra_cluster_sync();\n"
             f"    alloy_copy_1d(hbm_west(0, 0x{HBM[0]:x}), local(0x{TCDM[0]:x}), {nbytes});  // TCDM to HBM\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    alloy_copy_1d(local(0x{TCDM[1]:x}), hbm_west(0, 0x{HBM[0]:x}), {nbytes});  // HBM to TCDM\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    if (flex_get_core_id() == 0) {{\n{dump(TCDM[1], 32, DMA_WORDS)}    }}\n"
         )
         return frame(row["code"], data, cluster0(body)), words
@@ -160,14 +165,18 @@ def program(row: dict) -> tuple[str, list[int]]:
             f"    alloy_copy_1d(hbm_west(0, 0x{HBM[0]:x}), local(0x{TCDM[0]:x}), {nbytes});  // the matrix to HBM\n"
             f"    alloy_copy_1d(hbm_west(0, 0x{HBM[1]:x}), local(0x{TCDM[3]:x}), {nbytes});  // zeros to HBM\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    alloy_copy_2d(local(0x{TCDM[1]:x}), hbm_west(0, 0x{HBM[0]:x} + {corner}), {cols * 4}, {cols * 4}, "
             f"{COLS * 4}, {rows});  // gather the block: HBM to TCDM\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    alloy_copy_2d(hbm_west(0, 0x{HBM[1]:x} + {corner}), local(0x{TCDM[1]:x}), {cols * 4}, {COLS * 4}, "
             f"{cols * 4}, {rows});  // scatter it back: TCDM to HBM\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    alloy_copy_1d(local(0x{TCDM[2]:x}), hbm_west(0, 0x{HBM[1]:x}), {nbytes});\n"
             "    alloy_wait_idma();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    if (flex_get_core_id() == 0) {{\n{dump(TCDM[1], 32, rows * cols)}{dump(TCDM[2], 32, ROWS * COLS)}    }}\n"
         )
         return frame(row["code"], data, cluster0(body)), block + scattered
@@ -182,6 +191,7 @@ def program(row: dict) -> tuple[str, list[int]]:
             "    flex_intra_cluster_sync();\n"
             f"    alloy_mma_f16(0x{TCDM[0]:x}, 0x{TCDM[1]:x}, 0x{TCDM[2]:x}, {m}, {n}, {k});\n"
             "    alloy_wait_redmule();\n"
+            "    flex_intra_cluster_sync();  // barrier kind=cluster: the other cores read what landed\n"
             f"    if (flex_get_core_id() == 0) {{\n{dump(TCDM[2], 16, m * n)}    }}\n"
         )
         return frame(row["code"], data, cluster0(body)), []
@@ -242,15 +252,25 @@ def reference(row: dict) -> list[float]:
         m, n, k = MMA
         a, b, c = (draw("mma", "f16", count, seed) for seed, count in enumerate((m * k, k * n, m * n)))
         return [c[i * n + j] + sum(a[i * k + p] * b[p * n + j] for p in range(k)) for i in range(m) for j in range(n)]
-    arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1}[kind]
+    arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1, "unary": 1}[kind]
     xs = vector_inputs(op, dtype, arity)
     if kind == "reduction":
-        return [sum(xs[0]) if op == "reduce_add" else max(xs[0])]
+        return [{"reduce_add": sum, "reduce_max": max, "reduce_min": min}[op](xs[0])]
     if kind == "move":
         return xs[0]
     if kind == "fma":
         return [a * b + c for a, b, c in zip(*xs, strict=True)]
-    combine = {"add": lambda x, y: x + y, "mul": lambda x, y: x * y}[op]
+    if kind == "unary":
+        apply = {"neg": lambda x: -x, "abs": abs, "sqrt": math.sqrt}[op]
+        return [apply(x) for x in xs[0]]
+    combine = {
+        "add": lambda x, y: x + y,
+        "sub": lambda x, y: x - y,
+        "mul": lambda x, y: x * y,
+        "div": lambda x, y: x / y,
+        "min": min,
+        "max": max,
+    }[op]
     return [combine(x, y) for x, y in zip(*xs, strict=True)]
 
 

@@ -2,7 +2,6 @@
 """The gate's NumPy programs, each with its inputs and its NumPy reference."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import dace
 import numpy
@@ -12,7 +11,8 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.memlet import Memlet
 
-from alloy.softhiergen import program, storage
+from alloy.gate import Case
+from alloy.softhiergen import storage
 
 N = 4096
 #: Clusters of the v1 mesh: the allreduce has one row per cluster.
@@ -53,6 +53,35 @@ def vmax(x: dace.float32[N], s: dace.float32[1]) -> None:
 @dace.program
 def unary(x: dace.float32[N], y: dace.float32[N]) -> None:
     y[:] = -numpy.sqrt(numpy.abs(x))
+
+
+@dace.program
+def where(x: dace.float32[N], z: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.where(x < z, x, z)
+
+
+@dace.program
+def relu(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.where(x > 0, x, 0.0)
+
+
+@dace.program
+def at_least(x: dace.int32[N], z: dace.int32[N], y: dace.bool_[N]) -> None:
+    y[:] = x >= z
+
+
+@dace.program
+def cumsum(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.cumsum(x)
+
+
+#: A length no 256-wide tile divides: the lowering tiles it 32 wide
+RAGGED = 4000
+
+
+@dace.program
+def ragged(x: dace.float32[RAGGED], z: dace.float32[RAGGED], y: dace.float32[RAGGED]) -> None:
+    y[:] = x * z + x
 
 
 @dace.program
@@ -129,17 +158,6 @@ def in_kernel(
     return build
 
 
-@dataclass(frozen=True)
-class Case:
-    name: str
-    sdfg: Callable[[], dace.SDFG]
-    inputs: program.Inputs
-    #: The arrays the program must leave, by name
-    expected: dict[str, numpy.ndarray]
-    #: max |out - ref| / max |ref|
-    tolerance: float
-
-
 def cases() -> list[Case]:
     rng = numpy.random.default_rng(7)
     f32 = numpy.float32
@@ -148,6 +166,7 @@ def cases() -> list[Case]:
     pos = rng.uniform(0.5, 1.0, N).astype(f32)
     ga, gb = (rng.uniform(-1, 1, (64, 64)).astype(numpy.float16) for _ in range(2))
     rows = rng.uniform(-4, 4, (P, 1024)).astype(f32)
+    ia, ib = (rng.integers(-50, 50, N).astype(numpy.int32) for _ in range(2))  # equal pairs occur: ``>=`` ties
     return [
         Case("vector add", lambda: vadd.to_sdfg(simplify=True), {"A": a, "B": b}, {"C": a + b}, 1e-6),
         Case(
@@ -172,6 +191,13 @@ def cases() -> list[Case]:
             {"s": pos.astype(numpy.float64).sum(keepdims=True)},
             1e-5,
         ),
+        Case(
+            "prefix sum (cumsum)",
+            lambda: cumsum.to_sdfg(simplify=True),
+            {"x": pos},
+            {"y": numpy.cumsum(pos.astype(numpy.float64))},
+            1e-5,
+        ),  # fmt: skip
         Case("max reduction", lambda: vmax.to_sdfg(simplify=True), {"x": a}, {"s": a.max(keepdims=True)}, 0.0),
         Case(
             "tiled GEMM (RedMulE)",
@@ -188,6 +214,26 @@ def cases() -> list[Case]:
             1e-6,
         ),
         Case("copy chain", lambda: copy_chain.to_sdfg(simplify=False), {"A": a}, {"C": a}, 0.0),
+        Case(
+            "compare and select (where)",
+            lambda: where.to_sdfg(simplify=True),
+            {"x": a, "z": b},
+            {"y": numpy.where(a < b, a, b)},
+            0.0,
+        ),  # fmt: skip
+        Case(
+            "relu (a scalar arm)", lambda: relu.to_sdfg(simplify=True), {"x": a}, {"y": numpy.where(a > 0, a, 0)}, 0.0
+        ),
+        Case(
+            "ragged length (4000)",
+            lambda: ragged.to_sdfg(simplify=True),
+            {"x": a[:RAGGED], "z": b[:RAGGED]},
+            {"y": a[:RAGGED].astype(numpy.float64) * b[:RAGGED] + a[:RAGGED]},
+            1e-6,
+        ),  # fmt: skip
+        Case(
+            "int32 compare into bool", lambda: at_least.to_sdfg(simplify=True), {"x": ia, "z": ib}, {"y": ia >= ib}, 0.0
+        ),  # fmt: skip
         Case(
             "allreduce",
             allreduce,

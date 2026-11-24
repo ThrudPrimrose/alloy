@@ -253,7 +253,8 @@ def test_each_completion_token_has_a_wait_and_softhier_needs_no_fence(on: str, c
     wait = ask(Request("softhier", "wait", on=on), verify=False)
     fence = ask(Request("softhier", "fence", kind="proxy"), verify=False)
 
-    assert isinstance(wait, Feasible) and wait.steps[0].spelling == call
+    assert isinstance(wait, Feasible) and [s.spelling for s in wait.steps] == [call]  # the engine only, no barrier
+    assert any("barrier kind=cluster" in note for note in wait.notes)
     assert isinstance(fence, Infeasible) and fence.why is Why.NO_ROW and "wait on=idma" in fence.nearest
 
 

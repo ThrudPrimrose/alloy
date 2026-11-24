@@ -10,28 +10,26 @@
 6. Library nodes expand.
 """
 
-import warnings
+import math
 
 from dace import data, dtypes, nodes
 from dace.libraries.comm.nodes.node import CommNode
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
-from dace.libraries.tileops import TileBinop, TileFMA, TileMMA, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileFMA, TileITE, TileMMA, TileReduce, TileUnop
+from dace.libraries.tileops.nodes.tile_scan import TileScan
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.utils import inline_sdfgs
 from dace.subsets import Range
 from dace.transformation.dataflow import (
-    MapFusionVertical,
     RedundantArray,
     RedundantSecondArray,
     TrivialTaskletElimination,
 )
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
+from alloy import tilelower
 from alloy.softhiergen import hbm, storage
 from alloy.softhiergen.arch import V1
 from alloy.softhiergen.library import collectives, dma, kernels, redmule, rvv, sync
@@ -41,26 +39,41 @@ from alloy.softhiergen.library.common import LoweringError
 KERNEL_IMPLEMENTATIONS: tuple[tuple[type | tuple[type, ...], str], ...] = (
     (CopyLibraryNode, dma.IMPLEMENTATION),
     (TileMMA, redmule.IMPLEMENTATION),
-    ((TileBinop, TileFMA, TileReduce, TileUnop), rvv.IMPLEMENTATION),
+    ((TileBinop, TileFMA, TileITE, TileReduce, TileScan, TileUnop), rvv.IMPLEMENTATION),
     (CommNode, collectives.IMPLEMENTATION),
     (Sync, sync.IMPLEMENTATION),
 )
 
 
+#: The narrowest tile the lowering picks to fit a ragged extent; below it, a tile per few elements costs more than it
+#: computes.
+MIN_TILE = 16
+
+
+def tile_width(sdfg: SDFG, widest: int) -> int:
+    """The widest power-of-two tile up to ``widest`` (the vectorizer's rule) that divides the innermost extent of every
+    top-level map, so no remainder tile, and no mask, is needed (4000 elements: 32). Maps narrower than ``MIN_TILE``
+    (a loop over clusters, a single row) do not count; with no such width, ``widest`` stays and the vectorizer refuses
+    an extent it does not divide.
+
+    shortcut: a ragged extent gets narrow tiles, not a masked remainder; masked Spatz loops would keep 256."""
+    extents = [
+        int(node.map.range.size_exact()[-1])
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.MapEntry) and state.entry_node(node) is None and len(node.map.range) > 0
+    ]
+    common = math.gcd(*(e for e in extents if e >= MIN_TILE))
+    width = max((1 << k for k in range(widest.bit_length()) if 1 << k <= widest and common % (1 << k) == 0), default=1)
+    return width if width >= MIN_TILE else widest
+
+
 def lower(sdfg: SDFG, tile: int = 256) -> None:
-    """Lowers ``sdfg`` (all symbols specialized) for SoftHier; ``tile`` is the vectorizer's tile width."""
-    sdfg.apply_transformations_repeated(MapFusionVertical)
-    # An in-place update (``y[:] = a * x + y``) writes y through a transient; folded now, while the map body is
-    # still a tasklet RedundantArray can prove elementwise, it does not become a second kernel through HBM
-    sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
+    """Lowers ``sdfg`` (all symbols specialized) for SoftHier; ``tile`` is the widest tile the vectorizer may use."""
+    tilelower.fuse(sdfg)
+    tile = tile_width(sdfg, tile)
     try:
-        # A kernel with nothing elementwise (copies, library nodes, collectives, scalar tasklets) is left untiled,
-        # which is correct here; DaCe warns about it
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="VectorizeMultiDim: tiled nothing", category=UserWarning)
-            VectorizeCPUMultiDim(
-                VectorizeConfig(widths=(tile,), target_isa=ISA.SCALAR, assume_even=True, fuse_multiply_add=True)
-            ).apply_pass(sdfg, {})
+        tilelower.vectorize(sdfg, tile, fuse_multiply_add=True)
     except ValueError as error:
         # A remainder tile would be masked, and no Spatz loop takes a mask
         raise LoweringError(f"the tile width {tile} must divide every elementwise extent: {error}") from error

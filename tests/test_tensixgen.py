@@ -277,3 +277,28 @@ def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, Json], options: 
     found = [v for task in tasks.values() for v in ttsim.run_tasks([task], ttsim.default_cache(), options)]
 
     assert [v.name for v in found if not v.ok] == [], found
+
+
+def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -> None:
+    """The SoftHier gate's NumPy programs through the shared front and the Tensix split: elementwise maps and a sum
+    become programs, a float16 input is refused by name."""
+    from alloy.softhiergen.gate.programs import cases
+    from alloy.tensixgen.gate import lowered
+
+    by_name = {case.name: case for case in cases()}
+    for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)"):
+        assert lowered(by_name[name]).compute
+    with pytest.raises(Refused, match="float16"):
+        lowered(by_name["float16 multiply"])
+
+
+@pytest.mark.tensix
+def test_the_shared_gate_cases_run_correct_on_ttsim_and_the_planted_one_is_caught(tmp_path: pathlib.Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.fail("the tensix mark needs docker")
+    from alloy.tensixgen.gate import PLANTED, run
+
+    found = run(tmp_path, ttsim.default_cache())
+
+    assert all(found[name].startswith("wrong") for name in PLANTED), found
+    assert all(v.startswith("correct") for k, v in found.items() if k not in PLANTED), found

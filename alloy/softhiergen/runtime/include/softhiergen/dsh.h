@@ -18,8 +18,8 @@
 #include "softhiergen/dsh_rvv.h"
 
 #define DACE_EXPORTED extern "C"
-#define DACE_HDFI static inline
-#define DACE_DFI static inline
+#define DACE_HDFI inline  // as DaCe's types.h: the index helpers come as `static DACE_HDFI constexpr`
+#define DACE_DFI inline
 #define __DACE_UNROLL
 #define DACE_UNROLL
 

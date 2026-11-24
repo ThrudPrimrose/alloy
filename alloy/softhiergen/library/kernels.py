@@ -17,10 +17,13 @@ import dace
 from dace import data, dtypes, library
 from dace.frontend.operations import detect_reduction_type
 from dace.libraries.blas import Gemm, MatMul
-from dace.libraries.comm.nodes import Allreduce
+from dace.libraries.comm.nodes import Allgather, Allreduce
 from dace.libraries.standard import Reduce
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
-from dace.libraries.tileops import TileMMA, TileReduce
+from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.libraries.tileops import TileBinop, TileMMA, TileReduce
+from dace.libraries.tileops.kinds import SCALAR
+from dace.libraries.tileops.nodes.tile_scan import TileScan
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -162,6 +165,66 @@ def reduce_kernel(node: Reduce, state: dace.SDFGState, sdfg: dace.SDFG) -> dace.
     return kernel.sdfg
 
 
+#: Scan ops with a SoftHier kernel: the tile op, and the C that folds the lower clusters' totals into the offset.
+SCANS = {ScanOp.SUM: ("+", "off = off + t"), ScanOp.MAX: ("max", "off = t > off ? t : off"),
+         ScanOp.MIN: ("min", "off = t < off ? t : off")}  # fmt: skip
+
+
+def scan_kernel(node: Scan, state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+    """An inclusive scan of a vector: each cluster scans its share, an allgather shares the share totals, and each
+    cluster combines its scan with the totals of the clusters before it."""
+    if (
+        node.op not in SCANS
+        or node.exclusive
+        or node.chains != 1
+        or str(node.stride) != "1"
+        or ("_scan_init" in in_edges(state, node))
+    ):
+        raise LoweringError(f"{node.label}: SoftHier scans inclusively with +, max or min, one chain, no init")
+    kernel = Kernel(f"{node.label}_softhier", node, state, sdfg)
+    source = kernel.sdfg.arrays["_scan_in"]
+    if len(source.shape) != 1:
+        raise LoweringError(f"{node.label}: SoftHier scans a vector")
+    tile_op, fold = SCANS[node.op]
+    share, subset = kernel.share("_scan_in")
+    _, out_subset = kernel.share("_scan_out")
+    part = kernel.load("_scan_in", subset, kernel.tcdm("part", (share,), source.dtype))
+    scan = TileScan("scan_tile", (share,), op=tile_op)
+    scan.implementation = rvv.IMPLEMENTATION
+    scanned = kernel.compute(scan, {"_src": part}, kernel.tcdm("scanned", (share,), source.dtype), "_dst")
+    total = TileReduce("total_tile", (share,), op=tile_op)
+    total.implementation = rvv.IMPLEMENTATION
+    mine = kernel.compute(total, {"_src": part}, kernel.tcdm("mine", (1,), source.dtype), "_dst")
+    share_totals = Allgather("share_totals")
+    share_totals.implementation = collectives.IMPLEMENTATION
+    clusters = V1.num_clusters
+    totals = kernel.compute(
+        share_totals, {"_inbuffer": mine}, kernel.tcdm("totals", (clusters,), source.dtype), "_outbuffer"
+    )
+    # Every core folds the same values into the same offset: no role guard, and no barrier before the vector loop
+    # that reads it on the core that wrote it
+    seed = "0" if node.op == ScanOp.SUM else "_totals[0]"
+    # Pointer connectors, as the guarded tasklets take: the SoftHier target defines no scalar output memlet
+    offset = kernel.state.add_tasklet(
+        "offset",
+        {"_totals": dtypes.pointer(source.dtype)},
+        {"_off": dtypes.pointer(source.dtype)},
+        f"{source.dtype.ctype} off = {seed};\nfor (int r = {0 if node.op == ScanOp.SUM else 1}; r < {CLUSTER}; ++r) {{\n"
+        f"    {source.dtype.ctype} t = _totals[r];\n    {fold};\n}}\n_off[0] = off;",
+        language=dtypes.Language.CPP,
+    )
+    kernel.state.add_edge(
+        totals, None, offset, "_totals", Memlet.from_array(totals.data, kernel.sdfg.arrays[totals.data])
+    )
+    off = kernel.state.add_access(kernel.tcdm("off", (1,), source.dtype))
+    kernel.state.add_edge(offset, "_off", off, None, Memlet("off[0:1]"))
+    combine = TileBinop("combine", (share,), op=tile_op, kind_b=SCALAR)
+    combine.implementation = rvv.IMPLEMENTATION
+    result = kernel.compute(combine, {"_a": scanned, "_b": off}, kernel.tcdm("result", (share,), source.dtype), "_c")
+    kernel.store(result, "_scan_out", out_subset)
+    return kernel.sdfg
+
+
 def copy_kernel(node: CopyLibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
     """A copy between two HBM arrays: each cluster moves its share HBM -> TCDM -> HBM."""
     kernel = Kernel(f"{node.label}_softhier", node, state, sdfg)
@@ -195,5 +258,6 @@ for node_type, build in (
     (Reduce, reduce_kernel),
     (CopyLibraryNode, copy_kernel),
     (Allreduce, allreduce_kernel),
+    (Scan, scan_kernel),
 ):
     node_type.register_implementation(IMPLEMENTATION, expansion_of(build))

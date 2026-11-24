@@ -250,3 +250,19 @@ class SoftHierCodeGen(TargetCodeGenerator):
                 f"SoftHier: the copy {src_node.data} -> {dst_node.data} has no copy node; run the lowering pipeline"
             )
         self.cpu.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)  # pyright: ignore[reportOptionalMemberAccess] -- DaCe's annotation
+
+    def define_out_memlet(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        src_node: nodes.Node,
+        dst_node: nodes.Node,
+        edge: MultiConnectorEdge[Memlet],
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ) -> None:
+        """A tasklet's output into TCDM: the CPU target's definition, as for a copy (the target registers itself for
+        every copy into its storages, so DaCe asks it here too)."""
+        self.cpu.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)  # pyright: ignore[reportOptionalMemberAccess] -- DaCe's annotation

@@ -453,6 +453,7 @@ WAITS: dict[str, dict[str, tuple[str, str]]] = {
     },
     "tensix": {
         "noc": ("noc_async_read_barrier();", "the NoC reads issued so far have landed in L1"),
+        "noc_write": ("noc_async_write_barrier();", "the NoC writes issued so far have left L1 and landed"),
         "cb": ("cb_wait_front(cb, n);", "the producer has pushed n tiles into the circular buffer"),
     },
 } | dict.fromkeys(tile.CDNA, {
@@ -495,7 +496,7 @@ COMPLETIONS = {
 #: The waits and fences a tile program that ran on its hardware issues (alloy_tile_sm90.cuh, tensix_harness.py); every
 #: other one is from the ISA manuals alone.
 ISSUED = {("sm90", "mbarrier"), ("sm90", "wgmma_group"), ("sm90", "proxy"), ("sm90", "operand"), ("tensix", "noc"),
-          ("tensix", "cb")}  # fmt: skip
+          ("tensix", "noc_write"), ("tensix", "cb")}  # fmt: skip
 
 
 def manual_check(target: str, name: str) -> Check:
@@ -1355,7 +1356,9 @@ def copy(request: Request, verify: bool) -> Answer:
     src, dst = ops["src"], ops["dst"]
     if request.target in CPU:
         return cpu_copy(request, src, dst)
-    if request.target not in tile.GPU_TILES:  # sme, tensix: no copy row yet
+    if request.target == "tensix":
+        return tensix_copy(request, src, dst)
+    if request.target not in tile.GPU_TILES:  # sme: no copy row yet
         return no(request, Why.NOT_COVERED, f"no checked row covers a {request.target} copy from {src.space} to "
                   f"{dst.space}")  # fmt: skip
     taken = [i for i, _ in tile.TYPES[request.target]]
@@ -1376,6 +1379,62 @@ def copy(request: Request, verify: bool) -> Answer:
         f"no checked row covers a {request.target} copy from {src.space} to {dst.space}",
         fix="write it as plain device code, each thread moving its own elements, and check it with score",
     )
+
+
+#: A Tensix tile: 32 x 32 elements, one page of a DRAM buffer and one slot of a circular buffer.
+TENSIX_TILE = 32
+
+
+def tensix_copy(request: Request, src: Operand, dst: Operand) -> Answer:
+    """Whole tiles between DRAM (``global``, an interleaved buffer read through a ``TensorAccessor``) and a circular
+    buffer in the core's L1 (``shared``), in the spelling of tensixgen's reader and writer kernels: the reader reserves
+    CB slots, reads tile pages over the NoC, waits on the read barrier, then pushes; the writer waits for the tiles,
+    writes them, waits on the write barrier, then pops. No multicast and no core-to-core copy: an agent adds those."""
+    nearest = (spell(src=Operand("global", "f32", (32, 32)), dst=Operand("shared", "f32", (32, 32))),
+               spell(src=Operand("shared", "f32", (32, 32)), dst=Operand("global", "f32", (32, 32))))  # fmt: skip
+    if src.dtype != dst.dtype:
+        return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}",
+                   *nearest)  # fmt: skip
+    if dst.dtype != "f32":
+        return no(request, Why.ELEMENT_TYPE, "the Tensix programs that ran move float32 tiles", *nearest)
+    if src.shape != dst.shape or len(dst.shape) != 2 or any(e % TENSIX_TILE for e in dst.shape):
+        return no(request, Why.SHAPE, "a Tensix copy moves whole 32 x 32 tiles, the same box on both sides", *nearest)
+    tiles = dst.shape[0] * dst.shape[1] // TENSIX_TILE**2
+    if (src.space, dst.space) == ("global", "shared"):
+        steps = (Step("noc", "cb_reserve_back(cb, n)"),
+                 Step("noc", "noc_async_read_tile(first + t, accessor, get_write_ptr(cb) + t * tile_bytes)", tiles),
+                 Step("noc", "noc_async_read_barrier()"), Step("noc", "cb_push_back(cb, n)"))  # fmt: skip
+        body = (
+            "cb_reserve_back(cb, n);\nuint32_t w = get_write_ptr(cb);\n"
+            "for (uint32_t t = 0; t < n; ++t) noc_async_read_tile(first + t, accessor, w + t * tile_bytes);\n"
+            "noc_async_read_barrier();  // wait on=noc\ncb_push_back(cb, n);"
+        )
+        completion, what = (
+            Completion("noc", "wait on=noc"),
+            "the reader kernel's side: compute takes the tiles with cb_wait_front",
+        )
+    elif (src.space, dst.space) == ("shared", "global"):
+        steps = (Step("noc", "cb_wait_front(cb, n)"),
+                 Step("noc", "noc_async_write_tile(first + t, accessor, get_read_ptr(cb) + t * tile_bytes)", tiles),
+                 Step("noc", "noc_async_write_barrier()"), Step("noc", "cb_pop_front(cb, n)"))  # fmt: skip
+        body = (
+            "cb_wait_front(cb, n);\nuint32_t r = get_read_ptr(cb);\n"
+            "for (uint32_t t = 0; t < n; ++t) noc_async_write_tile(first + t, accessor, r + t * tile_bytes);\n"
+            "noc_async_write_barrier();  // wait on=noc_write\ncb_pop_front(cb, n);"
+        )
+        completion, what = (
+            Completion("noc_write", "wait on=noc_write"),
+            "the writer kernel's side: compute fills the tiles with cb_push_back",
+        )
+    else:
+        return no(request, Why.NOT_COVERED, f"no checked row covers a tensix copy from {src.space} to {dst.space}: "
+                  "DRAM (global) and a core's circular buffer (shared) only", *nearest)  # fmt: skip
+    signature = "// n tiles; accessor = TensorAccessor(TensorAccessorArgs<0>(), addr, tile_bytes), tile_bytes = get_tile_size(cb)"
+    return Feasible(request, "noc", steps, {}, f"{signature}\n{body}\n",
+                    manual_check("tensix", completion.token),
+                    (what, f"{tiles} tile(s) of {TENSIX_TILE} x {TENSIX_TILE}; the NoC moves pages of one tile each",
+                     "no handle per transfer: the barrier completes every read (write) the core issued"),
+                    completion)  # fmt: skip
 
 
 def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
@@ -1830,8 +1889,11 @@ def softhier_wait(request: Request) -> Answer:
         return no(request, Why.NO_ROW, reason, *nearest) if request.on else bad(request, Why.OPERANDS, reason, *nearest)
     name, what = SOFTHIER_WAITS[request.on]
     row = softhier_row(name)
-    return softhier_feasible(request, row, row.dtypes[0], (Step(row.unit, row.call), Step("cluster",
-                             "flex_intra_cluster_sync()")), (what,))  # fmt: skip
+    # the engine's wait alone: a core that did not issue the work reads it after `barrier kind=cluster`
+    then = (
+        "the wait completes the engine's work only: before another core of the cluster reads it, barrier kind=cluster"
+    )
+    return softhier_feasible(request, row, row.dtypes[0], (Step(row.unit, row.call),), (what, then))
 
 
 def softhier_barrier(request: Request) -> Answer:

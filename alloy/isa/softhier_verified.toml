@@ -1,6 +1,6 @@
 # Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated
 # SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.
-run = "2026-11-21"
+run = "2026-11-24"
 base = "docker://gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea8088"
 gvsoc = "https://github.com/gvsoc/gvsoc.git a453fa09fe53ff306c91072066ea3ff559a0853a (config_tree d134f4100bffdc0de196f6672e005ff3b58ad083, core 4be5293a4976eea02d224e425493b755d46b1d15, engine 16dadd30d76a0aa2a33a85d3bdc52a75558a83c3, gvrun e9030b5b9aa963dd4e820ad71676cc984cc02ddb, gvtest 12cfe2c4a2ef527edabd0368b0c04d9bf06c522a, pulp 6a00247dc3c621d5979fcd6abfa0c39d889a3f6a, pulpos f216d7b8d830620b964187738089c95a29de44ae)"
 sdk = "https://github.com/pulp-platform/softhier-sdk.git c32f3eba212e5f44e9a65610836991729c0c58ce"
@@ -16,133 +16,245 @@ name = "load"
 dtype = "f32"
 ok = true
 rel = 0.0
-digest = "90014e1d2d2fc26a"
+digest = "92a5f7fcdd00bd55"
 
 [[verdicts]]
 name = "load"
 dtype = "f16"
 ok = true
 rel = 0.0
-digest = "05d7ba874b70d05a"
+digest = "5864298c66c16814"
 
 [[verdicts]]
 name = "store"
 dtype = "f32"
 ok = true
 rel = 0.0
-digest = "c47eb16875e4bc3f"
+digest = "5e799f10e35975a6"
 
 [[verdicts]]
 name = "store"
 dtype = "f16"
 ok = true
 rel = 0.0
-digest = "58cc22f6336f40be"
+digest = "81b1844a105697f9"
 
 [[verdicts]]
 name = "add"
 dtype = "f32"
 ok = true
 rel = 3.090025163928925e-08
-digest = "74ad21af0ee1527d"
+digest = "5bdb67700dbfa03d"
 
 [[verdicts]]
 name = "add"
 dtype = "f16"
 ok = true
 rel = 0.00025316455696202533
-digest = "ff2ad176532323e5"
+digest = "e10837ef2b9fec28"
 
 [[verdicts]]
 name = "mul"
 dtype = "f32"
 ok = true
 rel = 2.896295179145227e-08
-digest = "aded1b015e2b6722"
+digest = "7b9cfe0d05d7fb2e"
 
 [[verdicts]]
 name = "mul"
 dtype = "f16"
 ok = true
 rel = 0.00024849959873624364
-digest = "36272fc8a4054117"
+digest = "57624418d4e661f7"
 
 [[verdicts]]
 name = "fma"
 dtype = "f32"
 ok = true
 rel = 5.131930643170882e-08
-digest = "507a534a57c23f73"
+digest = "f38669163211fc2c"
 
 [[verdicts]]
 name = "fma"
 dtype = "f16"
 ok = true
 rel = 0.0003446366061054469
-digest = "2c7cf1ea9687fd93"
+digest = "8ce04d11e263325e"
 
 [[verdicts]]
 name = "reduce_add"
 dtype = "f32"
 ok = true
 rel = 8.001291693713697e-08
-digest = "cfd5b09dbcfde33e"
+digest = "e55ebae8e5958d14"
 
 [[verdicts]]
 name = "reduce_add"
 dtype = "f16"
 ok = true
 rel = 0.0005039545001079902
-digest = "6c9396861e3beb09"
+digest = "c0050e15a9780171"
 
 [[verdicts]]
 name = "reduce_max"
 dtype = "f32"
 ok = true
 rel = 0.0
-digest = "a487eff260ba9b96"
+digest = "04321cdfcfab47ed"
 
 [[verdicts]]
 name = "reduce_max"
 dtype = "f16"
 ok = true
 rel = 0.0
-digest = "9c9fc4a4390cb4ca"
+digest = "af37de1e5a60f8f6"
+
+[[verdicts]]
+name = "sub"
+dtype = "f32"
+ok = true
+rel = 3.006082838684907e-08
+digest = "3185cb9742843910"
+
+[[verdicts]]
+name = "sub"
+dtype = "f16"
+ok = true
+rel = 0.0002463054187192118
+digest = "e8273fcfc46f4b49"
+
+[[verdicts]]
+name = "div"
+dtype = "f32"
+ok = true
+rel = 3.2028848209129185e-08
+digest = "f1a7ce6f952a60a1"
+
+[[verdicts]]
+name = "div"
+dtype = "f16"
+ok = true
+rel = 0.00022617176399545672
+digest = "181318ee52e7c15d"
+
+[[verdicts]]
+name = "min"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "e26f0b90e3c28b58"
+
+[[verdicts]]
+name = "min"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "3620ed0bc2ba7adf"
+
+[[verdicts]]
+name = "max"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "b3f72bed8b6c3420"
+
+[[verdicts]]
+name = "max"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "442cc3a854878600"
+
+[[verdicts]]
+name = "neg"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "f99d374ae21f56af"
+
+[[verdicts]]
+name = "neg"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "a01111bdde019792"
+
+[[verdicts]]
+name = "abs"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "5800072d5d4c03d0"
+
+[[verdicts]]
+name = "abs"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "8c16cba3b07f0a4e"
+
+[[verdicts]]
+name = "sqrt"
+dtype = "f32"
+ok = true
+rel = 2.9752281818893236e-08
+digest = "469e50f0b69eb746"
+
+[[verdicts]]
+name = "sqrt"
+dtype = "f16"
+ok = true
+rel = 0.0002441704346005673
+digest = "842aa3906f4b9c3a"
+
+[[verdicts]]
+name = "reduce_min"
+dtype = "f32"
+ok = true
+rel = 0.0
+digest = "f9a48e7533fba4fc"
+
+[[verdicts]]
+name = "reduce_min"
+dtype = "f16"
+ok = true
+rel = 0.0
+digest = "ccf6cbf36d9cf343"
 
 [[verdicts]]
 name = "copy_1d"
 dtype = "bytes"
 ok = true
 rel = 0.0
-digest = "c8ba83ab15621e23"
+digest = "353102d654412d92"
 
 [[verdicts]]
 name = "copy_2d"
 dtype = "bytes"
 ok = true
 rel = 0.0
-digest = "fadeeb5e00426cd4"
+digest = "38a89b56a61880a3"
 
 [[verdicts]]
 name = "mma"
 dtype = "f16"
 ok = true
 rel = 0.00022130849714876254
-digest = "416443bf1fb56ef8"
+digest = "126c0ea60bf34dc5"
 
 [[verdicts]]
 name = "barrier_cluster"
 dtype = "none"
 ok = true
 rel = 0.0
-digest = "d37fcc3cda05aa50"
+digest = "b60b24ffe8e21d0e"
 
 [[verdicts]]
 name = "barrier_global"
 dtype = "none"
 ok = true
 rel = 0.0
-digest = "1611a181c62e9e15"
+digest = "8b99ad7989174adb"
 
 [[planted]]
 name = "planted_add_is_sub"
@@ -150,7 +262,7 @@ dtype = "f32"
 ok = false
 rel = 1.0324731362482324
 error = "max error 1.03 over max |reference| > 1e-06"
-digest = "ba9e8993ced8bb0d"
+digest = "660dfc4505128d83"
 
 [[planted]]
 name = "planted_add_is_sub"
@@ -158,7 +270,7 @@ dtype = "f16"
 ok = false
 rel = 1.0326582278481014
 error = "max error 1.03 over max |reference| > 0.001"
-digest = "a34565525e2b20d0"
+digest = "7c57ad42e3f18490"
 
 [[planted]]
 name = "planted_copy_2d_strides_swapped"
@@ -166,7 +278,7 @@ dtype = "bytes"
 ok = false
 rel = 1.0
 error = "154 words differ, first at 10"
-digest = "97936f13100417ad"
+digest = "0449248fe2f2a393"
 
 [[planted]]
 name = "planted_barrier_global_removed"
@@ -174,7 +286,7 @@ dtype = "none"
 ok = false
 rel = 1.0
 error = "3 words differ, first at 1"
-digest = "0a4acb10df7e4db6"
+digest = "43b8324a11d11251"
 
 [[planted]]
 name = "planted_reduce_add_without_tail"
@@ -182,7 +294,7 @@ dtype = "f32"
 ok = false
 rel = 0.7269195113922108
 error = "max error 0.727 over max |reference| > 1e-06"
-digest = "2610b9132b71277d"
+digest = "74efa331583e2469"
 
 [[planted]]
 name = "planted_reduce_add_without_tail"
@@ -190,7 +302,7 @@ dtype = "f16"
 ok = false
 rel = 0.7268799731224267
 error = "max error 0.727 over max |reference| > 0.002"
-digest = "1dfc252ce6856dd1"
+digest = "b5a17fda2d9a4654"
 
 [[planted]]
 name = "planted_reduce_max_without_tail"
@@ -198,7 +310,7 @@ dtype = "f32"
 ok = false
 rel = 0.9369479338967249
 error = "max error 0.937 over max |reference| > 0.0"
-digest = "4e4255f543229f15"
+digest = "a39792d856975991"
 
 [[planted]]
 name = "planted_reduce_max_without_tail"
@@ -206,4 +318,52 @@ dtype = "f16"
 ok = false
 rel = 0.9369455396747166
 error = "max error 0.937 over max |reference| > 0.0"
-digest = "c4c9c8b338a99a0d"
+digest = "49057cd882b19cdb"
+
+[[planted]]
+name = "planted_reduce_min_without_tail"
+dtype = "f32"
+ok = false
+rel = 0.9369479338967249
+error = "max error 0.937 over max |reference| > 0.0"
+digest = "ea82dc1dc5436bec"
+
+[[planted]]
+name = "planted_reduce_min_without_tail"
+dtype = "f16"
+ok = false
+rel = 0.9369455396747166
+error = "max error 0.937 over max |reference| > 0.0"
+digest = "3c7d71d9db53f14a"
+
+[[planted]]
+name = "planted_min_is_max"
+dtype = "f32"
+ok = false
+rel = 1.9873435296016715
+error = "max error 1.99 over max |reference| > 0.0"
+digest = "df6e809d3d1bf62b"
+
+[[planted]]
+name = "planted_min_is_max"
+dtype = "f16"
+ok = false
+rel = 1.9872736172295644
+error = "max error 1.99 over max |reference| > 0.0"
+digest = "bb5d433e5d306cd7"
+
+[[planted]]
+name = "planted_sqrt_is_abs"
+dtype = "f32"
+ok = false
+rel = 2.9988405216103518
+error = "max error 3 over max |reference| > 1e-06"
+digest = "a54ef0ba6853489c"
+
+[[planted]]
+name = "planted_sqrt_is_abs"
+dtype = "f16"
+ok = false
+rel = 2.9990233182615977
+error = "max error 3 over max |reference| > 0.001"
+digest = "74f29d6ded46be21"

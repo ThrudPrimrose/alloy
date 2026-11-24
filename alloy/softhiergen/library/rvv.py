@@ -6,13 +6,15 @@ Tile operands are contiguous TCDM runs, read in place; a ``Scalar`` or ``Symbol`
 """
 
 import math
+import re
 from typing import ClassVar
 
 import dace
 from dace import library
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.libraries.tileops import TileBinop, TileFMA, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileFMA, TileITE, TileReduce, TileUnop
 from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.nodes.tile_scan import TileScan
 from dace.libraries.tileops.operands import Operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -34,6 +36,10 @@ IMPLEMENTATION = "SoftHierRVV"
 #: TileBinop ops with a Spatz loop, and whether they commute.
 BINOPS = {"+": ("add", True), "-": ("sub", False), "*": ("mul", True), "/": ("div", False), "min": ("min", True),
           "max": ("max", True)}  # fmt: skip
+#: TileBinop comparisons: the Spatz loop, and the one that takes the operands swapped (``s < x`` is ``x > s``). The
+#: result is a bool tile, one 0/1 byte per lane.
+COMPARES = {"<": ("lt", "gt"), "<=": ("le", "ge"), ">": ("gt", "lt"), ">=": ("ge", "le"), "==": ("eq", "eq"),
+            "!=": ("ne", "ne")}  # fmt: skip
 #: TileUnop ops that are one RVV float instruction; the rest (exp, log, ...) have no Spatz loop.
 UNOPS = ("neg", "abs", "sqrt")
 #: TileReduce ops with a Spatz reduction.
@@ -43,13 +49,17 @@ REDUCTIONS = {"+": "sum", "max": "max", "min": "min"}
 class Call:
     """The connectors and arguments of one call: tiles by pointer, single values by value or inline."""
 
-    def __init__(self, node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, out_conn: str) -> None:
+    def __init__(
+        self, node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, out_conn: str, lanes_of: str = ""
+    ) -> None:
+        """``lanes_of``: the input connector whose element type the loop takes, when the output's differs (a
+        comparison writes bool)."""
         self.node, self.state, self.sdfg = node, state, sdfg
         self.inputs: dict[str, dace.typeclass | None] = {}
         out = out_edges(state, node)[out_conn]
         self.check(tcdm_tile_reason(sdfg, out, f"{node.label}: output {out_conn}"))
         self.outputs = {out_conn: pointer_to(sdfg, out)}
-        self.dtype = edge_desc(sdfg, out).dtype
+        self.dtype = edge_desc(sdfg, in_edges(state, node)[lanes_of] if lanes_of else out).dtype
         if self.dtype not in RVV_SUFFIX:
             raise LoweringError(f"{node.label}: Spatz takes float32, float16 or int32, not {self.dtype}")
         self.suffix = RVV_SUFFIX[self.dtype]
@@ -59,11 +69,12 @@ class Call:
         if reason is not None:
             raise LoweringError(reason)
 
-    def tile(self, conn: str) -> str:
+    def tile(self, conn: str, dtype: dace.typeclass | None = None) -> str:
+        """``conn`` read in place; its element type must be ``dtype``, the loop's by default."""
         edge = in_edges(self.state, self.node)[conn]
         self.check(tcdm_tile_reason(self.sdfg, edge, f"{self.node.label}: {conn}"))
-        if edge_desc(self.sdfg, edge).dtype != self.dtype:
-            raise LoweringError(f"{self.node.label}: {conn} is not {self.dtype}")
+        if edge_desc(self.sdfg, edge).dtype != (dtype or self.dtype):
+            raise LoweringError(f"{self.node.label}: {conn} is not {dtype or self.dtype}")
         self.inputs[conn] = pointer_to(self.sdfg, edge)
         return conn
 
@@ -74,6 +85,10 @@ class Call:
         return f"({self.dtype.ctype})({operand.conn})"
 
     def tasklet(self, body: str) -> nodes.Tasklet:
+        # rv32 newlib's int32_t is long, DaCe's int32 is int: one width, two C++ types, so int tiles pass by cast
+        for conn, ptr in {**self.inputs, **self.outputs}.items():
+            if ptr is not None and ptr.base_type == dace.int32:
+                body = re.sub(rf"\b{conn}\b(?!\s*\[)", f"(int32_t*){conn}", body)  # not an indexed scalar
         # The fence completes the vector stores before the cluster barrier lets other cores read them
         return guarded_tasklet(
             f"{self.node.label}_rvv", self.inputs, self.outputs, COMPUTE_CORE, f"{body}\ndsh_vfence();"
@@ -92,6 +107,8 @@ class ExpandBinopRVV(ExpandTransformation):
     @staticmethod
     def expansion(node: TileBinop, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         no_mask(node)
+        if node.op in COMPARES:
+            return compare(node, parent_state, parent_sdfg)
         if node.op not in BINOPS:
             raise LoweringError(f"{node.label}: no Spatz loop for {node.op!r}")
         name, commutes = BINOPS[node.op]
@@ -164,3 +181,72 @@ class ExpandReduceRVV(ExpandTransformation):
             raise LoweringError(f"{node.label}: a float16 sum would accumulate in float16")
         source = call.tile("_src")
         return call.tasklet(f"_dst[0] = dsh_rvv_red{REDUCTIONS[node.op]}_{call.suffix}({source}, {call.count});")
+
+
+def compare(node: TileBinop, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    """A comparison into a bool tile: ``x CMP y`` or ``x CMP s``; ``s CMP x`` is ``x`` compared the other way."""
+    a, b = node.operands()
+    if TILE not in (a.kind, b.kind):
+        raise LoweringError(f"{node.label}: one side of {node.op!r} must be a tile")
+    call = Call(node, state, sdfg, "_c", "_a" if a.kind == TILE else "_b")
+    if edge_desc(sdfg, out_edges(state, node)["_c"]).dtype != dace.bool_:
+        raise LoweringError(f"{node.label}: a comparison writes a bool tile")
+    name, swapped = COMPARES[node.op]
+    n, s = call.count, call.suffix
+    if a.kind == TILE and b.kind == TILE:
+        body = f"dsh_rvv_{name}_{s}(_c, {call.tile('_a')}, {call.tile('_b')}, {n});"
+    elif a.kind == TILE:
+        body = f"dsh_rvv_{name}_s_{s}(_c, {call.tile('_a')}, {call.value(b)}, {n});"
+    else:
+        body = f"dsh_rvv_{swapped}_s_{s}(_c, {call.tile('_b')}, {call.value(a)}, {n});"
+    return call.tasklet(body)
+
+
+@library.register_expansion(TileITE, IMPLEMENTATION)  # pyright: ignore[reportArgumentType] -- DaCe's annotation
+class ExpandITERVV(ExpandTransformation):
+    """``_o = _mask ? _t : _e`` with a bool tile as the condition: a scalar loop on the Spatz core (``dsh_rvv.h``:
+    GVSoC's Spatz model stops on mask instructions)."""
+
+    environments: ClassVar[list[type]] = []
+
+    @staticmethod
+    def expansion(node: TileITE, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        condition, then, otherwise = node.operands()
+        if condition.kind != TILE:
+            raise LoweringError(f"{node.label}: Spatz selects under a bool tile, not a {condition.kind} condition")
+        call = Call(node, parent_state, parent_sdfg, "_o")
+        mask, n, s = call.tile("_mask", dace.bool_), call.count, call.suffix
+        if then.kind == TILE and otherwise.kind == TILE:
+            body = f"dsh_rvv_select_{s}(_o, {mask}, {call.tile('_t')}, {call.tile('_e')}, {n});"
+        elif otherwise.kind == TILE:
+            body = f"dsh_rvv_select_ts_{s}(_o, {mask}, {call.value(then)}, {call.tile('_e')}, {n});"
+        elif then.kind == TILE:
+            body = f"dsh_rvv_select_es_{s}(_o, {mask}, {call.tile('_t')}, {call.value(otherwise)}, {n});"
+        else:
+            raise LoweringError(f"{node.label}: one arm must be a tile")
+        return call.tasklet(body)
+
+
+#: TileScan combines as C on two values ``a`` and ``b``.
+SCAN_COMBINE = {"+": "a + b", "*": "a * b", "min": "b < a ? b : a", "max": "b > a ? b : a"}
+
+
+@library.register_expansion(TileScan, IMPLEMENTATION)  # pyright: ignore[reportArgumentType] -- DaCe's annotation
+class ExpandScanRVV(ExpandTransformation):
+    """An inclusive scan of a one-dim tile, a scalar loop on the compute core: RVV has no scan instruction, and the
+    log-step slide-and-add costs more than the loop at Spatz's strip lengths.
+
+    shortcut: scalar; a vslideup ladder per strip (alloy/isa intrinsics.toml rvv scan_add) once it runs on GVSoC."""
+
+    environments: ClassVar[list[type]] = []
+
+    @staticmethod
+    def expansion(node: TileScan, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        call = Call(node, parent_state, parent_sdfg, "_dst")
+        source, ctype = call.tile("_src"), call.dtype.ctype
+        combine = SCAN_COMBINE[node.op].replace("a", "acc").replace("b", f"{source}[i]")
+        body = (
+            f"{ctype} acc = {source}[0];\n_dst[0] = acc;\n"
+            f"for (size_t i = 1; i < {call.count}; ++i) {{\n    acc = {combine};\n    _dst[i] = acc;\n}}"
+        )
+        return call.tasklet(body)

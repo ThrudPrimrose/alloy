@@ -8,6 +8,9 @@ the reference, |got - ref| <= 1e-5 + 1e-3 |ref|, and a sum's partial tiles added
 the descriptor's ``placement`` says: interleaved DRAM, or L1 height sharded over those cores.
 
     python3 ttsim_host.py FOLDER...   # each: reader.cpp, compute.cpp, writer.cpp, config.json, program.json
+
+A folder with ``inputs.npz`` (the shared gate's case, alloy.tensixgen.gate) runs those arrays instead, at their own
+tile count, and saves the output as ``got.npy`` (a reduction's partial tiles summed in float64); the gate compares it.
 """
 
 import json
@@ -116,15 +119,25 @@ def compute_descriptor(module: ModuleType, cfg: Json) -> "ttnn.ComputeConfigDesc
 
 
 def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
+    import numpy
+    import torch
     import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
     task = json.loads((folder / "program.json").read_text())
     cfg = json.loads((folder / "config.json").read_text())
-    xs, want = operands(task)
+    given = folder / "inputs.npz"
+    if given.exists():  # the gate's own arrays, 1024 consecutive elements per tile
+        with numpy.load(given) as found:
+            xs = [torch.from_numpy(found[name].astype(numpy.float64).reshape(-1, 32)) for name, *_ in task["inputs"]]
+        want = None
+    else:
+        xs, want = operands(task)
+    tiles = xs[0].numel() // (32 * 32)
     grid = dev.compute_with_storage_grid_size()
     cores = [(x, y) for y in range(grid.y) for x in range(grid.x)]  # core index = y * grid.x + x
     cores = cores[: task["options"]["cores"] or len(cores)]
-    assert len(cores) <= TILES, f"{len(cores)} cores for {TILES} tiles: a core without a tile hangs"
+    cores = cores[:tiles]  # a core without a tile hangs
+    assert len(cores) <= tiles, f"{len(cores)} cores for {tiles} tiles: a core without a tile hangs"
     core = ttnn.CoreRangeSet([ttnn.CoreRange(ttnn.CoreCoord(x, y), ttnn.CoreCoord(x, y)) for x, y in cores])
     placed = task["placement"]
 
@@ -153,7 +166,7 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
         for i, (tiles, f) in sorted(plan.items())
     ]  # fmt: skip
     config = compute_descriptor(ttnn, cfg)
-    base, rest = divmod(TILES, len(cores))
+    base, rest = divmod(tiles, len(cores))
     counts = [base + (i < rest) for i in range(len(cores))]
     starts = [sum(counts[:i]) for i in range(len(cores))]
     addrs = [x.buffer_address() for x in tensors]
@@ -180,6 +193,10 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
     ]  # fmt: skip
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
     got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
+    if want is None:
+        found = got.double().sum().reshape(1) if reduce else got.double().flatten()
+        numpy.save(folder / "got.npy", found.numpy())
+        return {"ok": True, "err": None, "abs": None, "cores": len(cores)}  # the gate checks got.npy
     return {**verdict_of(task, got, want), "cores": len(cores)}
 
 

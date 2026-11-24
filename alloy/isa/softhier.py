@@ -54,8 +54,8 @@ FLAGS = ["-mabi=ilp32d", "-mcmodel=medlow", "-march=rv32imafdv_zfh_zvfh", "-O3",
          "-fno-tree-vectorize", "-fno-common", "-ffunction-sections"]  # fmt: skip
 #: Per kind and element type: the largest max |out - ref| / max |ref| a run may show. Elementwise: one rounding (2u).
 #: reduce_add: one rounding per strip of a sum whose last strip holds the largest terms (5 strips of f32, 3 of f16, a
-#: few u), so dropping the tail or five terms is outside it. reduce_max is exact. mma: the model rounds an f32 sum to
-#: f16 once (2u, about 4.5x the 2.2e-4 measured on 2026-11-18).
+#: few u), so dropping the tail or five terms is outside it. reduce_max, reduce_min, min, max, neg and abs are exact.
+#: mma: the model rounds an f32 sum to f16 once (2u, about 4.5x the 2.2e-4 measured on 2026-11-18).
 TOLERANCE = {"f32": 1e-6, "f16": 1e-3, "reduction_f32": 1e-6, "reduction_f16": 2e-3, "mma_f16": 1e-3}
 C_TYPES = {"f32": "float", "f16": "_Float16"}
 #: Wrong rows the harness must fail: a row's name, and the text in its code swapped for the wrong one.
@@ -68,6 +68,9 @@ PLANTED = {
     "planted_barrier_global_removed": ("barrier_global", "flex_global_barrier_xy();", ";"),
     "planted_reduce_add_without_tail": ("reduce_add", "i < n;", "i + __riscv_vsetvlmax_e${b}m8() <= n;"),
     "planted_reduce_max_without_tail": ("reduce_max", "i < n;", "i + __riscv_vsetvlmax_e${b}m8() <= n;"),
+    "planted_reduce_min_without_tail": ("reduce_min", "i < n;", "i + __riscv_vsetvlmax_e${b}m8() <= n;"),
+    "planted_min_is_max": ("min", "__riscv_vfmin_vv_", "__riscv_vfmax_vv_"),
+    "planted_sqrt_is_abs": ("sqrt", "__riscv_vfsqrt_v_", "__riscv_vfabs_v_"),
 }  # fmt: skip
 RUN_TIMEOUT = 3600
 
@@ -147,7 +150,7 @@ def function(row: Row, dtype: str) -> str:
 
 
 def tolerance(row: Row, dtype: str) -> float:
-    if row.op == "reduce_max":
+    if row.op in ("reduce_max", "reduce_min", "min", "max", "neg", "abs"):  # no rounding: exact
         return 0.0
     if row.kind in ("reduction", "mma"):
         return TOLERANCE[f"{row.kind}_{dtype}"]
@@ -322,7 +325,8 @@ def run_harness(jobs: int = 8, image: pathlib.Path | None = None) -> str:
         shutil.copy(HARNESS, work / "softhier_harness.py")
         command = [sys.executable, str(work / "softhier_harness.py"), str(work / "rows.json")]
         if image is not None:
-            command = ["singularity", "exec", "-B", tmp, str(image), "python3", *command[1:]]
+            # the image's compilers write temporaries in TMPDIR: the bound folder, not the host's (unbound, read-only)
+            command = ["singularity", "exec", "-B", tmp, "--env", f"TMPDIR={tmp}", str(image), "python3", *command[1:]]
         done = subprocess.run(command, capture_output=True, text=True, check=False, timeout=RUN_TIMEOUT)
     if done.returncode != 0:
         raise RuntimeError(f"the harness exited {done.returncode}: {done.stderr[-1500:]}")

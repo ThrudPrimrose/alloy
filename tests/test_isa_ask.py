@@ -958,12 +958,29 @@ def requests(target: str, *texts: str) -> list[Request]:
     ("sm90", "mbarrier", "mbarrier.try_wait.parity"), ("sm90", "wgmma_group", "wgmma.wait_group.sync.aligned 0"),
     ("sm90", "bulk_group", "cp.async.bulk.wait_group.read 0"), ("sm90", "cp_async_group", "cp.async.wait_group 0"),
     ("gfx90a", "vmcnt", "s_waitcnt vmcnt(0)"), ("gfx942", "lgkmcnt", "s_waitcnt lgkmcnt(0)"),
-    ("tensix", "noc", "noc_async_read_barrier()"), ("tensix", "cb", "cb_wait_front"),
+    ("tensix", "noc", "noc_async_read_barrier()"), ("tensix", "noc_write", "noc_async_write_barrier()"),
+    ("tensix", "cb", "cb_wait_front"),
 ])  # fmt: skip
 def test_a_wait_answers_the_instruction_that_completes_its_token(target: str, on: str, spelled: str) -> None:
     sut = ask(Request(target, "wait", on=on))
 
     assert isinstance(sut, Feasible) and spelled in sut.code
+
+
+@pytest.mark.parametrize(("src", "dst", "spelled", "token"), [
+    ("global", "shared", "noc_async_read_tile(", "noc"), ("shared", "global", "noc_async_write_tile(", "noc_write"),
+])  # fmt: skip
+def test_a_tensix_copy_moves_whole_tiles_over_the_noc_and_names_its_barrier(
+    src: str, dst: str, spelled: str, token: str
+) -> None:
+    sut = ask(Request("tensix", "copy", {"src": Operand(src, "f32", (32, 64)), "dst": Operand(dst, "f32", (32, 64))}))
+    ragged = ask(
+        Request("tensix", "copy", {"src": Operand(src, "f32", (30, 32)), "dst": Operand(dst, "f32", (30, 32))})
+    )
+
+    assert isinstance(sut, Feasible) and spelled in sut.code and sut.steps[1].count == 2
+    assert sut.completion is not None and sut.completion.wait == f"wait on={token}"
+    assert isinstance(ragged, Infeasible) and ragged.why is Why.SHAPE
 
 
 def test_a_wait_on_a_token_the_target_lacks_offers_the_ones_it_has_and_a_cpu_has_none() -> None:
