@@ -433,7 +433,11 @@ def test_a_profile_episode_whose_timing_crashes_delivers_the_plain_program_and_r
     monkeypatch.setattr(adapter, "plain", lambda *args: BASE)
     monkeypatch.setattr(adapter, "generated", crashed)
 
-    sut = adapter.optimize(task, "canon", lambda *args: BASE, lambda schema, data: kept.append((schema, data)))  # type: ignore[arg-type]
+    def keep(schema: int, data: object) -> pathlib.Path:
+        kept.append((schema, data))
+        return tmp_path
+
+    sut = adapter.optimize(task, "canon", lambda *args: BASE, keep)
 
     assert sut is BASE
     ((_, data),) = kept
