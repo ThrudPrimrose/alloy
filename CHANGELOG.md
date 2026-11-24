@@ -6,6 +6,8 @@
   the strip-mined `rvv_vsetvl` schedule with its skeleton, and llvm-mca costs on SiFive X280. Every row except the
   transcendentals runs under qemu-riscv64 at VLEN 256 against the scalar reference, as SVE runs under qemu-aarch64.
 - `reverse` takes dotted RVV mnemonics (`vfmacc.vv`).
+- HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
+  drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 
 ## 0.1.1 (2026-11-24)
 

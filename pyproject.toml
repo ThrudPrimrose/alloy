@@ -66,10 +66,6 @@ no-binary-package = ["cupy"]
 # The pinned bench still names a bare `dace`; dropped, so dace-extended alone installs the `dace` package.
 override-dependencies = ["dace ; sys_platform == 'never'"]
 
-# PyPI metadata carries plain names; checkouts and CI take the bench at its pinned commit.
-[tool.uv.sources]
-hpcagent-bench = { git = "https://github.com/spcl/HPCAgent-Bench.git", rev = "a4395e3c5c7d69832f456b715575ef6c29d24463" }
-
 [tool.mypy]
 # Strict static typing for Alloy's own code, as in a statically typed language. The untyped libraries it calls (DaCe,
 # the benchmark, tt-metal, torch) are skipped: their values are Any at the boundary, which strict mode makes explicit.
