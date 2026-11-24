@@ -19,7 +19,7 @@ import numpy
 
 from alloy import tilelower
 from alloy.gate import Case, error
-from alloy.softhiergen.gate.programs import cases, collective_cases, placement_cases
+from alloy.softhiergen.gate.programs import all_cases
 from alloy.tensixgen import ttsim
 from alloy.tensixgen.backend import Refused
 from alloy.tensixgen.split import Program, program
@@ -51,7 +51,7 @@ PLANTED = {"planted: vector add is sub": ("vector add", "add_binary_tile", "sub_
 def generated() -> tuple[dict[str, tuple[Case, Program]], dict[str, str]]:
     """Every shared case's Tensix program, and the refusal of every other case."""
     made, refused = {}, {}
-    for case in cases() + collective_cases() + placement_cases():
+    for case in all_cases():
         try:
             made[case.name] = (case, lowered(case))
         except Exception as err:  # every refusal is a row of the table, whatever raised it
@@ -67,11 +67,11 @@ def generated() -> tuple[dict[str, tuple[Case, Program]], dict[str, str]]:
 def run(root: pathlib.Path, cache: pathlib.Path) -> dict[str, str]:
     """Each generated program on ttsim: ``correct (rel e)``, ``wrong (rel e)`` or the run's error, by case."""
     made, _ = generated()
-    folders = []
+    folders: list[tuple[str, Case, pathlib.Path]] = []
     for name, (case, prog) in made.items():
         folder = prog.write(root / f"case{len(folders)}")
         arrays = {k: numpy.asarray(v, dtype=numpy.float32) for k, v in case.inputs.items() if numpy.ndim(v) > 0}
-        numpy.savez(folder / "inputs.npz", **arrays)  # pyright: ignore[reportArgumentType] -- numpy types its keyword arrays as its own options
+        numpy.savez(folder / "inputs.npz", **arrays)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType] -- numpy types its keyword arrays as its own options
         folders.append((name, case, folder))
     verdicts = ttsim.run([folder for _, _, folder in folders], cache)
     found = {}

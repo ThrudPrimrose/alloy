@@ -14,9 +14,9 @@ This page lists what the two backends share, where they differ, and what each re
 
 | Part | Where | What it does |
 |---|---|---|
-| Front | `alloy.tilelower.front(sdfg, width, fuse_multiply_add)` | Expands `numpy.where` to an elementwise map, then runs `simplify` without dead-dataflow elimination, vertical map fusion, and redundant-array removal. Then DaCe's vectorizer turns each elementwise map into a map of tile nodes, `width` lanes wide. |
+| Front | `alloy.tilelower.front(sdfg, width, fuse_multiply_add)` | Substitutes the specialized sizes into the SDFG, expands `numpy.where` to an elementwise map, then runs `simplify` without dead-dataflow elimination, vertical map fusion, and redundant-array removal. Then DaCe's vectorizer turns each elementwise map into a map of tile nodes, `width` lanes wide. |
 | Refusal | `alloy.tilelower.Unsupported` | The base class of softhiergen's `LoweringError` and tensixgen's `Refused`. The message names the node and the reason. Neither backend falls back to a scalar loop it was not built for. |
-| Gate | `alloy.gate`, cases in `alloy/softhiergen/gate/programs.py` | Holds the NumPy programs, their inputs, and their float64 references. The check is per element: `\|out - ref\| <= tol (\|ref\| + max \|ref\|)`, with integer and bool outputs exact. Each backend also runs one planted wrong program (vector add with the add swapped for a sub), which must come out wrong. |
+| Gate | `alloy.gate`, cases in `alloy/softhiergen/gate/programs.py` (`all_cases`, with the CloudSC nests of `cloudsc.py`) | Holds the NumPy programs, their inputs, and their float64 references. The check is per element: `\|out - ref\| <= tol (\|ref\| + max \|ref\|)`, with integer and bool outputs exact. Each backend also runs one planted wrong program (vector add with the add swapped for a sub), which must come out wrong. |
 | Rows | `alloy/isa/softhier.toml`, `alloy/isa/tensix.toml` | The checked instructions each expansion may call. Every row runs on the simulator against a scalar reference, and a planted wrong row must fail (`*_verified.toml`). |
 
 Tile widths differ because the hardware does:

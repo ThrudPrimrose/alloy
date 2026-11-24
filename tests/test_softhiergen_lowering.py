@@ -392,6 +392,24 @@ def test_a_rooted_collective_keeps_the_copy_that_fills_its_output() -> None:
     assert "init_dma" in program.generate(gather.sdfg())
 
 
+def test_numpy_full_is_the_spatz_fill() -> None:
+    """The vectorizer spells ``numpy.full`` as a TileGather of a constant: Spatz fills the tile."""
+    from alloy.softhiergen.gate.programs import full_where
+
+    assert "dsh_rvv_fill_f32(" in program.generate(full_where.to_sdfg(simplify=True))
+
+
+def test_a_specialized_cloudsc_nest_lowers_with_its_sizes_as_constants() -> None:
+    """KLEV and KLON are specialized, not literal: the tile width and the vectorizer read their values, so no size guard
+    is left outside the kernels; the Magnus exponentials are the ladder's exp loops."""
+    from alloy.softhiergen.gate.cloudsc import cloudsc_cases
+
+    (saturation, *_) = cloudsc_cases()
+    code = program.generate(saturation.sdfg())
+
+    assert "dsh_scalar_exp_f32(" in code and "abort" not in code
+
+
 def test_cumsum_scans_each_share_and_adds_the_earlier_totals() -> None:
     """A cluster scans its share, the clusters allgather their totals, and each adds the totals before its own."""
     from alloy.softhiergen.gate.programs import cumsum

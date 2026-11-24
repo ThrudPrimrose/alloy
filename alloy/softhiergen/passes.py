@@ -12,11 +12,11 @@
 
 import math
 
-from dace import data, dtypes, nodes
+from dace import data, dtypes, nodes, symbolic
 from dace.libraries.comm.nodes.node import CommNode
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
-from dace.libraries.tileops import TileBinop, TileFMA, TileITE, TileMMA, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileFMA, TileGather, TileITE, TileMMA, TileReduce, TileUnop
 from dace.libraries.tileops.nodes.tile_scan import TileScan
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
@@ -39,7 +39,7 @@ from alloy.softhiergen.library.common import LoweringError
 KERNEL_IMPLEMENTATIONS: tuple[tuple[type | tuple[type, ...], str], ...] = (
     (CopyLibraryNode, dma.IMPLEMENTATION),
     (TileMMA, redmule.IMPLEMENTATION),
-    ((TileBinop, TileFMA, TileITE, TileReduce, TileScan, TileUnop), rvv.IMPLEMENTATION),
+    ((TileBinop, TileFMA, TileGather, TileITE, TileReduce, TileScan, TileUnop), rvv.IMPLEMENTATION),
     (CommNode, collectives.IMPLEMENTATION),
     (Sync, sync.IMPLEMENTATION),
 )
@@ -58,7 +58,7 @@ def tile_width(sdfg: SDFG, widest: int) -> int:
 
     shortcut: a ragged extent gets narrow tiles, not a masked remainder; masked Spatz loops would keep 256."""
     extents = [
-        int(node.map.range.size_exact()[-1])
+        int(symbolic.evaluate(node.map.range.size_exact()[-1], sdfg.constants))  # a specialized size is a constant
         for state in sdfg.states()
         for node in state.nodes()
         if isinstance(node, nodes.MapEntry) and state.entry_node(node) is None and len(node.map.range) > 0

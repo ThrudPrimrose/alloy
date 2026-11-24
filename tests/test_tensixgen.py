@@ -289,10 +289,16 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
     for name in ("vector add", "axpy", "sum reduction", "unary (neg, abs, sqrt)", "ladder exp and log (softplus)",
                  "relu (a scalar arm)"):  # fmt: skip
         assert lowered(by_name[name]).compute
+    assert "fill_tile(" in lowered(by_name["numpy.full in a where (a filled tile)"]).compute
     where = lowered(by_name["compare and select (where)"]).compute
     assert "lt_binary_tile(" in where and "where_tile<DataFormat::Float32>(" in where
     with pytest.raises(Refused, match="float16"):
         lowered(by_name["float16 multiply"])
+    from alloy.softhiergen.gate.cloudsc import cloudsc_cases
+
+    for nest in cloudsc_cases():  # contract v2 writes one output; every CloudSC nest writes several
+        with pytest.raises(Refused, match="outputs; a Tensix program writes one"):
+            lowered(nest)
 
 
 @pytest.mark.tensix

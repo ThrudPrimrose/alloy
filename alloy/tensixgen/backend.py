@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 
 import dace
-from dace.libraries.tileops.nodes import TileBinop, TileITE, TileReduce, TileUnop
+from dace.libraries.tileops.nodes import TileBinop, TileGather, TileITE, TileReduce, TileUnop
 from dace.libraries.tileops.ops import CAST_OPS
 from dace.sdfg import nodes
 
@@ -150,6 +150,8 @@ def op_of(node: nodes.LibraryNode) -> str:
         return BINARY[node.op]  # a Symbol operand is a filled tile of the split's
     if isinstance(node, TileUnop) and node.kind_a == "Symbol" and node.op in CAST_OPS:  # a constant: a filled tile
         return "broadcast"
+    if isinstance(node, TileGather) and node.src_kind == "Symbol":  # numpy.full: a filled tile
+        return "broadcast"
     if isinstance(node, TileUnop) and node.kind_a != "Tile":
         raise Refused(f"{node.label}: {node.op} of a {node.kind_a}, not of a tile")
     if isinstance(node, TileUnop) and node.op in UNARY:
@@ -194,17 +196,20 @@ CONNECTORS: dict[type[nodes.LibraryNode], tuple[str, ...]] = {
     TileUnop: ("_c",),
     TileReduce: ("_dst", "_src", "_dst"),
     TileITE: ("_mask", "_t", "_e", "_o"),
+    TileGather: ("_dst",),
 }
 
 
 #: The compute tile nodes Tensix runs.
-TILE_NODES = (TileBinop, TileUnop, TileReduce, TileITE)
+TILE_NODES = (TileBinop, TileUnop, TileReduce, TileITE, TileGather)
 
 
 def node_code(node: nodes.LibraryNode, version: str = "v06") -> tuple[str, str]:
     """``node``'s init and call on DST tiles named by its connectors, for tt-metal ``version``."""
     op = op_of(node)
-    value = constant(node, node.expr_a) if op == "broadcast" and isinstance(node, TileUnop) else 0.0
+    value = 0.0
+    if op == "broadcast":
+        value = constant(node, node.expr_a if isinstance(node, TileUnop) else node.src_expr)  # pyright: ignore[reportAttributeAccessIssue] -- a TileGather
     return code(op, CONNECTORS[type(node)], value, version)
 
 

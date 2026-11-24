@@ -12,7 +12,7 @@ import numpy
 
 from alloy.gate import error
 from alloy.softhiergen import program
-from alloy.softhiergen.gate.programs import cases, collective_cases, placement_cases
+from alloy.softhiergen.gate.programs import all_cases
 
 #: Generated programs with one call swapped, by the case they copy: the check must call each wrong
 PLANTED = {"planted: vector add is sub": ("vector add", "dsh_rvv_add_f32(", "dsh_rvv_sub_f32(")}
@@ -27,7 +27,7 @@ def slug(name: str) -> str:
 
 
 def prepare(root: pathlib.Path) -> None:
-    for case in cases() + collective_cases() + placement_cases():
+    for case in all_cases():
         folder = root / slug(case.name)
         try:
             sdfg = case.sdfg()
@@ -65,7 +65,7 @@ def outcome(
 
 def check(root: pathlib.Path) -> bool:
     print("| program | builds | runs | correct | cycles |\n|---|---|---|---|---|")
-    every = {case.name: case for case in cases() + collective_cases() + placement_cases()}
+    every = {case.name: case for case in all_cases()}
     passed = True
     for case in every.values():
         built, ran, correct, cycles, note = outcome(root / slug(case.name), case.expected, case.tolerance)

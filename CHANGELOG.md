@@ -39,6 +39,13 @@
   the copy that fills a rooted collective's output (the gate's gather and reduce came out wrong).
 - `docs/tile-backends.md` sets softhiergen and tensixgen side by side: the shared front and gate, the differences,
   what each refuses, and the known limits; `docs/softhiergen.md` follows the code again (front, compares, exp and log).
+- CloudSC in the gate: float32 transcriptions of the saturation, liquid/ice fraction and init nests, on the bench
+  initializer's draws against the bench's float64 NumPy reference (`alloy/softhiergen/gate/cloudsc.py`). Both gates
+  read one case list (`programs.all_cases`). A specialized SDFG lowers on both backends (the front substitutes the
+  specialized sizes, so the vectorizer leaves no size guard and SoftHier's tile width reads them); `numpy.full` (a
+  constant TileGather) is a fill on both (Spatz `dsh_rvv_fill_*`, Tensix `fill_tile`). Tensix refuses the CloudSC
+  nests: each writes several outputs, and contract v2 writes one.
+- CI: the Tensix rows run at their own dtypes (`tensix.row_dtypes`: select is float32 only); mypy and pyright clean.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

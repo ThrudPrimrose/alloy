@@ -12,7 +12,7 @@ from typing import ClassVar
 import dace
 from dace import library
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.libraries.tileops import TileBinop, TileFMA, TileITE, TileReduce, TileUnop
+from dace.libraries.tileops import TileBinop, TileFMA, TileGather, TileITE, TileReduce, TileUnop
 from dace.libraries.tileops.kinds import SYMBOL, TILE
 from dace.libraries.tileops.nodes.tile_scan import TileScan
 from dace.libraries.tileops.operands import Operand
@@ -176,6 +176,23 @@ def ladder_unit() -> str:
                   f"void dsh_scalar_{fn}_f32(float *z, const float *x, int n) {{",
                   f"    for (int i = 0; i < n; ++i) z[i] = {k.name}(x[i]);", "}"]  # fmt: skip
     return "\n".join(lines) + "\n"
+
+
+@library.register_expansion(TileGather, IMPLEMENTATION)  # pyright: ignore[reportArgumentType] -- DaCe's annotation
+class ExpandGatherRVV(ExpandTransformation):
+    """A constant over the tile (``numpy.full``): the Spatz fill loop. A gather from memory has no Spatz loop."""
+
+    environments: ClassVar[list[type]] = []
+
+    @staticmethod
+    def expansion(node: TileGather, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        if node.src_kind != SYMBOL:
+            raise LoweringError(f"{node.label}: only a constant fills a tile on Spatz, not a {node.src_kind} gather")
+        call = Call(node, parent_state, parent_sdfg, "_dst")
+        if call.suffix == "i32":
+            raise LoweringError(f"{node.label}: Spatz fills float tiles only")
+        value = f"({call.dtype.ctype})({pyexpr2cpp(node.src_expr)})"
+        return call.tasklet(f"dsh_rvv_fill_{call.suffix}(_dst, {value}, {call.count});")
 
 
 @library.register_expansion(TileFMA, IMPLEMENTATION)  # pyright: ignore[reportArgumentType] -- DaCe's annotation

@@ -314,14 +314,17 @@ class BodyBuilder:
             self.operands(node, ins, init, call, outs["_c" if isinstance(node, TileBinop) else "_o"])
         elif "_a" in ins:
             self.unary(node, ins["_a"], init, call, outs["_c"])
-        else:  # a filled tile
-            self.steps.append(Step(init, call, (("_c", slots.take(outs["_c"])),)))
+        else:  # a filled tile: a constant TileUnop (_c) or a constant TileGather (_dst)
+            self.steps.append(Step(init, call, tuple((conn, slots.take(data)) for conn, data in outs.items())))
 
     def operands(self, node: TileBinop | TileITE, ins: dict[str, str], init: str, call: str, out: str) -> None:
         """A binary op (``_a``, ``_b`` into ``_c``) or a select (``_mask``, ``_t``, ``_e`` into ``_o``); a constant
         operand is a filled tile."""
         if isinstance(node, TileBinop):
-            given = (("_a", node.kind_a, node.expr_a), ("_b", node.kind_b, node.expr_b))
+            given: tuple[tuple[str, str, str | None], ...] = (
+                ("_a", node.kind_a, node.expr_a),
+                ("_b", node.kind_b, node.expr_b),
+            )
         else:
             given = (("_mask", node.kind_mask, node.expr_mask), ("_t", node.kind_t, node.expr_t),
                      ("_e", node.kind_e, node.expr_e))  # fmt: skip

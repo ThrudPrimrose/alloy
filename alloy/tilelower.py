@@ -18,6 +18,9 @@ class Unsupported(ValueError):
 
 def front(sdfg: SDFG, width: int, fuse_multiply_add: bool) -> None:
     """:func:`fuse`, then :func:`vectorize` at ``width`` lanes: the tile nodes both backends expand."""
+    # A specialized size becomes its value in every shape and range: the vectorizer then proves the tiles divide it,
+    # where it would guard a symbol at run time outside every kernel
+    sdfg.replace_dict({name: value for name, value in sdfg.constants.items() if name in sdfg.symbols})
     fuse(sdfg)
     try:
         vectorize(sdfg, width, fuse_multiply_add)

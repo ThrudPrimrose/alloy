@@ -61,6 +61,11 @@ def softplus(x: dace.float32[N], y: dace.float32[N]) -> None:
 
 
 @dace.program
+def full_where(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.where(x > 0.0, numpy.full(N, 1.0, dtype=numpy.float32), x)
+
+
+@dace.program
 def where(x: dace.float32[N], z: dace.float32[N], y: dace.float32[N]) -> None:
     y[:] = numpy.where(x < z, x, z)
 
@@ -224,6 +229,13 @@ def cases() -> list[Case]:
             {"x": a},
             {"y": numpy.log1p(numpy.exp(a.astype(numpy.float64)))},
             1e-6,
+        ),
+        Case(
+            "numpy.full in a where (a filled tile)",
+            lambda: full_where.to_sdfg(simplify=True),
+            {"x": a},
+            {"y": numpy.where(a > 0.0, f32(1.0), a)},
+            0.0,
         ),
         Case("copy chain", lambda: copy_chain.to_sdfg(simplify=False), {"A": a}, {"C": a}, 0.0),
         Case(
@@ -414,3 +426,10 @@ def placement_cases() -> list[Case]:
             0.0,
         ),
     ]
+
+
+def all_cases() -> list[Case]:
+    """Every case of the gate, both backends: the programs, the collectives, the placements and the CloudSC nests."""
+    from alloy.softhiergen.gate.cloudsc import cloudsc_cases
+
+    return cases() + collective_cases() + placement_cases() + cloudsc_cases()
