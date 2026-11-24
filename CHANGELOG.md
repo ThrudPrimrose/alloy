@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 (2026-11-24)
+
+A fix to profile mode: a timing draw that crashed the reference program no longer loses the episode.
+
+- Size presets carry the manifest's first `config` row (`K`): a kernel whose input initializer reads a config entry
+  raised `KeyError: 'K'` at every timing draw (`ext_break_capture`, `fuse_move_ifs`, `versioned_distance_update`).
+- The verifying child tells distinct outputs apart by a BLAKE2b digest read in place, not a joined byte copy of every
+  output, which ran it out of its memory share at large sizes (`MemoryError`).
+- When Alloy's timer raises, profile mode delivers the plain program and keeps the episode record, as it does when
+  its pick grades slower. Before, the episode exited without a submission.
+
 ## 0.1.0 (2026-11-23)
 
 The first release, published on PyPI as `dace-alloy`. The import name is `alloy`.
