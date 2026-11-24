@@ -1,5 +1,5 @@
 # Written by helpers/isacost.py: llvm-mca's model of each table row's compiled instructions (alloy/isa/costs.py).
-# CPUs: neoverse-v2, znver4. Do not edit by hand; rerun the helper after a table change.
+# CPUs: neoverse-v2, sifive-x280, znver4. Do not edit by hand; rerun the helper after a table change.
 
 [[rows."avx2/f16/abs"]]
 cpu = "znver4"
@@ -3095,6 +3095,1000 @@ instruction = "sub v0.2d, v0.2d, v1.2d"
 uops = 1
 latency = 2
 rthroughput = 0.25
+
+[[rows."rvv/f32/abs"]]
+cpu = "sifive-x280"
+instruction = "vfabs.v v8, v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/add"]]
+cpu = "sifive-x280"
+instruction = "vfadd.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/broadcast"]]
+cpu = "sifive-x280"
+instruction = "ld a1, 0(a4)"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f32/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vsetvli zero, a1, e32, m1, ta, ma"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f32/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vlse32.v v8, (a0), zero"
+uops = 1
+latency = 19
+rthroughput = 16.0
+
+[[rows."rvv/f32/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vse32.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f32/div"]]
+cpu = "sifive-x280"
+instruction = "vfdiv.vv v8, v8, v9"
+uops = 1
+latency = 112
+rthroughput = 112.0
+
+[[rows."rvv/f32/fma"]]
+cpu = "sifive-x280"
+instruction = "vfmadd.vv v10, v9, v8"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/gather"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a4)"
+uops = 1
+latency = 4
+rthroughput = 4.0
+
+[[rows."rvv/f32/gather"]]
+cpu = "sifive-x280"
+instruction = "vsll.vi v8, v8, 2"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/gather"]]
+cpu = "sifive-x280"
+instruction = "vluxei64.v v10, (a0), v8"
+uops = 1
+latency = 11
+rthroughput = 8.0
+
+[[rows."rvv/f32/gen_mask"]]
+cpu = "sifive-x280"
+instruction = "vid.v v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/gen_mask"]]
+cpu = "sifive-x280"
+instruction = "vmsltu.vx v0, v8, a1"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f32/load"]]
+cpu = "sifive-x280"
+instruction = "vle32.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/load_bf16"]]
+cpu = "sifive-x280"
+instruction = "vle16.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/f32/load_bf16"]]
+cpu = "sifive-x280"
+instruction = "vzext.vf2 v9, v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/load_bf16"]]
+cpu = "sifive-x280"
+instruction = "vsll.vi v8, v9, 16"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/load_f16"]]
+cpu = "sifive-x280"
+instruction = "vle16.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/f32/load_f16"]]
+cpu = "sifive-x280"
+instruction = "vfwcvt.f.f.v v9, v8"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/lt"]]
+cpu = "sifive-x280"
+instruction = "vmflt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f32/max"]]
+cpu = "sifive-x280"
+instruction = "vfmax.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/min"]]
+cpu = "sifive-x280"
+instruction = "vfmin.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/mod"]]
+cpu = "sifive-x280"
+instruction = "vfdiv.vv v10, v8, v9"
+uops = 1
+latency = 112
+rthroughput = 112.0
+
+[[rows."rvv/f32/mod"]]
+cpu = "sifive-x280"
+instruction = "vfcvt.rtz.x.f.v v10, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/mod"]]
+cpu = "sifive-x280"
+instruction = "vfcvt.f.x.v v10, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/mod"]]
+cpu = "sifive-x280"
+instruction = "vfnmsub.vv v10, v9, v8"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/mul"]]
+cpu = "sifive-x280"
+instruction = "vfmul.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/neg"]]
+cpu = "sifive-x280"
+instruction = "vfneg.v v8, v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/reduce_add"]]
+cpu = "sifive-x280"
+instruction = "vfredusum.vs v8, v8, v9"
+uops = 1
+latency = 37
+rthroughput = 37.0
+
+[[rows."rvv/f32/reduce_max"]]
+cpu = "sifive-x280"
+instruction = "vfredmax.vs v8, v8, v8"
+uops = 1
+latency = 37
+rthroughput = 37.0
+
+[[rows."rvv/f32/reduce_min"]]
+cpu = "sifive-x280"
+instruction = "vfredmin.vs v8, v8, v8"
+uops = 1
+latency = 37
+rthroughput = 37.0
+
+[[rows."rvv/f32/scan_add"]]
+cpu = "sifive-x280"
+instruction = "vslideup.vx v10, v8, a0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/scan_add"]]
+cpu = "sifive-x280"
+instruction = "vfadd.vv v8, v8, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/scatter"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a4)"
+uops = 1
+latency = 4
+rthroughput = 4.0
+
+[[rows."rvv/f32/scatter"]]
+cpu = "sifive-x280"
+instruction = "vsll.vi v8, v8, 2"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/scatter"]]
+cpu = "sifive-x280"
+instruction = "vsuxei64.v v10, (a3), v8"
+uops = 1
+latency = 1
+rthroughput = 8.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "ld a4, 0(a4)"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vsetvli zero, a4, e32, m1, ta, mu"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vle32.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vle32.v v9, (a2)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vmflt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vle32.v v8, (a1), v0.t"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/select"]]
+cpu = "sifive-x280"
+instruction = "vse32.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f32/sqrt"]]
+cpu = "sifive-x280"
+instruction = "vfsqrt.v v8, v8"
+uops = 1
+latency = 112
+rthroughput = 112.0
+
+[[rows."rvv/f32/store"]]
+cpu = "sifive-x280"
+instruction = "vse32.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vsrl.vi v9, v8, 16"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vand.vi v9, v9, 1"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vadd.vx v9, v9, a1"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vadd.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vnsrl.wi v8, v8, 16"
+uops = 1
+latency = 8
+rthroughput = 4.0
+
+[[rows."rvv/f32/store_bf16"]]
+cpu = "sifive-x280"
+instruction = "vse16.v v8, (a0)"
+uops = 1
+latency = 1
+rthroughput = 1.0
+
+[[rows."rvv/f32/store_f16"]]
+cpu = "sifive-x280"
+instruction = "vfncvt.f.f.w v9, v8"
+uops = 1
+latency = 8
+rthroughput = 4.0
+
+[[rows."rvv/f32/store_f16"]]
+cpu = "sifive-x280"
+instruction = "vse16.v v9, (s1)"
+uops = 1
+latency = 1
+rthroughput = 1.0
+
+[[rows."rvv/f32/sub"]]
+cpu = "sifive-x280"
+instruction = "vfsub.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f32/zero"]]
+cpu = "sifive-x280"
+instruction = "vmv.v.i v8, 0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/abs"]]
+cpu = "sifive-x280"
+instruction = "vfabs.v v8, v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/add"]]
+cpu = "sifive-x280"
+instruction = "vfadd.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/broadcast"]]
+cpu = "sifive-x280"
+instruction = "ld a1, 0(a4)"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f64/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vsetvli zero, a1, e64, m1, ta, ma"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f64/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vlse64.v v8, (a0), zero"
+uops = 1
+latency = 11
+rthroughput = 8.0
+
+[[rows."rvv/f64/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vse64.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f64/div"]]
+cpu = "sifive-x280"
+instruction = "vfdiv.vv v8, v8, v9"
+uops = 1
+latency = 114
+rthroughput = 114.0
+
+[[rows."rvv/f64/fma"]]
+cpu = "sifive-x280"
+instruction = "vfmadd.vv v10, v9, v8"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/gather"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a4)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/gather"]]
+cpu = "sifive-x280"
+instruction = "vsll.vi v8, v8, 3"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/gather"]]
+cpu = "sifive-x280"
+instruction = "vluxei64.v v8, (a0), v8"
+uops = 1
+latency = 11
+rthroughput = 8.0
+
+[[rows."rvv/f64/gen_mask"]]
+cpu = "sifive-x280"
+instruction = "vid.v v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/gen_mask"]]
+cpu = "sifive-x280"
+instruction = "vmsltu.vx v0, v8, a1"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f64/load"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/lt"]]
+cpu = "sifive-x280"
+instruction = "vmflt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f64/max"]]
+cpu = "sifive-x280"
+instruction = "vfmax.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/min"]]
+cpu = "sifive-x280"
+instruction = "vfmin.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/mod"]]
+cpu = "sifive-x280"
+instruction = "vfdiv.vv v10, v8, v9"
+uops = 1
+latency = 114
+rthroughput = 114.0
+
+[[rows."rvv/f64/mod"]]
+cpu = "sifive-x280"
+instruction = "vfcvt.rtz.x.f.v v10, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/mod"]]
+cpu = "sifive-x280"
+instruction = "vfcvt.f.x.v v10, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/mod"]]
+cpu = "sifive-x280"
+instruction = "vfnmsub.vv v10, v9, v8"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/mul"]]
+cpu = "sifive-x280"
+instruction = "vfmul.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/neg"]]
+cpu = "sifive-x280"
+instruction = "vfneg.v v8, v8"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/reduce_add"]]
+cpu = "sifive-x280"
+instruction = "vfredusum.vs v8, v8, v9"
+uops = 1
+latency = 32
+rthroughput = 32.0
+
+[[rows."rvv/f64/reduce_max"]]
+cpu = "sifive-x280"
+instruction = "vfredmax.vs v8, v8, v8"
+uops = 1
+latency = 32
+rthroughput = 32.0
+
+[[rows."rvv/f64/reduce_min"]]
+cpu = "sifive-x280"
+instruction = "vfredmin.vs v8, v8, v8"
+uops = 1
+latency = 32
+rthroughput = 32.0
+
+[[rows."rvv/f64/scan_add"]]
+cpu = "sifive-x280"
+instruction = "vslideup.vx v10, v8, a0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/scan_add"]]
+cpu = "sifive-x280"
+instruction = "vfadd.vv v8, v8, v10"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/scatter"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a4)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/scatter"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v9, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/scatter"]]
+cpu = "sifive-x280"
+instruction = "vsll.vi v8, v8, 3"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/scatter"]]
+cpu = "sifive-x280"
+instruction = "vsuxei64.v v9, (a3), v8"
+uops = 1
+latency = 1
+rthroughput = 8.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "ld a4, 0(a4)"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vsetvli zero, a4, e64, m1, ta, mu"
+uops = 1
+latency = 3
+rthroughput = 1.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v9, (a2)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vmflt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a1), v0.t"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/f64/select"]]
+cpu = "sifive-x280"
+instruction = "vse64.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f64/sqrt"]]
+cpu = "sifive-x280"
+instruction = "vfsqrt.v v8, v8"
+uops = 1
+latency = 114
+rthroughput = 114.0
+
+[[rows."rvv/f64/store"]]
+cpu = "sifive-x280"
+instruction = "vse64.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/f64/sub"]]
+cpu = "sifive-x280"
+instruction = "vfsub.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/f64/zero"]]
+cpu = "sifive-x280"
+instruction = "vmv.v.i v8, 0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/add"]]
+cpu = "sifive-x280"
+instruction = "vadd.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/and"]]
+cpu = "sifive-x280"
+instruction = "vand.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vlse32.v v8, (a0), zero"
+uops = 1
+latency = 19
+rthroughput = 16.0
+
+[[rows."rvv/i32/land"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v8, v8, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/land"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v9, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/land"]]
+cpu = "sifive-x280"
+instruction = "vmand.mm v0, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/i32/load"]]
+cpu = "sifive-x280"
+instruction = "vle32.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/lor"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v8, v8, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/lor"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v9, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/lor"]]
+cpu = "sifive-x280"
+instruction = "vmor.mm v0, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/i32/lt"]]
+cpu = "sifive-x280"
+instruction = "vmslt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/max"]]
+cpu = "sifive-x280"
+instruction = "vmax.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/min"]]
+cpu = "sifive-x280"
+instruction = "vmin.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/mod"]]
+cpu = "sifive-x280"
+instruction = "vrem.vv v8, v8, v9"
+uops = 1
+latency = 112
+rthroughput = 112.0
+
+[[rows."rvv/i32/mod"]]
+cpu = "sifive-x280"
+instruction = "vmseq.vi v0, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i32/mod"]]
+cpu = "sifive-x280"
+instruction = "vmerge.vim v8, v8, 0, v0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/mul"]]
+cpu = "sifive-x280"
+instruction = "vmul.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i32/or"]]
+cpu = "sifive-x280"
+instruction = "vor.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i32/shl"]]
+cpu = "sifive-x280"
+instruction = "vsll.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i32/shr"]]
+cpu = "sifive-x280"
+instruction = "vsrl.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i32/store"]]
+cpu = "sifive-x280"
+instruction = "vse32.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/i32/sub"]]
+cpu = "sifive-x280"
+instruction = "vsub.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/add"]]
+cpu = "sifive-x280"
+instruction = "vadd.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/and"]]
+cpu = "sifive-x280"
+instruction = "vand.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/broadcast"]]
+cpu = "sifive-x280"
+instruction = "vlse64.v v8, (a0), zero"
+uops = 1
+latency = 11
+rthroughput = 8.0
+
+[[rows."rvv/i64/land"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v8, v8, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/land"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v9, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/land"]]
+cpu = "sifive-x280"
+instruction = "vmand.mm v0, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/i64/load"]]
+cpu = "sifive-x280"
+instruction = "vle64.v v8, (a0)"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/lor"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v8, v8, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/lor"]]
+cpu = "sifive-x280"
+instruction = "vmsne.vi v9, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/lor"]]
+cpu = "sifive-x280"
+instruction = "vmor.mm v0, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 1.0
+
+[[rows."rvv/i64/lt"]]
+cpu = "sifive-x280"
+instruction = "vmslt.vv v0, v9, v8"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/max"]]
+cpu = "sifive-x280"
+instruction = "vmax.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/min"]]
+cpu = "sifive-x280"
+instruction = "vmin.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/mod"]]
+cpu = "sifive-x280"
+instruction = "vrem.vv v8, v8, v9"
+uops = 1
+latency = 114
+rthroughput = 114.0
+
+[[rows."rvv/i64/mod"]]
+cpu = "sifive-x280"
+instruction = "vmseq.vi v0, v9, 0"
+uops = 1
+latency = 5
+rthroughput = 2.0
+
+[[rows."rvv/i64/mod"]]
+cpu = "sifive-x280"
+instruction = "vmerge.vim v8, v8, 0, v0"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/mul"]]
+cpu = "sifive-x280"
+instruction = "vmul.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i64/or"]]
+cpu = "sifive-x280"
+instruction = "vor.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
+
+[[rows."rvv/i64/shl"]]
+cpu = "sifive-x280"
+instruction = "vsll.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i64/shr"]]
+cpu = "sifive-x280"
+instruction = "vsrl.vv v8, v8, v9"
+uops = 1
+latency = 8
+rthroughput = 2.0
+
+[[rows."rvv/i64/store"]]
+cpu = "sifive-x280"
+instruction = "vse64.v v8, (a3)"
+uops = 1
+latency = 1
+rthroughput = 2.0
+
+[[rows."rvv/i64/sub"]]
+cpu = "sifive-x280"
+instruction = "vsub.vv v8, v8, v9"
+uops = 1
+latency = 4
+rthroughput = 2.0
 
 [[rows."sve/f16/abs"]]
 cpu = "neoverse-v2"

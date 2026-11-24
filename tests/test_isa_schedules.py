@@ -35,6 +35,9 @@ def test_every_schedule_is_described_and_every_isa_offer_is_known() -> None:
         ("avx512", "sve_intrinsics", False),
         ("sve", "sve_intrinsics", True),
         ("sve", "scalar_remainder", True),
+        ("rvv", "rvv_vsetvl", True),
+        ("rvv", "full_mask", False),
+        ("sve", "rvv_vsetvl", False),
     ],
 )
 def test_legality_and_the_reason(isa: str, schedule: str, offered: bool) -> None:
@@ -152,6 +155,16 @@ def test_an_arm_skeleton_runs_under_qemu_when_the_host_has_it(isa: str, schedule
     verdict = verify(isa, schedule, dtype, TABLE)
 
     assert verdict.ok is (True if emulated(isa) else None), verdict.detail
+
+
+@pytest.mark.parametrize("dtype", ["f64", "f32"])
+def test_the_rvv_skeleton_runs_under_qemu_when_the_host_has_it(dtype: str) -> None:
+    from alloy.isa.schedules import verify
+    from alloy.isa.validate import emulated
+
+    verdict = verify("rvv", "rvv_vsetvl", dtype, TABLE)
+
+    assert verdict.ok is (True if emulated("rvv") else None), verdict.detail
 
 
 def test_every_schedule_spells_how_to_ask_each_compiler() -> None:

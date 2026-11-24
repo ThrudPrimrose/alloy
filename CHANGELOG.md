@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- RISC-V V 1.0 joins the lookup as `rvv`: 86 rows over f64, f32, i64, and i32 (LMUL 1, `__riscv_` v1.0 spellings),
+  the strip-mined `rvv_vsetvl` schedule with its skeleton, and llvm-mca costs on SiFive X280. Every row except the
+  transcendentals runs under qemu-riscv64 at VLEN 256 against the scalar reference, as SVE runs under qemu-aarch64.
+- `reverse` takes dotted RVV mnemonics (`vfmacc.vv`).
+
 ## 0.1.1 (2026-11-24)
 
 A fix to profile mode: a timing draw that crashed the reference program no longer loses the episode.

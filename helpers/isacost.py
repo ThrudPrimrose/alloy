@@ -14,7 +14,7 @@ from pathlib import Path
 
 from alloy.isa.costs import CPUS, DEFAULT_PATH, Cost
 from alloy.isa.table import ALL_DTYPES, Entry, Table, load
-from alloy.isa.validate import CROSS, NOT_MNEMONICS, c_flags, row_unit
+from alloy.isa.validate import CROSS, NOT_MNEMONICS, RVV, RVV_FLAGS, c_flags, row_unit
 
 #: One row of llvm-mca's instruction info: µops, latency, reciprocal throughput, the flag columns, the instruction.
 INFO_ROW = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\d+\.\d+)\s+(?:[*U]\s+)*(\S.*?)\s*$")
@@ -29,7 +29,10 @@ VECTOR_REGISTER = re.compile(r"%([xyz])mm\d+")
 
 
 def target_flags(isa: str, dtype: str) -> list[str]:
-    """clang flags that build ``isa`` rows: the validator's, with the triple and architecture an aarch64 row needs."""
+    """clang flags that build ``isa`` rows: the validator's, with the triple and architecture an aarch64 or RISC-V row
+    needs. RISC-V builds freestanding: clang's own stdint.h, no riscv64 sysroot."""
+    if isa == RVV:
+        return ["--target=riscv64-linux-gnu", *RVV_FLAGS, "-ffreestanding", f"-mtune={CPUS[isa]}"]
     if isa in CROSS:
         arch = f"{CROSS[isa]}+fp16" if dtype == "f16" else CROSS[isa]
         return ["--target=aarch64-linux-gnu", f"-march={arch}"]
@@ -104,13 +107,18 @@ def register_form(instruction: str, op: str) -> str:
     return MEMORY_OPERAND.sub(f"%{widest}mm15", instruction, count=1)
 
 
-def mca(instructions: list[str], isa: str) -> list[Cost]:
+#: The vector type llvm-mca's RISC-V models cost an instruction at: LMUL 1 and the row's element width.
+RVV_TYPE = "# LLVM-MCA-RISCV-LMUL M1\n# LLVM-MCA-RISCV-SEW E{bits}\n"
+
+
+def mca(instructions: list[str], isa: str, dtype: str = "f64") -> list[Cost]:
     """llvm-mca's instruction info for ``instructions`` on the CPU of ``isa``."""
     cpu = CPUS[isa]
-    triple = ["-mtriple=aarch64"] if isa in CROSS else []
+    triple = ["-mtriple=aarch64"] if isa in CROSS else ["-mtriple=riscv64"] if isa == RVV else []
+    head = RVV_TYPE.format(bits=dtype[1:]) if isa == RVV else ""
     run = subprocess.run(
         ["llvm-mca", *triple, f"-mcpu={cpu}", "-instruction-info", "-iterations=1", "-"],
-        input="\n".join(instructions) + "\n",
+        input=head + "\n".join(instructions) + "\n",
         capture_output=True,
         text=True,
         check=False,
@@ -133,20 +141,21 @@ def directional(lines: list[str], op: str) -> list[str]:
         return memory is not None and register is not None and memory.start() < register.start()
 
     x86 = [line for line in lines if VECTOR_REGISTER.search(line)]
-    if not x86:  # aarch64: the mnemonic tells the direction
-        return [line for line in lines if line.split()[0].startswith("ld" if op == "load" else "st")]
+    if not x86:  # aarch64 and RISC-V: the mnemonic tells the direction
+        prefixes = ("ld", "vl") if op == "load" else ("st", "vs")
+        return [line for line in lines if line.split()[0].startswith(prefixes)]
     return [line for line in x86 if reads(line) == (op == "load")]
 
 
-def row_costs(lines: list[str], isa: str, op: str) -> list[Cost]:
+def row_costs(lines: list[str], isa: str, op: str, dtype: str) -> list[Cost]:
     """llvm-mca's costs of ``lines`` in register form, or as compiled when the assembler rejects a register form
     (a conversion's narrower source)."""
     if not lines:
         return []
     try:
-        return mca([register_form(line, op) for line in lines], isa)
+        return mca([register_form(line, op) for line in lines], isa, dtype)
     except RuntimeError:
-        return mca(lines, isa)
+        return mca(lines, isa, dtype)
 
 
 #: Why llvm-mca's x86 numbers of a row are not a model: znver4 has no entry for gathers and scatters.
@@ -159,7 +168,7 @@ def measured(table: Table) -> Iterator[tuple[str, list[Cost]]]:
             for op, entry in target.entries(dtype).items():
                 if not entry.mnemonic or entry.approximations:
                     continue
-                if op in ("gather", "scatter") and isa not in CROSS:
+                if op in ("gather", "scatter") and isa not in (*CROSS, RVV):
                     yield f"{isa}/{dtype}/{op}", [Cost(CPUS[isa], entry.mnemonic, 0, 0, 0.0, NOT_MODELLED)]
                     continue
                 try:
@@ -169,7 +178,7 @@ def measured(table: Table) -> Iterator[tuple[str, list[Cost]]]:
                     if renamed:
                         named = [line for line in compiled if MEMORY_OPERAND.search(line) or "[" in line]
                     picked = directional(named, op)
-                    found = row_costs(picked[:1] if renamed else picked, isa, op)
+                    found = row_costs(picked[:1] if renamed else picked, isa, op, dtype)
                 except (RuntimeError, subprocess.TimeoutExpired) as err:
                     print(f"{isa}/{dtype}/{op}: {err}", file=sys.stderr)
                     continue

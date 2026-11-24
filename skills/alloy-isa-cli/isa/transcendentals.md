@@ -352,3 +352,9 @@ Chebyshev fit in t = x*x; the division in x = (m-1)/(m+1) is the cost a table lo
 | sve | f32 | exp | `_ZGVsMxv_expf` | `—` | `—` |
 | sve | f32 | sin | `_ZGVsMxv_sinf` | `—` | `—` |
 | sve | f32 | cos | `_ZGVsMxv_cosf` | `—` | `—` |
+| rvv | f64 | exp | `—` | `—` | `—` |
+| rvv | f64 | sin | `—` | `—` | `—` |
+| rvv | f64 | cos | `—` | `—` | `—` |
+| rvv | f32 | exp | `—` | `—` | `—` |
+| rvv | f32 | sin | `—` | `—` | `—` |
+| rvv | f32 | cos | `—` | `—` | `—` |

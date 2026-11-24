@@ -76,7 +76,9 @@ def test_the_abstract_isa_covers_the_core_math() -> None:
 
 
 def test_the_matrix_and_the_table_agree_on_isa_widths() -> None:
-    for name in TABLE.isas:
+    lookup_only = {"rvv"}  # no evaluated host is RISC-V: the lookup answers rvv, no candidate targets it
+    assert TABLE.isas.keys() - MATRIX.isas.keys() == lookup_only
+    for name in TABLE.isas.keys() - lookup_only:
         assert TABLE.isa(name).vector_bytes == MATRIX.isas[name].vector_bytes
 
 
@@ -239,7 +241,8 @@ def test_every_spelling_exists_in_the_clang_headers() -> None:
     blob = header_blob()
     names = [
         name
-        for isa in TABLE.isas.values()
+        for name_, isa in TABLE.isas.items()
+        if name_ != "rvv"  # pragma-declared: test_every_rvv_spelling_is_declared_by_clang
         for dtype in ALL_DTYPES
         for entry in isa.entries(dtype).values()
         # recipes may carry pseudo steps (the fallback stories: "no vector remainder: ..."),
@@ -250,6 +253,51 @@ def test_every_spelling_exists_in_the_clang_headers() -> None:
     spelled = r"\b{0}\s*\(|#define\s+{0}\s"  # a function, a function macro, or an alias of one
     missing = [name for name in dict.fromkeys(names) if not re.search(spelled.format(re.escape(name)), blob)]
     assert not missing
+
+
+def rvv_names() -> list[str]:
+    """Every RVV spelling of the table: rows, recipe steps, and assists."""
+    rvv = TABLE.isas["rvv"]
+    rows = [
+        name
+        for dtype in ALL_DTYPES
+        for entry in rvv.entries(dtype).values()
+        for name in [entry.intrinsic, *entry.recipe]
+    ]
+    return list(dict.fromkeys(name for name in [*rows, *(a.name for a in rvv.assists)] if name))
+
+
+def rvv_clang() -> str | None:
+    """A clang that targets riscv64, or None."""
+    for command in ("clang-22", "clang-21", "clang"):
+        try:
+            run = subprocess.run([command, "-print-targets"], capture_output=True, text=True, check=True)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        if "riscv64" in run.stdout:
+            return command
+    return None
+
+
+@pytest.mark.skipif(rvv_clang() is None, reason="no clang targeting riscv64 on this host")
+def test_every_rvv_spelling_is_declared_by_clang(tmp_path: pathlib.Path) -> None:
+    """riscv_vector.h declares its intrinsics through a pragma, so no header text names them: clang itself says which
+    names it does not know."""
+    names = rvv_names()
+    unit = tmp_path / "names.c"
+    unit.write_text("#include <riscv_vector.h>\nvoid f(void) {\n" + "".join(f"  (void){n};\n" for n in names) + "}\n")
+    flags = [
+        "--target=riscv64-linux-gnu",
+        "-march=rv64gcv_zvfhmin",
+        "-ffreestanding",
+        "-fsyntax-only",
+        "-ferror-limit=0",
+    ]
+    run = subprocess.run([str(rvv_clang()), *flags, str(unit)], capture_output=True, text=True, check=False)
+
+    assert len(names) > 80
+    assert re.findall(r"undeclared identifier '(\w+)'", run.stderr) == []
+    assert "riscv_vector.h" not in run.stderr  # the header itself loaded
 
 
 def test_an_integer_op_is_refused_on_a_float_dtype() -> None:
@@ -467,7 +515,8 @@ def test_every_assist_spelling_exists_in_the_clang_headers() -> None:
     blob = header_blob()
     missing = [
         assist.name
-        for isa in TABLE.isas.values()
+        for name, isa in TABLE.isas.items()
+        if name != "rvv"  # pragma-declared: test_every_rvv_spelling_is_declared_by_clang
         for assist in isa.assists
         if not re.search(rf"\b{re.escape(assist.name)}\s*\(", blob)
     ]

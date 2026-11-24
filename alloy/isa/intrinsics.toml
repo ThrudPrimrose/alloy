@@ -1,6 +1,7 @@
 # The op x dtype x ISA instruction table: the abstract math ops of alloy/isa/ops.py spelled as C
 # intrinsics (and assembly mnemonics) per vector ISA. Checked-in reference data, written by hand; every spelling was
-# checked against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h), and `validate` runs every row
+# checked against the clang resource headers (immintrin.h chain, arm_neon.h, arm_sve.h) or, for RVV, whose
+# riscv_vector.h declares nothing in text, by compiling every row, and `validate` runs every row
 # the host can execute. Operand-order traps (NEON/SVE fma differ from Intel) are recorded
 # in `signature`/`semantics`, so no caller hardcodes an order. A `recipe` names its steps; its `code`
 # is the C that runs them on the operands of `signature`: statements, then the result expression.
@@ -46,6 +47,13 @@ description = "SVE shape rendered by DaCe's SVEVectorization (the sve_intrinsics
 tail = "predicate every iteration (svwhilelt), runtime vector length, no remainder"
 gcc = "-fopenmp-simd -march=armv8-a+sve with #pragma omp simd (auto SVE), or explicit intrinsics via this skeleton"
 clang = "-march=armv8-a+sve -mllvm -prefer-predicate-over-epilogue=predicate-dont-vectorize, or DaCe SVEVectorization (this skeleton)"
+
+[schedules.rvv_vsetvl]
+title = "Strip-mined RVV loop"
+description = "RISC-V V shape: each pass asks vsetvl for vl = min(N - i, VLMAX) and every intrinsic takes vl, so the last pass is the tail and no mask or remainder loop exists. The loop steps by the vl it got."
+tail = "none: vsetvl shortens the last pass"
+gcc = "-march=rv64gcv -O3 (auto-vectorizes to this shape), or explicit intrinsics via this skeleton"
+clang = "-march=rv64gcv -O3 (auto-vectorizes to this shape), or explicit intrinsics via this skeleton"
 
 [isa.avx2]
 title = "AVX2 + FMA3 (256-bit VEX)"
@@ -3481,3 +3489,669 @@ semantics = "p[j] = v[j] rounded to nearest even bf16, for active lanes"
 recipe = ["svreinterpret_u32_f32", "svadd_u32_x", "svadd_n_u32_x", "svand_n_u32_x", "svlsr_n_u32_x", "svst1h_u32"]
 code = ["svuint32_t x = svreinterpret_u32_f32(v)", "svuint32_t r = svadd_u32_x(pg, x, svadd_n_u32_x(pg, svand_n_u32_x(pg, svlsr_n_u32_x(pg, x, 16), 1), 0x7fff))", "svst1h_u32(pg, p, svlsr_n_u32_x(pg, r, 16))"]
 note = "round to nearest even by adding 0x7fff plus the lowest kept bit, then keep the top half; a NaN may round to infinity: quiet it first if NaN can occur. With +bf16, svcvt_bf16_f32_x rounds in one instruction"
+
+[isa.rvv]
+title = "RISC-V V 1.0 (scalable vectors, vl-driven)"
+vector_bytes = 0
+lanes = { f64 = 0, f32 = 0, i64 = 0, i32 = 0 }
+mask = true
+schedules = ["scalar", "rvv_vsetvl"]
+gen_mask = "__riscv_vmsltu_vx_u{64,32}m1_b{64,32}(__riscv_vid_v_u{64,32}m1(vl), N - i, vl)"
+note = "Scalable: VLEN is fixed per core (128 bits and up on application cores, 256 on SoftHier's Spatz) and known only at run time - lanes 0 here mean 'runtime length'. Every intrinsic takes vl last: size_t vl = __riscv_vsetvl_e64m1(N - i) per pass, or __riscv_vsetvlmax_e64m1() for a whole register. Rows use LMUL 1 (m1); m2, m4, m8 group 2, 4, 8 registers for longer strips with the same spelling. Masks are vbool<SEW/LMUL>_t. Intrinsics of the v1.0 spec (GCC 14, Clang 17 and later): older toolchains spell them without the __riscv_ prefix. Host flag: -march=rv64gcv (the f16 storage rows: rv64gcv_zvfhmin); checked under qemu-riscv64 at VLEN 256. SoftHier's Spatz rows (alloy/isa/softhier.toml) are this ISA on RV32 with LMUL 8."
+
+# Hardware assists (reverse-lookup: `python -m alloy.isa assist <name>`).
+[[isa.rvv.assists]]
+name = "__riscv_vfrec7_v_f64m1"
+mnemonic = "vfrec7.v"
+helps = "div"
+note = "7-bit reciprocal estimate; each Newton step r = r*(2 - d*r) (vfnmsac then vfmul) doubles the bits, f64 needs 3"
+
+[[isa.rvv.assists]]
+name = "__riscv_vfrsqrt7_v_f64m1"
+mnemonic = "vfrsqrt7.v"
+helps = "sqrt"
+note = "7-bit reciprocal square root estimate; refine with r = r*(1.5 - 0.5*x*r*r) for a fast rsqrt"
+
+[isa.rvv.f64.load]
+intrinsic = "__riscv_vle64_v_f64m1"
+mnemonic = "vle64.v"
+signature = "(p, vl) -> v"
+semantics = "v[j] = p[j] for j < vl"
+note = "unit stride, any alignment of the element type; vl from vsetvl bounds the lanes, so the tail needs no mask"
+
+[isa.rvv.f64.store]
+intrinsic = "__riscv_vse64_v_f64m1"
+mnemonic = "vse64.v"
+signature = "(p, v, vl) -> void"
+semantics = "p[j] = v[j] for j < vl"
+
+[isa.rvv.f64.broadcast]
+intrinsic = "__riscv_vfmv_v_f_f64m1"
+mnemonic = "vfmv.v.f"
+signature = "(s, vl) -> v"
+semantics = "v[j] = s for j < vl"
+
+[isa.rvv.f64.add]
+intrinsic = "__riscv_vfadd_vv_f64m1"
+mnemonic = "vfadd.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] + b[j] for j < vl"
+
+[isa.rvv.f64.sub]
+intrinsic = "__riscv_vfsub_vv_f64m1"
+mnemonic = "vfsub.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - b[j] for j < vl"
+
+[isa.rvv.f64.mul]
+intrinsic = "__riscv_vfmul_vv_f64m1"
+mnemonic = "vfmul.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] * b[j] for j < vl"
+
+[isa.rvv.f64.div]
+intrinsic = "__riscv_vfdiv_vv_f64m1"
+mnemonic = "vfdiv.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] / b[j] for j < vl"
+
+[isa.rvv.f64.fma]
+intrinsic = "__riscv_vfmacc_vv_f64m1"
+mnemonic = "vfmacc.vv"
+observed = ["vfmadd"]
+signature = "(add, m1, m2, vl) -> v"
+semantics = "v[j] = add[j] + m1[j]*m2[j] for j < vl, rounded once"
+note = "operand-order trap: the accumulator is FIRST (vd += vs1*vs2), like NEON and SVE, unlike Intel's fmadd; vfmadd (vd = vd*vs1 + vs2) overwrites a multiplicand instead"
+
+[isa.rvv.f64.min]
+intrinsic = "__riscv_vfmin_vv_f64m1"
+mnemonic = "vfmin.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the smaller of a[j], b[j]; a NaN operand gives the other operand, -0 is below +0"
+note = "IEEE 754-2019 minimumNumber/maximumNumber: a NaN lane does not propagate (x86 returns the second operand, Arm FMIN/FMAX return NaN)"
+
+[isa.rvv.f64.max]
+intrinsic = "__riscv_vfmax_vv_f64m1"
+mnemonic = "vfmax.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the larger of a[j], b[j]; a NaN operand gives the other operand, -0 is below +0"
+note = "IEEE 754-2019 minimumNumber/maximumNumber: a NaN lane does not propagate (x86 returns the second operand, Arm FMIN/FMAX return NaN)"
+
+[isa.rvv.f64.sqrt]
+intrinsic = "__riscv_vfsqrt_v_f64m1"
+mnemonic = "vfsqrt.v"
+signature = "(a, vl) -> v"
+semantics = "v[j] = sqrt(a[j]) for j < vl, correctly rounded"
+
+[isa.rvv.f64.abs]
+intrinsic = "__riscv_vfabs_v_f64m1"
+mnemonic = "vfabs.v"
+observed = ["vfsgnjx"]
+signature = "(a, vl) -> v"
+semantics = "v[j] = |a[j]|: the sign bit cleared, NaN included"
+note = "an assembler alias of vfsgnjx.vv v, a, a"
+
+[isa.rvv.f64.neg]
+intrinsic = "__riscv_vfneg_v_f64m1"
+mnemonic = "vfneg.v"
+observed = ["vfsgnjn"]
+signature = "(a, vl) -> v"
+semantics = "v[j] = -a[j]: the sign bit flipped, NaN and zero included"
+note = "an assembler alias of vfsgnjn.vv v, a, a"
+
+[isa.rvv.f64.zero]
+intrinsic = "__riscv_vfmv_v_f_f64m1"
+mnemonic = "vmv.v.i"
+observed = ["vfmv.v.f", "vmv"]
+signature = "(0.0, vl) -> v"
+semantics = "v[j] = 0.0 for j < vl"
+
+[isa.rvv.f64.reduce_add]
+mnemonic = "vfredusum.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the sum of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f64m1_f64", "__riscv_vfredusum_vs_f64m1_f64m1", "__riscv_vfmv_s_f_f64m1"]
+code = ["__riscv_vfmv_f_s_f64m1_f64(__riscv_vfredusum_vs_f64m1_f64m1(v, __riscv_vfmv_s_f_f64m1(0, vl), vl))"]
+note = "unordered sum (any association): needs reassociation permission; vfredosum is the ordered, slower left fold. The scalar start value sits in lane 0 of the second operand (a zero start compiles to vmv.s.x of the zero register)"
+
+[isa.rvv.f64.reduce_min]
+mnemonic = "vfredmin.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the smallest of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f64m1_f64", "__riscv_vfredmin_vs_f64m1_f64m1"]
+code = ["__riscv_vfmv_f_s_f64m1_f64(__riscv_vfredmin_vs_f64m1_f64m1(v, v, vl))"]
+note = "v seeds itself: lane 0 of the second operand joins the reduction, and it is one of the lanes anyway. NaN lanes are skipped (minimumNumber); all-NaN gives the canonical NaN"
+
+[isa.rvv.f64.reduce_max]
+mnemonic = "vfredmax.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the largest of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f64m1_f64", "__riscv_vfredmax_vs_f64m1_f64m1"]
+code = ["__riscv_vfmv_f_s_f64m1_f64(__riscv_vfredmax_vs_f64m1_f64m1(v, v, vl))"]
+note = "v seeds itself: lane 0 of the second operand joins the reduction, and it is one of the lanes anyway. NaN lanes are skipped (minimumNumber); all-NaN gives the canonical NaN"
+
+[isa.rvv.f64.lt]
+intrinsic = "__riscv_vmflt_vv_f64m1_b64"
+mnemonic = "vmflt.vv"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "a vbool64_t mask register (one bit per lane)"
+
+[isa.rvv.f64.select]
+intrinsic = "__riscv_vmerge_vvm_f64m1"
+mnemonic = "vmerge.vvm"
+signature = "(f, t, mask, vl) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+note = "operand-order trap: the value for a false lane comes FIRST"
+
+[isa.rvv.f64.gen_mask]
+mnemonic = "vid.v + vmsltu.vx"
+signature = "(i, N, vl) -> pg"
+semantics = "lane j active iff i + j < N"
+recipe = ["__riscv_vmsltu_vx_u64m1_b64", "__riscv_vid_v_u64m1"]
+code = ["__riscv_vmsltu_vx_u64m1_b64(__riscv_vid_v_u64m1(vl), N - i, vl)"]
+note = "rarely needed: a strip-mined loop (rvv_vsetvl) sets vl = min(N - i, VLMAX) each pass and has no tail. A mask suits a fixed vl, as in a full_mask loop"
+
+[isa.rvv.f64.gather]
+mnemonic = "vle64.v + vsll.vi + vluxei64.v"
+signature = "(base, idx, vl) -> v"
+semantics = "v[j] = base[idx[j]] for j < vl, idx holding int64 element indices"
+recipe = ["__riscv_vluxei64_v_f64m1", "__riscv_vsll_vx_u64m1", "__riscv_vle64_v_u64m1"]
+code = ["__riscv_vluxei64_v_f64m1(base, __riscv_vsll_vx_u64m1(__riscv_vle64_v_u64m1((const uint64_t*)idx, vl), 3, vl), vl)"]
+note = "the indexed load takes BYTE offsets: scale the element indices by the element size first. vluxei is unordered; vloxei keeps the order (only matters for I/O)"
+
+[isa.rvv.f64.scatter]
+mnemonic = "vle64.v + vsll.vi + vsuxei64.v"
+signature = "(base, idx, v, vl) -> void"
+semantics = "base[idx[j]] = v[j] for j < vl, idx holding int64 element indices"
+recipe = ["__riscv_vsuxei64_v_f64m1", "__riscv_vsll_vx_u64m1", "__riscv_vle64_v_u64m1"]
+code = ["__riscv_vsuxei64_v_f64m1(base, __riscv_vsll_vx_u64m1(__riscv_vle64_v_u64m1((const uint64_t*)idx, vl), 3, vl), v, vl)"]
+note = "byte offsets, as for the gather; vsuxei is unordered, so two lanes with one index leave either value (vsoxei writes in lane order, the last lane wins)"
+
+[isa.rvv.f64.mod]
+mnemonic = "vfdiv.vv + vfcvt.rtz.x.f.v + vfcvt.f.x.v + vfnmsac.vv"
+observed = ["vfnmsub"]
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
+recipe = ["__riscv_vfcvt_f_x_v_f64m1", "__riscv_vfcvt_rtz_x_f_v_i64m1", "__riscv_vfdiv_vv_f64m1", "__riscv_vfnmsac_vv_f64m1"]
+code = ["vfloat64m1_t q = __riscv_vfcvt_f_x_v_f64m1(__riscv_vfcvt_rtz_x_f_v_i64m1(__riscv_vfdiv_vv_f64m1(a, b, vl), vl), vl)", "__riscv_vfnmsac_vv_f64m1(a, q, b, vl)"]
+note = "no fmod and no round-toward-zero to float: q = trunc(a/b) through an int64 conversion (rtz), r = vfnmsac(a, q, b) = a - q*b. Holds only for finite b and |a/b| < 2^52 (the conversion also saturates past 2^63); outside, call scalar fmod"
+
+[isa.rvv.f64.scan_add]
+mnemonic = "vslideup.vx + vfadd.vv"
+signature = "(v, vl) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for j < vl"
+recipe = ["__riscv_vfadd_vv_f64m1", "__riscv_vslideup_vx_f64m1", "__riscv_vfmv_v_f_f64m1"]
+code = ["vfloat64m1_t t = v", "for (size_t d = 1; d < vl; d *= 2) t = __riscv_vfadd_vv_f64m1(t, __riscv_vslideup_vx_f64m1(__riscv_vfmv_v_f_f64m1(0, vl), t, d, vl), vl)", "t"]
+note = "no single intrinsic: vslideup moves the lanes up by d onto a zero vector, for d = 1, 2, 4, ... below vl. log2(vl) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before (vslidedown by vl - 1, then vfmv.f.s)"
+
+[isa.rvv.f64.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 52, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_expdx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f64.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 52, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_sindx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f64.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 52, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_cosdx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f32.load]
+intrinsic = "__riscv_vle32_v_f32m1"
+mnemonic = "vle32.v"
+signature = "(p, vl) -> v"
+semantics = "v[j] = p[j] for j < vl"
+note = "unit stride, any alignment of the element type; vl from vsetvl bounds the lanes, so the tail needs no mask"
+
+[isa.rvv.f32.store]
+intrinsic = "__riscv_vse32_v_f32m1"
+mnemonic = "vse32.v"
+signature = "(p, v, vl) -> void"
+semantics = "p[j] = v[j] for j < vl"
+
+[isa.rvv.f32.broadcast]
+intrinsic = "__riscv_vfmv_v_f_f32m1"
+mnemonic = "vfmv.v.f"
+signature = "(s, vl) -> v"
+semantics = "v[j] = s for j < vl"
+
+[isa.rvv.f32.add]
+intrinsic = "__riscv_vfadd_vv_f32m1"
+mnemonic = "vfadd.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] + b[j] for j < vl"
+
+[isa.rvv.f32.sub]
+intrinsic = "__riscv_vfsub_vv_f32m1"
+mnemonic = "vfsub.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - b[j] for j < vl"
+
+[isa.rvv.f32.mul]
+intrinsic = "__riscv_vfmul_vv_f32m1"
+mnemonic = "vfmul.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] * b[j] for j < vl"
+
+[isa.rvv.f32.div]
+intrinsic = "__riscv_vfdiv_vv_f32m1"
+mnemonic = "vfdiv.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] / b[j] for j < vl"
+
+[isa.rvv.f32.fma]
+intrinsic = "__riscv_vfmacc_vv_f32m1"
+mnemonic = "vfmacc.vv"
+observed = ["vfmadd"]
+signature = "(add, m1, m2, vl) -> v"
+semantics = "v[j] = add[j] + m1[j]*m2[j] for j < vl, rounded once"
+note = "operand-order trap: the accumulator is FIRST (vd += vs1*vs2), like NEON and SVE, unlike Intel's fmadd; vfmadd (vd = vd*vs1 + vs2) overwrites a multiplicand instead"
+
+[isa.rvv.f32.min]
+intrinsic = "__riscv_vfmin_vv_f32m1"
+mnemonic = "vfmin.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the smaller of a[j], b[j]; a NaN operand gives the other operand, -0 is below +0"
+note = "IEEE 754-2019 minimumNumber/maximumNumber: a NaN lane does not propagate (x86 returns the second operand, Arm FMIN/FMAX return NaN)"
+
+[isa.rvv.f32.max]
+intrinsic = "__riscv_vfmax_vv_f32m1"
+mnemonic = "vfmax.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the larger of a[j], b[j]; a NaN operand gives the other operand, -0 is below +0"
+note = "IEEE 754-2019 minimumNumber/maximumNumber: a NaN lane does not propagate (x86 returns the second operand, Arm FMIN/FMAX return NaN)"
+
+[isa.rvv.f32.sqrt]
+intrinsic = "__riscv_vfsqrt_v_f32m1"
+mnemonic = "vfsqrt.v"
+signature = "(a, vl) -> v"
+semantics = "v[j] = sqrt(a[j]) for j < vl, correctly rounded"
+
+[isa.rvv.f32.abs]
+intrinsic = "__riscv_vfabs_v_f32m1"
+mnemonic = "vfabs.v"
+observed = ["vfsgnjx"]
+signature = "(a, vl) -> v"
+semantics = "v[j] = |a[j]|: the sign bit cleared, NaN included"
+note = "an assembler alias of vfsgnjx.vv v, a, a"
+
+[isa.rvv.f32.neg]
+intrinsic = "__riscv_vfneg_v_f32m1"
+mnemonic = "vfneg.v"
+observed = ["vfsgnjn"]
+signature = "(a, vl) -> v"
+semantics = "v[j] = -a[j]: the sign bit flipped, NaN and zero included"
+note = "an assembler alias of vfsgnjn.vv v, a, a"
+
+[isa.rvv.f32.zero]
+intrinsic = "__riscv_vfmv_v_f_f32m1"
+mnemonic = "vmv.v.i"
+observed = ["vfmv.v.f", "vmv"]
+signature = "(0.0, vl) -> v"
+semantics = "v[j] = 0.0 for j < vl"
+
+[isa.rvv.f32.reduce_add]
+mnemonic = "vfredusum.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the sum of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f32m1_f32", "__riscv_vfredusum_vs_f32m1_f32m1", "__riscv_vfmv_s_f_f32m1"]
+code = ["__riscv_vfmv_f_s_f32m1_f32(__riscv_vfredusum_vs_f32m1_f32m1(v, __riscv_vfmv_s_f_f32m1(0, vl), vl))"]
+note = "unordered sum (any association): needs reassociation permission; vfredosum is the ordered, slower left fold. The scalar start value sits in lane 0 of the second operand (a zero start compiles to vmv.s.x of the zero register)"
+
+[isa.rvv.f32.reduce_min]
+mnemonic = "vfredmin.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the smallest of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f32m1_f32", "__riscv_vfredmin_vs_f32m1_f32m1"]
+code = ["__riscv_vfmv_f_s_f32m1_f32(__riscv_vfredmin_vs_f32m1_f32m1(v, v, vl))"]
+note = "v seeds itself: lane 0 of the second operand joins the reduction, and it is one of the lanes anyway. NaN lanes are skipped (minimumNumber); all-NaN gives the canonical NaN"
+
+[isa.rvv.f32.reduce_max]
+mnemonic = "vfredmax.vs + vfmv.f.s"
+signature = "(v, vl) -> s"
+semantics = "s = the largest of the first vl lanes of v"
+recipe = ["__riscv_vfmv_f_s_f32m1_f32", "__riscv_vfredmax_vs_f32m1_f32m1"]
+code = ["__riscv_vfmv_f_s_f32m1_f32(__riscv_vfredmax_vs_f32m1_f32m1(v, v, vl))"]
+note = "v seeds itself: lane 0 of the second operand joins the reduction, and it is one of the lanes anyway. NaN lanes are skipped (minimumNumber); all-NaN gives the canonical NaN"
+
+[isa.rvv.f32.lt]
+intrinsic = "__riscv_vmflt_vv_f32m1_b32"
+mnemonic = "vmflt.vv"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff a[j] < b[j]; false on NaN"
+note = "a vbool32_t mask register (one bit per lane)"
+
+[isa.rvv.f32.select]
+intrinsic = "__riscv_vmerge_vvm_f32m1"
+mnemonic = "vmerge.vvm"
+signature = "(f, t, mask, vl) -> v"
+semantics = "v[j] = mask[j] ? t[j] : f[j]"
+note = "operand-order trap: the value for a false lane comes FIRST"
+
+[isa.rvv.f32.gen_mask]
+mnemonic = "vid.v + vmsltu.vx"
+signature = "(i, N, vl) -> pg"
+semantics = "lane j active iff i + j < N"
+recipe = ["__riscv_vmsltu_vx_u32m1_b32", "__riscv_vid_v_u32m1"]
+code = ["__riscv_vmsltu_vx_u32m1_b32(__riscv_vid_v_u32m1(vl), N - i, vl)"]
+note = "rarely needed: a strip-mined loop (rvv_vsetvl) sets vl = min(N - i, VLMAX) each pass and has no tail. A mask suits a fixed vl, as in a full_mask loop"
+
+[isa.rvv.f32.gather]
+mnemonic = "vle64.v + vsll.vi + vluxei64.v"
+signature = "(base, idx, vl) -> v"
+semantics = "v[j] = base[idx[j]] for j < vl, idx holding int64 element indices"
+recipe = ["__riscv_vluxei64_v_f32m1", "__riscv_vsll_vx_u64m2", "__riscv_vle64_v_u64m2"]
+code = ["__riscv_vluxei64_v_f32m1(base, __riscv_vsll_vx_u64m2(__riscv_vle64_v_u64m2((const uint64_t*)idx, vl), 2, vl), vl)"]
+note = "the indexed load takes BYTE offsets: scale the element indices by the element size first. vluxei is unordered; vloxei keeps the order (only matters for I/O)"
+
+[isa.rvv.f32.scatter]
+mnemonic = "vle64.v + vsll.vi + vsuxei64.v"
+signature = "(base, idx, v, vl) -> void"
+semantics = "base[idx[j]] = v[j] for j < vl, idx holding int64 element indices"
+recipe = ["__riscv_vsuxei64_v_f32m1", "__riscv_vsll_vx_u64m2", "__riscv_vle64_v_u64m2"]
+code = ["__riscv_vsuxei64_v_f32m1(base, __riscv_vsll_vx_u64m2(__riscv_vle64_v_u64m2((const uint64_t*)idx, vl), 2, vl), v, vl)"]
+note = "byte offsets, as for the gather; vsuxei is unordered, so two lanes with one index leave either value (vsoxei writes in lane order, the last lane wins)"
+
+[isa.rvv.f32.mod]
+mnemonic = "vfdiv.vv + vfcvt.rtz.x.f.v + vfcvt.f.x.v + vfnmsac.vv"
+observed = ["vfnmsub"]
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - trunc(a[j]/b[j])*b[j]: fmod only for finite b and |a/b| below 2^p"
+recipe = ["__riscv_vfcvt_f_x_v_f32m1", "__riscv_vfcvt_rtz_x_f_v_i32m1", "__riscv_vfdiv_vv_f32m1", "__riscv_vfnmsac_vv_f32m1"]
+code = ["vfloat32m1_t q = __riscv_vfcvt_f_x_v_f32m1(__riscv_vfcvt_rtz_x_f_v_i32m1(__riscv_vfdiv_vv_f32m1(a, b, vl), vl), vl)", "__riscv_vfnmsac_vv_f32m1(a, q, b, vl)"]
+note = "no fmod and no round-toward-zero to float: q = trunc(a/b) through an int32 conversion (rtz), r = vfnmsac(a, q, b) = a - q*b. Holds only for finite b and |a/b| < 2^23 (the conversion also saturates past 2^31); outside, call scalar fmod"
+
+[isa.rvv.f32.scan_add]
+mnemonic = "vslideup.vx + vfadd.vv"
+signature = "(v, vl) -> v"
+semantics = "inclusive prefix sum: v[j] = x[0] + ... + x[j] for j < vl"
+recipe = ["__riscv_vfadd_vv_f32m1", "__riscv_vslideup_vx_f32m1", "__riscv_vfmv_v_f_f32m1"]
+code = ["vfloat32m1_t t = v", "for (size_t d = 1; d < vl; d *= 2) t = __riscv_vfadd_vv_f32m1(t, __riscv_vslideup_vx_f32m1(__riscv_vfmv_v_f_f32m1(0, vl), t, d, vl), vl)", "t"]
+note = "no single intrinsic: vslideup moves the lanes up by d onto a zero vector, for d = 1, 2, 4, ... below vl. log2(vl) shifted adds, so the sums associate differently from a scalar left fold: needs reassociation permission; across registers, add the broadcast last lane of the register before (vslidedown by vl - 1, then vfmv.f.s)"
+
+[isa.rvv.f32.exp]
+signature = "(v) -> v"
+semantics = "v[j] = exp(v[j])"
+approximations = ["exp-taylor5", "exp-taylor7", "exp-taylor9", "exp-cheb7", "exp-cheb9", "exp-cheb11"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 23, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_expfx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f32.sin]
+signature = "(v) -> v"
+semantics = "v[j] = sin(v[j])"
+approximations = ["sin-taylor7", "sin-taylor9", "sin-taylor11", "sin-quad-cheb9", "sin-quad-cheb13"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 23, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_sinfx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f32.cos]
+signature = "(v) -> v"
+semantics = "v[j] = cos(v[j])"
+approximations = ["cos-taylor6", "cos-taylor8", "cos-taylor10", "cos-quad-cheb8", "cos-quad-cheb12"]
+note = "no transcendental instruction and no exponent assist (only the 7-bit estimates vfrec7 and vfrsqrt7): range-reduce, run a tier's polynomial with vfmacc, and rebuild 2^k by an integer add into the exponent field (vsll by 23, vadd, vreinterpret). glibc has no RISC-V libmvec; SLEEF builds RVV versions (Sleef_cosfx_u10rvvm1 and m2, check the installed sleef.h), and the Rivos veclibm covers every SLEEF function"
+
+[isa.rvv.f32.load_f16]
+mnemonic = "vle16.v + vfwcvt.f.f.v"
+signature = "(p, vl) -> v"
+semantics = "v[j] = (float)p[j], p holding vl f16"
+recipe = ["__riscv_vfwcvt_f_f_v_f32m1", "__riscv_vle16_v_f16mf2"]
+code = ["__riscv_vfwcvt_f_f_v_f32m1(__riscv_vle16_v_f16mf2((const _Float16*)p, vl), vl)"]
+note = "Zvfhmin (-march=..._zvfhmin): f16 storage and conversions only; arithmetic on f16 lanes needs Zvfh. The f16 sit in half a register (mf2) and widen into a whole one; exact"
+
+[isa.rvv.f32.store_f16]
+mnemonic = "vfncvt.f.f.w + vse16.v"
+signature = "(p, v, vl)"
+semantics = "p[j] = (f16)v[j], rounded by frm (nearest even by default)"
+recipe = ["__riscv_vse16_v_f16mf2", "__riscv_vfncvt_f_f_w_f16mf2"]
+code = ["__riscv_vse16_v_f16mf2((_Float16*)p, __riscv_vfncvt_f_f_w_f16mf2(v, vl), vl)"]
+note = "Zvfhmin; the narrowing convert rounds by the dynamic rounding mode (frm)"
+
+[isa.rvv.f32.load_bf16]
+mnemonic = "vle16.v + vzext.vf2 + vsll.vi"
+signature = "(p, vl) -> v"
+semantics = "v[j] = the f32 whose upper 16 bits are p[j]"
+recipe = ["__riscv_vreinterpret_v_u32m1_f32m1", "__riscv_vsll_vx_u32m1", "__riscv_vzext_vf2_u32m1", "__riscv_vle16_v_u16mf2"]
+code = ["__riscv_vreinterpret_v_u32m1_f32m1(__riscv_vsll_vx_u32m1(__riscv_vzext_vf2_u32m1(__riscv_vle16_v_u16mf2(p, vl), vl), 16, vl))"]
+note = "widen and shift into the top half; exact on base V (Zvfbfmin's vfwcvtbf16 does it in one instruction)"
+
+[isa.rvv.f32.store_bf16]
+mnemonic = "vsrl.vi + vand.vi + vadd + vnsrl.wi + vse16.v"
+signature = "(p, v, vl)"
+semantics = "p[j] = v[j] rounded to nearest even bf16"
+recipe = ["__riscv_vreinterpret_v_f32m1_u32m1", "__riscv_vadd_vv_u32m1", "__riscv_vadd_vx_u32m1", "__riscv_vand_vx_u32m1", "__riscv_vsrl_vx_u32m1", "__riscv_vse16_v_u16mf2", "__riscv_vnsrl_wx_u16mf2"]
+code = ["vuint32m1_t x = __riscv_vreinterpret_v_f32m1_u32m1(v)", "vuint32m1_t r = __riscv_vadd_vv_u32m1(x, __riscv_vadd_vx_u32m1(__riscv_vand_vx_u32m1(__riscv_vsrl_vx_u32m1(x, 16, vl), 1, vl), 0x7fff, vl), vl)", "__riscv_vse16_v_u16mf2(p, __riscv_vnsrl_wx_u16mf2(r, 16, vl), vl)"]
+note = "round to nearest even by adding 0x7fff plus the lowest kept bit; vnsrl shifts and narrows in one step. A NaN may round to infinity: quiet it first if NaN can occur. Zvfbfmin's vfncvtbf16 rounds in one instruction"
+
+[isa.rvv.i64.load]
+intrinsic = "__riscv_vle64_v_i64m1"
+mnemonic = "vle64.v"
+signature = "(p, vl) -> v"
+semantics = "v[j] = p[j] for j < vl"
+
+[isa.rvv.i64.store]
+intrinsic = "__riscv_vse64_v_i64m1"
+mnemonic = "vse64.v"
+signature = "(p, v, vl) -> void"
+semantics = "p[j] = v[j] for j < vl"
+
+[isa.rvv.i64.broadcast]
+intrinsic = "__riscv_vmv_v_x_i64m1"
+mnemonic = "vmv.v.x"
+observed = ["vlse"]
+signature = "(s, vl) -> v"
+semantics = "v[j] = s for j < vl"
+note = "a scalar read from memory may fold into a zero-stride load (vlse with stride zero)"
+
+[isa.rvv.i64.add]
+intrinsic = "__riscv_vadd_vv_i64m1"
+mnemonic = "vadd.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] + b[j] for j < vl"
+note = "wraps modulo 2^64"
+
+[isa.rvv.i64.sub]
+intrinsic = "__riscv_vsub_vv_i64m1"
+mnemonic = "vsub.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - b[j] for j < vl"
+note = "wraps modulo 2^64"
+
+[isa.rvv.i64.mul]
+intrinsic = "__riscv_vmul_vv_i64m1"
+mnemonic = "vmul.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] * b[j] for j < vl"
+note = "wraps modulo 2^64"
+
+[isa.rvv.i64.and]
+intrinsic = "__riscv_vand_vv_i64m1"
+mnemonic = "vand.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] & b[j] for j < vl"
+
+[isa.rvv.i64.or]
+intrinsic = "__riscv_vor_vv_i64m1"
+mnemonic = "vor.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] | b[j] for j < vl"
+
+[isa.rvv.i64.mod]
+mnemonic = "vrem.vv + vmseq.vi + vmerge.vim"
+observed = ["vrem"]
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a); 0 where b[j] == 0"
+recipe = ["__riscv_vmerge_vxm_i64m1", "__riscv_vrem_vv_i64m1", "__riscv_vmseq_vx_i64m1_b64"]
+code = ["__riscv_vmerge_vxm_i64m1(__riscv_vrem_vv_i64m1(a, b, vl), 0, __riscv_vmseq_vx_i64m1_b64(b, 0, vl), vl)"]
+note = "vrem never traps: a zero divisor gives a[j], so select 0 there like the other targets; INT_MIN % -1 gives 0"
+
+[isa.rvv.i64.min]
+intrinsic = "__riscv_vmin_vv_i64m1"
+mnemonic = "vmin.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the smaller of a[j], b[j], signed"
+note = "vminu is the unsigned one"
+
+[isa.rvv.i64.max]
+intrinsic = "__riscv_vmax_vv_i64m1"
+mnemonic = "vmax.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the larger of a[j], b[j], signed"
+note = "vmaxu is the unsigned one"
+
+[isa.rvv.i64.shl]
+mnemonic = "vsll.vv"
+signature = "(a, counts, vl) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+recipe = ["__riscv_vsll_vv_i64m1", "__riscv_vreinterpret_v_i64m1_u64m1"]
+code = ["__riscv_vsll_vv_i64m1(a, __riscv_vreinterpret_v_i64m1_u64m1(counts), vl)"]
+note = "the counts are an unsigned vector; only their low 6 bits count"
+
+[isa.rvv.i64.shr]
+mnemonic = "vsrl.vv"
+signature = "(a, counts, vl) -> v"
+semantics = "v[j] = (unsigned)a[j] >> counts[j], zeros shifted in"
+recipe = ["__riscv_vreinterpret_v_u64m1_i64m1", "__riscv_vsrl_vv_u64m1", "__riscv_vreinterpret_v_i64m1_u64m1"]
+code = ["__riscv_vreinterpret_v_u64m1_i64m1(__riscv_vsrl_vv_u64m1(__riscv_vreinterpret_v_i64m1_u64m1(a), __riscv_vreinterpret_v_i64m1_u64m1(counts), vl))"]
+note = "logical: vsrl exists only on unsigned lanes (vsra is the arithmetic shift of signed ones)"
+
+[isa.rvv.i64.land]
+mnemonic = "vmsne.vi + vmand.mm"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff both of a[j], b[j] are non-zero"
+recipe = ["__riscv_vmand_mm_b64", "__riscv_vmsne_vx_i64m1_b64"]
+code = ["__riscv_vmand_mm_b64(__riscv_vmsne_vx_i64m1_b64(a, 0, vl), __riscv_vmsne_vx_i64m1_b64(b, 0, vl), vl)"]
+note = "a mask, read with vmerge"
+
+[isa.rvv.i64.lor]
+mnemonic = "vmsne.vi + vmor.mm"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff either of a[j], b[j] are non-zero"
+recipe = ["__riscv_vmor_mm_b64", "__riscv_vmsne_vx_i64m1_b64"]
+code = ["__riscv_vmor_mm_b64(__riscv_vmsne_vx_i64m1_b64(a, 0, vl), __riscv_vmsne_vx_i64m1_b64(b, 0, vl), vl)"]
+note = "a mask, read with vmerge"
+
+[isa.rvv.i64.lt]
+intrinsic = "__riscv_vmslt_vv_i64m1_b64"
+mnemonic = "vmslt.vv"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+note = "a vbool64_t mask; vmsltu compares unsigned"
+
+[isa.rvv.i32.load]
+intrinsic = "__riscv_vle32_v_i32m1"
+mnemonic = "vle32.v"
+signature = "(p, vl) -> v"
+semantics = "v[j] = p[j] for j < vl"
+
+[isa.rvv.i32.store]
+intrinsic = "__riscv_vse32_v_i32m1"
+mnemonic = "vse32.v"
+signature = "(p, v, vl) -> void"
+semantics = "p[j] = v[j] for j < vl"
+
+[isa.rvv.i32.broadcast]
+intrinsic = "__riscv_vmv_v_x_i32m1"
+mnemonic = "vmv.v.x"
+observed = ["vlse"]
+signature = "(s, vl) -> v"
+semantics = "v[j] = s for j < vl"
+note = "a scalar read from memory may fold into a zero-stride load (vlse with stride zero)"
+
+[isa.rvv.i32.add]
+intrinsic = "__riscv_vadd_vv_i32m1"
+mnemonic = "vadd.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] + b[j] for j < vl"
+note = "wraps modulo 2^32"
+
+[isa.rvv.i32.sub]
+intrinsic = "__riscv_vsub_vv_i32m1"
+mnemonic = "vsub.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] - b[j] for j < vl"
+note = "wraps modulo 2^32"
+
+[isa.rvv.i32.mul]
+intrinsic = "__riscv_vmul_vv_i32m1"
+mnemonic = "vmul.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] * b[j] for j < vl"
+note = "wraps modulo 2^32"
+
+[isa.rvv.i32.and]
+intrinsic = "__riscv_vand_vv_i32m1"
+mnemonic = "vand.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] & b[j] for j < vl"
+
+[isa.rvv.i32.or]
+intrinsic = "__riscv_vor_vv_i32m1"
+mnemonic = "vor.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] | b[j] for j < vl"
+
+[isa.rvv.i32.mod]
+mnemonic = "vrem.vv + vmseq.vi + vmerge.vim"
+observed = ["vrem"]
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = a[j] % b[j], truncated (sign of a); 0 where b[j] == 0"
+recipe = ["__riscv_vmerge_vxm_i32m1", "__riscv_vrem_vv_i32m1", "__riscv_vmseq_vx_i32m1_b32"]
+code = ["__riscv_vmerge_vxm_i32m1(__riscv_vrem_vv_i32m1(a, b, vl), 0, __riscv_vmseq_vx_i32m1_b32(b, 0, vl), vl)"]
+note = "vrem never traps: a zero divisor gives a[j], so select 0 there like the other targets; INT_MIN % -1 gives 0"
+
+[isa.rvv.i32.min]
+intrinsic = "__riscv_vmin_vv_i32m1"
+mnemonic = "vmin.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the smaller of a[j], b[j], signed"
+note = "vminu is the unsigned one"
+
+[isa.rvv.i32.max]
+intrinsic = "__riscv_vmax_vv_i32m1"
+mnemonic = "vmax.vv"
+signature = "(a, b, vl) -> v"
+semantics = "v[j] = the larger of a[j], b[j], signed"
+note = "vmaxu is the unsigned one"
+
+[isa.rvv.i32.shl]
+mnemonic = "vsll.vv"
+signature = "(a, counts, vl) -> v"
+semantics = "v[j] = a[j] << counts[j]"
+recipe = ["__riscv_vsll_vv_i32m1", "__riscv_vreinterpret_v_i32m1_u32m1"]
+code = ["__riscv_vsll_vv_i32m1(a, __riscv_vreinterpret_v_i32m1_u32m1(counts), vl)"]
+note = "the counts are an unsigned vector; only their low 5 bits count"
+
+[isa.rvv.i32.shr]
+mnemonic = "vsrl.vv"
+signature = "(a, counts, vl) -> v"
+semantics = "v[j] = (unsigned)a[j] >> counts[j], zeros shifted in"
+recipe = ["__riscv_vreinterpret_v_u32m1_i32m1", "__riscv_vsrl_vv_u32m1", "__riscv_vreinterpret_v_i32m1_u32m1"]
+code = ["__riscv_vreinterpret_v_u32m1_i32m1(__riscv_vsrl_vv_u32m1(__riscv_vreinterpret_v_i32m1_u32m1(a), __riscv_vreinterpret_v_i32m1_u32m1(counts), vl))"]
+note = "logical: vsrl exists only on unsigned lanes (vsra is the arithmetic shift of signed ones)"
+
+[isa.rvv.i32.land]
+mnemonic = "vmsne.vi + vmand.mm"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff both of a[j], b[j] are non-zero"
+recipe = ["__riscv_vmand_mm_b32", "__riscv_vmsne_vx_i32m1_b32"]
+code = ["__riscv_vmand_mm_b32(__riscv_vmsne_vx_i32m1_b32(a, 0, vl), __riscv_vmsne_vx_i32m1_b32(b, 0, vl), vl)"]
+note = "a mask, read with vmerge"
+
+[isa.rvv.i32.lor]
+mnemonic = "vmsne.vi + vmor.mm"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff either of a[j], b[j] are non-zero"
+recipe = ["__riscv_vmor_mm_b32", "__riscv_vmsne_vx_i32m1_b32"]
+code = ["__riscv_vmor_mm_b32(__riscv_vmsne_vx_i32m1_b32(a, 0, vl), __riscv_vmsne_vx_i32m1_b32(b, 0, vl), vl)"]
+note = "a mask, read with vmerge"
+
+[isa.rvv.i32.lt]
+intrinsic = "__riscv_vmslt_vv_i32m1_b32"
+mnemonic = "vmslt.vv"
+signature = "(a, b, vl) -> mask"
+semantics = "lane j true iff a[j] < b[j], signed"
+note = "a vbool32_t mask; vmsltu compares unsigned"

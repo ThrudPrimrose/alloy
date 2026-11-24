@@ -16,8 +16,9 @@ __all__ = ["CPUS", "Cost", "DEFAULT_PATH", "costs", "load"]
 
 DEFAULT_PATH = pathlib.Path(__file__).parent / "costs.toml"
 
-#: The CPU llvm-mca models for an ISA: Zen 4 (beverin's MI300A host) for x86, Neoverse V2 (GH200's Grace) for Arm.
-CPUS = {"avx2": "znver4", "avx512": "znver4", "neon": "neoverse-v2", "sve": "neoverse-v2"}
+#: The CPU llvm-mca models for an ISA: Zen 4 (beverin's MI300A host) for x86, Neoverse V2 (GH200's Grace) for Arm,
+#: SiFive X280 (RVV 1.0, VLEN 512) for RISC-V: no evaluated machine has RVV, and X280 is LLVM's in-order RVV model.
+CPUS = {"avx2": "znver4", "avx512": "znver4", "neon": "neoverse-v2", "sve": "neoverse-v2", "rvv": "sifive-x280"}
 
 
 @dataclass(frozen=True, slots=True, config=ConfigDict(extra="forbid"))

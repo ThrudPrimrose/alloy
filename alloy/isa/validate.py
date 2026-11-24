@@ -3,8 +3,8 @@
 that is possible, and every row that did not run says unverified. An AVX-512 row's masked form runs too, a row's
 mnemonic is looked for in the disassembly of the compiled row, and notes are not checked.
 
-An entry runs natively (AVX2+FMA, AVX-512F+DQ, aarch64) or under qemu-aarch64 when that and the cross compiler are on
-PATH: fixed inputs, on buffers no vector boundary aligns, through a small compiled C kernel that calls the row in its
+An entry runs natively (AVX2+FMA, AVX-512F+DQ, aarch64) or under qemu-aarch64 or qemu-riscv64 when that and the
+cross compiler are on PATH: fixed inputs, on buffers no vector boundary aligns, through a small compiled C kernel that calls the row in its
 signature's operand order, or runs its ``code`` as written, against a scalar reference and a per-op tolerance;
 :func:`unexercised` refuses a kernel that skips a spelling. An approximation tier is re-measured in numpy against libm:
 the recorded ``error_ulp`` must reproduce within a slack, which catches transcription errors in the coefficients. On a
@@ -63,17 +63,24 @@ PRINTED = re.compile(r"^\s*[0-9a-f]+:\s+(\S+)", re.MULTILINE)
 NOT_MNEMONICS = frozenset({"op", "scalar", "storeu", "..."})
 SIGNATURE = re.compile(r"^\(([^)]*)\)")
 #: A signature's literal operand: ``(0.0) -> v``, ``(a, b, _CMP_LT_OQ) -> mask``.
-LITERAL = re.compile(r"\d[\d.]*f?|_[A-Z_]+")
+LITERAL = re.compile(r"\d[\d.]*f?|_[A-Z_]+|vl")  # vl: the RVV vector length every RVV kernel declares
 WORD = re.compile(r"\b[A-Za-z_]\w*\b")
 #: The -march of each aarch64 target when another host builds it, by this compiler.
 CROSS = {"neon": "armv8.2-a", "sve": "armv8.2-a+sve"}
 CROSS_CC = "aarch64-linux-gnu-gcc"
+#: RISC-V V: built by the riscv64 cross compiler and run under qemu-riscv64 at VLEN 256; buffers hold VLEN 2048.
+RVV = "rvv"
+RISCV_CC = "riscv64-linux-gnu-gcc"
+RVV_FLAGS = ("-march=rv64gcv_zvfhmin", "-mabi=lp64d")  # Zvfhmin: the f16 storage rows
+RVV_BITS = 256
+RVV_MAX_BYTES = 256
 HEADERS = {
     "avx2": "immintrin.h",
     "avx512": "immintrin.h",
     "avx512_fp16": "immintrin.h",
     "neon": "arm_neon.h",
     "sve": "arm_sve.h",
+    "rvv": "riscv_vector.h",
     "scalar": "stdint.h",
 }
 #: The math kernels' portable target: one lane of plain C (the approximation axis), runnable on every host.
@@ -181,6 +188,8 @@ def c_flags(isa: str, dtype: str) -> list[str]:
         return ["-march=armv8.2-a+fp16"] if dtype == "f16" else []
     if isa == "sve":
         return ["-march=armv8-a+sve"]
+    if isa == RVV:
+        return list(RVV_FLAGS)
     if isa == "avx2":
         return ["-mavx2", "-mfma", "-mf16c"]  # every AVX2 CPU has F16C; f32 rows convert f16 storage with it
     return ["-mavx512f", "-mavx512dq", "-mavx512fp16"] if dtype == "f16" else ["-mavx512f", "-mavx512dq"]
@@ -249,11 +258,27 @@ def arm_frame(isa: str, dtype: str) -> Frame:
     return Frame(isa, dtype, scalar, f"{element}x{lanes}_t", f"uint{width}x{lanes}_t", suffix, lanes)
 
 
+#: dtype -> (scalar C type, RVV vector type at LMUL 1, intrinsic suffix).
+RVV_LANES = {
+    "f64": ("double", "vfloat64m1_t", "f64m1"),
+    "f32": ("float", "vfloat32m1_t", "f32m1"),
+    "i64": ("int64_t", "vint64m1_t", "i64m1"),
+    "i32": ("int32_t", "vint32m1_t", "i32m1"),
+}
+
+
+def rvv_frame(isa: str, dtype: str) -> Frame:
+    """Buffers hold the longest RVV register at LMUL 1; a kernel touches ``VL`` lanes, read at run time."""
+    scalar, vector, suffix = RVV_LANES[dtype]
+    lanes = RVV_MAX_BYTES // LANE_BYTES[dtype]
+    return Frame(isa, dtype, scalar, vector, f"vbool{8 * LANE_BYTES[dtype]}_t", suffix, lanes)
+
+
 def frame(isa: str, dtype: str, table: Table, opaque: bool = False) -> Frame:
     """The frame of ``(isa, dtype)``, spelled with the table's own load, store, compare and broadcast. ``opaque``: a
     row unit's frame, whose mask compares c with a, so no compiler folds a select on ``a < b`` into a max, and whose
     SVE predicate is a run-time one, so no compiler turns a predicated load into an unpredicated one."""
-    k = arm_frame(isa, dtype) if isa in CROSS else x86_frame(isa, dtype)
+    k = rvv_frame(isa, dtype) if isa == RVV else arm_frame(isa, dtype) if isa in CROSS else x86_frame(isa, dtype)
     load_row, store_row, set1 = (table.entry(isa, op, dtype) for op in ("load", "store", "broadcast"))
     names = {"a": "vc", "b": "va", "pg": "pg"} if opaque else {"a": "va", "b": "vb", "pg": "pg"}
     if dtype == F16:
@@ -263,9 +288,16 @@ def frame(isa: str, dtype: str, table: Table, opaque: bool = False) -> Frame:
     masked = f"{load_row.masked.split('(', 1)[0].strip()}(k, a)" if k.wide else called(load_row, {"pg": "k", "p": "a"})
     if k.wide and dtype == F16:  # the f16 masked load is the 16-bit integer one
         masked = f"_mm512_castsi512_ph({masked})"
+    if isa == RVV:  # mask-undisturbed: inactive lanes keep the zero vector
+        masked = f"{load_row.intrinsic}_mu(k, {called(set1, {'s': '0'})}, a, vl)"
     loads = {name: called(load_row, {"pg": "pg", "p": f"{k.cast}{name}"}) for name in "abc"}
     everywhere = f"svwhilelt_b{k.lane_bits}(0, (int)idx[0])" if opaque else f"svptrue_b{k.lane_bits}()"
     predicate = f"svbool_t pg = {everywhere};\n  " if isa == "sve" else ""
+    if isa == RVV:  # opaque: a run-time vl, so no compiler folds the vl of a row into a constant
+        length = (
+            f"__riscv_vsetvl_e{k.lane_bits}m1((size_t)idx[0])" if opaque else f"__riscv_vsetvlmax_e{k.lane_bits}m1()"
+        )
+        predicate = f"size_t vl = {length};\n  "
     return dataclasses.replace(
         k,
         loads=predicate + "\n  ".join(f"{k.vector} v{name} = {load};" for name, load in loads.items()),
@@ -330,6 +362,7 @@ def blended(k: Frame, mask: str) -> str:
         "avx512": f"_mm512_mask_blend_{k.suffix}({mask}, {k.zero}, {k.one})",
         "neon": f"vbslq_{k.suffix}({mask}, {k.one}, {k.zero})",
         "sve": f"svsel_{k.suffix}({mask}, {k.one}, {k.zero})",
+        "rvv": f"__riscv_vmerge_vvm_{k.suffix}({k.zero}, {k.one}, {mask}, vl)",
     }[k.isa]
 
 
@@ -411,7 +444,9 @@ def gen_mask_body(k: Frame, op: str, entry: Entry) -> tuple[str, str]:
         names = {"iota": "iota", "n": f"_mm512_set1_epi{k.lane_bits}(n)"}
     else:
         setup, names = "", {"i": "0", "N": "n"}
-    compute = f"int n = VL - 1;\n  {setup}{k.mask} k = {called(entry, names)};\n  {k.vector} vr = {k.masked_load};"
+    compute = (
+        f"int n = VL - 1;\n  {setup}{assigned(f'{k.mask} k = ', entry, names)}\n  {k.vector} vr = {k.masked_load};"
+    )
     return k.stored(compute), lane_ref("j < n ? a[j] : 0")
 
 
@@ -490,6 +525,13 @@ BODIES: dict[str, Callable[[Frame, str, Entry], tuple[str, str]]] = {
 #: either is NaN or both are zero, which ``a < b ? a : b`` states.
 ARM_MIN = "isnan(a[j]) || isnan(b[j]) ? NAN : a[j] == b[j] ? (signbit(a[j]) ? a[j] : b[j]) : a[j] < b[j] ? a[j] : b[j]"
 ARM_MAX = "isnan(a[j]) || isnan(b[j]) ? NAN : a[j] == b[j] ? (signbit(a[j]) ? b[j] : a[j]) : a[j] > b[j] ? a[j] : b[j]"
+#: RVV's vfmin and vfmax: IEEE 754-2019 minimumNumber and maximumNumber, a NaN operand gives the other one.
+RVV_MIN = (
+    "isnan(a[j]) ? b[j] : isnan(b[j]) ? a[j] : a[j] == b[j] ? (signbit(a[j]) ? a[j] : b[j]) : a[j] < b[j] ? a[j] : b[j]"
+)
+RVV_MAX = (
+    "isnan(a[j]) ? b[j] : isnan(b[j]) ? a[j] : a[j] == b[j] ? (signbit(a[j]) ? b[j] : a[j]) : a[j] > b[j] ? a[j] : b[j]"
+)
 
 
 def scalar_ref(k: Frame, op: str) -> str:
@@ -517,9 +559,9 @@ def scalar_ref(k: Frame, op: str) -> str:
         "sub": "a[j] - b[j]",
         "mul": "a[j] * b[j]",
         "div": "a[j] / b[j]",
-        "min": "a[j] < b[j] ? a[j] : b[j]" if k.isa not in CROSS else ARM_MIN,
-        "max": "a[j] > b[j] ? a[j] : b[j]" if k.isa not in CROSS else ARM_MAX,
-        "fma": f"fma{f}(b[j], c[j], a[j])" if k.isa in CROSS else f"fma{f}(a[j], b[j], c[j])",
+        "min": RVV_MIN if k.isa == RVV else ARM_MIN if k.isa in CROSS else "a[j] < b[j] ? a[j] : b[j]",
+        "max": RVV_MAX if k.isa == RVV else ARM_MAX if k.isa in CROSS else "a[j] > b[j] ? a[j] : b[j]",
+        "fma": f"fma{f}(b[j], c[j], a[j])" if k.isa in (*CROSS, RVV) else f"fma{f}(a[j], b[j], c[j])",
         "sqrt": f"sqrt{f}(a[j])",
         "abs": "fabs(a[j])",
         "neg": "-a[j]",
@@ -624,6 +666,8 @@ def comparison(k: Frame, op: str) -> Compare:
 
 def lane_count(k: Frame) -> str:
     """Lanes of a vector in C: a run-time query on SVE, whose buffers only bound it."""
+    if k.isa == RVV:
+        return f"((int)__riscv_vsetvlmax_e{k.lane_bits}m1())"
     return f"((int){ARM_LANES[k.dtype][3]})" if k.isa == "sve" else str(k.lanes)
 
 
@@ -735,7 +779,16 @@ Emulator = tuple[str, tuple[str, ...], tuple[str, ...]]
 
 
 def emulated(isa: str) -> Emulator | None:
-    """How this host runs an aarch64 ``isa`` under qemu, or None. A kernel run this way earns a real verdict."""
+    """How this host runs an aarch64 or RISC-V ``isa`` under qemu, or None. A kernel run this way earns a real verdict."""
+    if isa == RVV:
+        cc, qemu = shutil.which(RISCV_CC), shutil.which("qemu-riscv64") or shutil.which("qemu-riscv64-static")
+        if platform.machine() == "riscv64" or cc is None or qemu is None:
+            return None
+        return (
+            cc,
+            (*RVV_FLAGS, "-static"),
+            (qemu, "-cpu", f"max,vlen={RVV_BITS}"),
+        )  # max: V and Zvfhmin under every qemu since 8.1
     cc, qemu = shutil.which(CROSS_CC), shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")
     if isa not in CROSS or platform.machine() == "aarch64" or cc is None or qemu is None:
         return None
@@ -744,6 +797,8 @@ def emulated(isa: str) -> Emulator | None:
 
 def target_compiler(isa: str) -> str | None:
     """What builds ``isa`` here, whether or not the result can run."""
+    if isa == RVV and platform.machine() != "riscv64":
+        return shutil.which(RISCV_CC)
     return shutil.which(CROSS_CC) if isa in CROSS and platform.machine() != "aarch64" else c_compiler()
 
 

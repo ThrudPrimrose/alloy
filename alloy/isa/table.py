@@ -67,7 +67,7 @@ DEFAULT_PATH = pathlib.Path(__file__).parent / "intrinsics.toml"
 #: ``avx512_fp16`` is AVX-512 with AVX512-FP16 (Sapphire Rapids and later): the AVX-512 rows plus its f16 rows.
 ALIASES = {"avx512_256": "avx512", "avx512_fp16": "avx512"}
 WIDTH_KNOBS = frozenset({"avx512_256"})
-KNOWN_ISAS = "avx2, avx512, avx512_fp16, neon, sve (avx512_256 is a compiler width knob, not a target)"
+KNOWN_ISAS = "avx2, avx512, avx512_fp16, neon, sve, rvv (avx512_256 is a compiler width knob, not a target)"
 #: Lanes only a feature target has, by (target, dtype): plain AVX-512 (Zen 4, Skylake-X, Ice Lake) has no f16 math.
 GATED = {("avx512", "f16"): "avx512_fp16"}
 
@@ -79,7 +79,7 @@ FMA_DTYPE = {"d": "f64", "s": "f32", "h": "f16"}
 DOT_SUFFIX = re.compile(r"^([a-z0-9]+)\.[a-z]+$")
 
 #: An intrinsic named anywhere in free text: a bare recipe step, or a prose step or masked note citing one.
-SPELLED = re.compile(r"\b(?:_mm\d*_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_[a-z0-9]+)+)\b")
+SPELLED = re.compile(r"\b(?:_mm\d*_\w+|__riscv_\w+|sv[a-z0-9]+(?:_[a-z0-9]+)+|v[a-z0-9]+(?:_[a-z0-9]+)+)\b")
 #: An intrinsic a row's ``code`` calls.
 CALLED = re.compile(SPELLED.pattern + r"(?=\()")
 
@@ -266,6 +266,9 @@ class Table:
     def reverse(self, name: str) -> tuple[Hit, ...]:
         """Every ``(isa, op, dtype)`` an intrinsic, recipe step, library call or mnemonic spells, or an empty tuple.
         A mnemonic takes any letter case, operands and an EVEX ``.z``; one step of a composite matches the composite."""
+        first = name.strip().split(maxsplit=1)[0].split(",", 1)[0].lower() if name.strip() else ""
+        if "." in first and (dotted := self.mnemonic_hits(first)):  # RVV mnemonics keep their dot: vfmacc.vv
+            return dotted
         token = normalized(name)
         masked = masked_form(token)
         hits = self.by_intrinsic.get(token) or self.by_intrinsic.get(masked, ())

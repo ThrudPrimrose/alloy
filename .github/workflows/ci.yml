@@ -61,11 +61,13 @@ jobs:
           echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           # OpenBLAS + LAPACKE: the BLAS/LAPACK library-node headers a scope includes (OMEN's Norb-sized products)
-          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev ninja-build gcc-14-aarch64-linux-gnu qemu-user
+          sudo apt-get install -y gcc-$GCC_VERSION g++-$GCC_VERSION libopenblas-dev liblapacke-dev ninja-build gcc-14-aarch64-linux-gnu gcc-14-riscv64-linux-gnu qemu-user
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-$GCC_VERSION 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-$GCC_VERSION 100
           # SME tiles call the SME ABI routines (__arm_tpidr2_save), which libgcc has from gcc 14
           sudo update-alternatives --install /usr/bin/aarch64-linux-gnu-gcc aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-gnu-gcc-14 100
+          # RVV rows run under qemu-riscv64 (alloy/isa/validate.py)
+          sudo update-alternatives --install /usr/bin/riscv64-linux-gnu-gcc riscv64-linux-gnu-gcc /usr/bin/riscv64-linux-gnu-gcc-14 100
           # SLEEF shared and static: a scope that picks it links a private copy from libsleefgnuabi.a (A7)
           sudo JOBS="$(nproc)" helpers/install-sleef.sh /usr/local
 

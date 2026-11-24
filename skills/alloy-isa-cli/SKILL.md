@@ -1,6 +1,6 @@
 ---
 name: alloy-isa-cli
-description: "Vector intrinsics without manuals, through `python -m alloy.isa` for avx2, avx512, neon and sve: an abstract op's intrinsic with its operand-order traps, 19 math functions (sin, exp, log, pow, fmod, ...) as intrinsic C at a chosen error bound, legal loop tail schedules with compiled skeletons, and what a disassembled mnemonic or vector library symbol computes. Answers the host can run are compiled and checked first. Use when writing or reading SIMD intrinsics or vectorized disassembly on x86 or AArch64, replacing a libm call in a hot loop, choosing a tail schedule, or when Alloy's report sends a scope back to you."
+description: "Vector intrinsics without manuals, through `python -m alloy.isa` for avx2, avx512, neon, sve and rvv (RISC-V V): an abstract op's intrinsic with its operand-order traps, 19 math functions (sin, exp, log, pow, fmod, ...) as intrinsic C at a chosen error bound, legal loop tail schedules with compiled skeletons, and what a disassembled mnemonic or vector library symbol computes. Answers the host can run are compiled and checked first. Use when writing or reading SIMD intrinsics or vectorized disassembly on x86, AArch64 or RISC-V, replacing a libm call in a hot loop, choosing a tail schedule, or when Alloy's report sends a scope back to you."
 when: "you write or read vector intrinsic code or vectorized loops (source or disassembly) on x86 or AArch64 and need a spelling, an operand order, a loop schedule, a math function as intrinsics, or the math an instruction computes; or an Alloy report says a scope is yours to do by hand"
 ---
 
@@ -104,7 +104,8 @@ and fewer instructions, not by throughput.
   tt-metal renamed a call, and the maximum relative error its run on ttsim recorded. `f32` and `bf16` only.
 - `cuda` and `hip` answer with device code for one thread or one warp: `lookup hip reduce_add f32` gives the
   maskless 64-lane shuffle loop, `lookup cuda reduce_add f32` the masked 32-lane one, with the check each row passed.
-- ISAs: `avx2`, `avx512`, `neon`, `sve`. `avx512_256` is a compiler width knob: `kernel` maps it to AVX2 and
+- ISAs: `avx2`, `avx512`, `neon`, `sve`, `rvv` (RISC-V V 1.0; `lookup`, `reverse` and `skeleton`, run under
+  qemu-riscv64; no `kernel` yet). `avx512_256` is a compiler width knob: `kernel` maps it to AVX2 and
   `lookup` refuses it, because explicit `_mm512_*` intrinsics stay 512-bit. Dtypes: `f64`/`f32` everywhere, `f16`
   where the hardware has it, `i64`/`i32` for the integer ops. Names may be upper case.
 - `reverse` accepts C intrinsics (`_mm512_add_pd`), SVE `_m`/`_z` and AVX-512 `maskz`/`mask3` forms, recipe steps,
@@ -191,6 +192,6 @@ python -m alloy.isa reverse vfmadd231pd
 The `isa/` pages are generated: `python -m alloy.isa.render` after changing the table (maintenance
 workflow: the `alloy-isa-gen` skill). Never edit them by hand.
 
-Coverage: the abstract ops above on avx2, avx512, neon and sve, the 19 math functions, and the vector library
+Coverage: the abstract ops above on avx2, avx512, neon, sve and rvv, the 19 math functions, and the vector library
 spellings (libmvec names checked against the host's libmvec, SLEEF and SVML names per their references). To extend
 the table, follow the `alloy-isa-gen` skill.

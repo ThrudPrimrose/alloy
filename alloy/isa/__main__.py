@@ -149,7 +149,7 @@ def parser() -> Parser:
     commands = cli.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     lookup_p = commands.add_parser("lookup", help="op -> intrinsic: lookup <isa> <op> <dtype>")
-    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve; tensix, softhier, cuda, hip")
+    lookup_p.add_argument("isa", help="avx2, avx512 (also avx512_256), neon, sve, rvv; tensix, softhier, cuda, hip")
     lookup_p.add_argument("op", help=f"one of: {', '.join(OPS)}")
     lookup_p.add_argument("dtype", help="f64, f32, f16, i64 or i32")
     lookup_p.add_argument("--no-verify", action="store_true", help="skip the numerical validation gate")
@@ -268,6 +268,10 @@ def kernel_command(table: Table, args: argparse.Namespace) -> int:
     """A function's math kernels at one rung: the named ``--level``, or the cheapest within ``--max-ulp``/``--max-abs``."""
     level = args.level
     table.isa(args.isa)
+    if args.isa == "rvv":
+        raise KeyError(
+            f"rvv: no math kernels yet; `lookup rvv {args.function} {args.dtype}` gives the polynomial tiers"
+        )
     if args.max_ulp is not None or args.max_abs is not None:
         if level:
             raise KeyError("--level names one rung and --max-ulp/--max-abs pick one: give one of the two")
@@ -291,7 +295,9 @@ def refuse_width_knob(isa: str) -> None:
 def lanes_of(table: Table, isa: str, dtype: str) -> int | str:
     """Lanes per vector, or the runtime query on a length-agnostic ISA."""
     lanes = table.isa(isa).lanes[dtype]
-    return lanes or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
+    if lanes or isa != "rvv":
+        return lanes or {"f64": "svcntd()", "i64": "svcntd()", "f16": "svcnth()"}.get(dtype, "svcntw()")
+    return f"__riscv_vsetvlmax_e{dtype[1:]}m1()"
 
 
 def print_entry(table: Table, isa: str, op: str, dtype: str) -> None:

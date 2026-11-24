@@ -12,7 +12,7 @@ from alloy.isa.validate import REPORT_ERROR, Verdict, c_flags, compile_run, emul
 __all__ = ["SCHEDULES", "compiler_spelling", "legal", "skeleton", "verify"]
 
 #: Every schedule the table knows, most conservative first.
-SCHEDULES = ("scalar", "scalar_remainder", "masked_remainder", "full_mask", "sve_intrinsics")
+SCHEDULES = ("scalar", "scalar_remainder", "masked_remainder", "full_mask", "sve_intrinsics", "rvv_vsetvl")
 
 C_TYPE = {"f64": "double", "f32": "float"}
 
@@ -66,6 +66,8 @@ def fma_body(table: Table, isa: str, dtype: str, mask: str = "", pg: str = "pg")
         ldx = f"{ld.intrinsic}(X + i)"
         ldy = f"{ld.intrinsic}(Y + i)"
     family = family_of(isa)
+    if family == "rvv":  # accumulator first, every intrinsic takes vl last
+        return f"{fm.intrinsic}({ld.intrinsic}(Y + i, vl), {bc.intrinsic}(a, vl), {ld.intrinsic}(X + i, vl), vl)"
     if family == "x86":
         return f"{fm.intrinsic}({bc.intrinsic}(a), {ldx}, {ldy})"
     if family == "neon":
@@ -82,6 +84,8 @@ def store_of(table: Table, isa: str, dtype: str, value: str, mask: str = "", pg:
         return f"{applied(st.masked, {'p': 'C + i', 'k': mask, 'v': value})};"
     if family_of(isa) == "sve":
         return f"{st.intrinsic}({pg}, C + i, {value});"
+    if family_of(isa) == "rvv":
+        return f"{st.intrinsic}(C + i, {value}, vl);"
     return f"{st.intrinsic}(C + i, {value});"
 
 
@@ -110,8 +114,18 @@ def skeleton(table: Table, isa: str, schedule: str, dtype: str) -> str:
     family = family_of(isa)
     s = C_TYPE[dtype]
     lanes, step = lanes_of(table, isa, dtype)
-    header = {"x86": "#include <immintrin.h>", "neon": "#include <arm_neon.h>", "sve": "#include <arm_sve.h>"}[family]
-    body = sve_body(table, dtype, schedule, step) if family == "sve" else simd_body(table, isa, dtype, schedule, lanes)
+    header = {
+        "x86": "#include <immintrin.h>",
+        "neon": "#include <arm_neon.h>",
+        "sve": "#include <arm_sve.h>",
+        "rvv": "#include <riscv_vector.h>",
+    }[family]
+    if family == "sve":
+        body = sve_body(table, dtype, schedule, step)
+    elif family == "rvv":
+        body = rvv_body(table, dtype, schedule)
+    else:
+        body = simd_body(table, isa, dtype, schedule, lanes)
     return (
         f"{header}\n#include <stdint.h>\n\n"
         f"/* {isa}/{dtype}, schedule '{schedule}': {table.schedule_info[schedule].description} */\n"
@@ -183,6 +197,21 @@ def sve_body(table: Table, dtype: str, schedule: str, step: str) -> str:
     if schedule == "scalar_remainder":
         return f"{head}for (; i < N; i++) {{\n    C[i] = a * X[i] + Y[i];\n}}"
     return f"{head}if (i < N) {{\n    svbool_t __pg_i = {gen}(i, N);\n    {tail}\n}}"
+
+
+def rvv_body(table: Table, dtype: str, schedule: str) -> str:
+    """The strip-mined loop of RVV: vsetvl gives each pass min(N - i, VLMAX) lanes, so the last pass is the tail."""
+    if schedule == "scalar":
+        return scalar_loop("N")
+    bits = "64" if dtype == "f64" else "32"
+    store = store_of(table, "rvv", dtype, fma_body(table, "rvv", dtype))
+    return (
+        f"for (int64_t i = 0; i < N;) {{\n"
+        f"    size_t vl = __riscv_vsetvl_e{bits}m1((size_t)(N - i));\n"
+        f"    {store}\n"
+        f"    i += (int64_t)vl;\n"
+        f"}}"
+    )
 
 
 DRIVER = """

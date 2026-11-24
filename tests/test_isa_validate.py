@@ -483,6 +483,46 @@ def test_a_wrong_arm_row_fails_under_qemu(isa: str, dtype: str, op: str, fields:
     assert sut.ok is False, sut.basis
 
 
+RVV_ROWS = [
+    (dtype, op)
+    for dtype in ("f64", "f32", "i64", "i32")
+    for op, entry in TABLE.isas["rvv"].entries(dtype).items()
+    if not entry.approximations
+]
+
+
+@pytest.mark.skipif(validate_module.emulated("rvv") is None, reason="needs qemu-riscv64 and the riscv64 cross compiler")
+@pytest.mark.parametrize("dtype, op", RVV_ROWS)
+def test_every_rvv_row_runs_correctly_under_qemu(dtype: str, op: str) -> None:
+    sut = validate("rvv", op, dtype, TABLE)
+
+    assert sut.ok is True, f"{sut.basis}: {sut.detail}"
+    assert "qemu" in sut.basis
+
+
+@pytest.mark.skipif(validate_module.emulated("rvv") is None, reason="needs qemu-riscv64 and the riscv64 cross compiler")
+@pytest.mark.parametrize(
+    "dtype, op, fields",
+    [
+        ("f64", "fma", {"signature": "(m1, m2, add, vl) -> v"}),
+        ("f32", "select", {"signature": "(t, f, mask, vl) -> v"}),
+        ("f64", "min", {"intrinsic": "__riscv_vfmax_vv_f64m1"}),  # also differs from minimumNumber on no NaN lane
+        (
+            "i64",
+            "shr",
+            {
+                "recipe": ("__riscv_vsra_vv_i64m1", "__riscv_vreinterpret_v_i64m1_u64m1"),
+                "code": ("__riscv_vsra_vv_i64m1(a, __riscv_vreinterpret_v_i64m1_u64m1(counts), vl)",),
+            },
+        ),
+    ],
+)
+def test_a_wrong_rvv_row_fails_under_qemu(dtype: str, op: str, fields: dict[str, object]) -> None:
+    sut = validate("rvv", op, dtype, with_row("rvv", dtype, op, **fields))
+
+    assert sut.ok is False, sut.basis
+
+
 @pytest.mark.skipif(validate_module.emulated("neon") is None, reason="needs qemu-aarch64 and the cross compiler")
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize("op", ["sin", "cos", "exp"])
