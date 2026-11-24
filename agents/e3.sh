@@ -15,33 +15,17 @@ TOKENS=${TOKENS:-2500000}
 RUN=/scratch/ybudanaz/agents/e3-$STUDY/$(date +%Y%m%d-%H%M%S)-$(git -C "$HERE" rev-parse --short HEAD)
 ssh ault "mkdir -p $RUN"
 git -C "$HERE" archive --prefix=alloy/ HEAD | ssh ault "tar xf - -C $RUN"
-TASKS=${*:-$(python3 -c "import json,sys; print(' '.join(t['name'] for t in json.load(open(sys.argv[1]))))" \
-  "$HERE/agents/$([ "$STUDY" = tensix ] && echo tensix/agents || echo softhier)/tasks.json")}
-for task in $TASKS; do for config in $CONFIGS; do echo "$task $config"; done; done | ssh ault "cat > $RUN/episodes.txt"
+[ $# -eq 0 ] || for task in "$@"; do for config in $CONFIGS; do echo "$task $config"; done; done \
+  | ssh ault "cat > $RUN/episodes.txt"  # without TASKS, agents/e3_episodes.sh runs every task of the study
 ssh ault "cat > $RUN/job.sh" <<EOF
 #!/bin/bash -l
 set -uo pipefail
 cd $RUN
 export UV_CACHE_DIR=/scratch/ybudanaz/.cache/uv
 ~/.local/bin/uv venv -q --python 3.12 venv && ~/.local/bin/uv pip install -q --python venv/bin/python -e alloy || exit 3
-export ALLOY_REPO=$RUN/alloy SOFTHIER_IMAGE=/scratch/ybudanaz/softhier/image/softhier-v1.sif
-if [ $STUDY = softhier ]; then  # docs: the bench's docs-md-softhier pages; tensix: the pinned tt-metal tree
-  mkdir -p docs && cp -r alloy/alloy/hb_plugin/skills/docs-md-softhier-* docs/ && export DOCS_TREE=$RUN/docs
-else
-  export TT_DOCS_TREE=/scratch/ybudanaz/.cache/tt-metal-v0.63.0
-  venv/bin/python alloy/agents/tools/helptool.py docs fetch || exit 3
-fi
-episode() {
-  set -- \$1
-  out=$RUN/submissions/\$1-oss120b-\$2
-  venv/bin/python alloy/agents/run_agent.py "\$1" "\$2" "\$out" --study $STUDY --endpoint $ENDPOINT/endpoint.json \
-    --tokens $TOKENS > "\$out.log" 2>&1
-  [ $STUDY = softhier ] && singularity exec -B $RUN -B /scratch/ybudanaz "\$SOFTHIER_IMAGE" python3 alloy/agents/softhier/host.py grade "\$1" "\$out" \
-    > "\$out.verdict" 2>&1
-}
-export -f episode; export RUN SOFTHIER_IMAGE STUDY
-mkdir -p submissions
-xargs -a episodes.txt -P "\${SLURM_CPUS_PER_TASK:-16}" -I{} bash -c 'episode "{}"'
+PYTHON=$RUN/venv/bin/python GRADE=1 SOFTHIER_IMAGE=/scratch/ybudanaz/softhier/image/softhier-v1.sif \\
+  TT_DOCS_TREE=/scratch/ybudanaz/.cache/tt-metal-v0.63.0 CONFIGS="$CONFIGS" TOKENS=$TOKENS \\
+  bash alloy/agents/e3_episodes.sh $STUDY $RUN $ENDPOINT/endpoint.json
 EOF
 ssh ault "sbatch --parsable -A g34 -p amdvega -w ault20 -c 16 --mem=48G -t 04:00:00 -J e3-$STUDY -o $RUN/e3.out $RUN/job.sh"
 echo "$RUN"
