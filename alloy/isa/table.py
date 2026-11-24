@@ -266,8 +266,8 @@ class Table:
     def reverse(self, name: str) -> tuple[Hit, ...]:
         """Every ``(isa, op, dtype)`` an intrinsic, recipe step, library call or mnemonic spells, or an empty tuple.
         A mnemonic takes any letter case, operands and an EVEX ``.z``; one step of a composite matches the composite."""
-        first = name.strip().split(maxsplit=1)[0].split(",", 1)[0].lower() if name.strip() else ""
-        if "." in first and (dotted := self.mnemonic_hits(first)):  # RVV mnemonics keep their dot: vfmacc.vv
+        word = name.strip().split(maxsplit=1)[0].split(",", 1)[0].lower() if name.strip() else ""
+        if "." in word and (dotted := self.mnemonic_hits(word)):  # RVV mnemonics keep their dot: vfmacc.vv
             return dotted
         token = normalized(name)
         masked = masked_form(token)
@@ -277,7 +277,9 @@ class Table:
             return hits
         token = token.lower()
         if (m := FMA_FORM.match(token)) is not None:  # vfmadd231sd is the packed form's math on one lane
-            hits = tuple(h for h in self.mnemonic_hits(m.group(1)) if h.dtype == FMA_DTYPE[m.group(3)])
+            # an x86 form: RVV's vfmadd (vfmadd.vv) shares the stem
+            x86 = (h for h in self.mnemonic_hits(m.group(1)) if h.isa.startswith("avx"))
+            hits = tuple(h for h in x86 if h.dtype == FMA_DTYPE[m.group(3)])
             if m.group(2) == "p":
                 return hits
             first: dict[tuple[str, str], Hit] = {}

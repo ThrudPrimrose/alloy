@@ -477,7 +477,16 @@ def test_the_skill_pages_render_from_the_table(tmp_path: pathlib.Path) -> None:
     written = render(TABLE, tmp_path)
     names = {path.name for path in written}
 
-    assert names == {"index.md", "kernels.md", "transcendentals.md", "avx2.md", "avx512.md", "neon.md", "sve.md"}
+    assert names == {
+        "index.md",
+        "kernels.md",
+        "transcendentals.md",
+        "avx2.md",
+        "avx512.md",
+        "neon.md",
+        "sve.md",
+        "rvv.md",
+    }
     index = (tmp_path / "index.md").read_text()
     for op in ("load", "gather", "sin"):
         assert f"`{op}`" in index
