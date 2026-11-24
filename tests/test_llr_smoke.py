@@ -55,7 +55,7 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vpv", "tsvc_2_vsumr"])
+@pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vsumr"])  # tsvc_2_vpv: test_hb_plugin
 def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_against_the_default(
     kernel: str, tmp_path: pathlib.Path
 ) -> None:
@@ -87,15 +87,15 @@ def test_a_caller_that_times_elsewhere_gets_verified_builds_and_no_local_timing(
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("pipeline", ["parallel_cpu", "canon_cpu"])
 def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(
-    pipeline: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """OMEN's scattering self-energies (complex128, an indirect neighbor index, matmuls in an eight-deep nest) after
-    a bench transformation pipeline: every scope builds distinct variants and the whole program still verifies."""
+    the bench's canon pipeline: every scope builds distinct variants and the whole program still verifies (the parallel
+    pipeline took 4.6 min more; test_hb_plugin covers it on tsvc_2_vpv)."""
     monkeypatch.setenv("HPCAGENT_BENCH_FUZZ_SIZE_CAP", OMEN_SIZE_CAP)
     spec = BenchSpec.load("scattering_self_energies")
-    sdfg = pipeline_sdfg(spec, pipeline)
+    sdfg = pipeline_sdfg(spec, "canon_cpu")
     manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
 
     sut = api.generate(sdfg, tmp_path, manifest=manifest, matrix=TINY)

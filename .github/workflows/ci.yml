@@ -121,7 +121,7 @@ jobs:
           export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
           marks="not cuda and not hip and not tensix and not nvidia"
           grep -q avx512f /proc/cpuinfo || marks="not avx512 and $marks"
-          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error -m "$marks" tests \
+          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error --durations=25 -m "$marks" tests \
             --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py
 
   # The Tensix rows run on Tenstorrent's simulator ttsim inside the pinned tt-metal image (alloy/isa/tensix.py): docker

@@ -46,3 +46,12 @@ def test_only_the_isas_the_host_lists_are_offered() -> None:
 
     assert MATRIX.host_isas(zen3_flags) == ("avx2",)
     assert MATRIX.host_isas(grace_flags) == ("neon", "sve")
+
+
+def test_the_reference_fp_matrix_keeps_only_the_reference_levels_and_no_approximation() -> None:
+    ref = configuration_matrix.at_reference_fp(MATRIX)
+
+    assert set(MATRIX.fp_levels) - set(ref.fp_levels)  # the full matrix relaxes further (fast, reassoc)
+    assert set(ref.fp_levels) == set(MATRIX.fp_levels) & set(configuration_matrix.REFERENCE_FP_LEVELS)
+    assert ref.approximation is False
+    assert ref.compilers == MATRIX.compilers
