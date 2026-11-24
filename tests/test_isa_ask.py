@@ -971,7 +971,7 @@ def test_a_wait_answers_the_instruction_that_completes_its_token(target: str, on
     ("global", "shared", "noc_async_read_tile(", "noc"), ("shared", "global", "noc_async_write_tile(", "noc_write"),
 ])  # fmt: skip
 def test_a_tensix_copy_moves_whole_tiles_over_the_noc_and_names_its_barrier(
-    src: str, dst: str, spelled: str, token: str
+    src: Space, dst: Space, spelled: str, token: str
 ) -> None:
     sut = ask(Request("tensix", "copy", {"src": Operand(src, "f32", (32, 64)), "dst": Operand(dst, "f32", (32, 64))}))
     ragged = ask(

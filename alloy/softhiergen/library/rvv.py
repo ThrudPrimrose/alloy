@@ -250,7 +250,7 @@ class ExpandITERVV(ExpandTransformation):
         if condition.kind != TILE:
             raise LoweringError(f"{node.label}: Spatz selects under a bool tile, not a {condition.kind} condition")
         call = Call(node, parent_state, parent_sdfg, "_o")
-        mask, n, s = call.tile("_mask", dace.bool_), call.count, call.suffix
+        mask, n, s = call.tile("_mask", dace.bool), call.count, call.suffix  # pyright: ignore[reportArgumentType] -- DaCe's annotation
         if then.kind == TILE and otherwise.kind == TILE:
             body = f"dsh_rvv_select_{s}(_o, {mask}, {call.tile('_t')}, {call.tile('_e')}, {n});"
         elif otherwise.kind == TILE:

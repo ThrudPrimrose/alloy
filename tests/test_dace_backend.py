@@ -145,10 +145,11 @@ def test_the_build_computes_what_dace_computes_and_a_recompile_loads_it_unless_t
     first = built_outputs(matrix, out)
     swept = (out / "report.md").stat().st_mtime_ns
     again = built_outputs(matrix, out)
+    unswept = (out / "report.md").stat().st_mtime_ns
     sut = dace_backend.compile(doubled(load_program(f"{REDUCTIONS}:scale").to_sdfg(), "3.0"), matrix=matrix, out=out)
 
     np.testing.assert_array_equal(first, expected)
-    assert (out / "report.md").stat().st_mtime_ns == swept, "nothing swept again"
+    assert unswept == swept, "nothing swept again"
     np.testing.assert_array_equal(again, expected)
     args = arguments()
     assert sut is not None

@@ -71,7 +71,7 @@ def run(root: pathlib.Path, cache: pathlib.Path) -> dict[str, str]:
     for name, (case, prog) in made.items():
         folder = prog.write(root / f"case{len(folders)}")
         arrays = {k: numpy.asarray(v, dtype=numpy.float32) for k, v in case.inputs.items() if numpy.ndim(v) > 0}
-        numpy.savez(folder / "inputs.npz", **arrays)
+        numpy.savez(folder / "inputs.npz", **arrays)  # pyright: ignore[reportArgumentType] -- numpy types its keyword arrays as its own options
         folders.append((name, case, folder))
     verdicts = ttsim.run([folder for _, _, folder in folders], cache)
     found = {}

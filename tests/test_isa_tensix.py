@@ -12,11 +12,11 @@ from alloy.isa import tensix, tensix_harness
 from alloy.isa.__main__ import main
 
 
-def test_every_row_at_every_dtype_has_a_passing_run_on_the_pinned_image() -> None:
+def test_every_row_at_each_of_its_dtypes_has_a_passing_run_on_the_pinned_image() -> None:
     verdicts = tensix.verdicts()
 
     for row in tensix.rows():
-        for dtype in tensix.dtypes():
+        for dtype in tensix.row_dtypes(row):
             if row.pending:  # run by the tensix CI job (below), recorded by the next `verify`
                 assert (row.op, dtype, row.unit) not in verdicts
                 continue
@@ -137,7 +137,7 @@ def test_every_row_runs_correct_on_ttsim(tmp_path_factory: pytest.TempPathFactor
 
     if out := os.environ.get("ALLOY_TENSIX_VERDICTS"):  # the CI job uploads it: the record `verify` would write
         pathlib.Path(out).write_text(tensix.verdicts_text(found, library, tensix.IMAGE))
-    assert len(found) == len(tensix.rows()) * len(tensix.dtypes())
+    assert len(found) == sum(len(tensix.row_dtypes(row)) for row in tensix.rows())
     assert all(v.ok for v in found), [v for v in found if not v.ok]
 
 

@@ -135,6 +135,11 @@ def dtypes() -> tuple[str, ...]:
     return tuple(table()["target"]["dtypes"])
 
 
+def row_dtypes(row: Row) -> tuple[str, ...]:
+    """The dtypes ``row`` runs at: its own list (``select`` is float32 only), else every dtype of the target."""
+    return row.dtypes or dtypes()
+
+
 @functools.lru_cache(maxsize=None, typed=True)
 def recorded(path: pathlib.Path = VERDICTS_PATH) -> Json:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
@@ -149,7 +154,7 @@ def digest(row: Row, dtype: str) -> str:
 def current(path: pathlib.Path) -> dict[tuple[str, str, str], Verdict]:
     """``(op, dtype, unit)`` -> the verdict recorded in ``path`` of that row as it is now: a record of a row changed
     since its run is stale and left out, so the row is unverified until it runs again."""
-    now = {(r.op, d, r.unit): digest(r, d) for r in rows() for d in dtypes()}
+    now = {(r.op, d, r.unit): digest(r, d) for r in rows() for d in row_dtypes(r)}
     found = (Verdict(**v) for v in recorded(path).get("verdicts", []))
     return {(v.op, v.dtype, v.unit): v for v in found if now.get((v.op, v.dtype, v.unit)) == v.digest}
 
@@ -183,13 +188,12 @@ def spelled(value: str | dict[str, str], version: str) -> str:
 
 
 def harness_rows() -> list[Json]:
-    """Every row at every dtype, as the harness reads them."""
+    """Every row at each of its dtypes, as the harness reads them."""
     return [
         {"op": r.op, "dtype": d, "kind": r.kind, "unit": r.unit, "header": r.header, "init": r.init, "call": r.call,
          "domain": list(r.domain), "tol": TOLERANCE[d]}
         for r in rows()
-        for d in dtypes()
-        if not r.dtypes or d in r.dtypes
+        for d in row_dtypes(r)
     ]  # fmt: skip
 
 

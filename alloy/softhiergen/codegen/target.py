@@ -265,4 +265,4 @@ class SoftHierCodeGen(TargetCodeGenerator):
     ) -> None:
         """A tasklet's output into TCDM: the CPU target's definition, as for a copy (the target registers itself for
         every copy into its storages, so DaCe asks it here too)."""
-        self.cpu.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)  # pyright: ignore[reportOptionalMemberAccess] -- DaCe's annotation
+        self.cpu.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)  # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue] -- DaCe's annotation
