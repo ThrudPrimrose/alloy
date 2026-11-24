@@ -135,7 +135,7 @@ def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
     return Draw(sizes=sizes, values=dict(zip(spec.init.output_args, values, strict=True)))
 
 
-def presets(manifest: Manifest) -> list[dict[str, int]]:
+def presets(manifest: Manifest) -> list[dict[str, Any]]:
     """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges. Each carries the
     manifest's first ``config`` row (``K``), as the bench's shape checks do: the initializer reads it."""
     from hpcagent_bench.categories import Preset
