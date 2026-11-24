@@ -7,6 +7,7 @@ reduction that loses updates shows neither on a cold team nor at every size."""
 
 import ctypes
 import dataclasses
+import hashlib
 import itertools
 import multiprocessing
 import os
@@ -146,13 +147,21 @@ def call_program(folder: str, args: dict[str, Any], outputs: tuple[str, ...]) ->
     deadline = time.monotonic() + CHILD_CALLS_S
     for _ in range(CHILD_CALLS):
         result = bound_outputs(outputs, buffers, program(**buffers), declared)
-        distinct.setdefault(b"".join(value.tobytes() for value in result.values()), result)
+        distinct.setdefault(digest(result), result)
         if time.monotonic() > deadline:
             break
         for k, v in args.items():
             if isinstance(v, np.ndarray):
                 np.copyto(buffers[k], v)
     return list(distinct.values())
+
+
+def digest(outputs: Outputs) -> bytes:
+    """A hash of every output's bytes, read in place: a joined copy doubled the child's memory at large sizes."""
+    h = hashlib.blake2b()
+    for value in outputs.values():
+        h.update(np.ascontiguousarray(value).data)
+    return h.digest()
 
 
 def bound_outputs(

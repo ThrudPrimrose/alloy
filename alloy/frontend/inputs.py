@@ -136,10 +136,12 @@ def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
 
 
 def presets(manifest: Manifest) -> list[dict[str, int]]:
-    """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges."""
+    """The manifest's fixed size presets (``S``, ``L``, ...), without the ``fuzzed`` ranges. Each carries the
+    manifest's first ``config`` row (``K``), as the bench's shape checks do: the initializer reads it."""
     from hpcagent_bench.categories import Preset
 
-    return [dict(sizes) for name, sizes in manifest.raw["parameters"].items() if name != Preset.FUZZED.text]
+    config = dict(manifest.spec.config_space[0]) if manifest.spec.config_space else {}
+    return [{**config, **sizes} for name, sizes in manifest.raw["parameters"].items() if name != Preset.FUZZED.text]
 
 
 def constrained(manifest: Manifest, sizes: dict[str, int]) -> dict[str, int] | None:

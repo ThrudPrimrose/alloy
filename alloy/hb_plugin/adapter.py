@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import time
+import traceback
 from collections.abc import Callable, Sequence
 
 import dace
@@ -334,7 +335,13 @@ def optimize(
     score_cost = time.monotonic() - scoring
     generating = time.monotonic()
     # Alloy's own timer, as the alloy_profile tool's, stopped in time to grade the pick
-    result = generated(sdfg, spec, task.precision, matrix, out, time_locally=True, deadline=deadline - score_cost)
+    try:
+        result = generated(sdfg, spec, task.precision, matrix, out, time_locally=True, deadline=deadline - score_cost)
+    except Exception:  # timing or verification crashed: the plain program is still a correct submission
+        traceback.print_exc()
+        submission = plain(task, spec, pipeline, deliver)
+        record_episode(keep, Mode.PROFILE.value, task, started, time.monotonic() - generating, 0.0, score_cost)
+        return submission
     generate = time.monotonic() - generating
     linker = Linker(result.program, matrix, out)
     references = {rep.scope.symbol: rep.builds[0] for rep in result.scopes}

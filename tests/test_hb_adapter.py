@@ -412,3 +412,29 @@ def test_a_gpu_form_without_libraries_is_submitted_as_its_sources(monkeypatch: p
     )
 
     assert (sut.source, sut.device_source, sut.library) == ("host", "device", None)
+
+
+def test_a_profile_episode_whose_timing_crashes_delivers_the_plain_program_and_records_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A timing draw that crashed the reference (E1b, ault 921253: ``KeyError: 'K'``, ``MemoryError``) ended the
+    episode with no submission and no record; the plain program is still a correct one."""
+    kept: list[tuple[int, object]] = []
+    task = Task("tsvc_2_vpv", SourceMode.ANY, Language.C)
+
+    def crashed(*_: object, **__: object) -> object:
+        raise RuntimeError("the reference crashed at {'LEN_1D': 157277866}")
+
+    monkeypatch.setattr(adapter, "pipeline_sdfg", lambda *args: None)
+    monkeypatch.setattr(adapter, "nothing_to_generate", lambda *args: False)
+    monkeypatch.setattr(adapter, "scratch_folder", lambda spec: tmp_path)
+    monkeypatch.setattr(adapter, "judge_client", lambda: None)
+    monkeypatch.setattr(adapter, "public_grade", lambda *args: None)
+    monkeypatch.setattr(adapter, "plain", lambda *args: BASE)
+    monkeypatch.setattr(adapter, "generated", crashed)
+
+    sut = adapter.optimize(task, "canon", lambda *args: BASE, lambda schema, data: kept.append((schema, data)))  # type: ignore[arg-type]
+
+    assert sut is BASE
+    ((_, data),) = kept
+    assert isinstance(data, dict) and (data["mode"], data["scopes"]) == ("profile", [])

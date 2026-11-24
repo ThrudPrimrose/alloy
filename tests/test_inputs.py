@@ -90,3 +90,15 @@ def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant
     sut = inputs.derived_draw(sdfg, 0)
 
     assert sut.values["a"].shape == (10,)
+
+
+def test_a_preset_carries_the_manifests_first_configuration_the_initializer_reads() -> None:
+    """ext_break_capture's initializer reads the config entry ``K``; a timing draw at a bare preset raised
+    ``KeyError: 'K'`` and the profile episode delivered nothing (E1b, ault 921253)."""
+    spec = BenchSpec.load("ext_break_capture")
+    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml")
+
+    sut = inputs.presets(manifest)
+
+    assert all(sizes["K"] == 1 for sizes in sut)
+    assert inputs.at(manifest, min(sut, key=lambda sizes: sizes["LEN_1D"])).values["a"].shape == (512,)

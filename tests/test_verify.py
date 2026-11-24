@@ -810,3 +810,13 @@ def test_a_builder_has_the_dace_settings_its_parent_made_in_memory() -> None:
             seen = sut.submit(read_setting, *key).result()
 
     assert seen == "-O2 -DSEEN_BY_BUILDERS"
+
+
+def test_outputs_that_differ_in_any_byte_hash_apart_and_equal_ones_alike() -> None:
+    """The distinct-output key of a verifying child is a hash read in place (a joined byte copy ran it out of memory
+    at E1b's sizes); it must still tell every output byte apart."""
+    a = {"x": np.zeros(4), "y": np.ones(2)}
+    b = {"x": np.zeros(4), "y": np.ones(2)}
+    c = {"x": np.zeros(4), "y": np.array([1.0, np.nextafter(1.0, 2.0)])}
+
+    assert verify.digest(a) == verify.digest(b) != verify.digest(c)
