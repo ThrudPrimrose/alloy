@@ -45,6 +45,11 @@
   specialized sizes, so the vectorizer leaves no size guard and SoftHier's tile width reads them); `numpy.full` (a
   constant TileGather) is a fill on both (Spatz `dsh_rvv_fill_*`, Tensix `fill_tile`). Tensix refuses the CloudSC
   nests: each writes several outputs, and contract v2 writes one.
+- Tensix default collectives (`alloy/tensixgen/collectives.py`): `Bcast`, `Allgather`, `Gather`, `Scatter`, and
+  `Alltoall` of the gate's in-kernel form, one dataflow kernel per rank that writes whole tiles over the NoC into the
+  receiver's circular buffer and counts arrivals on a semaphore; `Bcast` multicasts. All five run correct on ttsim.
+  Collectives that combine data are refused (they need the compute kernel). The gate's collective cases move one
+  1024-float block per rank (was 256), one Tensix tile, so both backends run the same cases.
 - CI: the Tensix rows run at their own dtypes (`tensix.row_dtypes`: select is float32 only); mypy and pyright clean.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.

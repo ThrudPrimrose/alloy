@@ -20,7 +20,7 @@ import numpy
 from alloy import tilelower
 from alloy.gate import Case, error
 from alloy.softhiergen.gate.programs import all_cases
-from alloy.tensixgen import ttsim
+from alloy.tensixgen import collectives, ttsim
 from alloy.tensixgen.backend import Refused
 from alloy.tensixgen.split import Program, program
 from alloy.tensixgen.tasks import LANES
@@ -39,6 +39,8 @@ def task_of(case: Case) -> dict[str, object]:
 def lowered(case: Case) -> Program:
     """The case's Tensix program; raises :class:`Refused` (or DaCe's error) when the split does not take it."""
     sdfg = case.sdfg()
+    if (node := collectives.comm_node(sdfg)) is not None:
+        return collectives.program(task_of(case), sdfg, node)
     tilelower.front(sdfg, LANES, fuse_multiply_add=False)
     scalars = {name: float(value) for name, value in case.inputs.items() if numpy.ndim(value) == 0}
     return program(task_of(case), sdfg, scalars, version="v08")  # ttsim's tt-metal
@@ -71,6 +73,8 @@ def run(root: pathlib.Path, cache: pathlib.Path) -> dict[str, str]:
     for name, (case, prog) in made.items():
         folder = prog.write(root / f"case{len(folders)}")
         arrays = {k: numpy.asarray(v, dtype=numpy.float32) for k, v in case.inputs.items() if numpy.ndim(v) > 0}
+        for out, want in case.expected.items():  # a collective's host takes Y's shape from here
+            arrays.setdefault(out, numpy.zeros(want.shape, numpy.float32))
         numpy.savez(folder / "inputs.npz", **arrays)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType] -- numpy types its keyword arrays as its own options
         folders.append((name, case, folder))
     verdicts = ttsim.run([folder for _, _, folder in folders], cache)

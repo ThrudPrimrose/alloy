@@ -281,7 +281,8 @@ def test_every_eval_task_runs_correct_on_ttsim(tasks: dict[str, Json], options: 
 
 def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -> None:
     """The SoftHier gate's NumPy programs through the shared front and the Tensix split: elementwise maps, a sum and
-    numpy.where (a comparison, then select) become programs, a float16 input is refused by name."""
+    numpy.where (a comparison, then select) become programs, a float16 input is refused by name; the collectives that
+    only move data become one NoC kernel, multicast for bcast, and a reduce is refused."""
     from alloy.softhiergen.gate.programs import cases
     from alloy.tensixgen.gate import lowered
 
@@ -299,6 +300,14 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
     for nest in cloudsc_cases():  # contract v2 writes one output; every CloudSC nest writes several
         with pytest.raises(Refused, match="outputs; a Tensix program writes one"):
             lowered(nest)
+    from alloy.softhiergen.gate.programs import collective_cases
+
+    moving = {case.name: case for case in collective_cases()}  # the collectives that move tiles: one NoC kernel
+    assert "noc_async_write_multicast(" in lowered(moving["bcast"]).reader
+    for name in ("allgather", "gather", "scatter", "alltoall"):
+        assert "noc_semaphore_inc(" in lowered(moving[name]).reader
+    with pytest.raises(Refused, match="needs the compute kernel"):
+        lowered(moving["reduce"])
 
 
 @pytest.mark.tensix

@@ -3,7 +3,7 @@
 Alloy generates code for two tile accelerators from one DaCe SDFG: SoftHier v1 (`alloy/softhiergen/`, simulated on
 GVSoC) and Tenstorrent Tensix (`alloy/tensixgen/`, simulated on ttsim). Both backends generate a naive baseline. It
 is correct and checked against NumPy, and it moves data only in the program's own order: one tile from global
-memory to a core, the tile computed, the result written back. Overlapping transfers with compute, multicasting,
+memory to a core, the tile computed, the result written back. Overlapping transfers with compute, multicast trees,
 and keeping data on chip across kernels are left to the agent. The lookup (`alloy ask softhier ...`,
 `alloy ask tensix ...`) gives the agent the asynchronous steps for this, each with the wait that completes it.
 
@@ -33,7 +33,7 @@ Tile widths differ because the hardware does:
 | Work split | Cluster `c` runs kernel iterations `c, c + P, ...` | Tiles split evenly over the cores; a reduction sums one partial tile per core on the host |
 | Global memory layout | One HBM region, or a placement over HBM nodes (block-cyclic or page-cyclic) | Interleaved DRAM pages, or L1 height shards (one block of the outermost dimension per core) |
 | Element types | float32, float16, int32 | float32 |
-| Collectives | All nine (`Allreduce` to `Alltoall`, `Barrier`), over iDMA between global barriers | None: the NoC transfers between cores (multicast, broadcast) are the agent's |
+| Collectives | All nine (`Allreduce` to `Alltoall`, `Barrier`), over iDMA between global barriers | `Bcast`, `Allgather`, `Gather`, `Scatter`, `Alltoall` on whole tiles (`tensixgen/collectives.py`): one dataflow kernel per rank, NoC writes into the receiver's CB and a semaphore count; `Bcast` multicasts. Pipelining and multicast trees are the agent's |
 | exp, log | A scalar loop on the Spatz core over the ladder's strict float32 kernel (`dsh_ladder.c`) | The SFPU rows (`exp_tile`, `log_tile`) on ttsim; on the card the SFPI rungs (`rungs.exp`, `rungs.log` in `tensix.toml`), because the card rows miss float32 |
 | Waits an agent may move | `alloy_wait_idma` and `alloy_wait_redmule` complete their engine only; the cluster barrier is its own step | `wait on=noc` (reads) and `wait on=noc_write` (writes) complete every transfer issued before them |
 
@@ -57,7 +57,9 @@ Only Tensix refuses:
 - inputs other than float32;
 - more than one output;
 - reductions other than a whole sum of one input (so a max reduction is refused);
-- tile copies spread over several states (cumsum, the copy chain, GEMM, and every collective case);
+- tile copies spread over several states (cumsum, the copy chain, GEMM);
+- collectives that combine data (`Reduce`, `Allreduce`, `ReduceScatter`), the grid barrier, and collective rows
+  that are not whole tiles;
 - more live tiles than one DST acquire holds;
 - more cores than tiles;
 - a placement other than interleaved pages or one height shard per core.

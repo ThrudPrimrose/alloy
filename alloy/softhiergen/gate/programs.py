@@ -287,27 +287,28 @@ def block_copy(subset: str) -> dace.SDFG:
 def grid_sync() -> dace.SDFG:
     """Cluster c stores row c of X to row P - 1 - c of Y, a user's grid ``Sync`` between load and store."""
     sdfg = dace.SDFG("grid_sync")
-    sdfg.add_array("X", (P, 256), dace.float32)
-    sdfg.add_array("Y", (P, 256), dace.float32)
-    sdfg.add_array("x", (256,), dace.float32, storage=storage.TCDM, transient=True)
+    sdfg.add_array("X", (P, 1024), dace.float32)
+    sdfg.add_array("Y", (P, 1024), dace.float32)
+    sdfg.add_array("x", (1024,), dace.float32, storage=storage.TCDM, transient=True)
     state = sdfg.add_state()
     entry, exit_node = state.add_map("k", {"c": f"0:{P}"}, schedule=storage.DEVICE)
     load, store, barrier = CopyLibraryNode("load"), CopyLibraryNode("store"), Sync("grid", scope=SyncScope.GRID)
     x = state.add_access("x")
-    state.add_memlet_path(state.add_read("X"), entry, load, dst_conn="_cpy_in", memlet=Memlet("X[c, 0:256]"))
-    state.add_edge(load, "_cpy_out", x, None, Memlet("x[0:256]"))
+    state.add_memlet_path(state.add_read("X"), entry, load, dst_conn="_cpy_in", memlet=Memlet("X[c, 0:1024]"))
+    state.add_edge(load, "_cpy_out", x, None, Memlet("x[0:1024]"))
     state.add_edge(x, None, barrier, None, Memlet())
     state.add_edge(barrier, None, store, None, Memlet())
-    state.add_edge(x, None, store, "_cpy_in", Memlet("x[0:256]"))
+    state.add_edge(x, None, store, "_cpy_in", Memlet("x[0:1024]"))
     state.add_memlet_path(
-        store, exit_node, state.add_write("Y"), src_conn="_cpy_out", memlet=Memlet(f"Y[{P - 1} - c, 0:256]")
+        store, exit_node, state.add_write("Y"), src_conn="_cpy_out", memlet=Memlet(f"Y[{P - 1} - c, 0:1024]")
     )
     return sdfg
 
 
 def collective_cases() -> list[Case]:
-    """The other collectives, rank c = cluster c, root 0; 256 floats per rank; and the 2D iDMA copy."""
-    n = 256
+    """The other collectives, rank c = cluster c, root 0; one 1024-float block (a Tensix tile) per rank; and the 2D
+    iDMA copy."""
+    n = 1024
     X = numpy.random.default_rng(9).uniform(-4, 4, (P, P * n)).astype(numpy.float32)
     blocks = X.reshape(P, P, n)  # blocks[r, c]: rank r's block for rank c
     first = X[:, :n]

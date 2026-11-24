@@ -118,12 +118,58 @@ def compute_descriptor(module: ModuleType, cfg: Json) -> "ttnn.ComputeConfigDesc
     return config
 
 
+def run_collective(dev: "ttnn.MeshDevice", folder: pathlib.Path, task: Json) -> Json:
+    """A collective of alloy.tensixgen.collectives: reader.cpp on ranks 0..P-1 = logical cores (p, 0), X and Y from
+    inputs.npz, CB 0 an X row, CB 1 a Y row, semaphore 0 at zero; saves Y as got.npy."""
+    import numpy
+    import torch
+    import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
+
+    ranks = task["collective"]["ranks"]
+    assert ranks <= dev.compute_with_storage_grid_size().x, f"{ranks} ranks: more than one row of cores"
+    with numpy.load(folder / "inputs.npz") as found:
+        arrays = {name: torch.from_numpy(found[name].astype(numpy.float32)) for name in found.files}
+    x, y = arrays["X"], arrays["Y"]  # the gate gives Y: its shape, and the rows a rooted collective keeps
+
+    def tensor(a: "torch.Tensor") -> "ttnn.Tensor":
+        return ttnn.from_torch(a.reshape(-1, 32), dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=dev,
+                               memory_config=ttnn.DRAM_MEMORY_CONFIG)  # fmt: skip
+
+    xt, yt = tensor(x), tensor(y)
+    cores = [(p, 0) for p in range(ranks)]
+    core = ttnn.CoreRangeSet([ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(ranks - 1, 0))])
+    virtual = [dev.worker_core_from_logical_core(ttnn.CoreCoord(*c)) for c in cores]
+    lo, hi = virtual[min(1, ranks - 1)], virtual[-1]
+    coords = [v for c in virtual for v in (c.x, c.y)]
+    args = {c: [p, xt.buffer_address(), yt.buffer_address(), lo.x, lo.y, hi.x, hi.y, *coords]
+            for p, c in enumerate(cores)}  # fmt: skip
+    cbs = [
+        ttnn.CBDescriptor(total_size=cols // 1024 * 4096, core_ranges=core,
+                          format_descriptors=[ttnn.CBFormatDescriptor(buffer_index=i, data_format=ttnn.float32, page_size=4096)])
+        for i, cols in enumerate((x.shape[1], y.shape[1]))
+    ]  # fmt: skip
+    accessors = [
+        *ttnn.TensorAccessorArgs(xt).get_compile_time_args(),
+        *ttnn.TensorAccessorArgs(yt).get_compile_time_args(),
+    ]
+    kernel = ttnn.KernelDescriptor(kernel_source=(folder / "reader.cpp").read_text(), source_type=source_code(ttnn),
+                                   core_ranges=core, compile_time_args=accessors, runtime_args=per_core(ttnn, args),
+                                   config=ttnn.ReaderConfigDescriptor())  # fmt: skip
+    semaphore = ttnn.SemaphoreDescriptor(id=0, core_type=ttnn.CoreType.WORKER, core_ranges=core, initial_value=0)
+    program = ttnn.ProgramDescriptor(kernels=[kernel], semaphores=[semaphore], cbs=cbs)
+    got = ttnn.to_torch(ttnn.generic_op([xt, yt], program))
+    numpy.save(folder / "got.npy", got.double().flatten().numpy())
+    return {"ok": True, "err": None, "abs": None, "cores": ranks}  # the gate checks got.npy
+
+
 def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
     import numpy
     import torch
     import ttnn  # pyright: ignore[reportMissingImports] -- only inside the tt-metal image
 
     task = json.loads((folder / "program.json").read_text())
+    if "collective" in task:
+        return run_collective(dev, folder, task)
     cfg = json.loads((folder / "config.json").read_text())
     given = folder / "inputs.npz"
     if given.exists():  # the gate's own arrays, 1024 consecutive elements per tile

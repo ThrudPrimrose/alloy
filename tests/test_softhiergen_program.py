@@ -132,5 +132,5 @@ def test_rooted_collective_reads_its_root_from_a_register_scalar() -> None:
 
     bcast = next(case for case in collective_cases() if case.name == "bcast")
     code = program.generate(bcast.sdfg())
-    assert "dsh_bcast(y, x, 1024, r);" in code
+    assert "dsh_bcast(y, x, 4096, r);" in code
     assert "__dsh_l1_0_r" not in code
