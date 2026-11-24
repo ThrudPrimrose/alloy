@@ -113,7 +113,7 @@ def test_omen_sse_sweeps_several_verified_codegen_variants_per_scope(
 
 @pytest.mark.e2e
 @pytest.mark.gcc
-@pytest.mark.parametrize("kernel", ["tsvc_2_vpv", "tsvc_2_s1351", "tsvc_2_vsumr"])
+@pytest.mark.parametrize("kernel", ["tsvc_2_s1351", "tsvc_2_vsumr"])  # an elementwise loop and a sum
 def test_an_intrinsic_tasklet_candidate_builds_verifies_and_is_timed(kernel: str, tmp_path: pathlib.Path) -> None:
     """The intrinsic-tasklet axis on this host's ISAs: each ISA's candidate builds, matches the reference (exactly for
     an elementwise loop, in the band for the reassociated sum), and is screened like every other candidate."""

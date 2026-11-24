@@ -57,21 +57,6 @@ def outputs(program: dace.SDFG | dace.codegen.compiled_sdfg.CompiledSDFG) -> np.
 
 
 @pytest.mark.gcc
-def test_the_program_alloy_builds_is_called_like_the_sdfg_and_computes_what_dace_computes(
-    tmp_path: pathlib.Path,
-) -> None:
-    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
-    expected = outputs(sdfg)
-
-    sut = dace_backend.compile(sdfg, matrix=gcc_only(tmp_path), out=tmp_path / "alloy")
-
-    assert sut is not None
-    assert pathlib.Path(sut.filename).is_relative_to(tmp_path / "alloy" / "program")
-    assert scope_symbol(sdfg) in defined_symbols(sut.filename), "the scope runs from the archive Alloy linked"
-    np.testing.assert_array_equal(outputs(sut), expected)
-
-
-@pytest.mark.gcc
 def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp_path: pathlib.Path) -> None:
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     sdfg.build_folder = str(tmp_path / "build")
@@ -87,8 +72,11 @@ def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp
 
 def built_outputs(matrix: Matrix, out: pathlib.Path) -> np.ndarray:
     """``scale`` built and run; its handle ends with the call, as one a program keeps would warn the next load."""
-    program = dace_backend.compile(load_program(f"{REDUCTIONS}:scale").to_sdfg(), matrix=matrix, out=out)
+    sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
+    program = dace_backend.compile(sdfg, matrix=matrix, out=out)
     assert program is not None
+    assert pathlib.Path(program.filename).is_relative_to(out / "program")
+    assert scope_symbol(sdfg) in defined_symbols(program.filename), "the scope runs from the archive Alloy linked"
     return outputs(program)
 
 
@@ -106,18 +94,6 @@ def test_a_program_declared_small_links_its_serial_build_and_computes_what_dace_
     reference = scale_sdfg()
     reference.build_folder = str(tmp_path / "dace_build")
     assert np.array_equal(outputs(sut), outputs(reference.compile()))
-
-
-@pytest.mark.gcc
-def test_a_second_compile_of_the_same_program_loads_the_first_build(tmp_path: pathlib.Path) -> None:
-    matrix, out = gcc_only(tmp_path), tmp_path / "alloy"
-    expected = built_outputs(matrix, out)
-    swept = (out / "report.md").stat().st_mtime_ns
-
-    sut = built_outputs(matrix, out)
-
-    assert (out / "report.md").stat().st_mtime_ns == swept, "nothing swept again"
-    np.testing.assert_array_equal(sut, expected)
 
 
 @pytest.mark.gcc
@@ -158,13 +134,22 @@ def doubled(sdfg: dace.SDFG, constant: str) -> dace.SDFG:
 
 
 @pytest.mark.gcc
-def test_a_changed_program_never_loads_the_build_of_the_old_one(tmp_path: pathlib.Path) -> None:
+def test_the_build_computes_what_dace_computes_and_a_recompile_loads_it_unless_the_program_changed(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One sweep serves every compile of one program: the build is called like the SDFG and computes DaCe's result, a
+    second compile sweeps nothing, and a changed program never loads the old build."""
     matrix, out = gcc_only(tmp_path), tmp_path / "alloy"
-    dace_backend.compile(load_program(f"{REDUCTIONS}:scale").to_sdfg(), matrix=matrix, out=out)
-    changed = doubled(load_program(f"{REDUCTIONS}:scale").to_sdfg(), "3.0")
+    expected = outputs(load_program(f"{REDUCTIONS}:scale").to_sdfg())
 
-    sut = dace_backend.compile(changed, matrix=matrix, out=out)
+    first = built_outputs(matrix, out)
+    swept = (out / "report.md").stat().st_mtime_ns
+    again = built_outputs(matrix, out)
+    sut = dace_backend.compile(doubled(load_program(f"{REDUCTIONS}:scale").to_sdfg(), "3.0"), matrix=matrix, out=out)
 
+    np.testing.assert_array_equal(first, expected)
+    assert (out / "report.md").stat().st_mtime_ns == swept, "nothing swept again"
+    np.testing.assert_array_equal(again, expected)
     args = arguments()
     assert sut is not None
     sut(**args)

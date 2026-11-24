@@ -26,8 +26,9 @@
 - Tensix: compare rows (`lt`, `gt`, `le`, `ge`) and `select` (`where_tile`, float32), verified on ttsim; tensixgen
   lowers `numpy.where` and comparisons (bool tiles stay transient, a scalar arm becomes a filled tile), and the shared
   front simplifies the SDFG before fusing.
-- Tests: dropped the profile-tool packet grade (14 min in CI) and the per-agent-folder final grade; the judge's
-  grading stays covered by the packet's other runs.
+- Tests: dropped the profile-tool packet grade (14 min in CI); one speculative packet run checks the answer, the
+  episode folder, and the grade; the speculative flavor runs on atax only; the intrinsic-tasklet smoke drops
+  tsvc_2_vpv; one DaCe-backend test covers the build, its reuse, and a changed program (two sweeps for four).
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

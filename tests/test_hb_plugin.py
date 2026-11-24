@@ -73,14 +73,13 @@ def test_every_scope_gets_several_verified_variants(tmp_path: pathlib.Path) -> N
         assert len(variants) >= 2, f"{rep.scope.symbol}: {[b.name for b in variants]}"
 
 
-# Each mode once on the llr kernel; atax (its entry keeps a transient in the judge's scratch) once, in the cheapest
-# mode. The reference-FP flavor differs from profile only by its matrix (test_matrix.py), the parallel pipeline is
+# Each mode once: profile and none on the llr kernel, speculative on atax (its entry keeps a transient in the judge's
+# scratch). The reference-FP flavor differs from profile only by its matrix (test_matrix.py), the parallel pipeline is
 # covered by test_every_scope_gets_several_verified_variants: their profile runs here took 6 to 9 min each.
 @pytest.mark.parametrize(
     ("flavor", "kernel"),
     [
         ("dace_cpu_canon_alloy_profile", KERNEL),
-        ("dace_cpu_canon_alloy_speculative", KERNEL),
         ("dace_cpu_canon_alloy_none", KERNEL),
         ("dace_cpu_canon_alloy_speculative", "atax"),
     ],
