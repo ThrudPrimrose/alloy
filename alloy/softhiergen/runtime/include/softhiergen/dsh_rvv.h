@@ -205,4 +205,15 @@ DSH_RVV_COMPARES(float, f32)
 DSH_RVV_COMPARES(dsh_f16, f16)
 DSH_RVV_COMPARES(int32_t, i32)
 
+// z = fn(x) for the ladder's functions (rvv.LADDER): scalar loops over its float32 kernels in dsh_ladder.c, the C unit
+// program.py writes and main.c includes
+#ifdef __cplusplus
+extern "C" {
+#endif
+void dsh_scalar_exp_f32(float *z, const float *x, int n);
+void dsh_scalar_log_f32(float *z, const float *x, int n);
+#ifdef __cplusplus
+}
+#endif
+
 #endif  // DSH_RVV_H

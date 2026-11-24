@@ -56,6 +56,11 @@ def unary(x: dace.float32[N], y: dace.float32[N]) -> None:
 
 
 @dace.program
+def softplus(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.log(numpy.exp(x) + 1.0)
+
+
+@dace.program
 def where(x: dace.float32[N], z: dace.float32[N], y: dace.float32[N]) -> None:
     y[:] = numpy.where(x < z, x, z)
 
@@ -211,6 +216,13 @@ def cases() -> list[Case]:
             lambda: unary.to_sdfg(simplify=True),
             {"x": a},
             {"y": -numpy.sqrt(numpy.abs(a.astype(numpy.float64)))},
+            1e-6,
+        ),
+        Case(
+            "ladder exp and log (softplus)",
+            lambda: softplus.to_sdfg(simplify=True),
+            {"x": a},
+            {"y": numpy.log1p(numpy.exp(a.astype(numpy.float64)))},
             1e-6,
         ),
         Case("copy chain", lambda: copy_chain.to_sdfg(simplify=False), {"A": a}, {"C": a}, 0.0),

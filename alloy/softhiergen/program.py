@@ -22,6 +22,7 @@ from dace.sdfg import SDFG
 from alloy.softhiergen import hbm, passes, storage
 from alloy.softhiergen.arch import TARGET, V1, node_bases
 from alloy.softhiergen.codegen.target import SoftHierCodeGen, static_size
+from alloy.softhiergen.library import rvv
 
 RUNTIME = pathlib.Path(__file__).parent / "runtime" / "include"
 
@@ -46,7 +47,7 @@ SDK=$SOFTHIER_SDK/runtime/runtime
 riscv32-unknown-elf-g++ {FLAGS} {CXX_FLAGS} -I include -c kernels.cpp -o kernels.o
 riscv32-unknown-elf-gcc {FLAGS} -I $SDK/include -I include -c main.c -o main.o
 riscv32-unknown-elf-gcc {FLAGS} -I $SDK/include -T $SDK/flex_memory.ld -nostartfiles -Wl,--gc-sections \\
-    -o softhier.elf $SDK/flex_start.s main.o kernels.o
+    -o softhier.elf $SDK/flex_start.s main.o kernels.o -lm
 # The linker script's regions are larger than the memories: everything linked to L3 must fit the instruction memory,
 # .l1 the TCDM from its origin 0x10
 riscv32-unknown-elf-size -A softhier.elf | awk -v base={V1.instruction_mem_base} -v code={V1.instruction_mem_size} \\
@@ -175,6 +176,7 @@ def main_unit(sdfg: SDFG, inputs: Inputs) -> tuple[str, list[dict[str, Any]]]:
 #include "flex_printf.h"
 // The SDK headers define their functions: the runtime and main share this one C unit
 #include "softhiergen/dsh_rt.c"
+#include "softhiergen/dsh_ladder.c"
 
 _Static_assert(ARCH_NUM_CLUSTER == {V1.num_clusters}, "the SDK header and alloy.softhiergen.arch.V1 differ in cluster count");
 
@@ -263,6 +265,7 @@ def write_folder(folder: pathlib.Path, sdfg: SDFG, kernels: str, inputs: Inputs)
     (folder / "meta.json").write_text(json.dumps(meta))
     (folder / "arch.py").write_text(V1.to_arch_py())
     shutil.copytree(RUNTIME, folder / "include", dirs_exist_ok=True)
+    (folder / "include" / "softhiergen" / "dsh_ladder.c").write_text(rvv.ladder_unit())
     script = folder / "build_run.sh"
     script.write_text(build_run(nodes))
     script.chmod(0o755)

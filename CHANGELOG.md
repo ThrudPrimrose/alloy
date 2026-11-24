@@ -29,6 +29,9 @@
 - Tests: dropped the profile-tool packet grade (14 min in CI); one speculative packet run checks the answer, the
   episode folder, and the grade; the speculative flavor runs on atax only; the intrinsic-tasklet smoke drops
   tsvc_2_vpv; one DaCe-backend test covers the build, its reuse, and a changed program (two sweeps for four).
+- SoftHier: `numpy.exp` and `numpy.log` on float32 tiles lower to scalar loops on the Spatz core over the ladder's
+  strict kernels (`dsh_ladder.c`, which the program folder carries; the link adds newlib's libm for the strict
+  kernels' out-of-range path). The gate gains softplus.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
 

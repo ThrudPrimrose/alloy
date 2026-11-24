@@ -374,6 +374,20 @@ def test_int32_tiles_reach_the_spatz_loops_as_int32_t() -> None:
     assert "dsh_rvv_ge_i32(y_tile_out, (int32_t*)" in code
 
 
+def test_exp_and_log_are_scalar_loops_over_the_ladder_kernels_main_includes() -> None:
+    """No RVV instruction computes exp or log: each is a loop over the ladder's float32 kernel at the strict rung, in
+    the C unit the program folder carries."""
+    from alloy.softhiergen.gate.programs import softplus
+
+    code = program.generate(softplus.to_sdfg(simplify=True))
+    unit = rvv.ladder_unit()
+
+    assert "dsh_scalar_exp_f32(" in code and "dsh_scalar_log_f32(" in code
+    for fn in rvv.LADDER:
+        assert f"void dsh_scalar_{fn}_f32(float *z, const float *x, int n)" in unit
+        assert f"alloy_{fn}_f32_{rvv.LADDER_RUNG}(x[i])" in unit
+
+
 def test_cumsum_scans_each_share_and_adds_the_earlier_totals() -> None:
     """A cluster scans its share, the clusters allgather their totals, and each adds the totals before its own."""
     from alloy.softhiergen.gate.programs import cumsum
