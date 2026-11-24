@@ -94,6 +94,7 @@ disallow_subclassing_any = false
 module = ["alloy.isa.softhier_harness"]
 disallow_any_generics = false
 disallow_untyped_calls = false
+disable_error_code = ["operator"]  # its dict-of-callables lookups
 
 
 [tool.pyright]

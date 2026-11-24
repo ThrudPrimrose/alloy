@@ -23,7 +23,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterable
 
 #: Elements of a vector row's operands: several strips of e32m8 and e16m8 at VLEN 256 (64 and 128 elements) and a tail.
 VECTOR_N = 300
@@ -256,25 +255,23 @@ def reference(row: dict) -> list[float]:
     arity = {"binary": 2, "fma": 3, "move": 1, "reduction": 1, "unary": 1}[kind]
     xs = vector_inputs(op, dtype, arity)
     if kind == "reduction":
-        reducers: dict[str, Callable[[Iterable[float]], float]] = {"reduce_add": sum, "reduce_max": max,
-                                                                  "reduce_min": min}  # fmt: skip
-        return [reducers[op](xs[0])]
+        return [{"reduce_add": sum, "reduce_max": max, "reduce_min": min}[op](xs[0])]
     if kind == "move":
         return xs[0]
     if kind == "fma":
         return [a * b + c for a, b, c in zip(*xs, strict=True)]
     if kind == "unary":
-        unary: dict[str, Callable[[float], float]] = {"neg": lambda x: -x, "abs": abs, "sqrt": math.sqrt}
-        return [unary[op](x) for x in xs[0]]
-    binary: dict[str, Callable[[float, float], float]] = {
+        apply = {"neg": lambda x: -x, "abs": abs, "sqrt": math.sqrt}[op]
+        return [apply(x) for x in xs[0]]
+    combine = {
         "add": lambda x, y: x + y,
         "sub": lambda x, y: x - y,
         "mul": lambda x, y: x * y,
         "div": lambda x, y: x / y,
         "min": min,
         "max": max,
-    }
-    return [binary[op](x, y) for x, y in zip(*xs, strict=True)]
+    }[op]
+    return [combine(x, y) for x, y in zip(*xs, strict=True)]
 
 
 def compare(row: dict, words: list[int], exact: list[int]) -> tuple[bool, float | None, str]:
