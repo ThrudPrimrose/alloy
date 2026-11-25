@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Wrong results fixed. The Tensix SFPI exp rung saturates (inf above ln FLT_MAX, 0 below the smallest normal) where
+  it overflowed the exponent field for |x| above about 87; the card checked it over [-100, 100] (max rel 1.19e-07,
+  alloy-tenstorrent agents `8ec7b7d`), so its bound is 2.0 ulp. SoftHier's `max` and `min` (elementwise, with a
+  scalar, and the reductions) return NaN for a NaN operand as NumPy does; Spatz's `vfmax` and `vfmin` returned the
+  other operand. A NaN input reaches a SoftHier program as the quiet NaN (it was refused), and the gate's check
+  (`alloy.gate.error`) takes NaN and inf as exact matches. Two gate cases: a max reduction over a NaN, and maximum
+  and minimum with NaN.
+- Tensix max reduction: the tiles fold with the SFPU `max` row, and the ttsim host takes the max of the partial
+  tiles. The card's contract v2 host sums the partial tiles, so the card spelling refuses it.
+- Tensix several outputs (ttsim): output k leaves through CB 16 + k, and the writer stores every output before one
+  barrier. Whole rows as a tile: when every array's rows are K < 1024 elements, the tile is 1024 / K rows (still 1024
+  consecutive elements). Gate case: two outputs over 8 x 256 rows. The CloudSC nests stay refused on Tensix:
+  saturation needs more live tiles than one DST acquire holds, and liq_ice_frac and init are several tile bodies.
 - One entry point to both tile backends: `alloy.tilelower.lower(sdfg, "softhier" | "tensix")` returns the generated
   sources; Tensix reads its task (inputs, output, map or reduce) off the SDFG. Both gates lower through it, and every
   gate program is byte-identical to before. The shared front refuses an extent shorter than the tile, which the

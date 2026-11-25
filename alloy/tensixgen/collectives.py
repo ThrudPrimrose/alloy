@@ -153,6 +153,6 @@ def program(task: Json, sdfg: dace.SDFG, node: CommNode, version: str = "v08") -
     }
     (state,) = [s for n, s in sdfg.all_nodes_recursive() if n is node]
     assert isinstance(state, dace.SDFGState)
-    moves = movement.insert(state, ["X"], "Y")
+    moves = movement.insert(state, ["X"], ["Y"])
     source = kernel(node, moves, ranks, in_cols // TILE, out_cols // TILE, version == "v08")
     return Program(task["name"], source, "", "", {}, descriptor)

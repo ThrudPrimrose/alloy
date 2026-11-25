@@ -331,14 +331,14 @@ inline void alloy_log_f32_face() {
 name = "alloy_exp_f32_sfpi"
 dtype = "f32"
 unit = "SFPU"
-error_ulp = 1.66
-card = "tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 5cc4565: max rel error 9.87e-08, max abs error 7.10e-05 over x uniform in [-7, 7], worst x -6.99997"
+error_ulp = 2.0
+card = "tt-metal 0.63, Blackhole p150, 2026-11-18, alloy-tenstorrent agents commit 8ec7b7d (probe_exp_wide-sfpi): max rel error 1.19e-07 over x uniform in [-100, 100] against an f32-saturating reference (inf above ln FLT_MAX, 0 below the smallest normal), worst x -53.63; commit 5cc4565 (without the saturation): max rel 9.87e-08 over [-7, 7]"
 init = "MATH((llk_math_eltwise_unary_sfpu_init<SfpuType::unused, APPROX>()))"
 call = "MATH((_llk_math_eltwise_unary_sfpu_params_<APPROX>(alloy_exp_f32_face, 0, (int)VectorMode::RC)))"
-note = "dev: built after the pilot's failures, when exp_tile on 0.63 held bf16 only (rel 1.73e-3: the metal layer runs Moroz exp_21f, as exp2_tile does). n = round(x / ln2) by the 1.5 * 2^23 shifter, r = x - n ln2 with the ln2 hi/lo split of the log rung, Taylor degree 7 on |r| <= ln2 / 2, and 2^n added to the result's exponent by setexp. On the card probe it took 1.5 ms. Checked on [-7, 7] only; no clamp, so |x| above about 87 overflows the exponent field instead of giving inf or 0. Same includes and compute config as the log rung."
+note = "dev: built after the pilot's failures, when exp_tile on 0.63 held bf16 only (rel 1.73e-3: the metal layer runs Moroz exp_21f, as exp2_tile does). n = round(x / ln2) by the 1.5 * 2^23 shifter, r = x - n ln2 with the ln2 hi/lo split of the log rung, Taylor degree 7 on |r| <= ln2 / 2, and 2^n added to the result's exponent by setexp. Saturates: inf for x >= ln FLT_MAX (88.72), 0 for x <= -87.34 (below the smallest normal; the SFPU flushes subnormals). On the card probe it took 1.9 ms. Same includes and compute config as the log rung."
 code = '''
 #ifdef TRISC_MATH
-// f32 exp on SFPU lanes for |x| < 87: n = round(x / ln2) by the 1.5 * 2^23 shifter,
+// f32 exp on SFPU lanes for every finite x (saturating): n = round(x / ln2) by the 1.5 * 2^23 shifter,
 // r = x - n ln2 (hi/lo split), p = Taylor degree 7 on |r| <= ln2 / 2, exp x = p * 2^n.
 sfpi_inline sfpi::vFloat alloy_exp_f32(sfpi::vFloat x) {
     sfpi::vFloat shifter = 12582912.0f;  // 1.5 * 2^23: t's low mantissa bits hold n
@@ -359,7 +359,14 @@ sfpi_inline sfpi::vFloat alloy_exp_f32(sfpi::vFloat x) {
     p = p * r + 1.0f;
     p = p * r + 1.0f;
     // p in [0.7, 1.42]: add n to its biased exponent
-    return sfpi::setexp(p, sfpi::exexp_nodebias(p) + n);
+    sfpi::vFloat e = sfpi::setexp(p, sfpi::exexp_nodebias(p) + n);
+    // saturate where the exponent field would overflow or underflow: inf above ln(FLT_MAX), 0 below the
+    // smallest normal (f32 denormals flush to zero)
+    v_if (x >= 88.72283935546875f) { e = __builtin_inff(); }
+    v_endif;
+    v_if (x <= -87.33654022216797f) { e = 0.0f; }
+    v_endif;
+    return e;
 }
 
 inline void alloy_exp_f32_face() {

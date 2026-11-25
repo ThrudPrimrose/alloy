@@ -40,7 +40,9 @@ BINARY = {"+": "add", "-": "sub", "*": "mul", "/": "div", "max": "max", "<": "lt
           ">=": "ge"}  # fmt: skip
 UNARY = {"neg": "neg", "abs": "abs", "exp": "exp", "log": "log", "sqrt": "sqrt", "sin": "sin", "cos": "cos",
          "tanh": "tanh"}  # fmt: skip
-REDUCE = {"+": "add"}  # contract v2's host sums a reduction's partial tiles
+#: A reduction folds its tiles into one partial tile per core with this row; the host combines the partial tiles the
+#: same way (ttsim_host.py: a sum or a max; the card's contract v2 host sums only).
+REDUCE = {"+": "add", "max": "max"}
 #: The card evidence of the rows no probe measured (tensix_card.toml): the eval task whose generated program, in the
 #: v06 spelling, the card graded correct under contract v2 (alloy-tenstorrent agents a046cb3), and its max relative
 #: error. A task of several ops bounds its result only: cos's is the error of a sum.

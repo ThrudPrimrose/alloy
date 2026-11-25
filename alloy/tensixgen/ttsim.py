@@ -77,10 +77,9 @@ def run(folders: list[pathlib.Path], cache: pathlib.Path, image: str = tensix.IM
              "-e", "TT_METAL_DISABLE_SFPLOADMACRO=1", image, "bash", "-c", script],
             capture_output=True, text=True, check=False, timeout=TIMEOUT,
         )  # fmt: skip
-        for folder in folders:  # a gate case's output (ttsim_host.py: inputs.npz)
-            got = work / "programs" / folder.name / "got.npy"
-            if got.exists():
-                shutil.copy(got, folder / "got.npy")
+        for folder in folders:  # a gate case's outputs (ttsim_host.py: inputs.npz): got.npy, or got_<name>.npy each
+            for got in (work / "programs" / folder.name).glob("got*.npy"):
+                shutil.copy(got, folder / got.name)
     found = parse(done.stdout)
     if done.returncode != 0 or len(found) != len(folders):
         raise RuntimeError(

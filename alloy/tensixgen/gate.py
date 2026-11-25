@@ -17,7 +17,7 @@ import tempfile
 
 import dace
 import numpy
-from dace import data
+from dace import data, symbolic
 
 from alloy import tilelower
 from alloy.gate import Case, error
@@ -35,13 +35,26 @@ def task_of(sdfg: dace.SDFG, name: str | None = None) -> dict[str, object]:
     arrays = [k for k, v in sdfg.arrays.items() if not v.transient and isinstance(v, data.Array)]
     found = [(n, s) for s in sdfg.states() for n in s.data_nodes() if n.data in arrays]
     written = [a for a in arrays if any(n.data == a and s.in_degree(n) > 0 for n, s in found)]
-    if len(written) != 1:
-        raise Refused(f"{name}: {len(written)} outputs; a Tensix program writes one")
-    (output,) = written
+    if not written:
+        raise Refused(f"{name}: no output")
     read = {n.data for n, s in found if s.out_degree(n) > 0}
-    inputs = [[name, 0.0, 1.0] for name in arrays if name in read]
-    kind = "reduce" if sdfg.arrays[output].total_size == 1 else "map"
+    inputs = [[array, 0.0, 1.0] for array in arrays if array in read]
+    kind = "reduce" if len(written) == 1 and sdfg.arrays[written[0]].total_size == 1 else "map"
+    output: str | list[str] = written[0] if len(written) == 1 else written
     return {"name": name, "inputs": inputs, "output": output, "kind": kind, "program": [name]}
+
+
+def widths(sdfg: dace.SDFG) -> int | tuple[int, int]:
+    """The vectorizer's tile: :data:`LANES` along the innermost dimension, or, when every array's rows are ``K`` < 1024
+    elements long (``K`` dividing 1024), 1024 / ``K`` whole rows. Either way a tile is 1024 consecutive elements, the
+    host's tile of the array read as (-1, 32)."""
+    arrays = [d for d in sdfg.arrays.values() if not d.transient and isinstance(d, data.Array)]
+    rows = {int(symbolic.evaluate(d.shape[-1], sdfg.constants)) for d in arrays if len(d.shape) > 1}
+    if len(rows) == 1 and all(len(d.shape) > 1 for d in arrays):
+        (k,) = rows
+        if k < LANES and LANES % k == 0:
+            return (LANES // k, k)
+    return LANES
 
 
 def lower(sdfg: dace.SDFG, scalars: dict[str, float], name: str | None = None) -> Program:
@@ -51,7 +64,7 @@ def lower(sdfg: dace.SDFG, scalars: dict[str, float], name: str | None = None) -
     task = task_of(sdfg, name)
     if (node := collectives.comm_node(sdfg)) is not None:
         return collectives.program(task, sdfg, node)
-    tilelower.front(sdfg, LANES, fuse_multiply_add=False)
+    tilelower.front(sdfg, widths(sdfg), fuse_multiply_add=False)
     return program(task, sdfg, scalars, version="v08")
 
 
@@ -95,11 +108,12 @@ def run(root: pathlib.Path, cache: pathlib.Path) -> dict[str, str]:
     verdicts = ttsim.run([folder for _, _, folder in folders], cache)
     found = {}
     for (name, case, folder), verdict in zip(folders, verdicts, strict=True):
-        if verdict.error or not (folder / "got.npy").exists():
+        several = len(case.expected) > 1  # the host saves each output as got_<name>.npy
+        files = {out: folder / (f"got_{out}.npy" if several else "got.npy") for out in case.expected}
+        if verdict.error or not all(f.exists() for f in files.values()):
             found[name] = f"error: {verdict.error[:160]}"
             continue
-        ((_, want),) = case.expected.items()
-        worst = error(numpy.load(folder / "got.npy").reshape(want.shape), want)
+        worst = max(error(numpy.load(files[out]).reshape(want.shape), want) for out, want in case.expected.items())
         found[name] = f"{'correct' if worst <= case.tolerance else 'wrong'} (rel {worst:.2g})"
     return found
 

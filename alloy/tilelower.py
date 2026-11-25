@@ -44,8 +44,9 @@ def lower(sdfg: SDFG, target: Literal["softhier", "tensix"], scalars: dict[str, 
     return gate.lower(sdfg, scalars or {}, name)
 
 
-def front(sdfg: SDFG, width: int, fuse_multiply_add: bool) -> None:
-    """:func:`fuse`, then :func:`vectorize` at ``width`` lanes: the tile nodes both backends expand."""
+def front(sdfg: SDFG, width: int | tuple[int, ...], fuse_multiply_add: bool) -> None:
+    """:func:`fuse`, then :func:`vectorize` at ``width`` lanes (or per-dimension widths, innermost last): the tile nodes
+    both backends expand."""
     # A specialized size becomes its value in every shape and range: the vectorizer then proves the tiles divide it,
     # where it would guard a symbol at run time outside every kernel
     sdfg.replace_dict({name: value for name, value in sdfg.constants.items() if name in sdfg.symbols})
@@ -74,10 +75,11 @@ def fuse(sdfg: SDFG) -> None:
     sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
 
 
-def vectorize(sdfg: SDFG, width: int, fuse_multiply_add: bool) -> None:
+def vectorize(sdfg: SDFG, width: int | tuple[int, ...], fuse_multiply_add: bool) -> None:
     """Elementwise maps to tile maps of tile nodes, ``width`` lanes each; raises ValueError when ``width`` does not
     divide an elementwise extent (no backend takes a masked remainder tile)."""
-    config = VectorizeConfig(widths=(width,), target_isa=ISA.SCALAR, assume_even=True,
+    widths = width if isinstance(width, tuple) else (width,)
+    config = VectorizeConfig(widths=widths, target_isa=ISA.SCALAR, assume_even=True,
                              fuse_multiply_add=fuse_multiply_add)  # fmt: skip
     # A program with nothing elementwise (copies, library nodes, collectives) is left untiled; DaCe warns about it
     with warnings.catch_warnings():

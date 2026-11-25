@@ -108,10 +108,10 @@ def generate(sdfg: SDFG, tile: int = 256) -> str:
 
 
 def scalar_literal(value: numpy.generic) -> str:
-    """The C literal of exactly ``value`` (a float as a hex literal)."""
+    """The C literal of exactly ``value`` (a float as a hex literal; a NaN as the quiet NaN, its payload dropped)."""
     if isinstance(value, numpy.floating):
         if numpy.isnan(value):
-            raise ValueError("a NaN input has no C literal that keeps its bits")
+            return '__builtin_nanf("")' if value.itemsize <= 4 else '__builtin_nan("")'
         if numpy.isinf(value):
             return "-__builtin_inf()" if value < 0 else "__builtin_inf()"
         return float(value).hex() + ("f" if value.itemsize <= 4 else "")

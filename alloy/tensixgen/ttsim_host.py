@@ -10,7 +10,8 @@ the descriptor's ``placement`` says: interleaved DRAM, or L1 height sharded over
     python3 ttsim_host.py FOLDER...   # each: reader.cpp, compute.cpp, writer.cpp, config.json, program.json
 
 A folder with ``inputs.npz`` (the shared gate's case, alloy.tensixgen.gate) runs those arrays instead, at their own
-tile count, and saves the output as ``got.npy`` (a reduction's partial tiles summed in float64); the gate compares it.
+tile count, and saves the output as ``got.npy`` (a reduction's partial tiles summed in float64, or their max); the
+gate compares it.
 """
 
 import json
@@ -66,6 +67,8 @@ def verdict_of(task: Json, got: "torch.Tensor", want: "torch.Tensor") -> Json:
     if task["reduce"] == "add":
         got = got.sum().reshape(1)
         rtol += FP32_EPS * math.sqrt(TILES * 32 * 32)
+    elif task["reduce"] == "max":
+        got = got.max().reshape(1)
     diff = (got - want).abs()
     excess = (diff - (1e-5 + rtol * want.abs())).max().item()
     err = (diff / want.abs().clamp_min(1e-30)).max().item()
@@ -200,8 +203,9 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
                                memory_config=memory(name)) for name, x in zip(names, xs)]  # fmt: skip
     reduce = bool(task["reduce"])
     out_shape = [32 * len(cores), 32] if reduce else list(xs[0].shape)
-    out_mem = memory(task["output"])
-    out = ttnn.allocate_tensor_on_device(ttnn.Shape(out_shape), ttnn.float32, ttnn.TILE_LAYOUT, dev, out_mem)
+    out_names = task["output"] if isinstance(task["output"], list) else [task["output"]]  # output k from CB 16 + k
+    outs = [ttnn.allocate_tensor_on_device(ttnn.Shape(out_shape), ttnn.float32, ttnn.TILE_LAYOUT, dev, memory(o))
+             for o in out_names]  # fmt: skip
     plan = dict.fromkeys(range(len(xs)), (2, "float32")) | {OUT_CB: (2, "float32")}
     for extra in cfg.get("extra_cbs", []):
         plan[int(extra["index"])] = (int(extra["tiles"]), extra["format"])
@@ -217,16 +221,15 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
     starts = [sum(counts[:i]) for i in range(len(cores))]
     addrs = [x.buffer_address() for x in tensors]
     reader_rt = {c: [n, s0, *addrs] for c, n, s0 in zip(cores, counts, starts)}
-    writer_rt = {c: ([1, i] if reduce else [n, s0]) + [out.buffer_address()]
+    writer_rt = {c: ([1, i] if reduce else [n, s0]) + [o.buffer_address() for o in outs]
                  for i, (c, n, s0) in enumerate(zip(cores, counts, starts))}  # fmt: skip
     compute_rt = {c: [n] for c, n in zip(cores, counts)}
     src = source_code(ttnn)
     # a sharded array's kernel addresses its core's shard directly: no TensorAccessor, no compile-time args
     per_input = [a for name, x in zip(names, tensors) if placed[name]["kind"] == "interleaved"
                  for a in ttnn.TensorAccessorArgs(x).get_compile_time_args()]  # fmt: skip
-    out_args = (
-        [] if placed[task["output"]]["kind"] == "sharded" else ttnn.TensorAccessorArgs(out).get_compile_time_args()
-    )
+    out_args = [a for name, o in zip(out_names, outs) if placed[name]["kind"] == "interleaved"
+                for a in ttnn.TensorAccessorArgs(o).get_compile_time_args()]  # fmt: skip
     kernels = [
         ttnn.KernelDescriptor(kernel_source=(folder / "reader.cpp").read_text(), source_type=src, core_ranges=core,
                               compile_time_args=per_input, runtime_args=per_core(ttnn, reader_rt),
@@ -238,12 +241,26 @@ def run(dev: "ttnn.MeshDevice", folder: pathlib.Path) -> Json:
                               compile_time_args=[], runtime_args=per_core(ttnn, compute_rt), config=config),
     ]  # fmt: skip
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
-    got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
-    if want is None:
-        found = got.double().sum().reshape(1) if reduce else got.double().flatten()
-        numpy.save(folder / "got.npy", found.numpy())
-        return {"ok": True, "err": None, "abs": None, "cores": len(cores)}  # the gate checks got.npy
+    got = ttnn.to_torch(ttnn.generic_op([*tensors, *outs], program))
+    if want is None:  # the gate checks got.npy (got_<name>.npy for each of several outputs)
+        save_outputs(ttnn, folder, task, dict(zip(out_names, outs)))
+        return {"ok": True, "err": None, "abs": None, "cores": len(cores)}
     return {**verdict_of(task, got, want), "cores": len(cores)}
+
+
+def save_outputs(ttnn: ModuleType, folder: pathlib.Path, task: Json, outs: "dict[str, ttnn.Tensor]") -> None:
+    """A gate case's outputs: one as got.npy (a reduction's partial tiles folded by its own op, a sum or a max), each
+    of several as got_<name>.npy."""
+    import numpy
+
+    if len(outs) > 1:
+        for name, o in outs.items():
+            numpy.save(folder / f"got_{name}.npy", ttnn.to_torch(o).double().flatten().numpy())
+        return
+    (found,) = (ttnn.to_torch(o).double().flatten() for o in outs.values())
+    if task["reduce"]:  # one partial tile per core
+        found = (found.max() if task["reduce"] == "max" else found.sum()).reshape(1)
+    numpy.save(folder / "got.npy", found.numpy())
 
 
 def main() -> int:

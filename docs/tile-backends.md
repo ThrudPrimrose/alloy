@@ -22,8 +22,9 @@ This page lists what the two backends share, where they differ, and what each re
 
 Tile widths differ because the hardware does:
 - SoftHier takes 256 lanes, narrowed to the widest power of two that divides every elementwise extent (minimum 16).
-- Tensix takes one 32 x 32 tile, 1024 lanes, so an extent that 1024 does not divide is refused, including one shorter
-  than a tile (the vectorizer would mask it).
+- Tensix takes one 32 x 32 tile, 1024 consecutive elements: 1024 lanes of the innermost dimension, or, when every
+  array's rows are K < 1024 elements (K dividing 1024), 1024 / K whole rows. Any other extent is refused, including
+  one shorter than a tile (the vectorizer would mask it).
 
 ## 2. Where they differ
 
@@ -57,23 +58,25 @@ Only SoftHier refuses:
 
 Only Tensix refuses:
 - inputs other than float32;
-- more than one output;
-- reductions other than a whole sum of one input (so a max reduction is refused);
-- tile copies spread over several states (cumsum, the copy chain, GEMM);
+- more than one output in the card's spelling (its contract v2 host writes one); on ttsim output k leaves through
+  CB 16 + k, in one tile body, a map only, interleaved;
+- reductions other than a whole sum or max of one input (a max reduction runs on ttsim; the card's contract v2 host
+  sums the partial tiles, so the card spelling refuses it);
+- tile copies spread over several states (cumsum, the copy chain, GEMM, the CloudSC nests liq_ice_frac and init);
 - collectives that combine data (`Reduce`, `Allreduce`, `ReduceScatter`), the grid barrier, and collective rows
   that are not whole tiles;
-- more live tiles than one DST acquire holds;
+- more live tiles than one DST acquire holds (4 float32 tiles; the CloudSC saturation nest needs more);
 - more cores than tiles;
 - a placement other than interleaved pages or one height shard per core.
 
 ## 4. Known limits
 
-- Spatz `max` and `min` return the other operand when one is NaN (IEEE 754-2019 maximumNumber); NumPy returns NaN.
 - GVSoC stops on Spatz mask instructions, so SoftHier compares and selects run as scalar loops on the Spatz core.
 - GVSoC stops in newlib's `rintf`, `expf`, and `logf`. The SoftHier ladder rounds with one `fcvt.w.s` instruction,
   and outside the strict kernels' range it computes exp(x) as exp(x/2)^2 and log(x) on x scaled by 2^-64 or 2^64
   (the gate cases "exp beyond the ladder's range" and "log beyond the ladder's range").
 - The Tensix SFPU flushes subnormal inputs to zero, so `log_tile` of a subnormal is -inf.
 - On the Blackhole card with tt-metal 0.63, `exp_tile` holds bfloat16 accuracy only (max relative error 1.73e-3 on
-  [-7, 7]) and `log_tile` missed float32 by 0.0165. The SFPI rungs that replace them were checked on [-7, 7]; the exp
-  rung does not clamp, so |x| above about 87 overflows the exponent field.
+  [-7, 7]) and `log_tile` missed float32 by 0.0165. The SFPI rungs replace them: the log rung was checked on the card
+  over [1e-3, 1e3], the exp rung over [-100, 100], where it saturates to inf above ln FLT_MAX and to 0 below the
+  smallest normal.

@@ -247,7 +247,7 @@ constants as `constexpr` with `sym2cpp`, and refuses any access-to-access copy l
 frame code DaCe always generates is not used: `generate` returns only the SoftHier code object.
 
 The program folder (`write_folder`) holds `kernels.cpp`; `main.c`, which bakes the inputs into `.hbm`
-arrays of their element type (exact hex float literals; a NaN input is refused), checks `ARCH_NUM_CLUSTER` against `V1.num_clusters` at compile time, runs the SDK frame
+arrays of their element type (exact hex float literals; a NaN input as the quiet NaN), checks `ARCH_NUM_CLUSTER` against `V1.num_clusters` at compile time, runs the SDK frame
 around `__dsh_program` with a cycle count, and prints every array through a TCDM buffer; `arch.py` for
 `SOFTHIER_ARCH_FILE`; the runtime headers; `meta.json`; and `build_run.sh`, which compiles with the SDK's
 flags without `-ffast-math`, links with its start code and linker script, fails when the sections linked to `L3`
@@ -262,8 +262,9 @@ the node's base for each node after the first, and `write_folder` refuses a prog
 placed arrays gets the same `kernels.cpp`, `main.c`, `meta.json` and `build_run.sh` as before placement existed.
 `read_results` reads the printed words back into arrays.
 
-Limitation: `max` and `min` on Spatz (`vfmax`, `vfmin`, `vfredmax`, `vfredmin`) return the other operand when one
-is NaN (IEEE 754-2019 maximumNumber); NumPy returns NaN.
+`max` and `min` follow NumPy on NaN: a NaN operand gives NaN. Spatz's `vfmax` and `vfmin` return the other operand
+(IEEE 754-2019 maximumNumber), so `dsh_rvv.h` puts the NaN lanes back with integer ops (GVSoC stops on mask
+instructions), and the max and min reductions return the first NaN element before reducing.
 
 ## 9. Shortcuts in the code
 

@@ -104,6 +104,8 @@ class Body:
     reduce: Step | None
     ops: list[str]
     fold_op: str = ""
+    #: A map's DST tile of each output it stores, by output.
+    stores: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 class Slots:
@@ -159,11 +161,16 @@ def tile_body(sdfg: dace.SDFG) -> tuple[dace.SDFGState, Reduce | None]:
     return found[0]
 
 
-def dense(subset: dace.subsets.Subset) -> bool:
-    """Whether ``subset`` is one tile of consecutive elements: unit stride over :data:`LANES` in its last dimension,
-    one index in every other."""
-    *rest, (_, _, step) = subset.ndrange()
-    return step == 1 and subset.num_elements() == LANES and all(b == e for b, e, _ in rest)
+def dense(subset: dace.subsets.Subset, shape: tuple[symbolic.SymbolicType, ...]) -> bool:
+    """Whether ``subset`` of an array of ``shape`` is one tile of :data:`LANES` consecutive elements: one index in the
+    leading dimensions, then a unit-stride run, then whole rows (each later dimension at its full extent)."""
+    ranges = subset.ndrange()
+    wide = [d for d, (b, e, _) in enumerate(ranges) if b != e]
+    first = wide[0] if wide else len(ranges) - 1
+    # a run as long as the dimension is all of it (the tile index starts it at 0)
+    sizes = subset.size_exact()  # pyright: ignore[reportAttributeAccessIssue] -- Range and Indices both have it
+    whole = all(symbolic.equal(sizes[d], shape[d]) is True and ranges[d][2] == 1 for d in range(first + 1, len(ranges)))
+    return ranges[first][2] == 1 and whole and subset.num_elements() == LANES
 
 
 def placement_of(name: str, desc: dace.data.Array) -> int:
@@ -227,7 +234,7 @@ def body_of(state: dace.SDFGState, sdfg: dace.SDFG, inputs: list[str], scalars: 
             raise Refused(f"{node.label}: {type(node).__name__} in the tile body")
     if body.result < 0:
         raise Refused("no tile leaves the body")
-    return Body(body.steps, body.slots.width, body.result, body.fold, body.ops, body.fold_op)
+    return Body(body.steps, body.slots.width, body.result, body.fold, body.ops, body.fold_op, body.stores)
 
 
 @dataclass
@@ -249,6 +256,7 @@ class BodyBuilder:
     result: int = -1
     fold: Step | None = None
     fold_op: str = ""
+    stores: dict[str, int] = dataclasses.field(default_factory=dict)
 
     def fill(self, tile: str, value: float) -> None:
         """``tile`` filled with ``value`` in a DST tile of its own."""
@@ -258,7 +266,7 @@ class BodyBuilder:
 
     def one_output(self) -> None:
         if self.result >= 0:
-            raise Refused("more than one tile leaves the body: contract v2 writes one output")
+            raise Refused("a reduction and another tile leave the body: a reduction writes one output")
 
     def access(self, node: nodes.AccessNode) -> None:
         for e in self.state.in_edges(node):
@@ -287,7 +295,7 @@ class BodyBuilder:
             raise Refused(f"{node.label}: a copy between non-data nodes")
         load = not sdfg.arrays[src.data].transient
         span = inner.data.get_src_subset(inner, state) if load else outer.data.get_dst_subset(outer, state)
-        if span is None or not dense(span):
+        if span is None or not dense(span, sdfg.arrays[src.data if load else dst.data].shape):
             raise Refused(f"{node.label}: {span} is not one tile of consecutive elements")
         self.spans.add((str(span), tuple(sdfg.arrays[src.data if load else dst.data].shape)))
         if len(self.spans) > 1:  # the host reads and writes tile k of every array at the same index
@@ -298,9 +306,15 @@ class BodyBuilder:
             cb = self.inputs.index(src.data)
             self.loaded[dst.data] = cb
             self.steps.append(dataclasses.replace(copy(cb, self.version), tiles=(("_o", self.slots.take(dst.data)),)))
-        else:  # the store: packed to CB 16 after the block; its DST tile stays taken
-            self.one_output()
-            self.result = self.slots.of[src.data]
+        else:
+            self.store(node, src.data, dst.data)
+
+    def store(self, node: nodes.Node, tile: str, output: str) -> None:
+        """Output ``output``'s tile, packed to CB 16 + k after the block; its DST tile stays taken."""
+        if self.fold is not None or output in self.stores:
+            raise Refused(f"{node.label}: a second tile leaves the body for {output}")
+        self.stores[output] = self.slots.of[tile]
+        self.result = self.result if self.result >= 0 else self.stores[output]
 
     def tile_node(self, node: nodes.LibraryNode) -> None:
         state, slots = self.state, self.slots
@@ -355,21 +369,23 @@ class BodyBuilder:
 
 
 def reduce_body(node: Reduce, state: dace.SDFGState, inputs: list[str], version: str) -> Body:
-    """A ``Reduce`` that sums a whole input: one copy per tile, folded like a vectorized reduction."""
+    """A ``Reduce`` that sums or maxes a whole input: one copy per tile, folded like a vectorized reduction."""
     # shortcut: the vectorizer leaves a whole-array Reduce node (tsvc_2_s311) unvectorized; the split takes it as a
     # load and a TileReduce. Upgrade when the vectorizer lifts Reduce nodes into tile bodies.
     (edge,) = state.in_edges(node)
     desc = state.sdfg.arrays[edge.data.data]
     rank = len(desc.shape)
-    if detect_reduction_type(node.wcr) != dtypes.ReductionType.Sum or len(inputs) != 1:  # any spelling of a + b
-        raise Refused(f"{node.label}: only a sum of one input reduces on Tensix")
+    kind = detect_reduction_type(node.wcr)  # any spelling of a + b or max(a, b)
+    op = {dtypes.ReductionType.Sum: "add", dtypes.ReductionType.Max: "max"}.get(kind) if kind is not None else None
+    if op is None or len(inputs) != 1:
+        raise Refused(f"{node.label}: only a sum or a max of one input reduces on Tensix")
     if node.axes is not None and sorted(node.axes) != list(range(rank)):
         raise Refused(f"{node.label}: reduces axes {node.axes} of {rank}, not the whole input")
     if desc.dtype != dace.float32:
         raise Refused(f"{edge.data.data}: contract v2 moves float32 tiles")
-    init, call = code("add", ("_dst", "_src", "_dst"), version=version)
+    init, call = code(op, ("_dst", "_src", "_dst"), version=version)
     load = dataclasses.replace(copy(0, version), tiles=(("_o", 0),))
-    return Body([load], 1, 0, Step(init, call), ["add"], "add")
+    return Body([load], 1, 0, Step(init, call), [op], op)
 
 
 def slot(width: int, k: int) -> str:
@@ -387,7 +403,10 @@ def placed(step: Step, at: dict[str, str]) -> str:
     return text
 
 
-def compute(name: str, title: str, body: Body, block: int, inputs: int, version: str) -> str:
+def compute(name: str, title: str, body: Body, block: int, inputs: int, version: str,
+            outputs: list[int] | None = None) -> str:  # fmt: skip
+    """The compute kernel; ``outputs``: the DST tile of each output k, packed into CB 16 + k (None: one output, the
+    body's result)."""
     new = version == "v08"
     width, indent = body.width, "        "
     lines: list[str] = []
@@ -433,7 +452,7 @@ def compute(name: str, title: str, body: Body, block: int, inputs: int, version:
             "        tile_regs_release();",
             "        cb_push_back(into, 1);",
         ]
-    else:
+    elif outputs is None:
         loop += [
             "        tile_regs_commit();",
             *pops,
@@ -442,6 +461,20 @@ def compute(name: str, title: str, body: Body, block: int, inputs: int, version:
             f"        for (uint32_t t = 0; t < n; ++t) pack_tile({slot(width, s)}, {OUT_CB});",
             "        tile_regs_release();",
             f"        cb_push_back({OUT_CB}, n);",
+        ]
+    else:
+        cbs = [OUT_CB + k for k in range(len(outputs))]
+        loop += [
+            "        tile_regs_commit();",
+            *pops,
+            *(f"        cb_reserve_back({cb}, n);" for cb in cbs),
+            "        tile_regs_wait();",
+            *(
+                f"        for (uint32_t t = 0; t < n; ++t) pack_tile({slot(width, k)}, {cb});"
+                for k, cb in zip(outputs, cbs)
+            ),
+            "        tile_regs_release();",
+            *(f"        cb_push_back({cb}, n);" for cb in cbs),
         ]
     loop.append("    }")
     rules = {op: rule(op, version) for op in dict.fromkeys(body.ops)}
@@ -466,19 +499,21 @@ def compute(name: str, title: str, body: Body, block: int, inputs: int, version:
     return "\n".join([*head, "namespace NAMESPACE {", "void MAIN {", *loop, "}", "}  // namespace NAMESPACE", ""])
 
 
-def placements(task: Json, sdfg: dace.SDFG, inputs: list[str], output: str, reduce: bool,
+def placements(task: Json, sdfg: dace.SDFG, inputs: list[str], outputs: list[str], reduce: bool,
                options: Options) -> tuple[dict[str, dace.data.Array], dict[str, int], int]:  # fmt: skip
     """The task's arrays, the cores each is sharded over (0: interleaved DRAM), and the one placement they share:
     a reduction's output stays in DRAM, and the shards of one core fit its L1."""
     arrays: dict[str, dace.data.Array] = {}
-    for name in dict.fromkeys([*inputs, output]):
+    for name in dict.fromkeys([*inputs, *outputs]):
         desc = sdfg.arrays[name]
         if not isinstance(desc, dace.data.Array):
             raise Refused(f"{task['name']}: {name} is a {type(desc).__name__}; contract v2 moves arrays")
         arrays[name] = desc
     shards = {name: placement_of(name, desc) for name, desc in arrays.items()}
-    if reduce and shards[output]:
-        raise Refused(f"{task['name']}: a reduction writes one partial tile per core to DRAM, not to {output}'s shards")
+    if reduce and shards[outputs[0]]:
+        raise Refused(
+            f"{task['name']}: a reduction writes one partial tile per core to DRAM, not to {outputs[0]}'s shards"
+        )
     # each core reads and writes the same tiles of every array: sharded and interleaved arrays would need the host's
     # core order to equal the shard order
     kinds = {shards[name] for name in (inputs if reduce else shards)}
@@ -487,6 +522,8 @@ def placements(task: Json, sdfg: dace.SDFG, inputs: list[str], output: str, redu
             f"{task['name']}: arrays placed on {sorted(kinds)} cores (0: interleaved DRAM); one placement only"
         )
     (sharded,) = kinds
+    if sharded and len(outputs) > 1:
+        raise Refused(f"{task['name']}: {len(outputs)} sharded outputs; the writer stores one output to L1 shards")
     if sharded and options.cores not in (0, sharded):
         raise Refused(f"{task['name']}: arrays sharded over {sharded} cores, the program runs on {options.cores}")
     held = sum(bool(cores) for cores in shards.values()) * (TILES // sharded if sharded else 0) * TILE_BYTES
@@ -497,11 +534,13 @@ def placements(task: Json, sdfg: dace.SDFG, inputs: list[str], output: str, redu
     return arrays, shards, sharded
 
 
-def compute_config(count: int, block: int, reduce: bool) -> dict[str, object]:
-    """The compute kernel's config for ``count`` inputs and ``block`` tiles per DST acquire: fp32 in DST, and the CBs
-    sized for two blocks."""
-    sized = [*range(count), OUT_CB] if block > 1 else []  # the host's CBs hold 2 tiles: room for 2 blocks
-    extra = [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
+def compute_config(count: int, block: int, reduce: bool, outputs: int = 1) -> dict[str, object]:
+    """The compute kernel's config for ``count`` inputs, ``outputs`` outputs and ``block`` tiles per DST acquire: fp32
+    in DST, and the CBs sized for two blocks."""
+    outs = [OUT_CB + k for k in range(outputs)]
+    sized = [*range(count), *outs] if block > 1 else []  # the host's CBs hold 2 tiles: room for 2 blocks
+    extra = [{"index": k, "tiles": 2, "format": "float32"} for k in outs[1:] if block == 1]  # the host makes CB 16 only
+    extra += [{"index": k, "tiles": 2 * block, "format": "float32"} for k in sized]
     extra += [{"index": ACC_CB, "tiles": 2, "format": "float32"}] if reduce else []
     return {
         "fp32_dest_acc_en": True,
@@ -513,7 +552,8 @@ def compute_config(count: int, block: int, reduce: bool) -> dict[str, object]:
 
 
 def host_descriptor(task: Json, version: str, body: Body, options: Options, arrays: dict[str, dace.data.Array],
-                    shards: dict[str, int], inputs: list[str], block: int, reduce: bool) -> dict[str, object]:  # fmt: skip
+                    shards: dict[str, int], inputs: list[str], block: int, reduce: bool,
+                    outputs: int = 1) -> dict[str, object]:  # fmt: skip
     """``program.json``: what the host needs to run the program (contract, options and sweep axes, each array's
     placement, the CBs, and the kernels' arguments)."""
     count = len(inputs)
@@ -537,10 +577,16 @@ def host_descriptor(task: Json, version: str, body: Body, options: Options, arra
             }
             for name, cores in shards.items()
         },  # fmt: skip
-        "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), OUT_CB]}
+        "circular_buffers": {str(k): [2 * block, "float32"] for k in [*range(count), *range(OUT_CB, OUT_CB + outputs)]}
         | ({str(ACC_CB): [2, "float32"]} if reduce else {}),
         "reader_args": ["num_tiles", "start_tile", *(f"{name}_addr" for name in inputs)],
-        "writer_args": ["1", "core_index", "out_addr"] if reduce else ["num_tiles", "start_tile", "out_addr"],
+        "writer_args": ["1", "core_index", "out_addr"]
+        if reduce
+        else [
+            "num_tiles",
+            "start_tile",
+            *(["out_addr"] if outputs == 1 else [f"out{k}_addr" for k in range(outputs)]),
+        ],  # fmt: skip
         "compute_args": ["num_tiles"],
         "rows": {op: rule(op, version).source for op in dict.fromkeys(body.ops)},
     }
@@ -594,7 +640,9 @@ def reader(moves: movement.Movement, block: int, version: str, sharded: bool = F
 
 def writer(moves: movement.Movement, block: int, version: str, sharded: bool = False) -> str:
     """Writes this core's output tiles from CB 16 at ``start``: a map's ``n`` tiles, a reduction's one tile; a sharded
-    map's ``n`` tiles into the core's own L1 shard."""
+    map's ``n`` tiles into the core's own L1 shard. Several outputs: output k from CB 16 + k, interleaved."""
+    if len(moves.stores) > 1:
+        return writer_outputs(moves, block, version)
     if sharded:
         return "\n".join([
             f"// writer: n tiles from CB {OUT_CB} to this core's L1 shard of the output ({block} per barrier)",
@@ -645,6 +693,50 @@ def writer(moves: movement.Movement, block: int, version: str, sharded: bool = F
     ])  # fmt: skip
 
 
+def writer_outputs(moves: movement.Movement, block: int, version: str) -> str:
+    """The writer of several outputs: output k's tiles from CB 16 + k to its tiles ``start .. start + n - 1``, every
+    output's writes of a block in flight before one barrier."""
+    count = len(moves.stores)
+    accessors = []
+    for k in range(count):
+        offset = "0" if k == 0 else f"a{k - 1}.next_compile_time_args_offset()"
+        accessors += [
+            f"    constexpr auto a{k} = TensorAccessorArgs<{offset}>();",
+            f"    const auto s{k} = TensorAccessor(a{k}, get_arg_val<uint32_t>({2 + k}), bytes);",
+        ]
+    lines = [
+        (
+            f"// writer: n tiles of each of {count} outputs, output k from CB {OUT_CB} + k, to tiles start .. start + n"
+            f" - 1 ({block} per barrier)"
+        ),
+        "#include <stdint.h>",
+        f'#include "{dataflow_include(version == "v08")}"',
+        "",
+        "void kernel_main() {",
+        "    uint32_t num_tiles = get_arg_val<uint32_t>(0);",
+        "    uint32_t start = get_arg_val<uint32_t>(1);",
+        f"    const uint32_t bytes = get_tile_size({OUT_CB});",
+        *accessors,
+        f"    for (uint32_t i = 0; i < num_tiles; i += {block}) {{",
+        f"        uint32_t n = num_tiles - i < {block} ? num_tiles - i : {block};",
+    ]
+    for k in range(count):
+        lines += [
+            f"        cb_wait_front({OUT_CB + k}, n);",
+            f"        for (uint32_t t = 0, r = get_read_ptr({OUT_CB + k}); t < n; ++t) {{",
+            f"            noc_async_write_tile(start + i + t, s{k}, r + t * bytes);",
+            "        }",
+        ]
+    lines += [
+        f"        {moves.write_wait.call()}",
+        *(f"        cb_pop_front({OUT_CB + k}, n);" for k in range(count)),
+        "    }",
+        "}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True, slots=True)
 class Program:
     """A generated program in the layout of ``agents/reference/<task>/``, plus its host descriptor."""
@@ -666,6 +758,26 @@ class Program:
         return folder
 
 
+def outputs_of(task: Json, body: Body, reduce: bool, version: str) -> list[str]:
+    """The task's outputs, checked against its tile body: a reduction folds with ``add`` on the card (whose contract
+    v2 host sums the partial tiles) and writes one output; several outputs run on ttsim (v08) only."""
+    if reduce and body.fold_op != "add" and version == "v06":
+        raise Refused(f"{task['name']}: a {body.fold_op} reduction; the card's contract v2 host sums the partial tiles")
+    if reduce != (body.reduce is not None):
+        raise Refused(
+            f"{task['name']}: the task is a {task['kind']}, its tile body {'is not ' if reduce else ''}a reduction"
+        )
+    given = task["output"]
+    outputs = [str(o) for o in given] if isinstance(given, list) else [str(given)]
+    if len(outputs) > 1 and (reduce or version == "v06"):
+        raise Refused(
+            f"{task['name']}: {len(outputs)} outputs; contract v2 (the card's host) and a reduction write one"
+        )
+    if len(outputs) > 1 and sorted(body.stores) != sorted(outputs):
+        raise Refused(f"{task['name']}: the body stores {sorted(body.stores)}, the task writes {outputs}")
+    return outputs
+
+
 def program(task: Json, sdfg: dace.SDFG, scalars: dict[str, float], options: Options = Options(),
             version: str = "v06") -> Program:  # fmt: skip
     """The tile program of eval task ``task`` (``agents/tasks.json``'s form) from its vectorized SDFG, for tt-metal
@@ -685,27 +797,31 @@ def program(task: Json, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     else:
         body = reduce_body(node, state, inputs, version)
     reduce = task["kind"] == "reduce"
-    if reduce != (body.reduce is not None):
-        raise Refused(
-            f"{task['name']}: the task is a {task['kind']}, its tile body {'is not ' if reduce else ''}a reduction"
-        )
+    outputs = outputs_of(task, body, reduce, version)
     room = DST_TILES // body.width
     block = options.dst_block or room
     if not 1 <= block <= room:
         raise Refused(f"{task['name']}: {block} tile(s) of {body.width} DST tile(s) each exceed one DST acquire")
-    output = str(task["output"])
-    arrays, shards, sharded = placements(task, sdfg, inputs, output, reduce, options)
+    arrays, shards, sharded = placements(task, sdfg, inputs, outputs, reduce, options)
     options = dataclasses.replace(options, dst_block=block, cores=sharded or options.cores,
                                   placement=SHARDED if sharded else INTERLEAVED)  # fmt: skip
     count = len(inputs)
-    config = compute_config(count, block, reduce)
-    descriptor = host_descriptor(task, version, body, options, arrays, shards, inputs, block, reduce)
+    config = compute_config(count, block, reduce, len(outputs))
+    descriptor = host_descriptor(task, version, body, options, arrays, shards, inputs, block, reduce, len(outputs))
     title = " | ".join(task["program"])
-    moves = movement.insert(state, inputs, output, reduce)
+    moves = movement.insert(state, inputs, outputs, reduce)
     return Program(
         str(task["name"]),
         reader(moves, block, version, bool(sharded)),
-        compute(str(task["name"]), title, body, block, count, version),
+        compute(
+            str(task["name"]),
+            title,
+            body,
+            block,
+            count,
+            version,
+            [body.stores[o] for o in outputs] if len(outputs) > 1 else None,
+        ),  # fmt: skip
         writer(moves, block, version, bool(sharded) and not reduce),
         config,
         descriptor,

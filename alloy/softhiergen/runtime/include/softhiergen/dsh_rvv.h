@@ -114,19 +114,66 @@ static inline void dsh_vfence(void) { __asm__ volatile("fence\n\tlw zero, 0(sp)"
         }                                                                                           \
     }
 
+// z = max or min of x and y with NumPy's NaN: a NaN operand gives NaN, where vfmax and vfmin return the other operand
+// (IEEE 754-2019 maximumNumber). GVSoC's Spatz stops on mask instructions, so the NaN lanes are found with integer
+// ops: |bits| - (inf + 1) is negative unless the lane is NaN, and its sign smeared over the lane (vsra) keeps the
+// vfmax result there, the NaN operand elsewhere. LMUL 4: a, b, the result and the keep mask fit the 32 registers.
+// ABS clears the sign bit, NAN1 is inf's bits plus one, SH is the lane width minus one.
+#define DSH_RVV_NANBITS(S, B, ABS, NAN1, SH)                                                        \
+    static inline vint##B##m4_t dsh_keep_##S(vint##B##m4_t bits, size_t vl) {                       \
+        return __riscv_vsra_vx_i##B##m4(__riscv_vsub_vx_i##B##m4(__riscv_vand_vx_i##B##m4(bits, ABS, vl), NAN1, vl), \
+                                        SH, vl);                                                     \
+    }                                                                                               \
+    static inline vint##B##m4_t dsh_nan_##S(vint##B##m4_t r, vint##B##m4_t a, size_t vl) {          \
+        vint##B##m4_t keep = dsh_keep_##S(a, vl);                                                   \
+        return __riscv_vor_vv_i##B##m4(__riscv_vand_vv_i##B##m4(r, keep, vl),                       \
+                                       __riscv_vand_vv_i##B##m4(a, __riscv_vnot_v_i##B##m4(keep, vl), vl), vl); \
+    }
+
+#define DSH_RVV_MINMAX(NAME, T, S, B, OP)                                                           \
+    DSH_RVV_FN void dsh_rvv_##NAME##_##S(T* z, const T* x, const T* y, size_t n) {               \
+        for (size_t i = 0; i < n;) {                                                                \
+            size_t vl = __riscv_vsetvl_e##B##m4(n - i);                                             \
+            vfloat##B##m4_t a = __riscv_vle##B##_v_##S##m4(x + i, vl);                              \
+            vfloat##B##m4_t b = __riscv_vle##B##_v_##S##m4(y + i, vl);                              \
+            vint##B##m4_t r = __riscv_vreinterpret_v_##S##m4_i##B##m4(__riscv_##OP##_vv_##S##m4(a, b, vl)); \
+            r = dsh_nan_##S(r, __riscv_vreinterpret_v_##S##m4_i##B##m4(a), vl);                     \
+            r = dsh_nan_##S(r, __riscv_vreinterpret_v_##S##m4_i##B##m4(b), vl);                     \
+            __riscv_vse##B##_v_##S##m4(z + i, __riscv_vreinterpret_v_i##B##m4_##S##m4(r), vl);      \
+            i += vl;                                                                                \
+        }                                                                                           \
+    }                                                                                               \
+    /* z = OP(x, s), s one value: a NaN s makes every lane NaN */                                    \
+    DSH_RVV_FN void dsh_rvv_##NAME##_s_##S(T* z, const T* x, T s, size_t n) {                    \
+        for (size_t i = 0; i < n;) {                                                                \
+            size_t vl = __riscv_vsetvl_e##B##m4(n - i);                                             \
+            vfloat##B##m4_t a = __riscv_vle##B##_v_##S##m4(x + i, vl);                              \
+            vfloat##B##m4_t r = s != s ? __riscv_vfmv_v_f_##S##m4(s, vl) : __riscv_##OP##_vf_##S##m4(a, s, vl); \
+            vint##B##m4_t bits = dsh_nan_##S(__riscv_vreinterpret_v_##S##m4_i##B##m4(r),            \
+                                             __riscv_vreinterpret_v_##S##m4_i##B##m4(a), vl);       \
+            __riscv_vse##B##_v_##S##m4(z + i, __riscv_vreinterpret_v_i##B##m4_##S##m4(bits), vl);   \
+            i += vl;                                                                                \
+        }                                                                                           \
+    }
+
+// The max or min of x[0:n] with NumPy's NaN: vfredmax and vfredmin skip NaN, so a NaN element is looked for first
+#define DSH_RVV_REDNAN(NAME, T, S)                                                                  \
+    DSH_RVV_FN T dsh_rvv_red##NAME##_##S(const T* x, size_t n) {                                 \
+        for (size_t i = 0; i < n; ++i) {                                                            \
+            if (x[i] != x[i]) return x[i];                                                          \
+        }                                                                                           \
+        return dsh_rvv_red##NAME##_num_##S(x, n);                                                   \
+    }
+
 #define DSH_RVV_FLOAT(T, S, B)                                                                      \
     DSH_RVV_VV(add, T, vfloat##B##m8_t, S, B, vfadd)                                                \
     DSH_RVV_VV(sub, T, vfloat##B##m8_t, S, B, vfsub)                                                \
     DSH_RVV_VV(mul, T, vfloat##B##m8_t, S, B, vfmul)                                                \
     DSH_RVV_VV(div, T, vfloat##B##m8_t, S, B, vfdiv)                                                \
-    DSH_RVV_VV(max, T, vfloat##B##m8_t, S, B, vfmax)                                                \
-    DSH_RVV_VV(min, T, vfloat##B##m8_t, S, B, vfmin)                                                \
     DSH_RVV_VS(add, T, vfloat##B##m8_t, S, B, vfadd, vf)                                            \
     DSH_RVV_VS(sub, T, vfloat##B##m8_t, S, B, vfsub, vf)                                            \
     DSH_RVV_VS(mul, T, vfloat##B##m8_t, S, B, vfmul, vf)                                            \
     DSH_RVV_VS(div, T, vfloat##B##m8_t, S, B, vfdiv, vf)                                            \
-    DSH_RVV_VS(max, T, vfloat##B##m8_t, S, B, vfmax, vf)                                            \
-    DSH_RVV_VS(min, T, vfloat##B##m8_t, S, B, vfmin, vf)                                            \
     DSH_RVV_SV(sub, T, vfloat##B##m8_t, S, B, vfsub)                                                   \
     DSH_RVV_SV(div, T, vfloat##B##m8_t, S, B, vfdiv)                                                   \
     DSH_RVV_V(neg, T, vfloat##B##m8_t, S, B, vfneg)                                                 \
@@ -134,11 +181,19 @@ static inline void dsh_vfence(void) { __asm__ volatile("fence\n\tlw zero, 0(sp)"
     DSH_RVV_V(sqrt, T, vfloat##B##m8_t, S, B, vfsqrt)                                               \
     DSH_RVV_FMA(T, vfloat##B##m8_t, S, B, vfmacc, vf)                                                   \
     DSH_RVV_RED(sum, T, vfloat##B##m8_t, vfloat##B##m1_t, S, B, vfredusum, vfmv_s_f, vfmv_f_s, (T)0) \
-    DSH_RVV_RED(max, T, vfloat##B##m8_t, vfloat##B##m1_t, S, B, vfredmax, vfmv_s_f, vfmv_f_s, x[0])  \
-    DSH_RVV_RED(min, T, vfloat##B##m8_t, vfloat##B##m1_t, S, B, vfredmin, vfmv_s_f, vfmv_f_s, x[0])
+    DSH_RVV_RED(max_num, T, vfloat##B##m8_t, vfloat##B##m1_t, S, B, vfredmax, vfmv_s_f, vfmv_f_s, x[0])  \
+    DSH_RVV_RED(min_num, T, vfloat##B##m8_t, vfloat##B##m1_t, S, B, vfredmin, vfmv_s_f, vfmv_f_s, x[0])  \
+    DSH_RVV_REDNAN(max, T, S)                                                                       \
+    DSH_RVV_REDNAN(min, T, S)
 
 DSH_RVV_FLOAT(float, f32, 32)
 DSH_RVV_FLOAT(dsh_f16, f16, 16)
+DSH_RVV_NANBITS(f32, 32, 0x7FFFFFFF, 0x7F800001, 31)
+DSH_RVV_NANBITS(f16, 16, 0x7FFF, 0x7C01, 15)
+DSH_RVV_MINMAX(max, float, f32, 32, vfmax)
+DSH_RVV_MINMAX(min, float, f32, 32, vfmin)
+DSH_RVV_MINMAX(max, dsh_f16, f16, 16, vfmax)
+DSH_RVV_MINMAX(min, dsh_f16, f16, 16, vfmin)
 
 DSH_RVV_VV(add, int32_t, vint32m8_t, i32, 32, vadd)
 DSH_RVV_VV(sub, int32_t, vint32m8_t, i32, 32, vsub)

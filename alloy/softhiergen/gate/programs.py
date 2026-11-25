@@ -51,6 +51,18 @@ def vmax(x: dace.float32[N], s: dace.float32[1]) -> None:
 
 
 @dace.program
+def extremes(x: dace.float32[N], z: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.minimum(numpy.maximum(x, z), 0.5)
+
+
+@dace.program
+def two_outputs(x: dace.float32[8, 256], y: dace.float32[8, 256], z: dace.float32[8, 256]) -> None:
+    for i, j in dace.map[0:8, 0:256]:
+        y[i, j] = x[i, j] * x[i, j]
+        z[i, j] = x[i, j] + x[i, j]
+
+
+@dace.program
 def unary(x: dace.float32[N], y: dace.float32[N]) -> None:
     y[:] = -numpy.sqrt(numpy.abs(x))
 
@@ -187,6 +199,9 @@ def cases() -> list[Case]:
     ga, gb = (rng.uniform(-1, 1, (64, 64)).astype(numpy.float16) for _ in range(2))
     rows = rng.uniform(-4, 4, (P, 1024)).astype(f32)
     ia, ib = (rng.integers(-50, 50, N).astype(numpy.int32) for _ in range(2))
+    nan_a, nan_b = a.copy(), b.copy()  # NumPy's NaN: a NaN operand (or element) gives NaN
+    nan_a[[0, 5, 100]] = numpy.nan
+    nan_b[[7, 100, N - 1]] = numpy.nan
     tail_exp = rng.uniform(87.0, 88.5, N).astype(f32)
     tail_log = rng.uniform(1e37, 3e38, N).astype(
         f32
@@ -223,6 +238,27 @@ def cases() -> list[Case]:
             1e-5,
         ),  # fmt: skip
         Case("max reduction", lambda: vmax.to_sdfg(simplify=True), {"x": a}, {"s": a.max(keepdims=True)}, 0.0),
+        Case(
+            "max reduction over a NaN",
+            lambda: vmax.to_sdfg(simplify=True),
+            {"x": nan_b},
+            {"s": nan_b.max(keepdims=True)},
+            0.0,
+        ),  # fmt: skip
+        Case(
+            "two outputs over rows (8 x 256)",
+            lambda: two_outputs.to_sdfg(simplify=True),
+            {"x": a.reshape(16, 256)[:8]},
+            {"y": a.reshape(16, 256)[:8].astype(numpy.float64) ** 2, "z": 2.0 * a.reshape(16, 256)[:8]},
+            1e-6,
+        ),
+        Case(
+            "maximum and minimum with NaN",
+            lambda: extremes.to_sdfg(simplify=True),
+            {"x": nan_a, "z": nan_b},
+            {"y": numpy.minimum(numpy.maximum(nan_a, nan_b), f32(0.5))},
+            0.0,
+        ),
         Case(
             "tiled GEMM (RedMulE)",
             lambda: gemm.to_sdfg(simplify=True),

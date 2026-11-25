@@ -57,9 +57,10 @@ def test_a_unary_op_of_a_constant_is_refused_not_taken_for_a_filled_tile() -> No
         op_of(TileUnop("e", (1024,), op="exp", kind_a="Symbol", expr_a="2.0"))
 
 
-def test_a_max_reduction_is_refused_because_the_contracts_host_sums_the_partial_tiles() -> None:
+def test_a_max_reduction_folds_with_the_max_row_and_a_min_reduction_is_refused() -> None:
+    assert op_of(TileReduce("r", (1024,), op="max")) == "max"
     with pytest.raises(Refused, match="no Tensix row"):
-        op_of(TileReduce("r", (1024,), op="max"))
+        op_of(TileReduce("r", (1024,), op="min"))
 
 
 def test_a_row_without_a_card_run_is_refused_for_the_cards_spelling_only() -> None:
@@ -297,8 +298,15 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
         lowered(by_name["float16 multiply"])
     from alloy.softhiergen.gate.cloudsc import cloudsc_cases
 
-    for nest in cloudsc_cases():  # contract v2 writes one output; every CloudSC nest writes several
-        with pytest.raises(Refused, match="outputs; a Tensix program writes one"):
+    # two outputs over whole rows: one tile of 4 x 256, output k through CB 16 + k
+    two = lowered(by_name["two outputs over rows (8 x 256)"])
+    assert "pack_tile(t * 3 + 1, 17);" in two.compute and "noc_async_write_tile(start + i + t, s1," in two.writer
+    # each CloudSC nest writes several outputs over whole rows; saturation needs more live tiles than one DST acquire
+    # holds, liq_ice_frac and init are several tile bodies
+    reasons = {"saturation": "more live tiles", "liq_ice_frac": "tile copies in 2 states", "init": "tile copies in 4"}
+    for nest in cloudsc_cases():
+        (reason,) = [why for key, why in reasons.items() if key in nest.name]
+        with pytest.raises(Refused, match=reason):
             lowered(nest)
     from alloy.softhiergen.gate.programs import collective_cases
 

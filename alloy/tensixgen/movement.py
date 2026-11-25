@@ -9,8 +9,9 @@ asynchronous NoC transfers: :func:`insert` places
   Tensix barrier completes every transfer issued before it, so the loads of the body are in flight together, as
   ``InsertAsyncWaits`` issues a state's copies before its waits; then one ``Sync`` per circular buffer, the handoff
   to the compute kernel (``cb_push_back``);
-- around the store, a ``Sync`` that waits for the compute kernel's tiles (``cb_wait_front``), then the copy, its
-  :class:`NocWait` (``noc_async_write_barrier``), and a ``Sync`` that frees the buffer (``cb_pop_front``).
+- around the stores (one per output), a ``Sync`` that waits for the compute kernel's tiles (``cb_wait_front``), then
+  the copies, one :class:`NocWait` (``noc_async_write_barrier``) after them all, and a ``Sync`` that frees the
+  buffers (``cb_pop_front``).
 
 The reader and writer kernels of :mod:`alloy.tensixgen.split` spell these nodes in their order (:func:`read_lines`,
 :func:`write_lines`)."""
@@ -79,7 +80,7 @@ class Movement:
     loads: tuple[Load, ...]
     read_wait: NocWait
     ready: Sync
-    store: nodes.LibraryNode
+    stores: tuple[nodes.LibraryNode, ...]
     write_wait: NocWait
     pop: Sync
 
@@ -158,10 +159,10 @@ def store_of(
     return store, list(dict.fromkeys(e.src for a in held for e in state.in_edges(a)))
 
 
-def insert(state: dace.SDFGState, inputs: list[str], output: str, reduce: bool = False) -> Movement:
+def insert(state: dace.SDFGState, inputs: list[str], outputs: list[str], reduce: bool = False) -> Movement:
     """The copy, wait and sync nodes of the body in ``state``: input ``k`` (in ``inputs``' order) through CB ``k``,
-    the output through CB 16. A reduction (``reduce``) stores the contract's partial tile, which the SDFG does not
-    hold: its store is a copy without data edges, ordered after the body."""
+    output ``k`` through CB 16 + ``k``. A reduction (``reduce``, one output) stores the contract's partial tile, which
+    the SDFG does not hold: its store is a copy without data edges, ordered after the body."""
     body = state.sink_nodes() if reduce else []
     wait = NocWait("noc_read_wait", "read")
     state.add_node(wait)
@@ -176,16 +177,19 @@ def insert(state: dace.SDFGState, inputs: list[str], output: str, reduce: bool =
             for reader in dict.fromkeys(readers(state, copy)):
                 state.add_nedge(push, reader, Memlet())
         loads.append(Load(cb, name, tuple(copies), push))
-    store, before = store_of(state, output, body if reduce else None)
-    store.implementation = IMPLEMENTATION
     ready, done = sync(state, f"cb_wait_{OUT_CB}"), sync(state, f"cb_pop_{OUT_CB}")
     write_wait = NocWait("noc_write_wait", "write")
-    for node in before:
-        state.add_nedge(node, ready, Memlet())
-    state.add_nedge(ready, store, Memlet())
-    state.add_nedge(store, write_wait, Memlet())
+    stores = []
+    for output in outputs:
+        store, before = store_of(state, output, body if reduce else None)
+        store.implementation = IMPLEMENTATION
+        for node in before:
+            state.add_nedge(node, ready, Memlet())
+        state.add_nedge(ready, store, Memlet())
+        state.add_nedge(store, write_wait, Memlet())
+        stores.append(store)
     state.add_nedge(write_wait, done, Memlet())
-    return Movement(tuple(loads), wait, ready, store, write_wait, done)
+    return Movement(tuple(loads), wait, ready, tuple(stores), write_wait, done)
 
 
 def read_line(load: Load, sharded: bool) -> str:
