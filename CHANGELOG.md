@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `ask rvv`: RVV is an `ask` target. A request of any length answers as a `vsetvl` loop (every pass takes vl, the last
+  is the tail); reductions and scans hand out and run their whole program under qemu-riscv64.
 - Tensix tile moves and transpose (design T5): `copy` between a circular buffer (`shared`) and DST (`tile_register`)
   answers `copy_tile` or `pack_tile`, and `transpose` (a Tensix op) `transpose_tile` (`transpose_wh_tile` on 0.6x);
   all three run on ttsim in f32 and bf16, the moves bit for bit. `python -m alloy.isa.tensix verify --ops ...` runs

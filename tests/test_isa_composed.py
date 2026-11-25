@@ -11,11 +11,11 @@ from alloy.isa.table import Table, load
 from alloy.isa.validate import emulated, host_can_run
 
 TABLE = load()
-CASES = [("avx2", 24), ("avx512", 48), ("neon", 12), ("sve", 100)]  # three registers, or a partial SVE block
+CASES = [("avx2", 24), ("avx512", 48), ("neon", 12), ("sve", 100), ("rvv", 100)]  # three registers, or a partial pass
 
 
 def runs(isa: str) -> bool:
-    return emulated(isa) is not None if isa in ("neon", "sve") else host_can_run(isa, "f32")
+    return emulated(isa) is not None if isa in ("neon", "sve", "rvv") else host_can_run(isa, "f32")
 
 
 def with_intrinsic(isa: str, op: str, intrinsic: str) -> Table:
@@ -84,3 +84,23 @@ def test_a_wrong_join_makes_the_answer_infeasible(monkeypatch: pytest.MonkeyPatc
     sut = ask(Request("avx2", "scan_add", {"x": Operand("vector", "f32", (24,))}))
 
     assert isinstance(sut, Infeasible) and "differs from the scalar reference" in sut.reason
+
+
+def test_an_rvv_scan_that_carries_the_wrong_element_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not runs("rvv"):
+        pytest.skip("this host runs neither rvv nor its emulator")
+    right = composed.rvv_program
+    monkeypatch.setattr(composed, "rvv_program", lambda *a: right(*a).replace("vl - 1, vl", "vl - 2, vl"))
+
+    ok, _ = composed.checked("rvv", "scan_add", "f32", 100, TABLE)
+
+    assert ok is False
+
+
+def test_an_rvv_answer_over_n_elements_is_a_vsetvl_loop_without_a_remainder() -> None:
+    sut = ask(Request("rvv", "add", {"a": Operand("vector", "f32", (100,)), "b": Operand("vector", "f32", (100,))}),
+              verify=False)  # fmt: skip
+
+    assert isinstance(sut, Feasible)
+    assert "size_t vl = __riscv_vsetvl_e32m1((size_t)(100 - i));" in sut.code and "i += (int64_t)vl;" in sut.code
+    assert sut.setup["build"].startswith("riscv64-linux-gnu-gcc")

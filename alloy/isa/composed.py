@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 from alloy.isa.table import Entry, Table
-from alloy.isa.validate import HEADERS, arm_frame, c_compiler, c_flags, emulated, host_can_run, x86_frame
+from alloy.isa.validate import HEADERS, arm_frame, c_compiler, c_flags, emulated, host_can_run, rvv_frame, x86_frame
 
 __all__ = ["checked", "program"]
 
@@ -48,6 +48,8 @@ def row(entry: Entry) -> str:
 def program(isa: str, op: str, dtype: str, n: int, table: Table) -> str:
     """``op`` over ``n`` elements of ``x`` as a C function ``alloy_composed``: a reduction returns its scalar, a scan
     writes ``y``. On AVX2, AVX-512 and NEON ``n`` is a whole number of registers; SVE takes any ``n``."""
+    if isa == "rvv":
+        return rvv_program(op, dtype, n, table)
     frame = arm_frame(isa, dtype) if isa in ("neon", "sve") else x86_frame(isa, dtype)
     t, vec = frame.scalar, frame.vector
     entry = {name: table.entry(isa, name, dtype).intrinsic for name in ("load", "store", "broadcast")}
@@ -81,6 +83,29 @@ def program(isa: str, op: str, dtype: str, n: int, table: Table) -> str:
     return (f"{head}\n    {vec} acc = {entry['load']}(x);\n    for (int k = 1; k < {registers}; k++) "
             f"acc = {combine}(acc, {entry['load']}(x + k * {lanes}));\n"
             f"    {vec} v = acc;\n    {t} s;\n    {{ {body} }}\n    return s;\n}}\n")  # fmt: skip
+
+
+def rvv_program(op: str, dtype: str, n: int, table: Table) -> str:
+    """:func:`program` on RVV: passes of vl = vsetvl(n - i). A reduction folds each pass into its accumulator with the
+    tail-undisturbed form (lanes past vl keep what they hold) and reduces once at VLMAX; a scan adds the scalar carry
+    of the passes before, then reads the pass's last element as the next carry."""
+    frame = rvv_frame("rvv", dtype)
+    t, vec, suffix = frame.scalar, frame.vector, frame.suffix
+    sew = 64 if dtype == "f64" else 32
+    entry = {name: table.entry("rvv", name, dtype).intrinsic for name in ("load", "store", "broadcast")}
+    body = row(table.entry("rvv", op, dtype))
+    loop = f"    for (int64_t i = 0; i < {n};) {{\n        size_t vl = __riscv_vsetvl_e{sew}m1((size_t)({n} - i));\n"
+    if op == "scan_add":
+        return (f"static void alloy_composed(const {t} *x, {t} *y) {{\n    {t} c = 0;\n{loop}"
+                f"        {vec} v = {entry['load']}(x + i, vl);\n        {{ {body} }}\n"
+                f"        v = __riscv_vfadd_vf_{suffix}(v, c, vl);\n"
+                f"        c = __riscv_vfmv_f_s_{suffix}_{dtype}(__riscv_vslidedown_vx_{suffix}(v, vl - 1, vl));\n"
+                f"        {entry['store']}(y + i, v, vl);\n        i += (int64_t)vl;\n    }}\n}}\n")  # fmt: skip
+    combine = table.entry("rvv", COMBINE[op], dtype).intrinsic
+    return (f"static {t} alloy_composed(const {t} *x) {{\n    size_t vlmax = __riscv_vsetvlmax_e{sew}m1();\n"
+            f"    {vec} acc = {entry['broadcast']}({IDENTITY[op]}, vlmax);\n{loop}"
+            f"        acc = {combine}_tu(acc, acc, {entry['load']}(x + i, vl), vl);\n        i += (int64_t)vl;\n    }}\n"
+            f"    size_t vl = vlmax;\n    {vec} v = acc;\n    {t} s;\n    {{ {body} }}\n    return s;\n}}\n")  # fmt: skip
 
 
 #: The reference and the comparison: the extreme planted in turn at the first, a middle, and the last element.
@@ -124,8 +149,8 @@ def source(isa: str, op: str, dtype: str, n: int, table: Table) -> str:
 def checked(isa: str, op: str, dtype: str, n: int, table: Table) -> tuple[bool | None, str]:
     """Run the composed program: (True, basis) when it matches the reference, (False, why) when it does not or does
     not build, (None, why) when this host can run neither ``isa`` nor its emulator."""
-    arm = emulated(isa) if isa in ("neon", "sve") else None
-    if isa in ("neon", "sve") and arm is None:
+    arm = emulated(isa) if isa in ("neon", "sve", "rvv") else None
+    if isa in ("neon", "sve", "rvv") and arm is None:
         return None, f"no qemu for {isa} here"
     cc = c_compiler()
     if arm is None and (cc is None or not host_can_run(isa, dtype)):

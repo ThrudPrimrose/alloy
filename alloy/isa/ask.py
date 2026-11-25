@@ -65,6 +65,7 @@ UNITS: dict[str, tuple[str, ...]] = {
     "avx512_fp16": ("vector", "scalar"),
     "neon": ("vector", "scalar"),
     "sve": ("vector", "scalar"),
+    "rvv": ("vector", "scalar"),
     "sme": ("streaming_vector", "za"),
     "sm90": ("thread", "warp", "warpgroup", "tma", "tma_store", "cp_async"),
     "gfx942": ("thread", "wave", "mfma", "lds_dma", "lds"),
@@ -73,7 +74,7 @@ UNITS: dict[str, tuple[str, ...]] = {
     "softhier": ("spatz", "idma", "redmule", "cluster"),
 }
 TARGETS = tuple(UNITS)
-CPU = ("avx2", "avx512", "avx512_fp16", "neon", "sve")
+CPU = ("avx2", "avx512", "avx512_fp16", "neon", "sve", "rvv")
 #: The dialect of a GPU target's per-thread rows (simt.toml).
 DIALECT = {"sm90": "cuda"} | dict.fromkeys(tile.CDNA, "hip")
 #: Per tile target, what its mma kernel reads, exactly: the space of the inputs (a, b), their swizzle, the space of the
@@ -766,9 +767,10 @@ def vector_op_1d(request: Request, verify: bool) -> Answer:
         if lanes and operand.shape and operand.shape[0] % lanes and not scalar:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
     answer = one_register(request, isa, dtype, table, verify)
-    if not lanes and shapes:  # SVE: the lane count is known at run time only
+    if not lanes and shapes:  # SVE and RVV: the lane count is known at run time only
         n = math.prod(next(iter(shapes)))
-        return joined(scalable(answer, request, n, table, dtype), request, n, table, verify)
+        looped = strip_mined(answer, n, dtype) if isa == "rvv" else scalable(answer, request, n, table, dtype)
+        return joined(looped, request, n, table, verify)
     count = next(iter(shapes))[0] // lanes if shapes and lanes else 1
     return joined(repeated(answer, request, count, table, isa, dtype), request, count * lanes, table, verify)
 
@@ -807,6 +809,23 @@ SVE_TYPES = {
     "i64": ("svcntd()", "svint64_t", "int64_t", "b64"),
     "i32": ("svcntw()", "svint32_t", "int32_t", "b32"),
 }
+
+
+def strip_mined(answer: Answer, n: int, dtype: str) -> Answer:
+    """``answer`` for one RVV register, as the loop over ``n`` elements: each pass takes vl = vsetvl(n - i) and every
+    intrinsic that vl, so the last pass is the tail; no mask and no remainder loop. A reduction or a scan gets its
+    whole program from :func:`joined`."""
+    if not isinstance(answer, Feasible):
+        return answer
+    sew = {"f64": 64, "i64": 64, "f32": 32, "i32": 32}[dtype]
+    vsetvl = f"__riscv_vsetvl_e{sew}m1((size_t)({n} - i))"
+    each = "each pass of vl elements: "
+    steps = (Step("vector", f"{each}vl = {vsetvl}"), *(Step("vector", each + s.spelling) for s in answer.steps))
+    body = "".join(f"    {line}\n" for line in answer.code.splitlines())
+    code = (f"for (int64_t i = 0; i < {n};) {{\n    size_t vl = {vsetvl};\n    // the operands of pass i, loaded with "
+            f"vl; then\n{body}    i += (int64_t)vl;\n}}")  # fmt: skip
+    loop = f"{n} elements: passes of vl = vsetvl(N - i) elements (at most VLMAX); the last pass is the tail"
+    return dataclasses.replace(answer, steps=steps, code=code, notes=(*answer.notes, loop))
 
 
 def scalable(answer: Answer, request: Request, n: int, table: Table, dtype: str) -> Answer:
@@ -890,7 +909,9 @@ def cpu_setup(isa: str, dtype: str, table: Table, entry: Entry | None = None) ->
     """What a CPU answer needs around its code: the header and the compiler flags, and on AVX-512 the row's masked
     form for the last block with the mask it takes."""
     flags = " ".join(c_flags(isa, dtype)) or f"none: {isa} is in the target's baseline"
-    compiler = "aarch64-linux-gnu-gcc" if isa in ("neon", "sve") else "gcc"
+    compiler = {"neon": "aarch64-linux-gnu-gcc", "sve": "aarch64-linux-gnu-gcc", "rvv": "riscv64-linux-gnu-gcc"}.get(
+        isa, "gcc"
+    )
     setup = {"header": f"#include <{HEADERS[isa]}>", "flags": flags,
              "build": " ".join([compiler, "-O2", *c_flags(isa, dtype), "-c", "alloy.c", "-o", "alloy.o"])}  # fmt: skip
     if isa in ("neon", "sve"):
