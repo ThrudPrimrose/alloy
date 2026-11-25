@@ -33,6 +33,10 @@
   strict kernels (`dsh_ladder.c`, which the program folder carries; the link adds newlib's libm for the strict
   kernels' out-of-range path; rounding is one `fcvt.w.s` because newlib's `rintf` stops GVSoC). The gate gains
   softplus (correct on GVSoC, rel 3.2e-08).
+- One entry point to both tile backends: `alloy.tilelower.lower(sdfg, "softhier" | "tensix")` returns the generated
+  sources; Tensix reads its task (inputs, output, map or reduce) off the SDFG. Both gates lower through it, and every
+  gate program is byte-identical to before. The shared front refuses an extent shorter than the tile, which the
+  vectorizer let through as one masked tile (Tensix then failed on `TileMaskGen`).
 - Tile backends share one front (`alloy.tilelower.front`: fuse, then vectorize) and one refusal class
   (`alloy.tilelower.Unsupported`, the base of softhiergen's `LoweringError` and tensixgen's `Refused`); a length the
   tile does not divide is refused alike on both. The front's simplify skips dead-dataflow elimination, which dropped

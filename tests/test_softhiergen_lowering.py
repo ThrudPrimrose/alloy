@@ -351,14 +351,17 @@ def test_in_place_update_is_one_kernel_without_an_hbm_temporary() -> None:
 
 
 def test_length_the_tile_does_not_divide_is_a_lowering_error() -> None:
-    """1000 elements do not split into tiles of 256: the shared front refuses it, as it does for Tensix."""
+    """1000 elements do not split into tiles of 256 (SoftHier) or 1024 (Tensix): the one entry point refuses it alike
+    on both targets."""
 
     @dace.program
     def odd(A: dace.float32[1000], B: dace.float32[1000], C: dace.float32[1000]) -> None:
         C[:] = A + B
 
-    with pytest.raises(tilelower.Unsupported, match="tile width 256"):
-        program.generate(odd.to_sdfg(simplify=True))
+    with pytest.raises(tilelower.Unsupported, match="tile width 256 "):
+        tilelower.lower(odd.to_sdfg(simplify=True), "softhier")
+    with pytest.raises(tilelower.Unsupported, match="tile width 1024 "):
+        tilelower.lower(odd.to_sdfg(simplify=True), "tensix")
 
 
 def test_ragged_length_takes_the_widest_tile_that_divides_it() -> None:

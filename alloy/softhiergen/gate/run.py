@@ -10,6 +10,7 @@ import traceback
 
 import numpy
 
+from alloy import tilelower
 from alloy.gate import error
 from alloy.softhiergen import program
 from alloy.softhiergen.gate.programs import all_cases
@@ -31,7 +32,7 @@ def prepare(root: pathlib.Path) -> None:
         folder = root / slug(case.name)
         try:
             sdfg = case.sdfg()
-            program.write_folder(folder, sdfg, program.generate(sdfg), case.inputs)
+            program.write_folder(folder, sdfg, tilelower.lower(sdfg, "softhier"), case.inputs)
             print(f"{case.name}: generated")
         except Exception:
             folder.mkdir(parents=True, exist_ok=True)

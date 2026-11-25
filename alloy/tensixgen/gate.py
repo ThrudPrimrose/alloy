@@ -15,7 +15,9 @@ import pathlib
 import sys
 import tempfile
 
+import dace
 import numpy
+from dace import data
 
 from alloy import tilelower
 from alloy.gate import Case, error
@@ -26,24 +28,37 @@ from alloy.tensixgen.split import Program, program
 from alloy.tensixgen.tasks import LANES
 
 
-def task_of(case: Case) -> dict[str, object]:
-    """The eval-task form the split takes: the case's array inputs, its one output, map or reduce by its size."""
-    if len(case.expected) != 1:
-        raise Refused(f"{case.name}: {len(case.expected)} outputs; a Tensix program writes one")
-    ((output, want),) = case.expected.items()
-    inputs = [[name, 0.0, 1.0] for name, value in case.inputs.items() if numpy.ndim(value) > 0]
-    return {"name": case.name, "inputs": inputs, "output": output, "kind": "reduce" if want.size == 1 else "map",
-            "program": [case.name]}  # fmt: skip
+def task_of(sdfg: dace.SDFG, name: str | None = None) -> dict[str, object]:
+    """The eval-task form the split takes, read off the SDFG: its non-transient arrays that are read (in declaration
+    order), the one it writes, map or reduce by that array's size; ``name`` (default: the SDFG's) names the task."""
+    name = name or sdfg.name
+    arrays = [k for k, v in sdfg.arrays.items() if not v.transient and isinstance(v, data.Array)]
+    found = [(n, s) for s in sdfg.states() for n in s.data_nodes() if n.data in arrays]
+    written = [a for a in arrays if any(n.data == a and s.in_degree(n) > 0 for n, s in found)]
+    if len(written) != 1:
+        raise Refused(f"{name}: {len(written)} outputs; a Tensix program writes one")
+    (output,) = written
+    read = {n.data for n, s in found if s.out_degree(n) > 0}
+    inputs = [[name, 0.0, 1.0] for name in arrays if name in read]
+    kind = "reduce" if sdfg.arrays[output].total_size == 1 else "map"
+    return {"name": name, "inputs": inputs, "output": output, "kind": kind, "program": [name]}
+
+
+def lower(sdfg: dace.SDFG, scalars: dict[str, float], name: str | None = None) -> Program:
+    """The Tensix program of ``sdfg`` for ttsim's tt-metal (v08): a collective's NoC kernel, or the shared front and the
+    kernel split; ``scalars`` are the values of its scalar arguments. Raises :class:`Refused` (or DaCe's error) when
+    the split does not take it."""
+    task = task_of(sdfg, name)
+    if (node := collectives.comm_node(sdfg)) is not None:
+        return collectives.program(task, sdfg, node)
+    tilelower.front(sdfg, LANES, fuse_multiply_add=False)
+    return program(task, sdfg, scalars, version="v08")
 
 
 def lowered(case: Case) -> Program:
-    """The case's Tensix program; raises :class:`Refused` (or DaCe's error) when the split does not take it."""
-    sdfg = case.sdfg()
-    if (node := collectives.comm_node(sdfg)) is not None:
-        return collectives.program(task_of(case), sdfg, node)
-    tilelower.front(sdfg, LANES, fuse_multiply_add=False)
+    """The case's Tensix program through :func:`alloy.tilelower.lower`."""
     scalars = {name: float(value) for name, value in case.inputs.items() if numpy.ndim(value) == 0}
-    return program(task_of(case), sdfg, scalars, version="v08")  # ttsim's tt-metal
+    return tilelower.lower(case.sdfg(), "tensix", scalars, case.name)
 
 
 #: Programs with one call swapped, by the case they copy: the check must call each wrong.

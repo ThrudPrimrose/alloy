@@ -313,7 +313,7 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
     sdfg = moving["allgather"].sdfg()  # the row's load and store are the movement nodes, as in the split
     node = collectives.comm_node(sdfg)
     assert node is not None
-    collectives.program(task_of(moving["allgather"]), sdfg, node)
+    collectives.program(task_of(sdfg), sdfg, node)
     assert sorted(n.direction for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NocWait)) == ["read", "write"]
     with pytest.raises(Refused, match="needs the compute kernel"):
         lowered(moving["reduce"])
@@ -346,7 +346,7 @@ def test_data_movement_is_copy_wait_and_sync_nodes_in_the_tile_body() -> None:
     case = next(c for c in cases() if c.name == "vector add")
     sdfg = case.sdfg()
     tilelower.front(sdfg, LANES, fuse_multiply_add=False)
-    program(task_of(case), sdfg, {}, version="v08")
+    program(task_of(sdfg), sdfg, {}, version="v08")
     state, _ = tile_body(sdfg)
 
     waits = {n.direction: n for n in state.nodes() if isinstance(n, NocWait)}

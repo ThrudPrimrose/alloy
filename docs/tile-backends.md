@@ -14,6 +14,7 @@ This page lists what the two backends share, where they differ, and what each re
 
 | Part | Where | What it does |
 |---|---|---|
+| Entry | `alloy.tilelower.lower(sdfg, target, scalars, name)` | Lowers the SDFG in place for `"softhier"` or `"tensix"` and returns the generated sources: SoftHier's C++ unit, or Tensix's reader, compute, and writer kernels. Tensix reads its task off the SDFG: the non-transient arrays read, the one array written, and map or reduce by that array's size. Both gates lower through it. |
 | Front | `alloy.tilelower.front(sdfg, width, fuse_multiply_add)` | Substitutes the specialized sizes into the SDFG, expands `numpy.where` to an elementwise map, then runs `simplify` without dead-dataflow elimination, vertical map fusion, and redundant-array removal. Then DaCe's vectorizer turns each elementwise map into a map of tile nodes, `width` lanes wide. |
 | Refusal | `alloy.tilelower.Unsupported` | The base class of softhiergen's `LoweringError` and tensixgen's `Refused`. The message names the node and the reason. Neither backend falls back to a scalar loop it was not built for. |
 | Gate | `alloy.gate`, cases in `alloy/softhiergen/gate/programs.py` (`all_cases`, with the CloudSC nests of `cloudsc.py`) | Holds the NumPy programs, their inputs, and their float64 references. The check is per element: `\|out - ref\| <= tol (\|ref\| + max \|ref\|)`, with integer and bool outputs exact. Each backend also runs one planted wrong program (vector add with the add swapped for a sub), which must come out wrong. |
@@ -21,13 +22,14 @@ This page lists what the two backends share, where they differ, and what each re
 
 Tile widths differ because the hardware does:
 - SoftHier takes 256 lanes, narrowed to the widest power of two that divides every elementwise extent (minimum 16).
-- Tensix takes one 32 x 32 tile, 1024 lanes, so an extent that 1024 does not divide is refused.
+- Tensix takes one 32 x 32 tile, 1024 lanes, so an extent that 1024 does not divide is refused, including one shorter
+  than a tile (the vectorizer would mask it).
 
 ## 2. Where they differ
 
 | | SoftHier v1 | Tensix (eval contract v2) |
 |---|---|---|
-| Entry | `softhiergen.program.generate(sdfg)`, then `write_folder` | `tensixgen.split.program(task, sdfg, scalars)`, then `Program.write` |
+| Backend entry (under `tilelower.lower`) | `softhiergen.program.generate(sdfg)`, then `write_folder` | `tensixgen.gate.lower(sdfg, scalars)` (a collective, or the front and `tensixgen.split.program(task, sdfg, scalars)`), then `Program.write` |
 | Compute | Spatz RVV loops (`dsh_rvv_*`) on core 0 of each cluster; RedMulE for float16 GEMM | SFPU and FPU row calls on DST tiles in one compute kernel |
 | Data movement | Copy nodes (iDMA on the DMA core), each followed by its wait (`DmaWait`) and a `Sync` (cluster barrier) | Copy nodes (NoC reads and writes), one `NocWait` after the loads and one around the store, and a `Sync` per circular-buffer handoff (`alloy/tensixgen/movement.py`); the reader and writer kernels spell them. Both follow DaCe's `InsertAsyncWaits`: copies in flight, then the wait before their readers |
 | Work split | Cluster `c` runs kernel iterations `c, c + P, ...` | Tiles split evenly over the cores; a reduction sums one partial tile per core on the host |
