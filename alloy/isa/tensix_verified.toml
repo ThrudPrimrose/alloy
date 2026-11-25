@@ -507,3 +507,51 @@ unit = "SFPU"
 ok = true
 rel = 0.0074582692080028415
 digest = "9dcc0d5113591e42"
+
+[[verdicts]]
+op = "load"
+dtype = "f32"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "548fde69f1a00152"
+
+[[verdicts]]
+op = "load"
+dtype = "bf16"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "460f674a71ac6cc2"
+
+[[verdicts]]
+op = "store"
+dtype = "f32"
+unit = "pack"
+ok = true
+rel = 0.0
+digest = "709bdeb685c9d40f"
+
+[[verdicts]]
+op = "store"
+dtype = "bf16"
+unit = "pack"
+ok = true
+rel = 0.0
+digest = "30244909fc9e28fd"
+
+[[verdicts]]
+op = "transpose"
+dtype = "f32"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "024a27e2470c9142"
+
+[[verdicts]]
+op = "transpose"
+dtype = "bf16"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "a753bfe33f70de95"

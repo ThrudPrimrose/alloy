@@ -35,10 +35,15 @@ OUT_CB = 16
 Json = dict[str, Any]
 
 
+#: Compute API headers 0.8x renamed: the 0.8x name a row gives, the 0.6x one.
+OLD_HEADER = {"transpose.h": "transpose_wh.h"}
+
+
 def compute_include(header: str, new: bool) -> str:
     """``header`` of the compute API; 0.6x keeps ``compute_kernel_api.h`` itself at the include root."""
     if new:
         return f"api/compute/{header}"
+    header = OLD_HEADER.get(header, header)
     return header if header == "compute_kernel_api.h" else f"compute_kernel_api/{header}"
 
 
@@ -136,6 +141,12 @@ def body(row: Json, new: bool) -> "tuple[str, str, str]":
     if row["kind"] == "fill":  # no operand: the input tile is read and dropped, DST tile 0 is written
         start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
         return start, f"cb_wait_front(c0, 1);\n        {init};\n        {call};", "cb_pop_front(c0, 1);"
+    if row["kind"] == "move":  # the CB-to-DST copy and the pack every program has, nothing between them
+        start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
+        return start, "cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);", "cb_pop_front(c0, 1);"
+    if row["kind"] == "transpose":  # the unpacker reads the CB's tile transposed into DST
+        start = f"compute_kernel_hw_startup(c0, c16);\n    {init};" if new else f"{init};"
+        return start, f"cb_wait_front(c0, 1);\n        {call};", "cb_pop_front(c0, 1);"
     if row["kind"] in ("unary", "scan"):
         start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
         if row["kind"] == "scan":  # one init: the running totals stay in SFPU registers from tile to tile
@@ -314,7 +325,7 @@ def inputs(row: Json) -> list["torch.Tensor"]:
     import torch
 
     lo, hi = row["domain"]
-    count = 1 if row["kind"] in ("unary", "fill") else 2
+    count = 1 if row["kind"] in ("unary", "fill", "move", "transpose") else 2
     base = torch.linspace(lo, hi, TILES * TILE, dtype=torch.float32)
     if row["kind"] == "matmul":  # A is one row of TILES K tiles (32 x 32 TILES), B one column of them
         return [base.reshape(32, TILES * 32), base.roll(97).reshape(TILES * 32, 32)]
@@ -349,6 +360,10 @@ def reference(op: str, xs: list["torch.Tensor"], call: str = "") -> "torch.Tenso
     import torch
 
     x = xs[0].double()
+    if op in ("load", "store"):  # a move changes nothing
+        return x
+    if op == "transpose":  # each 32 x 32 tile on its own
+        return x.reshape(-1, 32, 32).transpose(1, 2).reshape(x.shape)
     if op == "broadcast":
         return torch.full_like(x, filled(call))
     unary = {

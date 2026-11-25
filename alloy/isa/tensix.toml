@@ -414,3 +414,32 @@ inline void alloy_exp_f32_face() {
 }
 #endif
 '''
+
+# Moves between a circular buffer and DST (design T5). The harness runs both in one program: copy_tile unpacks the
+# CB's tile to DST, pack_tile packs DST back to the output CB; the output must equal the input bit for bit.
+[[ops.load]]
+kind = "move"
+unit = "unpack"
+header = "tile_move_copy.h"
+init = { v06 = "copy_tile_to_dst_init_short(cb)", v08 = "copy_init(cb)" }
+call = "copy_tile(cb, 0, dst)"
+domain = [-8.0, 8.0]
+note = "CB tile 0 into DST tile dst, between tile_regs_acquire() and tile_regs_commit(), after cb_wait_front(cb, 1). f32 keeps its 32 bits only with fp32_dest_acc_en and UnpackToDestFp32 on the CB."
+
+[[ops.store]]
+kind = "move"
+unit = "pack"
+header = "tile_move_copy.h"
+init = { v06 = "pack_reconfig_data_format(cb)", v08 = "pack_reconfig_data_format(cb)" }
+call = "pack_tile(dst, cb)"
+domain = [-8.0, 8.0]
+note = "DST tile dst into the next free slot of CB cb, between tile_regs_wait() and tile_regs_release(), after cb_reserve_back(cb, 1); then cb_push_back(cb, 1). The init is needed only when the CB's data format differs from the last pack."
+
+[[ops.transpose]]
+kind = "transpose"
+unit = "unpack"
+header = "transpose.h"  # transpose_wh.h in 0.6x
+init = { v06 = "transpose_wh_init(c0, c16)", v08 = "transpose_init(c0)" }
+call = { v06 = "transpose_wh_tile(c0, 0, 0)", v08 = "transpose_tile(c0, 0, 0)" }
+domain = [-8.0, 8.0]
+note = "Transposes one 32x32 tile (rows to columns) on its way from the CB into DST: the unpacker reads it transposed, so no separate copy_tile."

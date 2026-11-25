@@ -147,7 +147,7 @@ def recorded(path: pathlib.Path = VERDICTS_PATH) -> Json:
 
 def digest(row: Row, dtype: str) -> str:
     """What a run of ``row`` at ``dtype`` checked: the kernel kind, unit, header, calls, inputs, and bound."""
-    checked = [row.kind, row.unit, row.header, row.init, row.call, list(row.domain), dtype, TOLERANCE[dtype]]
+    checked = [row.kind, row.unit, row.header, row.init, row.call, list(row.domain), dtype, tolerance(row, dtype)]
     return hashlib.sha256(json.dumps(checked).encode()).hexdigest()[:16]
 
 
@@ -187,11 +187,16 @@ def spelled(value: str | dict[str, str], version: str) -> str:
     return value if isinstance(value, str) else value[version]
 
 
+def tolerance(row: "Row", dtype: str) -> float:
+    """The relative error a run of ``row`` may show: none for a move, which changes no bit; else per dtype."""
+    return 0.0 if row.kind == "move" else TOLERANCE[dtype]
+
+
 def harness_rows() -> list[Json]:
     """Every row at each of its dtypes, as the harness reads them."""
     return [
         {"op": r.op, "dtype": d, "kind": r.kind, "unit": r.unit, "header": r.header, "init": r.init, "call": r.call,
-         "domain": list(r.domain), "tol": TOLERANCE[d]}
+         "domain": list(r.domain), "tol": tolerance(r, d)}
         for r in rows()
         for d in row_dtypes(r)
     ]  # fmt: skip
@@ -208,14 +213,16 @@ def ttsim(cache: pathlib.Path) -> pathlib.Path:
     return library
 
 
-def run_harness(library: pathlib.Path, image: str) -> list[Verdict]:
-    """The harness over every row inside ``image`` on the simulator ``library`` (its folder mounted as /sim); the
-    Blackhole SoC descriptor is copied beside the library from the image, as tt-metal before 0.83 needs."""
+def run_harness(library: pathlib.Path, image: str, ops: tuple[str, ...] = ()) -> list[Verdict]:
+    """The harness over every row (or the rows of ``ops``) inside ``image`` on the simulator ``library`` (its folder
+    mounted as /sim); the Blackhole SoC descriptor is copied beside the library from the image, as tt-metal before
+    0.83 needs."""
+    chosen = [r for r in harness_rows() if not ops or r["op"] in ops]
     if shutil.which("docker") is None:
         raise RuntimeError("docker is not on PATH: the harness runs inside a tt-metal image")
     with tempfile.TemporaryDirectory(prefix="alloy_tensix_") as tmp:
         work = pathlib.Path(tmp)
-        (work / "rows.json").write_text(json.dumps(harness_rows()))
+        (work / "rows.json").write_text(json.dumps(chosen))
         shutil.copy(HARNESS, work / "tensix_harness.py")
         script = (
             "set -e; source /opt/venv/bin/activate; "
@@ -239,10 +246,9 @@ def run_harness(library: pathlib.Path, image: str) -> list[Verdict]:
         if line.startswith("TENSIX-VERDICT ")
     ]
     found = [dataclasses.replace(v, digest=digest(by_key[v.op, v.unit], v.dtype)) for v in found]
-    if done.returncode != 0 or len(found) != len(harness_rows()):
+    if done.returncode != 0 or len(found) != len(chosen):
         raise RuntimeError(
-            f"the harness gave {len(found)} of {len(harness_rows())} verdicts (exit {done.returncode}): "
-            f"{done.stderr[-1500:]}"
+            f"the harness gave {len(found)} of {len(chosen)} verdicts (exit {done.returncode}): {done.stderr[-1500:]}"
         )
     return found
 
@@ -265,11 +271,18 @@ def verdicts_text(found: list[Verdict], library: pathlib.Path, image: str) -> st
     return "\n".join(head + body)
 
 
-def verify(cache: pathlib.Path, image: str = IMAGE) -> list[Verdict]:
-    """Every row run on ttsim; the verdicts rewrite :data:`VERDICTS_PATH`."""
+def verify(cache: pathlib.Path, image: str = IMAGE, ops: tuple[str, ...] = ()) -> list[Verdict]:
+    """Every row run on ttsim, or only the rows of ``ops``; the verdicts rewrite :data:`VERDICTS_PATH`. With ``ops``,
+    the other rows keep their records, which must come from the same image."""
     library = ttsim(cache)
-    found = run_harness(library, image)
-    VERDICTS_PATH.write_text(verdicts_text(found, library, image))
+    found = run_harness(library, image, ops)
+    kept: list[Verdict] = []
+    if ops:
+        record = recorded()
+        if record.get("image") != image:
+            raise RuntimeError(f"the record ran {record.get('image')}, not {image}: verify every row")
+        kept = [Verdict(**v) for v in record.get("verdicts", []) if v["op"] not in ops]
+    VERDICTS_PATH.write_text(verdicts_text([*kept, *found], library, image))
     recorded.cache_clear()
     return found
 
@@ -283,8 +296,9 @@ def main(argv: list[str] | None = None) -> int:
         default=pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "alloy-ttsim",
     )
     parser.add_argument("--image", default=IMAGE)
+    parser.add_argument("--ops", nargs="*", default=[], help="run only these ops' rows; the others keep their records")
     args = parser.parse_args(argv)
-    found = verify(args.cache, args.image)
+    found = verify(args.cache, args.image, tuple(args.ops))
     failed = [v for v in found if not v.ok]
     for v in found:
         print(

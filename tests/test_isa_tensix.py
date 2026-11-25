@@ -441,3 +441,38 @@ def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_at_the_car
     )  # TensorAccessor at 0.6x, no tensor_accessor.h
     assert '"api/compute/' not in printed  # no tt-metal 0.8x spelling beside the card's (owner, 11-19)
     assert '#include "compute_kernel_api/eltwise_unary/trigonometry.h"' in printed  # the row's own header
+
+
+@pytest.mark.parametrize(("src", "dst", "op", "call"), [
+    ("shared", "tile_register", "load", "copy_tile(cb, 0, dst)"),
+    ("tile_register", "shared", "store", "pack_tile(dst, cb)"),
+])  # fmt: skip
+@pytest.mark.parametrize("dtype", ["f32", "bf16"])
+def test_a_tile_between_a_cb_and_dst_moves_by_its_ttsim_checked_row(
+    src: str, dst: str, op: str, call: str, dtype: str
+) -> None:
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    sut = ask(Request("tensix", "copy", {"src": Operand(src, dtype, (64, 32)), "dst": Operand(dst, dtype, (64, 32))}))
+
+    assert isinstance(sut, Feasible), sut
+    assert sut.steps[-1].spelling == call and sut.steps[-1].count == 2 and sut.check.status == "run"
+
+
+def test_a_move_must_return_its_tile_bit_for_bit_and_a_transpose_must_move_every_off_diagonal_element() -> None:
+    import torch
+
+    move = next(r for r in tensix.harness_rows() if r["op"] == "load")
+    x = tensix_harness.inputs(move)[0]
+    swapped = tensix_harness.reference("transpose", [x])
+
+    assert move["tol"] == 0.0
+    assert torch.equal(tensix_harness.reference("load", [x]), x.double())
+    assert (swapped != x.double()).sum().item() >= x.numel() - 2 * 32  # only the diagonals stay
+
+
+def test_transpose_is_a_tensix_op_only() -> None:
+    from alloy.isa.ask import Feasible, Invalid, Operand, Request, ask
+
+    assert isinstance(ask(Request("tensix", "transpose", {"x": Operand("tile_register", "f32", (32, 32))})), Feasible)
+    assert isinstance(ask(Request("avx2", "transpose", {"x": Operand("vector", "f32", (8,))})), Invalid)

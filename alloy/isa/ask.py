@@ -615,7 +615,8 @@ def answered(request: Request, verify: bool) -> Answer:
         return moved(request, verify)
     if request.target in DIALECT:
         return thread_op(request)
-    if request.op not in OPS and request.op not in functions():
+    own = request.target == "tensix" and request.op in {r.op for r in tensix.rows()}  # transpose: a Tensix tile op
+    if request.op not in OPS and request.op not in functions() and not own:
         return bad(
             request, Why.OPERATION, f"no operation {request.op!r}", "an op of `python -m alloy.isa ops`, mma, or copy"
         )
@@ -1569,6 +1570,21 @@ def copy(request: Request, verify: bool) -> Answer:
 TENSIX_TILE = 32
 
 
+def cb_dst_move(request: Request, op: str, tiles: int) -> Answer:
+    """A tile between a circular buffer and DST (design T5): copy_tile unpacks it into DST (``load``), pack_tile packs
+    DST into the CB (``store``), as the row ran on ttsim, bit for bit."""
+    dtype = request.operands["dst"].dtype
+    row = next(r for r in tensix.rows() if r.op == op)
+    check = ttsim_check(row, dtype)
+    if isinstance(check, str):
+        return no(request, Why.CHECK_FAILED, check)
+    init, call = tensix.spelled(row.init, "v08"), tensix.spelled(row.call, "v08")
+    unit = row.unit.lower()
+    steps = (Step(unit, init), Step(unit, call, tiles))
+    notes = (row.note, f"{tiles} tile(s): dst counts DST tiles from 0, at most 8 (4 with fp32_dest_acc_en) per acquire")
+    return Feasible(request, unit, steps, tensix_setup(row, dtype), f"{init};\n{call};", check, notes)
+
+
 def tensix_copy(request: Request, src: Operand, dst: Operand) -> Answer:
     """Whole tiles between DRAM (``global``, an interleaved buffer read through a ``TensorAccessor``) and a circular
     buffer in the core's L1 (``shared``), in the spelling of tensixgen's reader and writer kernels: the reader reserves
@@ -1579,11 +1595,15 @@ def tensix_copy(request: Request, src: Operand, dst: Operand) -> Answer:
     if src.dtype != dst.dtype:
         return bad(request, Why.MIXED_TYPES, f"a copy converts nothing: src is {src.dtype}, dst is {dst.dtype}",
                    *nearest)  # fmt: skip
-    if dst.dtype != "f32":
-        return no(request, Why.ELEMENT_TYPE, "the Tensix programs that ran move float32 tiles", *nearest)
     if src.shape != dst.shape or len(dst.shape) != 2 or any(e % TENSIX_TILE for e in dst.shape):
         return no(request, Why.SHAPE, "a Tensix copy moves whole 32 x 32 tiles, the same box on both sides", *nearest)
     tiles = dst.shape[0] * dst.shape[1] // TENSIX_TILE**2
+    if {src.space, dst.space} == {"shared", "tile_register"}:
+        if dst.dtype not in tensix.dtypes():
+            return no(request, Why.ELEMENT_TYPE, f"Tensix moves {', '.join(tensix.dtypes())} tiles", *nearest)
+        return cb_dst_move(request, "load" if src.space == "shared" else "store", tiles)
+    if dst.dtype != "f32":
+        return no(request, Why.ELEMENT_TYPE, "the Tensix programs that ran move float32 tiles", *nearest)
     if (src.space, dst.space) == ("global", "shared"):
         steps = (Step("noc", "cb_reserve_back(cb, n)"),
                  Step("noc", "noc_async_read_tile(first + t, accessor, get_write_ptr(cb) + t * tile_bytes)", tiles),
@@ -1612,7 +1632,8 @@ def tensix_copy(request: Request, src: Operand, dst: Operand) -> Answer:
         )
     else:
         return no(request, Why.NOT_COVERED, f"no checked row covers a tensix copy from {src.space} to {dst.space}: "
-                  "DRAM (global) and a core's circular buffer (shared) only", *nearest)  # fmt: skip
+                  "DRAM (global), a core's circular buffer (shared), and DST (tile_register) only",
+                  *nearest)  # fmt: skip
     signature = "// n tiles; accessor = TensorAccessor(TensorAccessorArgs<0>(), addr, tile_bytes), tile_bytes = get_tile_size(cb)"
     return Feasible(request, "noc", steps, {}, f"{signature}\n{body}\n",
                     manual_check("tensix", completion.token),

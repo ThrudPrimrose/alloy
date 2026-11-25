@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Tensix tile moves and transpose (design T5): `copy` between a circular buffer (`shared`) and DST (`tile_register`)
+  answers `copy_tile` or `pack_tile`, and `transpose` (a Tensix op) `transpose_tile` (`transpose_wh_tile` on 0.6x);
+  all three run on ttsim in f32 and bf16, the moves bit for bit. `python -m alloy.isa.tensix verify --ops ...` runs
+  only those rows and keeps the others' records.
 - Math kernels compute the same rounding under every compiler and flag (review R3): the renderer writes each product an
   addition takes as one fused instruction, within a statement and across them, so `-ffp-contract` and gcc versus clang
   no longer change a kernel's result. Records are the worst over gcc and clang on AVX2 and AVX-512, NEON, SVE and RVV
