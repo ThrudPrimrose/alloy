@@ -30,7 +30,7 @@ Changelog = "https://github.com/ThrudPrimrose/dace-alloy/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent-bench>=1.0.0"]
+bench = ["hpcagent-bench>=1.0.1"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["dace-alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["dace-alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
