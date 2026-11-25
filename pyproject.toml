@@ -16,7 +16,7 @@ dependencies = [
     "numpy",
     "pydantic>=2",
     # DaCe extended (import name dace); its `alloy` extra names dace-alloy back.
-    "dace-extended>=1.0.0",
+    "dace-extended>=1.0.1",
     "sympy",
     "pydantic-core",
     # C to NumPy (alloy.frontend.cnumpy) parses C with tree-sitter's grammar
