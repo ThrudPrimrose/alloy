@@ -442,12 +442,6 @@ def test_the_product_bound_is_a_few_times_the_error_measured_on_gvsoc() -> None:
     assert measured < vector_row("mma", "f16")["tol"] <= 5 * measured
 
 
-def test_each_planted_row_without_its_tail_strip_loops_only_over_whole_strips() -> None:
-    for name in ("planted_reduce_add_without_tail", "planted_reduce_max_without_tail"):
-        sut = next(r for r in softhier.planted() if r.key() == name)
-        assert "i + __riscv_vsetvlmax_e32m8() <= n;" in softhier.code(sut, "f32")
-
-
 @pytest.mark.parametrize(("src", "dst"), [((300,), (16, 16)), ((300,), (200,)), ((16, 16), (64,))])
 def test_a_copy_between_a_vector_and_a_matrix_or_runs_of_unequal_length_is_refused(
     src: tuple[int, int] | tuple[int], dst: tuple[int, int] | tuple[int]

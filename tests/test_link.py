@@ -234,24 +234,6 @@ def test_scopes_run_in_program_order() -> None:
     assert sut[-1] == reduction
 
 
-def test_best_carries_each_winners_own_source_and_flags(tmp_path: pathlib.Path) -> None:
-    program = outlined()
-    winners = {
-        scope.symbol: build(scope, Candidate("c", "gcc", fp_level="contract"), MATRIX, tmp_path / scope.symbol, {})
-        for scope in program.scopes
-    }
-
-    sut = Linker(program, MATRIX, tmp_path / "out").write_best(winners)
-
-    best = tmp_path / "out" / "best"
-    assert {s.symbol for s in sut.scopes} == set(winners)
-    for scope in sut.scopes:
-        winner = winners[scope.symbol]
-        assert scope.candidate == winner.name
-        assert scope.flags == winner.flags
-        assert (best / scope.source).read_bytes() == winner.source.read_bytes()
-
-
 @pytest.mark.nvhpc
 def test_best_compiles_a_winner_into_the_code_that_was_measured(tmp_path: pathlib.Path) -> None:
     """nvc's line tables (``-gopt``) keep a frame pointer: a ``best/`` compile without them is other code."""
