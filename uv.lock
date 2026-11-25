@@ -1254,10 +1254,10 @@ requires-dist = [
     { name = "dace-alloy", extras = ["bench"], marker = "extra == 'nvgpu'" },
     { name = "dace-alloy", extras = ["dev", "amdgpu"], marker = "extra == 'dev-amd'" },
     { name = "dace-alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
-    { name = "dace-extended", specifier = ">=1.0.0" },
+    { name = "dace-extended", specifier = ">=1.0.1" },
     { name = "dace-relayout", specifier = ">=0.1.2" },
     { name = "hjson", marker = "extra == 'softhier'", specifier = "==3.1.0" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", specifier = ">=1.0.0" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", specifier = ">=1.0.1" },
     { name = "html2text", marker = "extra == 'softhier'", specifier = "==2025.4.15" },
     { name = "lz4", marker = "extra == 'softhier'", specifier = "==4.4.5" },
     { name = "mako", marker = "extra == 'softhier'", specifier = "==1.4.3" },
@@ -1296,7 +1296,7 @@ provides-extras = ["bench", "nvgpu", "amdgpu", "dev", "softhier", "dev-nvidia", 
 
 [[package]]
 name = "dace-extended"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astunparse" },
@@ -1320,9 +1320,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "z3-solver" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/77/f5d22bea269bd9dbff5f26a695ec796156c35c16a7ac0086c64a5c940e09/dace_extended-1.0.0.tar.gz", hash = "sha256:e400ccd5211ec3656e3604cd5dd4895bf9d8447041a6740b949a889093784119", size = 9173389, upload-time = "2026-11-23T16:19:30.534Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/1c/ba2b91893fa381c3b0462a896cc9114aa6ee36b1a490811d1c8659b8e825/dace_extended-1.0.1.tar.gz", hash = "sha256:04cdcad38ae4a7d3b7d4d58983d7aeb706fd571610c29d16af05555680adac17", size = 9287949, upload-time = "2026-11-25T12:39:36.437Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/41/8a456422f5dc378e6d3355a1251b9c922513d9e5a341f7d65ee3e27f52fc/dace_extended-1.0.0-py3-none-any.whl", hash = "sha256:5b230e739575de45a046da881ebd458090ce098e1218655a1699ef1b6a58381a", size = 10068641, upload-time = "2026-11-23T16:19:27.675Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/9d/fe6c33046e2d201433d194ac586ec501c2bc3dd28b4f63a3335832f14ed2/dace_extended-1.0.1-py3-none-any.whl", hash = "sha256:cdbf9f427cb0fc904327dce8e08149a35c5f95a845a87584993bb1875ccc4a52", size = 10187293, upload-time = "2026-11-25T12:39:33.158Z" },
 ]
 
 [[package]]
@@ -1913,7 +1913,7 @@ wheels = [
 
 [[package]]
 name = "hpcagent-bench"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
@@ -1965,9 +1965,9 @@ dependencies = [
     { name = "xgboost" },
     { name = "z3-solver" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/76/938f1408593332ccfb6b1674a51563aaec2d7efd095e5d6e2d777db1deaa/hpcagent_bench-1.0.0.tar.gz", hash = "sha256:afc93332c0ba5422c58366ead824c621aa8aeaba21d3370812595efb230484d5", size = 7047755, upload-time = "2026-11-24T19:16:53.996Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/f6/43453c0b1fce54b5adafd8175035228deb7e5c9ebd31be19e2faf013b462/hpcagent_bench-1.0.1.tar.gz", hash = "sha256:7183a9aaf0907b6166acb3512b42114eee0d5fdd8bd14ddf788a271526073ac4", size = 7084485, upload-time = "2026-11-25T13:29:55.858Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/34/ecb5a2d8202e561adfba2598497f317749fbc9d73d2d94725265d2c01289/hpcagent_bench-1.0.0-py3-none-any.whl", hash = "sha256:b8bf40625032aa7e0878af8b7864d4fcf397dc7c45efdf7d8870eb5ffabbc8e2", size = 6697769, upload-time = "2026-11-24T19:16:50.244Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/63/d84f3c439178ed82bac167ebe4d5d23313f448c90234857f189f90bea9c9/hpcagent_bench-1.0.1-py3-none-any.whl", hash = "sha256:44e674a6f58e7fa70cd851abdacf67bba61ca13054193e9613261b5331f669c6", size = 6712985, upload-time = "2026-11-25T13:29:52.281Z" },
 ]
 
 [[package]]
