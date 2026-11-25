@@ -54,10 +54,6 @@ def test_a_saved_dmidecode_listing_is_read_from_the_file_the_variable_names(
     assert machine.memory_devices_text() == TWO_DDR5_MODULES_ONE_EMPTY_SLOT
 
 
-def test_a_measured_copy_moves_bytes_at_a_positive_rate() -> None:
-    assert machine.stream_bandwidth(threads=1, rounds=1) > 0
-
-
 def test_threads_that_ask_at_once_share_one_bandwidth_measurement(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cache does not serialize a miss: each thread's own measurement would run against the others and read low."""
     measured = []

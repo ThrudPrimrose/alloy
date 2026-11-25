@@ -46,9 +46,9 @@ Layout:
   runtime, `sweep` builds every candidate.
 - `alloy/evaluate/`: `link` builds whole programs from scope archives, `verify` checks candidates on fuzzed inputs,
   `timing` times them and links alloy-full.
-- `alloy/isa/`: the machine abstract math ISA (`ops.py`, 37 ops across 414 CPU rows + 22 assists in `intrinsics.toml`,
-  390 `llvm-mca` cost rows in `costs.toml`, 19 precision-bounded math functions in `mathkernels.toml`, 26 CUDA + 26 HIP
-  device rows in `simt.toml`, 23 Tensix rows + 2 card-checked SFPI rungs in `tensix.toml`, 14 SoftHier ops in
+- `alloy/isa/`: the machine abstract math ISA (`ops.py`, 37 ops across 504 CPU rows (AVX2, AVX-512, NEON, SVE, RVV) + 24 assists in `intrinsics.toml`,
+  474 `llvm-mca` cost rows in `costs.toml`, 19 precision-bounded math functions in `mathkernels.toml`, 31 CUDA + 31 HIP
+  device rows (f32, and f64 for `fma`, the reductions and `scan_add`) in `simt.toml`, 34 Tensix rows + 2 card-checked SFPI rungs in `tensix.toml`, 19 SoftHier ops in
   `softhier.toml`, and tile kernels in `alloy_tile_{cpu,sme,sm90,cdna}*`) exposed through one CLI:
   `python -m alloy.isa host|lookup|reverse|assist|kernel|tiers|time|validate|skeleton|ops|isas|schedule|tile|ask|ask-all`.
   `validate.py` runs a row's intrinsic or recipe in a compiled kernel, natively or under `qemu-aarch64` when that is on

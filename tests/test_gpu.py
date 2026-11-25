@@ -163,8 +163,7 @@ def test_a_row_of_half_a_wavefront_ranks_below_a_full_one_on_hip_only() -> None:
     assert gpu.rank_key(*full, gpu.LANES["hip"]) < gpu.rank_key(*half, gpu.LANES["hip"])
 
 
-# Reproducer: the GPU path follows the task's dialect and the bench's parse, ISA checks no longer pass vacuously, Tensix
-#  rows as tt-metal 0.63 runs them (7d94b16)
+# Reproducer: the GPU path ignored the task's dialect (7d94b16)
 def test_the_gpu_form_follows_the_task_language_and_else_the_image() -> None:
     from hpcagent_bench.categories import Language, SourceMode
     from hpcagent_bench.harness.task import Task

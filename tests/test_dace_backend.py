@@ -8,6 +8,7 @@ import os
 import pathlib
 import pickle
 import subprocess
+from collections.abc import Callable
 from typing import Any
 
 import dace
@@ -57,7 +58,11 @@ def outputs(program: dace.SDFG | dace.codegen.compiled_sdfg.CompiledSDFG) -> np.
 
 
 @pytest.mark.gcc
-def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(tmp_path: pathlib.Path) -> None:
+def test_sdfg_compile_hands_the_sdfg_to_alloy_when_the_build_plugin_names_it(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    matrix = gcc_only(tmp_path)  # the hand-off is the point, not the breadth of the sweep
+    monkeypatch.setattr(configuration_matrix, "load", lambda: matrix)
     sdfg = load_program(f"{REDUCTIONS}:scale").to_sdfg()
     sdfg.build_folder = str(tmp_path / "build")
     expected = outputs(load_program(f"{REDUCTIONS}:scale").to_sdfg())
@@ -172,32 +177,37 @@ def scale_sdfg() -> dace.SDFG:
     return load_program(f"{REDUCTIONS}:scale").to_sdfg()
 
 
-def test_two_frontend_runs_of_one_program_share_a_build_key() -> None:
-    assert key_of(scale_sdfg()) == key_of(scale_sdfg())
+def renamed(sdfg: dace.SDFG) -> dace.SDFG:
+    sdfg.name = "other"  # pyright: ignore[reportAttributeAccessIssue] -- DaCe Property descriptor
+    return sdfg
 
 
-def test_the_build_key_changes_with_the_program() -> None:
-    assert key_of(doubled(scale_sdfg(), "3.0")) != key_of(scale_sdfg())
+def timed(sdfg: dace.SDFG) -> dace.SDFG:
+    sdfg.instrument = dace.InstrumentationType.Timer
+    return sdfg
 
 
-def test_the_build_key_changes_with_the_program_name_the_library_exports() -> None:
-    renamed = scale_sdfg()
-    renamed.name = "other"  # pyright: ignore[reportAttributeAccessIssue] -- DaCe Property descriptor
+#: What each build-key input changes, one variant of the plain ``scale`` build each.
+VARIANTS: dict[str, Callable[[], str]] = {
+    "program": lambda: key_of(doubled(scale_sdfg(), "3.0")),
+    "exported name": lambda: key_of(renamed(scale_sdfg())),
+    "instrumentation": lambda: key_of(timed(scale_sdfg())),
+    "matrix": lambda: key_of(
+        scale_sdfg(), dataclasses.replace(MATRIX, build_flags=(*MATRIX.build_flags, "-funroll-loops"))
+    ),
+    "finite inputs": lambda: key_of(scale_sdfg(), finite_inputs=True),
+    "mode": lambda: key_of(scale_sdfg(), mode=Mode.PROFILE),
+    "running sizes": lambda: key_of(scale_sdfg(), running={"N": 16}),
+}
 
-    assert key_of(renamed) != key_of(scale_sdfg())
 
+def test_two_frontend_runs_share_a_build_key_and_each_input_gives_a_key_of_its_own() -> None:
+    plain = key_of(scale_sdfg())
 
-def test_the_build_key_changes_with_what_the_program_instruments() -> None:
-    timed = scale_sdfg()
-    timed.instrument = dace.InstrumentationType.Timer
+    keys = {name: make() for name, make in VARIANTS.items()}
 
-    assert key_of(timed) != key_of(scale_sdfg())
-
-
-def test_the_build_key_changes_with_the_matrix() -> None:
-    flags = dataclasses.replace(MATRIX, build_flags=(*MATRIX.build_flags, "-funroll-loops"))
-
-    assert key_of(scale_sdfg(), flags) != key_of(scale_sdfg())
+    assert key_of(scale_sdfg()) == plain
+    assert plain not in keys.values() and len(set(keys.values())) == len(keys), keys
 
 
 def test_the_build_key_changes_with_the_manifest_and_what_it_draws(tmp_path: pathlib.Path) -> None:
@@ -208,14 +218,6 @@ def test_the_build_key_changes_with_the_manifest_and_what_it_draws(tmp_path: pat
     assert key_of(scale_sdfg(), manifest=wider) != key_of(scale_sdfg(), manifest=manifest)
     narrow = dataclasses.replace(manifest, datatype="float32")
     assert key_of(scale_sdfg(), manifest=narrow) != key_of(scale_sdfg(), manifest=manifest)
-
-
-def test_the_build_key_changes_with_what_the_caller_declares() -> None:
-    plain = key_of(scale_sdfg())
-
-    assert key_of(scale_sdfg(), finite_inputs=True) != plain
-    assert key_of(scale_sdfg(), mode=Mode.PROFILE) != plain
-    assert key_of(scale_sdfg(), running={"N": 16}) != plain
 
 
 def test_the_build_key_changes_with_a_compilers_version(

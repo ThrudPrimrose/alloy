@@ -5,7 +5,6 @@ factor, and a rendered library asks for the scratch its entry carves transients 
 
 import dataclasses
 import pathlib
-import tempfile
 
 import pytest
 
@@ -283,33 +282,7 @@ def test_a_grade_slower_than_one_judge_call_is_still_read(monkeypatch: pytest.Mo
     assert sut.timeout == http_json.terminal_timeout() and sut.timeout > 5400
 
 
-if __name__ == "__main__":
-    test_a_cpu_stub_time_is_the_elapsed_time_of_the_graded_thread_count()
-    test_a_gpu_stub_time_is_the_device_time_per_repetition()
-    test_a_profile_without_a_time_is_refused()
-    for token, size in FAST_SIZES:
-        test_a_stub_is_timed_at_the_fast_size_only_where_the_run_is_larger(token, size)
-    test_a_library_whose_entry_keeps_a_transient_asks_for_its_scratch()
-    test_a_library_without_transients_asks_for_no_scratch()
-    for scores, expected in PICK_CASES:
-        test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(scores, expected)
-    test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share()
-    for pick, delivered in PROFILE_CASES:
-        test_profile_delivers_its_stub_timed_pick_only_when_the_judge_grades_it_no_slower(pick, delivered)
-    for pick, delivery in PLAIN_CASES:
-        test_a_pick_is_delivered_only_when_no_slower_than_the_plain_program(pick, delivery)
-    test_a_pick_of_every_reference_delivers_the_plain_program_ungraded()
-    test_a_failed_verdict_is_not_offered_to_the_stub_ranking()
-    test_a_duplicate_build_is_not_offered_to_the_stub_ranking()
-    test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anchor()
-    with pytest.MonkeyPatch.context() as patch:
-        with tempfile.TemporaryDirectory() as folder:
-            test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(patch, pathlib.Path(folder))
-    with pytest.MonkeyPatch.context() as patch:
-        test_a_grade_slower_than_one_judge_call_is_still_read(patch)
-
-
-# Reproducer: the judge client uses the worker's own judge, GPU modes fall back to (7d94b16)
+# Reproducer: the judge client called the first judge of a run that lists several (7d94b16)
 def test_the_judge_client_calls_the_workers_own_judge_when_the_run_lists_several(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

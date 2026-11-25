@@ -224,18 +224,21 @@ def clang_include() -> pathlib.Path | None:
 
 
 @functools.lru_cache(maxsize=1)
-def header_blob() -> str:
+@functools.lru_cache(maxsize=1, typed=True)
+def header_names() -> tuple[frozenset[str], frozenset[str]]:
+    """The identifiers clang's headers write before a ``(`` (functions and function macros), and the ones they
+    ``#define`` (aliases): one pass over the headers, not one search per name."""
     include = clang_include()
     assert include is not None, "no clang resource headers on this host"
-    return "\n".join(path.read_text(errors="ignore") for path in include.glob("*.h"))
+    blob = "\n".join(path.read_text(errors="ignore") for path in include.glob("*.h"))
+    return frozenset(re.findall(r"\b(\w+)\s*\(", blob)), frozenset(re.findall(r"#define\s+(\w+)\s", blob))
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z_]\w*$")
 
 
-@pytest.mark.skipif(clang_include() is None, reason="no clang resource headers on this host")
+@pytest.mark.clang
 def test_every_spelling_exists_in_the_clang_headers() -> None:
-    blob = header_blob()
     names = [
         name
         for name_, isa in TABLE.isas.items()
@@ -247,8 +250,8 @@ def test_every_spelling_exists_in_the_clang_headers() -> None:
         for name in [entry.intrinsic, *entry.recipe]
         if name and IDENTIFIER.fullmatch(name)
     ]
-    spelled = r"\b{0}\s*\(|#define\s+{0}\s"  # a function, a function macro, or an alias of one
-    missing = [name for name in dict.fromkeys(names) if not re.search(spelled.format(re.escape(name)), blob)]
+    called, defined = header_names()  # a function, a function macro, or an alias of one
+    missing = [name for name in dict.fromkeys(names) if name not in called | defined]
     assert not missing
 
 
@@ -499,22 +502,20 @@ def test_the_assists_reverse_by_name_and_mnemonic() -> None:
     assert {h.isa for h in TABLE.assist("frecps")} == {"sve", "neon"}
 
 
+@pytest.mark.clang
 def test_every_assist_spelling_exists_in_the_clang_headers() -> None:
-    include = clang_include()
-    if include is None:
-        pytest.skip("no clang resource headers on this host")
-    blob = header_blob()
+    called, _ = header_names()
     missing = [
         assist.name
         for name, isa in TABLE.isas.items()
         if name != "rvv"  # pragma-declared: test_every_rvv_spelling_is_declared_by_clang
         for assist in isa.assists
-        if not re.search(rf"\b{re.escape(assist.name)}\s*\(", blob)
+        if assist.name not in called
     ]
     assert not missing
 
 
-# Reproducer: reverse() missed the masked-variant names that carry a note after the (dc0470e)
+# Reproducer: reverse() missed the masked-variant names that carry a note after the name (dc0470e)
 def test_masked_variant_names_reverse_without_their_notes() -> None:
     """The f16 masked variants carry a cast note after the name; the index must key the bare name."""
     (hit,) = reverse("_mm512_maskz_loadu_epi16", TABLE)
@@ -522,12 +523,10 @@ def test_masked_variant_names_reverse_without_their_notes() -> None:
     assert (hit.isa, hit.dtype, hit.op, hit.via) == ("avx512", "f16", "load", "masked")
 
 
-# Reproducer: reverse() missed the masked-variant names that carry a note after the (dc0470e)
+# Reproducer: reverse() missed the masked-variant names that carry a note after the name (dc0470e)
+@pytest.mark.clang
 def test_masked_variant_names_exist_in_the_clang_headers() -> None:
-    include = clang_include()
-    if include is None:
-        pytest.skip("no clang resource headers on this host")
-    blob = header_blob()
+    called, _ = header_names()
     missing = []
     for isa in TABLE.isas.values():
         for dtype in ALL_DTYPES:
@@ -535,7 +534,7 @@ def test_masked_variant_names_exist_in_the_clang_headers() -> None:
                 if not entry.masked:
                     continue
                 name = entry.masked.split("(", 1)[0].split(maxsplit=1)[0]
-                if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
+                if name not in called:
                     missing.append(name)
     assert not missing
 

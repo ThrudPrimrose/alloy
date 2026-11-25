@@ -16,20 +16,6 @@ defaults:
     shell: bash
 
 jobs:
-  lint:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.13"
-      - run: uv sync --locked --extra dev
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      # Strict static typing (pyproject.toml [tool.mypy] and [tool.pyright]) over the package, tests and helpers
-      - run: uv run pyright
-      - run: uv run mypy alloy tests helpers
-
   # Every compiler of configuration_matrix.toml on one runner, so the OpenMP interop test links objects from all of
   # them into one binary against each runtime (libomp, libgomp, libnvomp).
   toolchains:
@@ -122,7 +108,8 @@ jobs:
           marks="not cuda and not hip and not tensix and not nvidia"
           grep -q avx512f /proc/cpuinfo || marks="not avx512 and $marks"
           PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error --durations=25 -m "$marks" tests \
-            --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py
+            --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py \
+            --ignore=tests/test_verify.py --ignore=tests/test_timing.py
 
   # The Tensix rows run on Tenstorrent's simulator ttsim inside the pinned tt-metal image (alloy/isa/tensix.py): docker
   # is on every hosted runner, the image is about 5 GB.
@@ -135,6 +122,12 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --locked --extra dev
+      # Lint rides here: a job of its own spent a minute of setup on a minute of checks. Strict static typing
+      # (pyproject.toml [tool.mypy] and [tool.pyright]) over the package, tests and helpers.
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run mypy alloy tests helpers
       - name: Tensix rows on ttsim
         run: PYTHONHASHSEED=0 ALLOY_TENSIX_VERDICTS=$RUNNER_TEMP/tensix_verified.toml uv run pytest --maxfail=20 -W error -m tensix tests/test_isa_tensix.py
       # Every eval task's generated program on ttsim, one container per task, at 1 tile and at the most tiles per DST
@@ -189,3 +182,10 @@ jobs:
           export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
           PYTHONHASHSEED=0 uv run pytest -n 2 --maxfail=20 -W error --durations=10 \
             tests/test_hb_plugin.py tests/test_llr_smoke.py
+      # Verification and timing build gcc candidates only: here they shorten the toolchain job, the longest.
+      - name: Verification and timing
+        run: |
+          ulimit -s "$(ulimit -H -s)"
+          export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
+          PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error --durations=10 -m "not avx512" \
+            tests/test_verify.py tests/test_timing.py

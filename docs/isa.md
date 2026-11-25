@@ -7,9 +7,9 @@ agents reach it as the `alloy_isa` tool of the `alloy-isa` and `alloy` packets.
 
 ## What the table holds
 
-The table spells 37 abstract ops (`alloy/isa/ops.py`) on four SIMD ISAs (414 `(isa, dtype, op)` rows plus 22 hardware assists). The ops cover loads and stores, gather and
+The table spells 37 abstract ops (`alloy/isa/ops.py`) on five SIMD ISAs (504 `(isa, dtype, op)` rows plus 24 hardware assists). The ops cover loads and stores, gather and
 scatter, arithmetic, `fma`, `sqrt`, comparisons and `select`, integer bit/shift/logical operations, the reductions `reduce_add`,
-`reduce_min`, and `reduce_max`, the scan `scan_add`, `gen_mask`, and the math functions `exp`, `sin`, and `cos`. The ISAs are AVX2, AVX-512, NEON, and SVE, and `avx512_256` names AVX-512 under
+`reduce_min`, and `reduce_max`, the scan `scan_add`, `gen_mask`, and the math functions `exp`, `sin`, and `cos`. The ISAs are AVX2, AVX-512, NEON, SVE, and RVV, and `avx512_256` names AVX-512 under
 a 256-bit compiler width, so it has no spellings of its own.
 
 | ISA | f64 | f32 | f16 | i64 | i32 | Total rows | Assists |
@@ -62,7 +62,7 @@ A `lookup` ends with a `cost:` line when `costs.toml` has the row: µops, latenc
 stream, as llvm-mca models the row's compiled instruction. x86 rows are modelled on Zen 4 (`znver4`, the host of
 beverin's MI300A) and Arm rows on Neoverse V2 (`neoverse-v2`, GH200's Grace). The cost is the arithmetic's own cost.
 Clang folds a row's operand load into the instruction, so `helpers/isacost.py` measures the register form instead.
-The column records 390 of the 414 CPU rows in `costs.toml`. The rest are composite recipes or rows without a single modelled mnemonic.
+The column records 474 of the 504 CPU rows in `costs.toml`. The rest are composite recipes or rows without a single modelled mnemonic.
 
 The column shows what an intrinsic name hides. On Zen 4 a 512-bit `vaddpd` has the latency of a 256-bit one and
 half its throughput, because Zen 4 issues it as two 256-bit halves. Where AVX-512 wins on Zen 4, masking and the
@@ -80,7 +80,8 @@ member mask first (`__shfl_down_sync`), and its warp has 32 lanes. HIP's take no
 `python -m alloy.isa.simt verify` checks every row with a generated program: one warp runs the row on every thread,
 and the host compares each thread's value with the row's C reference. A dialect whose GPU the machine has is run; the
 other is compiled for its targets (`gfx90a` and `gfx942` for HIP, `sm_90a` for CUDA) and recorded as compiled, not run. The recorded checks
-(`simt_verified.toml`, run 2026-11-18) cover all 26 CUDA rows (verified on GH200) and all 26 HIP rows (verified on MI250X and MI300A).
+(`simt_verified.toml`, run 2026-11-25) cover all 31 CUDA rows (verified on GH200; the five f64 rows on an A100) and all 31 HIP rows (verified on MI250X and
+MI300A; the five f64 rows on an MI50, gfx906).
 
 ## Tenstorrent Tensix
 

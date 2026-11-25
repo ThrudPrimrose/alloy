@@ -742,7 +742,7 @@ def print_isas(table: Table) -> None:
     print(f"  {target['note']}")
     for dialect in simt.DIALECTS:
         target = simt.table()["target"][dialect]
-        print(f"{dialect:8} {target['title']}  [device code per thread or warp; f32]")
+        print(f"{dialect:8} {target['title']}  [device code per thread or warp; f32, f64]")
         print(f"  {target['note']}")
 
 

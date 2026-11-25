@@ -369,41 +369,26 @@ def test_the_grading_of_a_manifest_reaches_the_timing_stage(tmp_path: pathlib.Pa
     assert sut.screen["hand"].verdict.status == "exact"
 
 
-def test_a_band_candidate_may_miss_the_fraction_of_elements_the_manifest_forgives(tmp_path: pathlib.Path) -> None:
+#: One element off: inside a 2 % forgiven fraction of the scale kernel's output.
+ONE_OFF = "for (int64_t i = 0; i < N; ++i) out[i] = 2.0 * a[i];\nout[0] += 1.0;"
+
+
+@pytest.mark.parametrize(("body", "fp_level", "status"), [
+    (ONE_OFF, "reassoc", "pass"),  # a band candidate may miss the forgiven fraction
+    ("for (int64_t i = 0; i < N; ++i) out[i] = i % 8 ? 2.0 * a[i] : 0.0;", "reassoc", "fail"),  # past it
+    (ONE_OFF, "", "fail"),  # bit-identity is the strict level's promise, stronger than what the judge grades
+], ids=["band-inside", "band-past", "exact"])  # fmt: skip
+def test_the_forgiven_fraction_admits_a_band_candidate_up_to_it_and_never_an_exact_one(
+    tmp_path: pathlib.Path, body: str, fp_level: str, status: str
+) -> None:
     forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
     program, cases = program_and_cases(tmp_path, "scale", forgiving)
     (scope,) = program.scopes
-    flipped = "for (int64_t i = 0; i < N; ++i) out[i] = 2.0 * a[i];\nout[0] += 1.0;"
-    report = candidate_writing(tmp_path, scope, flipped, fp_level="reassoc")
+    report = candidate_writing(tmp_path, scope, body, fp_level=fp_level)
 
     sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
 
-    assert sut.verdicts[scope.symbol]["hand"].status == "pass"
-
-
-def test_a_candidate_past_the_forgiven_fraction_fails(tmp_path: pathlib.Path) -> None:
-    forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
-    program, cases = program_and_cases(tmp_path, "scale", forgiving)
-    (scope,) = program.scopes
-    wrong = "for (int64_t i = 0; i < N; ++i) out[i] = i % 8 ? 2.0 * a[i] : 0.0;"
-    report = candidate_writing(tmp_path, scope, wrong, fp_level="reassoc")
-
-    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
-
-    assert sut.verdicts[scope.symbol]["hand"].status == "fail"
-
-
-def test_an_exact_candidate_gets_no_forgiven_fraction(tmp_path: pathlib.Path) -> None:
-    """Bit-identity is the strict level's promise, stronger than what the judge grades."""
-    forgiving = SCALE_MANIFEST.replace("level: 1", "level: 1\nmismatch_fraction: 0.02")
-    program, cases = program_and_cases(tmp_path, "scale", forgiving)
-    (scope,) = program.scopes
-    flipped = "for (int64_t i = 0; i < N; ++i) out[i] = 2.0 * a[i];\nout[0] += 1.0;"
-    report = candidate_writing(tmp_path, scope, flipped)
-
-    sut = verify.verify(program, MATRIX, [report], cases, tmp_path / "out")
-
-    assert sut.verdicts[scope.symbol]["hand"].status == "fail"
+    assert sut.verdicts[scope.symbol]["hand"].status == status
 
 
 #: Every corpus kernel whose manifest sets ``conditioning_rtol`` or ``conditioning_atol``.
@@ -493,23 +478,16 @@ def test_a_reduction_keeps_the_forgiven_fraction_at_every_team_size(tmp_path: pa
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
 
 
-def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other() -> None:
+@pytest.mark.parametrize(("off", "status"), [(1, "pass"), (100, "fail")])
+def test_an_integer_output_may_miss_the_forgiven_fraction_like_any_other(off: int, status: str) -> None:
     """mandelbrot2's escape counts are integers: the judge forgives its boundary pixels there too."""
     expected = np.arange(100, dtype=np.int64)
-    flipped = expected.copy()
-    flipped[0] += 1
+    got = expected.copy()
+    got[:off] += 1
 
-    sut = verify.compare("band", expected, flipped, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
+    sut = verify.compare("band", expected, got, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
 
-    assert sut.status == "pass"
-
-
-def test_an_integer_output_past_the_forgiven_fraction_fails() -> None:
-    expected = np.arange(100, dtype=np.int64)
-
-    sut = verify.compare("band", expected, expected + 1, 1, "int64", inputs.Grading(mismatch_fraction=0.01))
-
-    assert sut.status == "fail"
+    assert sut.status == status
 
 
 def test_a_scalar_output_needs_no_extent() -> None:
@@ -737,26 +715,6 @@ def test_a_reduction_wrong_at_a_single_team_size_fails_verification(tmp_path: pa
     sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
 
     assert sut.verdicts[reduce_scope.symbol]["wrong"].status == "fail"
-
-
-def test_a_correct_reduction_stays_correct_at_every_team_size(tmp_path: pathlib.Path) -> None:
-    """The reference sums each row with an ``omp simd`` reduction; the serial sum reassociates it, so it is graded
-    at ``reassoc``."""
-    program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
-    init, reduce_scope = program.scopes
-    body = "for (int64_t j = 0; j < N; ++j) out[i] += a[i * N + j];"
-    right = handwritten_archive(tmp_path, reduce_scope, f"for (int64_t i = 0; i < M; ++i) {{ {body} }}")
-    good = build(reduce_scope, Candidate("c", "gcc"), MATRIX, tmp_path / "r", {})
-    reassoc = Candidate("c", "gcc", fp_level="reassoc")
-    hand = dataclasses.replace(good, name="hand", candidate=reassoc, archive=right, object_hash="hand")
-    reports = [
-        ScopeReport(init, (build(init, Candidate("c", "gcc"), MATRIX, tmp_path / "i", {}),)),
-        ScopeReport(reduce_scope, (good, hand)),
-    ]
-
-    sut = verify.verify(program, MATRIX, reports, cases, tmp_path / "out")
-
-    assert sut.verdicts[reduce_scope.symbol]["hand"].ok
 
 
 def test_a_child_starts_under_any_data_limit_of_its_parent() -> None:

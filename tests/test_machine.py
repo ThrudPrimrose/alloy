@@ -155,7 +155,3 @@ def test_the_region_cost_is_measured_on_the_matrix_runtime_of_this_host() -> Non
     assert sut.source == "measured"
     assert 0.0 < sut.ns < 1e6  # an empty region on a warm team: well under a millisecond on any host
     assert predict.region_ns(matrix) == sut.ns
-
-
-if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-q"]))

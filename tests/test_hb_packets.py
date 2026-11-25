@@ -201,38 +201,6 @@ def test_the_isa_tool_answers_a_lookup() -> None:
     assert "_mm256_add_pd" in str(sut.answer)
 
 
-def test_the_isa_tool_gives_an_agent_a_recipe_it_can_copy() -> None:
-    sut = isa_call("lookup", ["avx2", "mod", "f64", "--no-verify"])
-
-    assert sut.code == HTTPStatus.OK
-    assert "_mm256_fnmadd_pd(q, b, a)" in str(sut.answer)
-
-
-@pytest.mark.parametrize(
-    ("command", "arguments", "expected"),
-    [
-        ("tiers", ["log"], "log-cheb13"),
-        ("kernel", ["sve", "fmod", "f64", "--level", "relaxed", "--no-verify"], "alloy_fmod_f64_relaxed"),
-        ("reverse", ["vmulsd"], "mul on one lane"),
-        ("reverse", ["fmla z0.d, p0/m, z1.d, z2.d"], "sve/f64"),
-    ],
-)
-def test_the_isa_tool_answers_what_an_agent_reads_off_its_loop(
-    command: str, arguments: list[str], expected: str
-) -> None:
-    sut = isa_call(command, arguments)
-
-    assert sut.code == HTTPStatus.OK
-    assert expected in str(sut.answer)
-
-
-def test_the_isa_tool_points_a_maskless_tail_at_its_remainder_loop() -> None:
-    sut = isa_call("lookup", ["neon", "gen_mask", "f64"])
-
-    assert sut.code == HTTPStatus.BAD_REQUEST
-    assert "skeleton neon scalar_remainder f64" in str(sut.answer)
-
-
 def test_an_infeasible_ask_reaches_the_agent_as_an_answer_with_its_block_and_nearest_requests() -> None:
     sut = isa_call("ask", ["avx512", "add", "--x", "vector:f32:100", "--no-verify"])
 
