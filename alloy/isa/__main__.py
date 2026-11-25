@@ -227,6 +227,9 @@ def parser() -> Parser:
     ask_p.add_argument("op", help="an op of `ops`, a math function, mma, or copy")
     for name in ("a", "b", "c", "x", "src", "dst"):
         ask_p.add_argument(f"--{name}", help="operand as space:dtype[:RxC or N][:layout][:swizzle]")
+        ask_p.add_argument(
+            f"--{name}-layout", default="", help=f"{name}'s layout as relayout operations on array x (JSON)"
+        )
     ask_p.add_argument("--unit", default="", help="pin the implementation (tma, warpgroup, mfma, vector, ...)")
     ask_p.add_argument("--on", default="", help="wait: the completion token (mbarrier, wgmma_group, lgkmcnt, ...)")
     ask_p.add_argument("--kind", default="", help="fence: proxy or operand")
@@ -812,7 +815,7 @@ def ask_command(args: argparse.Namespace) -> int:
     answer: ask.Answer
     try:
         operands = {
-            name: ask.Operand.parse(value)
+            name: dataclasses.replace(ask.Operand.parse(value), relayout=vars(args)[f"{name}_layout"])
             for name in ("a", "b", "c", "x", "src", "dst")
             if isinstance(value := vars(args).get(name), str)
         }

@@ -33,6 +33,10 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
   - Spaces: `register`, `vector`, `tile_register`, `shared`, `global`, `constant`.
   - Layouts: `row_major`, `col_major`.
   - Swizzles: `none`, `b32`, `b64`, `b128` (the TMA swizzles of `sm90`), `xor:8` (the LDS swizzle of CDNA).
+  - Any 2-D layout as relayout operations on array `x` (dace-relayout's JSON): `--<operand>-layout '<JSON>'`, for
+    example `--a-layout '[{"action": "permute", "array": "x", "order": ["i1", "i0"]}]'` (in `ask-all`:
+    `a_layout=<JSON>` or `a_layout=@file.json`). The lookup compares every operand by its index map, so two
+    spellings of one map are one layout: `b128` on 128-byte rows is `xor:8`, and the answer notes the rename.
   - The shape is the extent of your data, not of one register. A `broadcast` takes its scalar source as
     `--x register:f64` (or `register:f64:1`).
 - **Options.** `--unit <name>` pins an implementation, for example `--unit tma`. `--max-ulp` bounds a math

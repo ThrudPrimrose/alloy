@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Lookup layouts as index maps (dace-relayout >= 0.1.2, a new dependency): an operand's named layout and swizzle
+  become relayout operations, and every layout check compares the index maps they give. Two spellings of one map are
+  one layout: `b128` on 128-byte rows is `xor:8`, so gfx942 and gfx90a take it (the answer notes the rename), and sm90
+  takes `xor:8` there. A 2-D operand may give any layout as relayout operations: `--<name>-layout '<JSON>'` in `ask`,
+  `name_layout=<JSON>|@file` in `ask-all`; malformed operations, or ones that are not one-to-one, are Invalid.
 - Lookup (owner rulings of 2026-11-25 on the design items): a CPU request with 2-D (or higher) data is answered as
   one run of its elements, row-major or column-major, and the answer says so; mixed layouts, and a scan over
   column-major data, are refused with a transpose fix. Tensix `reduce_add` and `reduce_max` take `dim=row|col|all`

@@ -133,6 +133,8 @@ def answered(request_: Request) -> Feasible | Infeasible | Invalid:
 
 LDS = Operand("shared", "f16", (64, 64), "row_major", "xor:8")
 B128 = Operand("shared", "f16", (64, 64), "row_major", "b128")
+#: On 128-byte rows b128 is xor:8 (one index map); b64 is not, so gfx942 refuses it.
+B64 = Operand("shared", "f16", (64, 64), "row_major", "b64")
 GLOBAL = Operand("global", "f16", (256, 256))
 
 
@@ -143,7 +145,7 @@ GLOBAL = Operand("global", "f16", (256, 256))
     (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), "accumulates c in register"),
     (Request("sm90", "mma", TILE | {"b": Operand("register", "f16", (64, 64))}), "reads b from shared"),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), "swizzle b128"),
-    (Request("gfx942", "mma", MFMA_TILE | {"a": B128}), "swizzle xor:8"),
+    (Request("gfx942", "mma", MFMA_TILE | {"a": B64}), "swizzle xor:8"),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major", "b128")}), "takes a row_major"),
     (Request("sm90", "mma", TILE | {"b": B128}), "takes b col_major (Bt, N rows of K)"),
     (Request("gfx942", "mma", MFMA_TILE | {"b": LDS}), "takes b col_major (Bt, N rows of K)"),
@@ -182,7 +184,7 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
 @pytest.mark.parametrize(("request_", "reason"), [
     (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f32", (7,))}),
      "copies f16, bf16, e4m3, e5m2, f64 tiles on gfx942, not f32"),
-    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), "xor:8"),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B64}), "xor:8"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (64, 64))}), "xor:8"),
     (Request("avx2", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f64", (4,))}),
      "converts nothing"),
@@ -269,12 +271,12 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> 
                             "c": Operand("global", "f32", (16, 16))}),
     Request("sme", "mma", TILE),
     Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}),
-    Request("gfx942", "mma", MFMA_TILE | {"a": B128}),
+    Request("gfx942", "mma", MFMA_TILE | {"a": B64}),
     Request("tensix", "mma", {"a": Operand("tile_register", "f32", (32, 48)),
                               "b": Operand("tile_register", "f32", (48, 32)),
                               "c": Operand("tile_register", "f32", (32, 32))}),
     Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}),
-    Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}),
+    Request("gfx942", "copy", {"src": GLOBAL, "dst": B64}),
     Request("gfx942", "copy", {"src": Operand("global", "f16", (128, 64)),
                                "dst": Operand("shared", "f16", (128, 64), "row_major", "xor:8")}),
     Request("sm90", "reduce_add", {"x": Operand("register", "f32", (1000,))}),
@@ -380,7 +382,7 @@ REGISTER = Operand("vector", "f64", (4,))
     (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), Why.SPACE),
     (Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("register", "f16", (64, 64))}), Why.SPACE),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), Why.SWIZZLE),
-    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B128}), Why.SWIZZLE),
+    (Request("gfx942", "copy", {"src": GLOBAL, "dst": B64}), Why.SWIZZLE),
     (Request("avx2", "add", {"x": Operand("vector", "f64", (4,), "row_major", "b128")}), Why.SWIZZLE),
     (Request("sm90", "mma", TILE | {"b": B128}), Why.LAYOUT),
     (Request("sme", "mma", SME | {"a": Operand("global", "f32", (70, 9))}), Why.LAYOUT),

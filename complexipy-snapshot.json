@@ -200,6 +200,10 @@
         "complexity": 16
       },
       {
+        "name": "parsed_request",
+        "complexity": 16
+      },
+      {
         "name": "cpu_copy",
         "complexity": 17
       },
@@ -218,10 +222,6 @@
       {
         "name": "off_register",
         "complexity": 19
-      },
-      {
-        "name": "parsed_request",
-        "complexity": 20
       },
       {
         "name": "vector_op_1d",

@@ -1162,6 +1162,7 @@ version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "dace-extended" },
+    { name = "dace-relayout" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-core" },
@@ -1254,6 +1255,7 @@ requires-dist = [
     { name = "dace-alloy", extras = ["dev", "amdgpu"], marker = "extra == 'dev-amd'" },
     { name = "dace-alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
     { name = "dace-extended", specifier = ">=1.0.0" },
+    { name = "dace-relayout", specifier = ">=0.1.2" },
     { name = "hjson", marker = "extra == 'softhier'", specifier = "==3.1.0" },
     { name = "hpcagent-bench", marker = "extra == 'bench'", specifier = ">=1.0.0" },
     { name = "html2text", marker = "extra == 'softhier'", specifier = "==2025.4.15" },

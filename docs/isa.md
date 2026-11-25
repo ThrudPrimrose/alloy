@@ -156,7 +156,9 @@ a kernel has 32 circular buffers, so `unpack_to_dest_mode` takes 32 entries wher
 `ask` takes one of six primitives on logical data (design: `notes/isa-design.md`, section 2.8 of the workspace): `load`
 and `store`, an elementwise operation or a math function, a reduction (`reduce_add`, `reduce_min`, `reduce_max`), the
 scan `scan_add` (the inclusive prefix sum), and `mma`. `copy` moves data between two memories. An operand is
-`space:dtype:shape[:layout[:swizzle]]`, and its shape is the extent of the data, not of a register.
+`space:dtype:shape[:layout[:swizzle]]`, and its shape is the extent of the data, not of a register. A 2-D operand may
+also give its layout as relayout operations (`--a-layout '<JSON>'`, `a_layout=<JSON>|@file` in `ask-all`;
+`alloy.isa.layouts`). Every layout check compares index maps, so `b128` on 128-byte rows and `xor:8` are one layout.
 
 Every lowering has a block, the extent one instruction takes: the lanes of a register (16 f32 on AVX-512), one 32x32
 tile on Tensix, and the K block of a GPU product (128 bytes of a row: 64 f16 or bf16, 128 e4m3 or e5m2). A shape that is a whole multiple of the block is feasible, and

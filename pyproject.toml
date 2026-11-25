@@ -21,6 +21,7 @@ dependencies = [
     "pydantic-core",
     # C to NumPy (alloy.frontend.cnumpy) parses C with tree-sitter's grammar
     "tree-sitter-language-pack",
+    "dace-relayout>=0.1.2",
 ]
 
 [project.urls]

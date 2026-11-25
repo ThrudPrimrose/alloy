@@ -22,6 +22,7 @@ import dataclasses
 import difflib
 import enum
 import math
+import pathlib
 import re
 from collections.abc import Sequence
 from typing import Literal, get_args
@@ -29,7 +30,7 @@ from typing import Literal, get_args
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-from alloy.isa import OPS, load, simt, softhier, tensix, tile
+from alloy.isa import OPS, layouts, load, simt, softhier, tensix, tile
 from alloy.isa.mathkernels import cheapest, functions, kernel, ladder, render, target_of
 from alloy.isa.table import ALIASES, GATED, Entry, Table, gate
 from alloy.isa.validate import HEADERS, c_flags
@@ -140,6 +141,8 @@ class Operand:
     shape: tuple[int, ...] = ()
     layout: Layout = "row_major"
     swizzle: Swizzle = "none"
+    #: A layout given as relayout operations on array ``x`` (JSON, ``--a-layout``); it replaces layout and swizzle.
+    relayout: str = ""
 
     @classmethod
     def parse(cls, text: str) -> "Operand":
@@ -409,6 +412,21 @@ def bad(request: Request | None, why: Why, reason: str, *expected: str) -> Inval
     return Invalid(request, why, reason, tuple(expected))
 
 
+def holds(operand: Operand, layout: str, swizzle: str) -> bool:
+    """Whether ``operand`` is laid out as the named ``layout`` and ``swizzle``: the same index map in relayout's algebra
+    (:mod:`alloy.isa.layouts`), so two spellings of one map agree; by name for an operand that is not 2-D."""
+    mine = layouts.index_map(operand.shape, operand.dtype, operand.layout, operand.swizzle, operand.relayout)
+    want = layouts.index_map(operand.shape, operand.dtype, layout, swizzle)
+    if mine is None or want is None:
+        return not operand.relayout and (operand.layout, operand.swizzle) == (layout, swizzle)
+    return mine == want
+
+
+def swizzled(operand: Operand) -> bool:
+    """Whether ``operand`` is laid out other than plainly row-major or column-major."""
+    return not (holds(operand, "row_major", "none") or holds(operand, "col_major", "none"))
+
+
 def spell(**operands: Operand) -> str:
     """Operands as a nearest request names them: ``a shared:f16:64x64, b ...``."""
     return ", ".join(f"{name} {operand.spelled()}" for name, operand in operands.items())
@@ -433,6 +451,10 @@ def ask(request: Request, verify: bool = True) -> Answer:
                 f"ask {request.target} {owners[0]} --{flag} ...",
                 f"ask {request.target} {request.op} without --{flag}",
             )
+    for name, operand in request.operands.items():
+        if operand.relayout and (why := layouts.problem(operand.shape, operand.relayout)):
+            return bad(request, Why.MALFORMED, f"--{name}-layout: {why}",
+                       '[{"action": "permute", "array": "x", "order": ["i1", "i0"]}]')  # fmt: skip
     if request.dim and (request.target != "tensix" or request.dim not in ("all", "row", "col")):
         why = (f"dim={request.dim}: a Tensix reduction takes dim=row, col, or all" if request.target == "tensix" else
                f"--dim applies to Tensix reductions only; a {request.target} reduction gives one value")  # fmt: skip
@@ -733,7 +755,7 @@ def vector_op_1d(request: Request, verify: bool) -> Answer:
             fix = f"load it first: ask load with src global and dst {register.spelled()}"
             return no(request, Why.SPACE, f"{isa} {request.op} computes on registers, not on {operand.space} memory",
                       spell(x=register), fix=fix)  # fmt: skip
-        if operand.swizzle != "none":
+        if swizzled(operand):
             return no(request, Why.SWIZZLE, "a CPU has no swizzle", spell(x=register))
         if lanes and operand.shape and operand.shape[0] % lanes and not scalar:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
@@ -1230,28 +1252,50 @@ INTO_LAYOUT = {
 INTO_LAYOUT["gfx90a", "b"] = INTO_LAYOUT["gfx942", "b"]
 
 
+def misplaced_input(target: str, name: str, operand: Operand) -> tuple[Why, str, str] | None:
+    """Why the target's mma cannot read the input ``name`` from where, or with the swizzle, the request has it."""
+    inputs, swizzle, _, _ = MMA_OPERANDS[target]
+    if operand.space not in inputs:
+        reason = f"{target} mma reads {name} from {' or '.join(inputs)}, not {operand.space}"
+        return Why.SPACE, reason, INTO_SPACE[target]
+    if not operand.relayout and not holds(operand, operand.layout, swizzle):
+        legal = "no swizzle" if swizzle == "none" else f"swizzle {swizzle}"
+        fix = INTO_SWIZZLE.get(target, f"{target} has no swizzle: ask with swizzle none")
+        return Why.SWIZZLE, f"{target} mma reads {name} with {legal}, not {operand.swizzle}", fix
+    return None
+
+
 def misplaced(target: str, a: Operand, b: Operand, c: Operand) -> tuple[Why, str, str] | None:
     """Why the target's mma cannot take its operands where and how the request has them: the reason's code, the
     reason, and the fix."""
-    inputs, swizzle, outputs, layouts = MMA_OPERANDS[target]
-    for name, operand in (("a", a), ("b", b)):
-        if operand.space not in inputs:
-            reason = f"{target} mma reads {name} from {' or '.join(inputs)}, not {operand.space}"
-            return Why.SPACE, reason, INTO_SPACE[target]
-        if operand.swizzle != swizzle:
-            legal = "no swizzle" if swizzle == "none" else f"swizzle {swizzle}"
-            fix = INTO_SWIZZLE.get(target, f"{target} has no swizzle: ask with swizzle none")
-            return Why.SWIZZLE, f"{target} mma reads {name} with {legal}, not {operand.swizzle}", fix
+    _, swizzle, outputs, layouts = MMA_OPERANDS[target]
+    found = misplaced_input(target, "a", a) or misplaced_input(target, "b", b)
+    if found:
+        return found
     if c.space not in outputs:
         fix = f"accumulate in {outputs[0]} and store the result to {c.space} after the last K block"
         return Why.SPACE, f"{target} mma accumulates c in {' or '.join(outputs)}, not {c.space}", fix
-    if c.swizzle != "none":
+    if not c.relayout and swizzled(c):
         return Why.SWIZZLE, f"{target} mma accumulates c without a swizzle, not {c.swizzle}", "ask c with swizzle none"
     for name, operand, layout in zip("abc", (a, b, c), layouts, strict=True):
-        if operand.layout != layout:
-            reason = f"{target} mma takes {name} {layout} ({MMA_LAYOUT[name, layout]}), not {operand.layout}"
+        if not holds(operand, layout, swizzle if name != "c" else "none"):
+            given = "the given relayout layout" if operand.relayout else operand.layout
+            reason = f"{target} mma takes {name} {layout} ({MMA_LAYOUT[name, layout]}), not {given}"
             return Why.LAYOUT, reason, INTO_LAYOUT.get((target, name), f"hold {name} {layout}")
     return None
+
+
+def renamed(target: str, a: Operand, b: Operand, c: Operand) -> tuple[str, ...]:
+    """A note per operand the request spells otherwise than the target names its layout, but whose index map is the
+    target's (``xor:8`` for sm90's ``b128`` on 128-byte rows, or relayout operations)."""
+    _, swizzle, _, layouts_ = MMA_OPERANDS[target]
+    notes = []
+    for name, operand, layout in zip("abc", (a, b, c), layouts_, strict=True):
+        want = swizzle if name != "c" else "none"
+        if operand.relayout or (operand.layout, operand.swizzle) != (layout, want):
+            given = "the relayout operations given" if operand.relayout else f"{operand.layout}:{operand.swizzle}"
+            notes.append(f"{name}: {given} is the same index map as {layout}:{want}, the layout {target} reads")
+    return tuple(notes)
 
 
 #: How a caller finishes an mma whose extents are not whole blocks: zeros add nothing to D = A x B + C.
@@ -1312,7 +1356,7 @@ def mma(request: Request, verify: bool) -> Answer:
     steps = tuple(Step(unit, s) for s in found.steps)
     if target in tile.GPU_TILES and (grid := block_grid(target, m, n, k, a.dtype)):
         steps = (Step(unit, grid), *steps)
-    notes: tuple[str, ...] = (found.layout,)
+    notes: tuple[str, ...] = (found.layout, *renamed(target, a, b, c))
     if target == "sm90":  # two kernels: say which ranks first and why, derived from the shapes
         rank = tile.ranked(target, m, n, k, a.dtype)
         notes += ("ranked, derived from the instruction shapes (not measured): "
@@ -1479,7 +1523,7 @@ def cpu_copy(request: Request, src: Operand, dst: Operand) -> Answer:
     one = Operand("vector", register.dtype, (lanes,) if lanes else ())
     nearest = (spell(src=Operand("global", one.dtype, one.shape), dst=one),
                spell(src=one, dst=Operand("global", one.dtype, one.shape)))  # fmt: skip
-    if src.swizzle != "none" or dst.swizzle != "none":
+    if swizzled(src) or swizzled(dst):
         return no(request, Why.SWIZZLE, "a CPU has no swizzle", *nearest)
     if register.space not in in_register or memory.space != "global":
         return no(request, Why.SPACE, f"a CPU copy loads global memory into a register or stores it back, not {src.space} to "
@@ -1513,7 +1557,7 @@ def tma_refusal(request: Request, src: Operand, dst: Operand, nearest: str, dtyp
     if dst.dtype not in taken:
         return no(request, Why.ELEMENT_TYPE, f"the checked TMA load fills {', '.join(taken)} tiles with the 128B "
                   f"swizzle, not {dst.dtype}", nearest)  # fmt: skip
-    if dst.swizzle != "b128":
+    if not holds(dst, "row_major", "b128"):
         return no(request, Why.SWIZZLE, f"the checked TMA load fills a {dtype} tile with the 128B swizzle", nearest)
     if dst.shape not in ((64, width), (128, width)):
         return no(request, Why.SHAPE, f"a TMA box here is 128 bytes wide ({width} {dtype}) and 64 or 128 rows",
@@ -1535,9 +1579,9 @@ def tma_refusal(request: Request, src: Operand, dst: Operand, nearest: str, dtyp
             "whole multiple of 16 bytes",
             nearest,
         )
-    if src.swizzle != "none":
+    if swizzled(src):
         return no(request, Why.SWIZZLE, "TMA reads an unswizzled global tile", nearest)
-    if src.layout != "row_major" or dst.layout != "row_major":
+    if not holds(src, "row_major", "none"):
         return no(request, Why.LAYOUT, "the checked TMA load copies row-major tiles", nearest)
     return None
 
@@ -1597,10 +1641,10 @@ def tma_store(request: Request, src: Operand, dst: Operand, verify: bool) -> Ans
     if src.dtype not in taken:
         return no(request, Why.ELEMENT_TYPE, f"the checked TMA store moves {', '.join(taken)} boxes, not {src.dtype}",
                   nearest)  # fmt: skip
-    if src.swizzle != "b128" or src.shape != (rows, width):
+    if not holds(src, "row_major", "b128") or src.shape != (rows, width):
         return no(request, Why.SHAPE, f"a TMA box here is 64 or 128 rows of 128 bytes ({width} {dtype}) with the 128B "
                   "swizzle", nearest)  # fmt: skip
-    if len(dst.shape) != 2 or dst.shape[1] * tile.GPU_BYTES[dtype] % 16 or dst.layout != "row_major":
+    if len(dst.shape) != 2 or dst.shape[1] * tile.GPU_BYTES[dtype] % 16 or not holds(dst, "row_major", "none"):
         return no(request, Why.SHAPE, "the tensor map describes a row-major two-dimensional global tile whose rows "
                   "are a whole multiple of 16 bytes", nearest)  # fmt: skip
     setup = tma_setup(dtype, rows) | {"build": gpu_build("sm90")}
@@ -1648,10 +1692,10 @@ def lds_copy(request: Request, src: Operand, dst: Operand, tile_: Operand, sourc
     if len(src.shape) != 2 or src.shape[0] < 64 or src.shape[1] < width or row_bytes % 16:
         return no(request, Why.SHAPE, f"the LDS load reads one 64 x {width} box of a row-major global tile whose "
                   "rows are whole 16-byte chunks: the source must hold the box", nearest)  # fmt: skip
-    if dst.swizzle != "xor:8" or src.swizzle != "none":
+    if not holds(dst, "row_major", "xor:8") or swizzled(src):
         return no(request, Why.SWIZZLE, "the checked LDS load stores each chunk at slot chunk ^ (row % 8) (dst "
                   "swizzle xor:8) from an unswizzled global tile", nearest)  # fmt: skip
-    if src.layout != "row_major" or dst.layout != "row_major":
+    if not holds(src, "row_major", "none"):
         return no(request, Why.LAYOUT, "the checked LDS load copies row-major tiles", nearest)
     steps = (Step("lds", "global_load_dwordx4"), Step("lds", "ds_write_b128 at slot chunk ^ (row % 8)"))
     spelled = "sA[r * 8 + (c ^ (r & 7))] = *reinterpret_cast<const alloy_long2*>(a + r * row_bytes + 16 * c);"
@@ -2020,8 +2064,8 @@ def softhier_copy(request: Request) -> Answer:
                   f"{src.space} to {dst.space}", near)  # fmt: skip
     if src.dtype not in SOFTHIER_BYTES:
         return no(request, Why.ELEMENT_TYPE, f"no element size for {src.dtype}", near)
-    if src.swizzle != "none" or dst.swizzle != "none" or src.layout != dst.layout:
-        return no(request, Why.SWIZZLE if src.swizzle != "none" or dst.swizzle != "none" else Why.LAYOUT,
+    if swizzled(src) or swizzled(dst) or src.layout != dst.layout:
+        return no(request, Why.SWIZZLE if swizzled(src) or swizzled(dst) else Why.LAYOUT,
                   "iDMA copies bytes in order: no swizzle, no transpose", near)  # fmt: skip
     size = SOFTHIER_BYTES[src.dtype]
     tcdm = dst if dst.space == "shared" else src
@@ -2090,7 +2134,7 @@ def softhier_mma(request: Request) -> Answer:
         if operand.space != "shared":
             return no(request, Why.SPACE, f"RedMulE reads and writes the cluster's TCDM, not {name} in {operand.space}",
                       near, fix=SOFTHIER_INTO_TCDM)  # fmt: skip
-        if operand.layout != "row_major" or operand.swizzle != "none":
+        if not holds(operand, "row_major", "none"):
             return no(request, Why.LAYOUT, f"RedMulE takes {name} packed row-major, without a swizzle", near,
                       fix=f"hold {name} row_major; a 2D iDMA copy packs a block of a larger matrix")  # fmt: skip
     if 2 * (m * k + k * n + m * n) > softhier.config()["cluster_tcdm_size"] or max(m, n, k) > 0xFFFF:
@@ -2107,6 +2151,24 @@ def softhier_mma(request: Request) -> Answer:
     return softhier_feasible(request, row, "f16", steps, notes, Completion("redmule", "wait on=redmule"))
 
 
+#: The numeric fields of an ``ask-all`` request, and what each must be.
+NUMBERS = {
+    "depth": "depth is a count of groups, 0 or more",
+    "stage": "stage is the shared-memory stage a copy fills, 0 or 1",
+    "max_ulp": "max_ulp is a number",
+}
+
+
+def request_number(name: str, value: str, where: str) -> float:
+    """The value of the numeric field ``name``: a count for depth and stage, any number for max_ulp."""
+    if name != "max_ulp" and not value.isdigit():
+        raise KeyError(f"{where}: {NUMBERS[name]}")
+    try:
+        return float(value)
+    except ValueError:
+        raise KeyError(f"{where}: {NUMBERS[name]}") from None
+
+
 def parsed_request(target: str, text: str) -> Request:
     """One request of ``ask-all``: ``op name=operand ... [unit=U] [max_ulp=X]``; a malformed one raises
     :class:`KeyError` with what is wrong."""
@@ -2115,30 +2177,26 @@ def parsed_request(target: str, text: str) -> Request:
     op, *fields = text.split()
     operands: dict[str, Operand] = {}
     words = dict.fromkeys(("unit", "on", "kind", "dim"), "")  # the fields that are a lowercase word
-    max_ulp, depth, stage = None, 0, 0
+    given: dict[str, str] = {}  # name_layout=JSON or @file: an operand's layout as relayout operations
+    numbers: dict[str, float] = {}  # depth, stage, max_ulp
     for field in fields:
         name, sep, value = field.partition("=")
         if not sep or not value:
             raise KeyError(
                 f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, kind=K, "
-                "depth=N, stage=S, or dim=row|col|all"
+                "depth=N, stage=S, dim=row|col|all, or name_layout=JSON|@file"
             )
         if name in words:
             words[name] = value.lower()
-        elif name == "depth":
-            if not value.isdigit():
-                raise KeyError(f"{field!r} in {text!r}: depth is a count of groups, 0 or more")
-            depth = int(value)
-        elif name == "stage":
-            if not value.isdigit():
-                raise KeyError(f"{field!r} in {text!r}: stage is the shared-memory stage a copy fills, 0 or 1")
-            stage = int(value)
-        elif name == "max_ulp":
-            try:
-                max_ulp = float(value)
-            except ValueError:
-                raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
+        elif name.endswith("_layout"):
+            given[name.removesuffix("_layout")] = pathlib.Path(value[1:]).read_text() if value[0] == "@" else value
+        elif name in NUMBERS:
+            numbers[name] = request_number(name, value, f"{field!r} in {text!r}")
         else:
             operands[name] = Operand.parse(value)
-    return Request(target, op.lower(), operands, words["unit"], max_ulp, words["on"], words["kind"], depth, stage,
-                   words["dim"])  # fmt: skip
+    for name, layout in given.items():
+        if name not in operands:
+            raise KeyError(f"{name}_layout in {text!r}: no operand {name}")
+        operands[name] = dataclasses.replace(operands[name], relayout=layout)
+    return Request(target, op.lower(), operands, words["unit"], numbers.get("max_ulp"), words["on"], words["kind"],
+                   int(numbers.get("depth", 0)), int(numbers.get("stage", 0)), words["dim"])  # fmt: skip
