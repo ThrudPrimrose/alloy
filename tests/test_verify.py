@@ -217,7 +217,9 @@ def reserve(count: int) -> int:
 
 
 def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_exhausted_machine() -> None:
-    sut = verify.in_child(reserve, (2 * machine.available_memory() // 8,), machine.core_slots()[0], verify.slot_share())
+    # past the child's cap (its data segment, inherited from this worker, plus a share of the available memory)
+    count = (machine.data_segment_bytes() + 2 * machine.available_memory()) // 8
+    sut = verify.in_child(reserve, (count,), machine.core_slots()[0], verify.slot_share())
 
     assert isinstance(sut, str) and sut.startswith("raised:") and "Unable to allocate" in sut
 
