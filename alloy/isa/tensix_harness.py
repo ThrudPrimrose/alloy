@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 TILE = 1024
 TILES = 2
+#: Where a reduction's largest input sits, flat in the first tile: row 17 (the lower faces), column 4.
+MAX_AT = 17 * 32 + 4
 #: Output circular buffer; inputs take CBs 0 and 1.
 OUT_CB = 16
 
@@ -319,7 +321,9 @@ def inputs(row: Json) -> list["torch.Tensor"]:
     if row["kind"] == "reduction":  # the data tiles and the scaler tile: 1 in the first row of each 16 x 16 face
         scaler = torch.zeros(32, 32)
         scaler[0::16] = 1.0
-        return [base.reshape(TILES * 32, 32), scaler]
+        # the maximum at row 17, column 4 of the first tile: a program that reduces only the last tile, or only a
+        # tile's first face, misses it
+        return [base.roll(MAX_AT + 1).reshape(TILES * 32, 32), scaler]
     if row["kind"] == "ternary_sfpu":  # a condition of 0.0 and 1.0 about half true, then two distinct arms
         condition = (base.roll(31) > (lo + hi) / 2).to(torch.float32)
         return [x.reshape(TILES * 32, 32) for x in (condition, base.roll(97), base.roll(194))]

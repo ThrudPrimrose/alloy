@@ -240,6 +240,21 @@ def test_the_scaler_tile_holds_one_in_the_first_row_of_each_face() -> None:
     assert scaler.sum().item() == 64.0 and scaler[0].sum().item() == scaler[16].sum().item() == 32.0
 
 
+@pytest.mark.parametrize("op", ["reduce_max", "reduce_max_row", "reduce_max_col"])
+def test_a_max_reductions_largest_input_sits_where_a_partial_reduction_misses_it(op: str) -> None:
+    import torch
+
+    row = next(r for r in tensix.harness_rows() if r["op"] == op)
+    data, _ = tensix_harness.inputs(row)
+    at = int(torch.argmax(data).item())
+    r, c = divmod(at, 32)
+
+    assert r < 32, "not in the last tile"
+    assert r >= 16, "not in the first face of a tile"
+    last_tile_only = data[32:].max().item()
+    assert tensix_harness.reference("reduce_max", [data, torch.zeros(32, 32)]).item() > last_tile_only
+
+
 @pytest.mark.parametrize(("op", "expected"), [("reduce_add", 2048.0), ("reduce_max", 1.0)])
 def test_the_reference_of_a_reduction_is_one_value_over_every_tile(op: str, expected: float) -> None:
     import torch
