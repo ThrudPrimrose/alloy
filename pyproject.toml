@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dace-alloy"
-version = "0.1.1"
+version = "0.1.2"
 description = "Speculative per-scope code generation backend for DaCe: sweep, verify, and report rendering candidates."
 readme = "README.md"
 license = "GPL-3.0-or-later"
