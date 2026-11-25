@@ -353,3 +353,17 @@ def test_the_build_plugin_compiles_a_gpu_sdfg_with_the_block_the_report_ranks_fi
     ((shapes, plugin),) = compiled
     assert shapes != [(64, 1, 1)] and plugin == "", "the spilling 64-thread block is replaced; DaCe builds it"
     assert [tuple(e.map.gpu_block_size) for e in gpu.device_maps(sdfg)] == before, "the caller's SDFG is unchanged"
+
+
+def test_an_amd_gpu_that_amdgpu_arch_omits_is_found_through_rocminfo(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ROCm 7.2's amdgpu-arch prints nothing for an MI50, exit 0; rocminfo still lists the agent
+    for name, text in (("amdgpu-arch", ""), ("rocminfo", "  Name:                    gfx906\n")):
+        tool = tmp_path / name
+        tool.write_text(f"#!/bin/sh\nprintf '{text}'\n")
+        tool.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert gpu.native_dialect() == "hip"
+    assert gpu.native_arch("hip") == "gfx906"

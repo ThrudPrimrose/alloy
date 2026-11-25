@@ -31,6 +31,7 @@ __all__ = [
     "cuda_occupancy",
     "descend",
     "device_maps",
+    "amd_gfx",
     "native_dialect",
     "hip_usage",
     "nvcc_usage",
@@ -349,23 +350,37 @@ def descend(
     return shapes
 
 
-def native_dialect() -> str:
-    """The dialect whose compiler report describes this machine's first GPU: ``cuda`` where ``nvidia-smi`` lists a
-    device, else ``hip`` where ``amdgpu-arch`` names one; RuntimeError when neither does."""
-    for dialect, argv in (("cuda", ("nvidia-smi", "-L")), ("hip", ("amdgpu-arch",))):
+def amd_gfx() -> str:
+    """The ``gfx`` target of this machine's first AMD GPU, "" when it has none: ``amdgpu-arch``, else the first gfx
+    agent ``rocminfo`` lists (ROCm 7's ``amdgpu-arch`` prints nothing for a gfx906, which still runs HIP)."""
+    for argv in (("amdgpu-arch",), ("rocminfo",)):
         if shutil.which(argv[0]) is None:
             continue
         done = subprocess.run(argv, capture_output=True, text=True, check=False)
+        found = re.search(r"\bgfx[0-9a-f]+\b", done.stdout) if done.returncode == 0 else None
+        if found:
+            return found.group(0)
+    return ""
+
+
+def native_dialect() -> str:
+    """The dialect whose compiler report describes this machine's first GPU: ``cuda`` where ``nvidia-smi`` lists a
+    device, else ``hip`` where :func:`amd_gfx` names one; RuntimeError when neither does."""
+    if shutil.which("nvidia-smi") is not None:
+        done = subprocess.run(("nvidia-smi", "-L"), capture_output=True, text=True, check=False)
         if done.returncode == 0 and done.stdout.strip():
-            return dialect
-    raise RuntimeError("no GPU here: nvidia-smi lists none and amdgpu-arch names none")
+            return "cuda"
+    if amd_gfx():
+        return "hip"
+    raise RuntimeError("no GPU here: nvidia-smi lists none and amdgpu-arch and rocminfo name none")
 
 
 def native_arch(dialect: str) -> str:
-    """The compute capability (``nvidia-smi``) or ``gfx`` target (``amdgpu-arch``) of this machine's first device."""
-    if dialect == "cuda":
-        argv: Sequence[str] = ("nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader")
-    else:
-        argv = ("amdgpu-arch",)
+    """The compute capability (``nvidia-smi``) or ``gfx`` target (:func:`amd_gfx`) of this machine's first device."""
+    if dialect != "cuda":
+        if not (gfx := amd_gfx()):
+            raise RuntimeError("no AMD GPU here: amdgpu-arch and rocminfo name none")
+        return gfx
+    argv: Sequence[str] = ("nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader")
     done = subprocess.run(argv, capture_output=True, text=True, check=True)
     return done.stdout.split()[0]

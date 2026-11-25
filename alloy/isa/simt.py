@@ -230,7 +230,7 @@ def build(source: str, dialect: str, folder: pathlib.Path, run: bool) -> list[st
             else ["nvcc", "-O2", "-c", str(unit), "-o", str(folder / "row.o")]
         )
     if run:
-        return ["hipcc", "-O2", "--offload-arch=native", str(unit), "-o", str(folder / "row")]
+        return ["hipcc", "-O2", f"--offload-arch={gpu.native_arch('hip')}", str(unit), "-o", str(folder / "row")]
     return ["hipcc", "-O2", *(f"--offload-arch={a}" for a in HIP_ARCHS), "-c", str(unit), "-o", str(folder / "row.o")]
 
 
@@ -257,7 +257,9 @@ def check(row: Row, dialect: str, runs: bool) -> Verdict:
 
 @functools.lru_cache(maxsize=None, typed=True)
 def gpu_name(dialect: str) -> str:
-    argv = ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"] if dialect == "cuda" else ["amdgpu-arch"]
+    if dialect != "cuda":
+        return gpu.amd_gfx() or dialect
+    argv = ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
     done = subprocess.run(argv, capture_output=True, text=True, check=False)
     return done.stdout.strip().splitlines()[0] if done.returncode == 0 and done.stdout.strip() else dialect
 
