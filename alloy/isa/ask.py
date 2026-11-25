@@ -528,6 +528,12 @@ ISSUED = {("sm90", "mbarrier"), ("sm90", "wgmma_group"), ("sm90", "proxy"), ("sm
           ("tensix", "noc_write"), ("tensix", "cb")}  # fmt: skip
 
 
+def known_op(request: Request) -> bool:
+    """Whether ``request`` names an op: of the abstract set, a math function, or a Tensix tile op (transpose)."""
+    tile_op = request.target == "tensix" and request.op in {r.op for r in tensix.rows()}
+    return request.op in OPS or request.op in functions() or tile_op
+
+
 def manual_check(target: str, name: str) -> Check:
     """The check of a wait or fence: unverified on its own, with whether a checked tile program issues it."""
     if (target, name) in ISSUED:
@@ -615,8 +621,7 @@ def answered(request: Request, verify: bool) -> Answer:
         return moved(request, verify)
     if request.target in DIALECT:
         return thread_op(request)
-    own = request.target == "tensix" and request.op in {r.op for r in tensix.rows()}  # transpose: a Tensix tile op
-    if request.op not in OPS and request.op not in functions() and not own:
+    if not known_op(request):
         return bad(
             request, Why.OPERATION, f"no operation {request.op!r}", "an op of `python -m alloy.isa ops`, mma, or copy"
         )

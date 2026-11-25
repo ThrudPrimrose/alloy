@@ -134,6 +134,16 @@ def sfpu_body(count: int, init: str, call: str, new: bool) -> "tuple[str, str, s
     return start, f"{waits}{copies}\n        {init};\n        {call};", pops
 
 
+def move_body(kind: str, init: str, call: str, new: bool) -> "tuple[str, str, str]":
+    """A ``move`` row: the CB-to-DST copy and the pack every program has, nothing between them; a ``transpose`` row:
+    the unpacker reads the CB's tile transposed into DST."""
+    if kind == "move":
+        start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
+        return start, "cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);", "cb_pop_front(c0, 1);"
+    start = f"compute_kernel_hw_startup(c0, c16);\n    {init};" if new else f"{init};"
+    return start, f"cb_wait_front(c0, 1);\n        {call};", "cb_pop_front(c0, 1);"
+
+
 def body(row: Json, new: bool) -> "tuple[str, str, str]":
     """The start-up, the per-tile body and the pops of ``row``'s kind: a unary row copies its tile to DST for the
     SFPU; a binary SFPU row copies both operands to DST; a binary FPU row reads both from their CBs."""
@@ -141,12 +151,8 @@ def body(row: Json, new: bool) -> "tuple[str, str, str]":
     if row["kind"] == "fill":  # no operand: the input tile is read and dropped, DST tile 0 is written
         start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
         return start, f"cb_wait_front(c0, 1);\n        {init};\n        {call};", "cb_pop_front(c0, 1);"
-    if row["kind"] == "move":  # the CB-to-DST copy and the pack every program has, nothing between them
-        start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
-        return start, "cb_wait_front(c0, 1);\n        copy_tile(c0, 0, 0);", "cb_pop_front(c0, 1);"
-    if row["kind"] == "transpose":  # the unpacker reads the CB's tile transposed into DST
-        start = f"compute_kernel_hw_startup(c0, c16);\n    {init};" if new else f"{init};"
-        return start, f"cb_wait_front(c0, 1);\n        {call};", "cb_pop_front(c0, 1);"
+    if row["kind"] in ("move", "transpose"):
+        return move_body(row["kind"], init, call, new)
     if row["kind"] in ("unary", "scan"):
         start = "compute_kernel_hw_startup(c0, c16);\n    copy_init(c0);" if new else "init_sfpu(c0, c16);"
         if row["kind"] == "scan":  # one init: the running totals stay in SFPU registers from tile to tile
@@ -356,14 +362,20 @@ def filled(call: str) -> float:
     return float(found.group(1))
 
 
+#: The references of the rows that move a tile: a copy changes nothing; a transpose swaps each 32 x 32 tile's axes.
+MOVES = {
+    "load": lambda x: x,
+    "store": lambda x: x,
+    "transpose": lambda x: x.reshape(-1, 32, 32).transpose(1, 2).reshape(x.shape),
+}
+
+
 def reference(op: str, xs: list["torch.Tensor"], call: str = "") -> "torch.Tensor":
     import torch
 
     x = xs[0].double()
-    if op in ("load", "store"):  # a move changes nothing
-        return x
-    if op == "transpose":  # each 32 x 32 tile on its own
-        return x.reshape(-1, 32, 32).transpose(1, 2).reshape(x.shape)
+    if op in MOVES:
+        return MOVES[op](x)
     if op == "broadcast":
         return torch.full_like(x, filled(call))
     unary = {

@@ -212,12 +212,12 @@
         "complexity": 17
       },
       {
-        "name": "tile_call",
+        "name": "answered",
         "complexity": 18
       },
       {
-        "name": "answered",
-        "complexity": 19
+        "name": "tile_call",
+        "complexity": 18
       },
       {
         "name": "vector_op_1d",
