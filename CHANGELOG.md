@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-11-25)
 
 - Lookup layouts as index maps (dace-relayout >= 0.1.2, a new dependency): an operand's named layout and swizzle
   become relayout operations, and every layout check compares the index maps they give. Two spellings of one map are
