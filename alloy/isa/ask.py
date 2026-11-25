@@ -1263,7 +1263,7 @@ def tile_call(request: Request) -> Answer:
         return no(request, Why.CHECK_FAILED, check)
     init, call = tensix.spelled(row.init, "v08"), tensix.spelled(row.call, "v08")
     unit = row.unit.lower()
-    once = row.kind in ("scan", "reduction")  # one init: the state stays in the unit from tile to tile
+    once = row.kind in ("scan", "reduction", "layout")  # one init: the unit keeps its state from tile to tile
     each = "one init, then one call per tile" if once else "the init before each tile's call, as the checked program"
     notes = (
         *((row.note,) if row.note else ()),

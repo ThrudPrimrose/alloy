@@ -555,3 +555,35 @@ unit = "unpack"
 ok = true
 rel = 0.0
 digest = "a753bfe33f70de95"
+
+[[verdicts]]
+op = "tilize"
+dtype = "f32"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "457fdb30d1bec1f1"
+
+[[verdicts]]
+op = "tilize"
+dtype = "bf16"
+unit = "unpack"
+ok = true
+rel = 0.0
+digest = "26103a19f9dce2f8"
+
+[[verdicts]]
+op = "untilize"
+dtype = "f32"
+unit = "pack"
+ok = true
+rel = 0.0
+digest = "8265773942a77713"
+
+[[verdicts]]
+op = "untilize"
+dtype = "bf16"
+unit = "pack"
+ok = true
+rel = 0.0
+digest = "d36786178a4215d3"

@@ -18,7 +18,7 @@ names the hardware or simulator it ran on (this machine, a recorded run on an MI
 
 `command="ask", arguments=[<target>, <op>, --<operand> <space:dtype:shape[:layout[:swizzle]]>, ...]`
 
-- **Targets.** `avx2`, `avx512`, `avx512_fp16` (AVX-512 with f16 arithmetic, Sapphire Rapids on; Zen 4 has none), `neon`, `sve`, `sme`; `sm90` (GH200's H100); `gfx90a` (MI200, the MI250X);
+- **Targets.** `avx2`, `avx512`, `avx512_fp16` (AVX-512 with f16 arithmetic, Sapphire Rapids on; Zen 4 has none), `neon`, `sve`, `rvv` (RISC-V V 1.0, LMUL 1), `sme`; `sm90` (GH200's H100); `gfx90a` (MI200, the MI250X);
   `gfx942` (MI300A); `tensix`; `softhier` (SoftHier v1 on the GVSoC simulator).
 - **Operations.** Six primitives on your data:
   - `load` and `store`;
@@ -85,13 +85,13 @@ before the wait is a race, and issuing without the fence reads stale data.
 
 ## What each target runs
 
-- **CPUs** (`avx2`, `avx512`, `neon`, `sve`). Data is one run of elements (`vector:f32:96`); a 2-D shape is refused,
+- **CPUs** (`avx2`, `avx512`, `neon`, `sve`, `rvv`). Data is one run of elements (`vector:f32:96`); a 2-D shape is refused,
   and the flattened run is offered as nearest. A length that is not a whole multiple of the lanes is refused with the
   multiples below and above, and with how to finish: a mask on AVX-512 and SVE, a scalar remainder loop on AVX2 and
   NEON. `ask avx512 load` (or `store`, `gen_mask`) shows the masked spelling and how to build the mask. A reduction
   over many registers combines lane-wise, then once across lanes; a scan carries the last lane of each register into
   the next. On `sve` the lane count is known at run time only: a request for N elements (`vector:f64:64`) is
-  answered as one `svwhilelt` loop. `reduce_add` and `scan_add` reassociate, so they need permission to; min and max
+  answered as one `svwhilelt` loop, on `rvv` as one `vsetvl` loop. `reduce_add` and `scan_add` reassociate, so they need permission to; min and max
   are exact. A CPU has no matrix unit: `mma` is a row-wise FMA tile in the ISA's own intrinsics (4 rows of C, one
   vector register per row; each k broadcasts A[i][k] and multiply-adds row k of B), on row-major arrays in global
   memory: `--a global:f64:64x64 --b global:f64:64x64 --c global:f64:64x64` (D = A x B + C). M takes multiples of 4

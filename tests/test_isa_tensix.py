@@ -471,6 +471,29 @@ def test_a_move_must_return_its_tile_bit_for_bit_and_a_transpose_must_move_every
     assert (swapped != x.double()).sum().item() >= x.numel() - 2 * 32  # only the diagonals stay
 
 
+def test_tilize_and_untilize_must_permute_the_faces_each_its_own_way() -> None:
+    import torch
+
+    row = next(r for r in tensix.harness_rows() if r["op"] == "tilize")
+    x = tensix_harness.inputs(row)[0]
+    tiled = tensix_harness.reference("tilize", [x])
+
+    assert row["tol"] == 0.0
+    assert torch.equal(tensix_harness.reference("untilize", [tiled.float()]), x.double())
+    assert (tiled != x.double()).sum().item() > x.numel() // 2  # a plain copy fails
+    assert (tiled != tensix_harness.reference("untilize", [x])).sum().item() > x.numel() // 2  # so does the other one
+
+
+@pytest.mark.parametrize("op", ["tilize", "untilize"])
+def test_a_layout_answer_inits_once_and_calls_once_per_tile(op: str) -> None:
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    sut = ask(Request("tensix", op, {"x": Operand("tile_register", "bf16", (64, 32))}))
+
+    assert isinstance(sut, Feasible), sut
+    assert [s.count for s in sut.steps] == [1, 2] and sut.check.status == "run"
+
+
 def test_transpose_is_a_tensix_op_only() -> None:
     from alloy.isa.ask import Feasible, Invalid, Operand, Request, ask
 

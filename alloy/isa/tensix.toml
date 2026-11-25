@@ -443,3 +443,21 @@ init = { v06 = "transpose_wh_init(c0, c16)", v08 = "transpose_init(c0)" }
 call = { v06 = "transpose_wh_tile(c0, 0, 0)", v08 = "transpose_tile(c0, 0, 0)" }
 domain = [-8.0, 8.0]
 note = "Transposes one 32x32 tile (rows to columns) on its way from the CB into DST: the unpacker reads it transposed, so no separate copy_tile."
+
+[[ops.tilize]]
+kind = "layout"
+unit = "unpack"
+header = "tilize.h"
+init = "tilize_init(c0, 1, c16)"
+call = "tilize_block(c0, 1, c16)"
+domain = [-8.0, 8.0]
+note = "One row-major 32x32 block in CB c0 (32 rows of 32 elements) into one tile in CB c16, after cb_wait_front(c0, 1) and cb_reserve_back(c16, 1); the call acquires DST and packs itself, so no tile_regs_* and no pack_tile. A block of n tiles is n tiles side by side: tilize_init(c0, n, c16), tilize_block(c0, n, c16)."
+
+[[ops.untilize]]
+kind = "layout"
+unit = "pack"
+header = "pack_untilize.h"
+init = "pack_untilize_init<1, 1>(c0, c16)"
+call = "pack_untilize_block<1, 1>(c0, 1, c16)"
+domain = [-8.0, 8.0]
+note = "One tile in CB c0 into one row-major 32x32 block in CB c16 (32 rows of 32 elements), after cb_wait_front(c0, 1) and cb_reserve_back(c16, 1); the call acquires DST and packs itself. The template arguments are the block's and the full row's width in tiles; pack_untilize_uninit(c16) before the CB packs tiles again."

@@ -8,6 +8,11 @@
   answers `copy_tile` or `pack_tile`, and `transpose` (a Tensix op) `transpose_tile` (`transpose_wh_tile` on 0.6x);
   all three run on ttsim in f32 and bf16, the moves bit for bit. `python -m alloy.isa.tensix verify --ops ...` runs
   only those rows and keeps the others' records.
+- Tensix `tilize` and `untilize` rows (design T5): `tilize_block` turns a row-major 32x32 block in a circular buffer
+  into a tile, `pack_untilize_block` a tile into a row-major block; each runs on ttsim in f32 and bf16 bit for bit,
+  against a reference that permutes the tile's four faces, so a plain copy fails. `ask tensix tilize` answers one init
+  and one call per tile.
+- The alloy-isa plugin skill names the `rvv` target.
 - Math kernels compute the same rounding under every compiler and flag (review R3): the renderer writes each product an
   addition takes as one fused instruction, within a statement and across them, so `-ffp-contract` and gcc versus clang
   no longer change a kernel's result. Records are the worst over gcc and clang on AVX2 and AVX-512, NEON, SVE and RVV

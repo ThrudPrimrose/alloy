@@ -189,7 +189,7 @@ def spelled(value: str | dict[str, str], version: str) -> str:
 
 def tolerance(row: "Row", dtype: str) -> float:
     """The relative error a run of ``row`` may show: none for a move, which changes no bit; else per dtype."""
-    return 0.0 if row.kind == "move" else TOLERANCE[dtype]
+    return 0.0 if row.kind in ("move", "layout") else TOLERANCE[dtype]
 
 
 def harness_rows() -> list[Json]:

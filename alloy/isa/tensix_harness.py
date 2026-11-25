@@ -252,10 +252,40 @@ def reduction_compute(row: Json, new: bool) -> str:
 """
 
 
+def layout_compute(row: Json, new: bool) -> str:
+    """The compute kernel of a ``layout`` row (tilize, untilize): CB 0 to CB 16 a tile at a time; the call acquires DST,
+    copies, and packs itself, so the program has no tile_regs_* calls and no pack_tile."""
+    includes = "\n".join(f'#include "{h}"' for h in compute_headers(row, new))
+    entry = "void kernel_main()" if new else "namespace NAMESPACE {\nvoid MAIN"
+    close = "" if new else "}  // namespace NAMESPACE"
+    start = "compute_kernel_hw_startup(c0, c16);" if new else "init_sfpu(c0, c16);"
+    return f"""
+#include <cstdint>
+{includes}
+{entry} {{
+    uint32_t num_tiles = get_arg_val<uint32_t>(0);
+    constexpr auto c0 = tt::CBIndex::c_0;
+    constexpr auto c16 = tt::CBIndex::c_{OUT_CB};
+    {start}
+    {spelled(row["init"], new)};
+    for (uint32_t i = 0; i < num_tiles; ++i) {{
+        cb_wait_front(c0, 1);
+        cb_reserve_back(c16, 1);
+        {spelled(row["call"], new)};
+        cb_push_back(c16, 1);
+        cb_pop_front(c0, 1);
+    }}
+}}
+{close}
+"""
+
+
 def compute(row: Json, new: bool) -> str:
     """The compute kernel of ``row`` for tt-metal 0.8x (``new``) or 0.6x."""
     if row["kind"] == "matmul":
         return matmul_compute(row, new)
+    if row["kind"] == "layout":
+        return layout_compute(row, new)
     if row["kind"] == "reduction":
         return reduction_compute(row, new)
     includes = "\n".join(f'#include "{h}"' for h in compute_headers(row, new))
@@ -331,7 +361,7 @@ def inputs(row: Json) -> list["torch.Tensor"]:
     import torch
 
     lo, hi = row["domain"]
-    count = 1 if row["kind"] in ("unary", "fill", "move", "transpose") else 2
+    count = 1 if row["kind"] in ("unary", "fill", "move", "transpose", "layout") else 2
     base = torch.linspace(lo, hi, TILES * TILE, dtype=torch.float32)
     if row["kind"] == "matmul":  # A is one row of TILES K tiles (32 x 32 TILES), B one column of them
         return [base.reshape(32, TILES * 32), base.roll(97).reshape(TILES * 32, 32)]
@@ -363,10 +393,15 @@ def filled(call: str) -> float:
 
 
 #: The references of the rows that move a tile: a copy changes nothing; a transpose swaps each 32 x 32 tile's axes.
+#: Tilize reads the CB's tile bytes (faces 0 to 3, each 16 x 16 row-major) as one row-major 32 x 32 block and tiles
+#: it; untilize writes a tile's elements row-major, which the harness reads back as tile bytes: two different
+#: permutations of the four faces, and a plain copy matches neither.
 MOVES = {
     "load": lambda x: x,
     "store": lambda x: x,
     "transpose": lambda x: x.reshape(-1, 32, 32).transpose(1, 2).reshape(x.shape),
+    "tilize": lambda x: x.reshape(-1, 2, 16, 2, 16).permute(0, 1, 3, 2, 4).reshape(x.shape),
+    "untilize": lambda x: x.reshape(-1, 2, 2, 16, 16).permute(0, 1, 3, 2, 4).reshape(x.shape),
 }
 
 
