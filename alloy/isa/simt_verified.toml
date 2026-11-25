@@ -421,7 +421,7 @@ digest = "f29ec8796ddbb00f"
 op = "fma_f64"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA A100-SXM4-40GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
 digest = "8a5c6ec0795c4dba"
 
@@ -437,7 +437,7 @@ digest = "8a5c6ec0795c4dba"
 op = "reduce_add_f64"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA A100-SXM4-40GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 3.94746e-16
 digest = "6647ca1dc956aad4"
 
@@ -453,7 +453,7 @@ digest = "4e2fb34b958d6408"
 op = "reduce_min_f64"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA A100-SXM4-40GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
 digest = "a4f1c786f1825b59"
 
@@ -469,7 +469,7 @@ digest = "8d50c7b66671b6e8"
 op = "reduce_max_f64"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA A100-SXM4-40GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 0.0
 digest = "4dba045670790049"
 
@@ -485,7 +485,7 @@ digest = "02b0fcda643c75a6"
 op = "scan_add_f64"
 dialect = "cuda"
 ok = true
-basis = "ran on NVIDIA GeForce RTX 4050 Laptop GPU"
+basis = "ran on NVIDIA A100-SXM4-40GB; ran on NVIDIA GeForce RTX 4050 Laptop GPU"
 rel = 4.45831e-16
 digest = "7577372a9c64b11e"
 
