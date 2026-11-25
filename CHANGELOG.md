@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.4 (2026-11-25)
+
+- Release candidate: prune and fuse tests, shorten CI, fresh docs (cd85e64)
+- Tests, second pass: drop what a bigger test already proves (Tensix kernel-text tests ttsim runs; the 0.6x card spelling stays), reverse cases the exhaustive row tests cover, a CLI duplicate of the lookup refusal, a planted-row structure test its recorded run covers, and best/'s winner check test_api asserts; tag the df65f42 note and mod fixes as reproducers. 2018 -> 2000 cases (f7629e5)
+- Tests: per-row gates check a fixed sample (helpers.sample; the verify CLIs check every row), cheap table checks folded into one test each, harness-text tests a planted-bug test already covers dropped, three duplicate refusal tests merged; reproducers carry a '# Reproducer:' line (tests/README.md); mypy: test_mcpserver imports Mode from alloy.report. 4206 -> 2018 cases (1e4c00f)
+- Alloy as an MCP server: alloy-mcp (extra mcp) serves alloy_profile, alloy_speculative, alloy_reference, alloy_sweep and alloy_isa over stdio outside the bench; the judge and the server answer alloy_isa through alloy.isa.query (dca51e5)
+- SIMT verdicts: the five f64 CUDA rows ran on an A100 (ault25) (4aa2d3d)
+- SIMT verdicts: HIP rows ran on an MI50 (gfx906, ROCm 7.2); the five f64 rows (fma, reduce add/min/max, scan add) now run on hardware (94b15a2)
+- AMD GPU detection falls back to rocminfo when amdgpu-arch prints nothing (ROCm 7.2 on an MI50); SIMT rows compile for the detected gfx target, not native (290a339)
+- Fix CI lint: type the RVV compile flags and the move test's spaces; drop an unused test variable (0379427)
+- Tensix tilize and untilize rows (design T5): tilize_block and pack_untilize_block, bit for bit on ttsim in f32 and bf16 against a face-permuting reference; ask inits a layout row once; the alloy-isa plugin skill names rvv (665c350)
+- Complexity gate: the loop over a request's elements out of vector_op_1d (spanned) (af1d057)
+- ask rvv (T7): RVV answers any length as a vsetvl loop; reductions and scans run their whole program under qemu-riscv64 (tail-undisturbed accumulator, scalar carry) (992b3f2)
+- Complexity gate: Tensix op check, move bodies and move references out of answered, body and reference (a628ca6)
+- Tensix load, store and transpose rows (T5): CB to DST and back by copy_tile and pack_tile (bit for bit on ttsim, f32 and bf16), transpose_tile per tt-metal version; ask answers CB-DST copies and the transpose op; tensix verify --ops records chosen rows (e488fcd)
+- Math kernels fuse every product an addition takes, so each compiler and contraction flag computes the recorded rounding (review R3); records are the worst over gcc, clang, NEON, SVE and RVV, rounded up, and the gate holds them exactly on a prefix of the record's draws; RVV math kernels (293872a)
+- f64 device rows (T9): fma, reduce_add/min/max and scan_add in double on CUDA and HIP; the check program runs a row in its own precision on inputs past float's digits (float mutants fail); CUDA rows run on an RTX 4050, HIP compiled for gfx90a and gfx942 (fefa85e)
+- Answers over several registers run their whole program (review R12): a CPU reduction or scan hands out the N-element code with its combine, carry and SVE loop, and the check runs it against a scalar reference (planted wrong carries and combines fail); SVE min/max answers include math.h (e20e8a3)
+- Tensix reductions (review R12, C14): the largest input sits at row 17, column 4 of the first tile, so a program that reduces only the last tile or a tile's first face fails its ttsim check (it sat in the last element, where those pass) (67389b7)
+- SoftHier verdicts rerun on GVSoC after the NumPy NaN max/min fix (alloy 2c7f0de, ault 924422): 35/35 rows, 14/14 planted rows fail, identical to the 11-24 record (21268c6)
+- GPU register rows over N elements (T3): lane rows run N / lanes times per lane on coalesced indices, warp reductions fold each lane first then reduce once; N a whole multiple of the warp, else refused with the multiples around it; a multi-warp scan refusal names the carry recipe (2c7f0de)
+
 ## Unreleased
 
 - Alloy as an MCP server: `alloy-mcp` (extra `mcp`, module `alloy.mcpserver`) serves `alloy_profile`,
