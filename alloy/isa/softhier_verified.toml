@@ -1,6 +1,6 @@
 # Written by `python -m alloy.isa.softhier record` (or verify): every softhier.toml row run on GVSoC (simulated
 # SoftHier v1). [[planted]] are rows with one call changed on purpose (softhier.PLANTED): their runs must fail.
-run = "2026-11-24"
+run = "2026-11-25"
 base = "docker://gcc@sha256:8c0fe724784c6d617cb582f79ddaf5dd2233aaba2fb7a14e0b9d03348fea8088"
 gvsoc = "https://github.com/gvsoc/gvsoc.git a453fa09fe53ff306c91072066ea3ff559a0853a (config_tree d134f4100bffdc0de196f6672e005ff3b58ad083, core 4be5293a4976eea02d224e425493b755d46b1d15, engine 16dadd30d76a0aa2a33a85d3bdc52a75558a83c3, gvrun e9030b5b9aa963dd4e820ad71676cc984cc02ddb, gvtest 12cfe2c4a2ef527edabd0368b0c04d9bf06c522a, pulp 6a00247dc3c621d5979fcd6abfa0c39d889a3f6a, pulpos f216d7b8d830620b964187738089c95a29de44ae)"
 sdk = "https://github.com/pulp-platform/softhier-sdk.git c32f3eba212e5f44e9a65610836991729c0c58ce"
