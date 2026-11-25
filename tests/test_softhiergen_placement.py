@@ -261,12 +261,13 @@ def test_tasklet_on_a_placed_array_is_refused() -> None:
     sdfg.add_array("X", (4,), dace.float32)
     sdfg.add_array("Y", (4,), dace.float32)
     state = sdfg.add_state()
-    state.add_mapped_tasklet(
+    _, entry, _ = state.add_mapped_tasklet(
         "k", {"c": "0:4"}, {"x": Memlet("X[c]")}, "y = x", {"y": Memlet("Y[c]")}, external_edges=True
     )
+    entry.map.schedule = storage.DEVICE  # a kernel, as lower() schedules it (its front refuses a 4-element map)
     sdfg.arrays["X"].placement = place(4, lambda i: i % 4)
     with pytest.raises(LoweringError, match="placed array X"):
-        passes.lower(sdfg)
+        passes.check_placed_access(sdfg)
 
 
 def test_main_scatters_shares_into_node_sections_and_results_gather_them(tmp_path: pathlib.Path) -> None:

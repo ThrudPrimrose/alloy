@@ -22,6 +22,7 @@ from alloy.isa.ask import (
     Feasible,
     Infeasible,
     Invalid,
+    Layout,
     Operand,
     Request,
     Space,
@@ -836,10 +837,10 @@ def test_a_cpu_answers_data_of_two_or_more_dimensions_as_its_flattened_run_and_s
     ("scan_add", ("col_major", "col_major"), "a scan over column-major data"),
 ])  # fmt: skip
 def test_2d_cpu_data_without_one_run_of_elements_is_refused_with_the_transpose_fix(
-    op: str, layouts: tuple[str, str], why: str
+    op: str, layouts: tuple[Layout, Layout], why: str
 ) -> None:
     names = ("a", "b") if op == "add" else ("x",)
-    operands = {name: Operand("vector", "f32", (32, 32), layout) for name, layout in zip(names, layouts)}  # pyright: ignore[reportArgumentType] -- the parametrized layouts are Layout literals
+    operands = {name: Operand("vector", "f32", (32, 32), layout) for name, layout in zip(names, layouts)}
 
     sut = ask(Request("avx2", op, operands), verify=False)
 
