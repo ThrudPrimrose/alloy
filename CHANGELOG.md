@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- GPU register rows take N elements over one warp (T3): a lane row (`fma`, ...) runs N / lanes times per lane on
+  coalesced indices `i = lane + j * lanes`; a warp reduction folds each lane's values first, then reduces once; N must
+  be a whole multiple of the warp (32 on CUDA, 64 on CDNA), else refused with the multiples around it and a bounds-check
+  fix. A scan over several warps is refused with the carry recipe (it named the reduction recipe).
+
 ## 0.1.3 (2026-11-25)
 
 - Lookup layouts as index maps (dace-relayout >= 0.1.2, a new dependency): an operand's named layout and swizzle

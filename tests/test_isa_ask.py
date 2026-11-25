@@ -281,6 +281,8 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> 
     Request("gfx942", "copy", {"src": Operand("global", "f16", (128, 64)),
                                "dst": Operand("shared", "f16", (128, 64), "row_major", "xor:8")}),
     Request("sm90", "reduce_add", {"x": Operand("register", "f32", (1000,))}),
+    Request("sm90", "fma", {"a": Operand("register", "f32", (100,)), "b": Operand("register", "f32", (100,))}),
+    Request("gfx942", "fma", {"x": Operand("register", "f32", (96,))}),
     Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
     Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}),
     Request("sm90", "fma", {"x": Operand("register", "f64")}),
@@ -295,6 +297,40 @@ def test_every_nearest_request_of_a_refusal_is_itself_feasible(refused: Request)
         operands = {name: Operand.parse(text) for name, text in (part.split(" ", 1) for part in near.split(", "))}
         op = "mma" if refused.target == "sme" else refused.op
         assert isinstance(answered(Request(refused.target, op, operands)), Feasible), near
+
+
+@pytest.mark.parametrize(("target", "n", "runs"), [("sm90", 128, 4), ("gfx942", 128, 2), ("sm90", 32, 1)])
+def test_a_lane_row_over_whole_warps_runs_once_per_warp_of_elements_on_each_lane(
+    target: str, n: int, runs: int
+) -> None:
+    sut = answered(
+        Request(target, "fma", {"a": Operand("register", "f32", (n,)), "b": Operand("register", "f32", (n,))})
+    )
+
+    assert isinstance(sut, Feasible), sut
+    assert [step.count for step in sut.steps] == [runs]
+    assert all(step.spelling == "fmaf(a, b, c)" for step in sut.steps)
+
+
+@pytest.mark.parametrize(("target", "op", "fold"), [
+    ("sm90", "reduce_add", "v += x[i]"), ("gfx942", "reduce_max", "v = fmaxf(v, x[i])"),
+])  # fmt: skip
+def test_a_warp_reduction_over_whole_warps_folds_each_lane_first_then_reduces_once(
+    target: str, op: str, fold: str
+) -> None:
+    lanes = 64 if target == "gfx942" else 32
+    sut = answered(Request(target, op, {"x": Operand("register", "f32", (3 * lanes,))}))
+
+    assert isinstance(sut, Feasible), sut
+    assert [(step.spelling, step.count) for step in sut.steps][0] == (fold, 2)
+    assert sut.steps[1].count == 1 and "shfl" in sut.steps[1].spelling
+
+
+def test_a_scan_over_several_warps_is_refused_with_the_carry_recipe() -> None:
+    sut = answered(Request("sm90", "scan_add", {"x": Operand("register", "f32", (96,))}))
+
+    assert isinstance(sut, Infeasible)
+    assert "carry" in sut.fix and "reduce each warp" not in sut.fix and sut.block == ()
 
 
 def test_a_tile_program_that_fails_its_check_is_infeasible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1399,7 +1435,7 @@ def test_a_math_answer_names_the_other_rungs_so_a_tighter_bound_can_ask_for_one(
 
 
 @pytest.mark.parametrize(("target", "lanes"), [("sm90", 32), ("gfx942", 64)])
-def test_a_warp_reduction_takes_one_value_per_lane_and_refuses_a_longer_one_with_the_block_recipe(
+def test_a_warp_reduction_takes_whole_warps_and_refuses_another_length_with_the_block_recipe(
     target: str, lanes: int
 ) -> None:
     one = ask(Request(target, "reduce_add", {"x": Operand("register", "f32", (lanes,))}), verify=False)
@@ -1407,7 +1443,8 @@ def test_a_warp_reduction_takes_one_value_per_lane_and_refuses_a_longer_one_with
 
     assert isinstance(one, Feasible), one
     assert isinstance(longer, Infeasible) and longer.why is Why.SHAPE and "shared memory" in longer.fix
-    assert f"x register:f32:{lanes}" in longer.nearest
+    below = 1000 - 1000 % lanes
+    assert longer.nearest[:2] == (f"x register:f32:{below}", f"x register:f32:{below + lanes}")
 
 
 def test_an_instruction_name_points_at_its_operation_and_an_unknown_name_at_no_unrelated_row() -> None:

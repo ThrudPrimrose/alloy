@@ -220,10 +220,6 @@
         "complexity": 19
       },
       {
-        "name": "off_register",
-        "complexity": 19
-      },
-      {
         "name": "vector_op_1d",
         "complexity": 21
       },

@@ -976,10 +976,13 @@ def thread_op(request: Request) -> Answer:
     spelling = row.spelled(dialect)
     check = Check("unverified") if verdict is None else Check("run" if verdict.ok else "compiled", verdict.basis)
     unit = ("wave" if dialect == "hip" else "warp") if row.kind == "warp" else "thread"  # a CDNA warp is a wavefront
-    spread = (f"{count * per_thread(row)} elements: {count} threads, {per_thread(row)} each",) if count > 1 else ()
+    laid = thread_steps(request, row, dialect, Step(unit, spelling, count))
+    if isinstance(laid, Infeasible):
+        return laid
+    steps, spread = laid
     notes = (*((row.note,) if row.note else ()), *spread, simt.bindings(dialect))
     setup = {"build": gpu_build(request.target)}
-    return Feasible(request, unit, (Step(unit, spelling, count),), setup, row_code(row, dialect), check, notes)
+    return Feasible(request, unit, steps, setup, row_code(row, dialect), check, notes)
 
 
 #: Lanes of a warp (CUDA) or a wavefront (CDNA, wave64).
@@ -989,19 +992,36 @@ BLOCK_REDUCTION = ("reduce each warp with this row, write lane 0's result to sha
                    "those partials with the row again in the first warp; across blocks, atomicAdd the block results "
                    "or launch a second pass")  # fmt: skip
 
+#: How a scan longer than one warp finishes: each warp scans its values, then carries its last lane into the next.
+WARP_SCAN_CARRY = ("scan each warp's values with this row, then add the previous warps' totals: broadcast each warp's "
+                   "last lane (__shfl_sync from lane lanes - 1), keep a running carry, and add it to every lane of the "
+                   "next warp")  # fmt: skip
+
+
+def warp_shape(request: Request, row: simt.Row, dialect: str) -> Infeasible | None:
+    """The refusal of a warp row's 1-D register operand that is not one warp, or (for a reduction) a whole multiple of
+    one; None."""
+    lanes = WARP_LANES[dialect]
+    reduction = row.op in REDUCTIONS
+    lengths = [o.shape[0] for o in request.operands.values() if o.space == "register" and len(o.shape) == 1]
+    wrong = [n for n in lengths if n != lanes and not (reduction and n % lanes == 0)]
+    if not wrong:
+        return None
+    n, group = wrong[0], "wavefront" if dialect == "hip" else "warp"
+    multiples = around(n, lanes) if reduction else (lanes,)
+    taken = " or a whole multiple" if reduction else ""
+    return no(request, Why.SHAPE, f"the {request.op} row combines one register per lane of a {group}: {lanes} values "
+              f"on {request.target}{taken}, not {n}", *(spell(x=Operand("register", row.dtype, (m,))) for m in multiples),
+              spell(x=Operand("register", row.dtype)), fix=BLOCK_REDUCTION if reduction else WARP_SCAN_CARRY,
+              block=(lanes,) if reduction else ())  # fmt: skip
+
 
 def off_register(request: Request, row: simt.Row, dialect: str) -> Infeasible | None:
     """The refusal of an operand that is no scalar in a register, for a SIMT row that computes on registers, or of a
     warp row's operand longer or shorter than one warp; None."""
     scalar = Operand("register", row.dtype)
-    lanes = WARP_LANES[dialect]
-    for operand in request.operands.values():
-        if row.kind == "warp" and operand.space == "register" and len(operand.shape) == 1 and operand.shape != (lanes,):
-            group = "wavefront" if dialect == "hip" else "warp"
-            return no(request, Why.SHAPE, f"the {request.op} row combines one register per lane of a {group}: "
-                      f"{lanes} values on {request.target}, not {operand.shape[0]}",
-                      spell(x=Operand("register", row.dtype, (lanes,))), spell(x=scalar), fix=BLOCK_REDUCTION,
-                      block=(lanes,))  # fmt: skip
+    if row.kind == "warp" and (refused := warp_shape(request, row, dialect)):
+        return refused
     for operand in request.operands.values():
         if len(operand.shape) >= 2 or operand.swizzle != "none":
             return no(request, Why.SHAPE, f"{request.op} is a row of one thread on scalars; a tile is an mma or "
@@ -1012,6 +1032,62 @@ def off_register(request: Request, row: simt.Row, dialect: str) -> Infeasible | 
             return no(request, Why.SPACE, f"the {request.op} row computes on {held}, not on {operand.space} "
                       "memory", spell(x=scalar), fix="load the value into a register first")  # fmt: skip
     return None
+
+
+#: How one lane folds its next value ``x[i]`` into its register ``v`` before a warp reduction.
+LANE_COMBINE = {"reduce_add": "v += x[i]", "reduce_min": "v = fminf(v, x[i])", "reduce_max": "v = fmaxf(v, x[i])"}
+
+
+def around(n: int, block: int) -> tuple[int, ...]:
+    """The whole multiples of ``block`` next to ``n``: the one below (when there is one) and the one above."""
+    below = n - n % block
+    return tuple(m for m in (below, below + block) if m)
+
+
+def thread_steps(
+    request: Request, row: simt.Row, dialect: str, step: Step
+) -> tuple[tuple[Step, ...], tuple[str, ...]] | Infeasible:
+    """The steps of a SIMT row and the note on how they spread: a move over ``step.count`` threads, or a register row
+    over the warp (:func:`over_warp`)."""
+    if moves(row):
+        count = step.count
+        return (step,), (
+            (f"{count * per_thread(row)} elements: {count} threads, {per_thread(row)} each",) if count > 1 else ()
+        )
+    return over_warp(request, row, dialect, step)
+
+
+def over_warp(
+    request: Request, row: simt.Row, dialect: str, step: Step
+) -> tuple[tuple[Step, ...], tuple[str, ...]] | Infeasible:
+    """A register row over N elements (design T3): the elements spread over one warp's lanes, lane ``l`` taking
+    ``i = l + j * lanes`` so the warp's accesses coalesce. A lane row runs N / lanes times on each lane; a warp
+    reduction first folds each lane's N / lanes values in its register, then runs once. N must be a whole multiple of
+    the warp (32 on CUDA, 64 on CDNA); one element, or none named, is one thread's scalar."""
+    shapes = {o.shape for o in request.operands.values() if o.shape}
+    if not shapes:
+        return (step,), ()
+    if len(shapes) > 1:
+        return no(request, Why.SHAPE, f"the operands of {request.op} share one shape; got "
+                  f"{', '.join(str(s) for s in sorted(shapes))}", spell(x=Operand("register", row.dtype)))  # fmt: skip
+    n = math.prod(next(iter(shapes)))
+    lanes = WARP_LANES[dialect]
+    group = "wavefront" if dialect == "hip" else "warp"
+    if n == 1 or (row.kind == "warp" and n == lanes):
+        return (step,), ()
+    if n % lanes:
+        return no(request, Why.SHAPE, f"{n} {row.dtype} elements are not a whole multiple of the {lanes} lanes of a "
+                  f"{group} on {request.target}",
+                  *(spell(x=Operand("register", row.dtype, (m,))) for m in around(n, lanes)), block=(lanes,),
+                  fix=f"guard the last {group}'s lanes with a bounds check (if (i < n)), or pad the data")  # fmt: skip
+    k = n // lanes
+    spread = f"lane l takes i = l + j * {lanes} for j < {k}, so each {group} access coalesces"
+    if row.kind == "warp":
+        note = (f"{n} elements over one {group}: each lane folds its {k} values ({spread}) in its register, then the "
+                "row runs once; the values combine in another order than a scalar left fold")  # fmt: skip
+        return (Step(step.unit, LANE_COMBINE[row.op], k - 1), step), (note,)
+    note = f"{n} elements over one {group}: each lane runs the row {k} times ({spread})"
+    return (Step(step.unit, step.spelling, k),), (note,)
 
 
 def row_code(row: simt.Row, dialect: str) -> str:
