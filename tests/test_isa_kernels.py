@@ -73,7 +73,7 @@ def test_an_avx512_kernel_builds_whatever_the_host_can_run(
     assert sut.returncode == 0, sut.stderr
 
 
-@pytest.mark.parametrize("isa", ["neon", "sve"])
+@pytest.mark.parametrize("isa", ["neon", "sve", "rvv"])
 @pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
 def test_a_kernel_holds_on_the_arm_targets_or_at_least_builds(fn: str, dtype: str, level: str, isa: str) -> None:
     """Under qemu it reproduces its recorded error; without it, the cross compiler must take it."""
@@ -512,3 +512,43 @@ def test_the_advice_for_pow_says_its_recommended_kernel_steps_down_under_reassoc
     assert "take relaxed where the inputs hold its contract" in sut
     assert "under reassociation relaxed does not compile: take the next rung down" in sut
     assert "does not compile" not in kernel_summary("avx2", "f64", "exp", "relaxed")
+
+
+class Spelling(Renderer):
+    """A renderer whose every call spells its primitive's name, so the rendered expression parses as Python."""
+
+    def call(self, op: str, *args: str) -> str:
+        return f"{op}({', '.join(args)})"
+
+
+@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+def test_a_rendered_kernel_leaves_no_product_for_a_compiler_to_contract(fn: str, dtype: str, level: str) -> None:
+    """Review R3: every product an addition takes is a fused primitive in the source, so gcc's -ffp-contract=fast,
+    clang's default and -ffp-contract=off all compute the rounding the record was measured with. A named product
+    stays only where a use is no addition (the error term of a double word: an fms reads it)."""
+    import ast
+    import re
+
+    from alloy.isa.mathkernels import contracted
+
+    k = kernel(fn, dtype, level)
+    r = Spelling("avx512", dtype)
+    rendered = {t: ast.parse(re.sub(r"(\d)(f|LL)\b", r"\1", r.expr(node)), mode="eval").body
+                for t, node in contracted(k.body, frozenset({k.result, *k.guard.split()}))}  # fmt: skip
+    calls = [n for root in rendered.values() for n in ast.walk(root) if isinstance(n, ast.Call)]
+    summing = [c for c in calls if ast.unparse(c.func) in ("add", "sub")]
+
+    def product(arg: ast.expr) -> bool:
+        return isinstance(arg, ast.Call) and ast.unparse(arg.func) == "mul"
+
+    assert not any(product(arg) for c in summing for arg in c.args)
+    for target, root in rendered.items():
+        uses = [c for c in calls for arg in c.args if isinstance(arg, ast.Name) and arg.id == target]
+        assert not (product(root) and uses and all(c in summing for c in uses)), target
+
+
+def test_the_gate_holds_a_kernel_to_its_record_without_slack() -> None:
+    k = kernel("exp", "f64", "relaxed")
+
+    assert judged(k, Measured(k.error_ulp, 0.0, 0.0, 0.0, 0), "").ok
+    assert not judged(k, Measured(k.error_ulp * 1.01, 0.0, 0.0, 0.0, 0), "").ok

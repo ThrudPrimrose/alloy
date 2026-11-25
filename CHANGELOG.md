@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Math kernels compute the same rounding under every compiler and flag (review R3): the renderer writes each product an
+  addition takes as one fused instruction, within a statement and across them, so `-ffp-contract` and gcc versus clang
+  no longer change a kernel's result. Records are the worst over gcc and clang on AVX2 and AVX-512, NEON, SVE and RVV
+  under qemu, and every f32 input of the exhaustive kernels, rounded up; the gate holds a kernel to its record exactly
+  (it allowed 1.5x) on a prefix of the record's draws. Up to 1.12x on 86 records, lower on 40.
+- RVV math kernels: the 180 ladder kernels on RISC-V V 1.0 at LMUL 1 (`kernel rvv ...`), each within its record
+  under qemu-riscv64.
 - f64 device rows (design T9): `fma`, `reduce_add`, `reduce_min`, `reduce_max` and `scan_add` in double on CUDA and HIP,
   each checked on inputs with digits past float's (a row that rounds through float fails); run on CUDA, HIP pending.
 - A CPU reduction or scan over several registers (any length on SVE) hands out the whole N-element program, the

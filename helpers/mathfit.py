@@ -11,6 +11,7 @@ import dataclasses
 import json
 import math
 import re
+import shutil
 import struct
 import sys
 from collections.abc import Callable
@@ -19,9 +20,9 @@ from typing import Any
 import mpmath as mp
 
 from alloy.isa.mathcheck import measure, measure_exhaustive
-from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, RUNGS, Grid, Kernel
+from alloy.isa.mathkernels import KERNELS_PATH, LEVELS, RUNGS, Grid, Kernel, functions, ladder
 from alloy.isa.table import DEFAULT_PATH, load
-from alloy.isa.validate import tier_error
+from alloy.isa.validate import emulated, tier_error
 from alloy.jsontype import Json
 
 #: mpmath's ``mpf`` is an attribute of its default context, not a class a type can name.
@@ -717,13 +718,29 @@ def distinct(fn: str, dtype: str) -> list[Kernel]:
     return [named["strict"], named["relaxed"], *renamed, named["fast"]]
 
 
+#: The x86 compilers a record is measured under, each one the host has: the gate re-measures with whichever it finds.
+COMPILERS = ("gcc", "clang")
+
+
 def measured(k: Kernel) -> tuple[Kernel, float, float, int]:
-    results = [m for isa in ("avx2", "avx512") if (m := measure(k, isa)) is not None]
+    """The kernel's worst error over every build the gate can run: AVX2 and AVX-512 under each compiler, NEON, SVE and
+    RVV under qemu when the host has it, and every f32 input under each compiler for an exhaustive kernel."""
+    x86 = [cc for cc in COMPILERS if shutil.which(cc)]
+    results = [m for isa in ("avx2", "avx512") for cc in x86 if (m := measure(k, isa, cc=cc)) is not None]
     if not results:
         raise RuntimeError("this host runs neither AVX2 nor AVX-512")
-    if k.exhaustive and (every := measure_exhaustive(k, "avx2")) is not None:
-        results.append(every)
+    results += [m for isa in ("neon", "sve", "rvv") if emulated(isa) and (m := measure(k, isa)) is not None]
+    if k.exhaustive:
+        results += [m for cc in x86 if (m := measure_exhaustive(k, "avx2", cc=cc)) is not None]
     return k, max(m.ulp for m in results), max(m.abs for m in results), max(m.special for m in results)
+
+
+def rounded_up(value: float) -> str:
+    """``value`` at four significant digits and never below it, so a re-measurement never exceeds its record."""
+    if value <= 0 or not math.isfinite(value):
+        return f"{value:.4g}"
+    step = 10.0 ** (math.floor(math.log10(value)) - 3)
+    return f"{math.ceil(value / step) * step:.4g}"
 
 
 def toml_entry(k: Kernel, ulp: float, abs_err: float) -> str:
@@ -731,8 +748,8 @@ def toml_entry(k: Kernel, ulp: float, abs_err: float) -> str:
     lines += [f"args = {json.dumps(list(k.args))}", f"result = {json.dumps(k.result)}"]
     if k.guard:
         lines.append(f"guard = {json.dumps(k.guard)}")
-    lines += [f"contract = {json.dumps(k.contract)}", f"error_ulp = {ulp:.4g}"]
-    lines.append(f"error_abs = {abs_err:.4g}")
+    lines += [f"contract = {json.dumps(k.contract)}", f"error_ulp = {rounded_up(ulp)}"]
+    lines.append(f"error_abs = {rounded_up(abs_err)}")
     if k.exhaustive:
         lines.append("exhaustive = true")
     if k.specials:
@@ -828,9 +845,39 @@ def refit_tiers() -> int:
     return 0
 
 
+def raised(isa: str) -> int:
+    """Every recorded kernel re-measured on ``isa`` (run here or under qemu): a record ``isa`` exceeds is raised to
+    it; bodies and every other field stay as they are. For an ISA whose toolchain lives elsewhere than the full fit's
+    (RVV in a cross-compiler container)."""
+    text = KERNELS_PATH.read_text()
+    kernels = [k for fn in functions() for dtype in ("f64", "f32") for k in ladder(fn, dtype)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        seen = list(pool.map(lambda k: measure(k, isa), kernels))
+    for k, m in zip(kernels, seen, strict=True):
+        if m is None:
+            raise RuntimeError(f"this host runs neither {isa} nor its emulator")
+        if m.special:
+            raise RuntimeError(f"{k.name} on {isa}: {m.special} special values off libm")
+        head = f"[{k.fn}.{k.dtype}.{k.level}]\n"
+        start = text.index(head)
+        end = text.find("\n[", start + len(head))
+        section = text[start : end if end >= 0 else len(text)]
+        for field, value, record in (("error_ulp", m.ulp, k.error_ulp), ("error_abs", m.abs, k.error_abs)):
+            if value > record:
+                section = re.sub(
+                    rf"^{field} = .*$", f"{field} = {rounded_up(value)}", section, count=1, flags=re.MULTILINE
+                )
+                print(f"{k.name:28} {field} {record:.4g} -> {rounded_up(value)} on {isa}")
+        text = text[:start] + section + text[start + len(section) :]
+    KERNELS_PATH.write_text(text)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if argv == ["tiers"]:
         return refit_tiers()
+    if argv[:1] == ["--isa"]:
+        return raised(argv[1])
     exhaustive = "--exhaustive" in argv
     argv = [arg for arg in argv if arg != "--exhaustive"]
     only = argv or list(PROGRAMS)

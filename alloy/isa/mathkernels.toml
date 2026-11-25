@@ -5,8 +5,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 2.579
-error_abs = 2.863e-16
+error_ulp = 2.605
+error_abs = 2.893e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -37,8 +37,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 1.611
-error_abs = 2.22e-16
+error_ulp = 1.551
+error_abs = 2.221e-16
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -59,8 +59,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 3.093
-error_abs = 3.434e-16
+error_ulp = 3.064
+error_abs = 3.402e-16
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -81,8 +81,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 616.8
-error_abs = 6.861e-14
+error_ulp = 617
+error_abs = 6.862e-14
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -126,7 +126,7 @@ result = "v"
 guard = "ok"
 contract = "finite, |x| <= 8192"
 error_ulp = 2.979
-error_abs = 1.775e-07
+error_abs = 1.776e-07
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
@@ -159,7 +159,7 @@ args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
 error_ulp = 1.8
-error_abs = 1.25e-07
+error_abs = 1.251e-07
 exhaustive = true
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -204,7 +204,7 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
-error_ulp = 687.9
+error_ulp = 688
 error_abs = 1.224e-06
 exhaustive = true
 grids = [
@@ -227,8 +227,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 2.623
-error_abs = 2.912e-16
+error_ulp = 2.609
+error_abs = 2.897e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -259,8 +259,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 1.617
-error_abs = 2.22e-16
+error_ulp = 1.714
+error_abs = 2.221e-16
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -281,8 +281,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 3.119
-error_abs = 3.462e-16
+error_ulp = 2.98
+error_abs = 3.309e-16
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -304,7 +304,7 @@ args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
 error_ulp = 617
-error_abs = 6.861e-14
+error_abs = 6.862e-14
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -325,7 +325,7 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 2.12e+05
+error_ulp = 2.119e+05
 error_abs = 2.355e-11
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -380,8 +380,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
-error_ulp = 1.79
-error_abs = 1.25e-07
+error_ulp = 1.791
+error_abs = 1.251e-07
 exhaustive = true
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -403,7 +403,7 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
-error_ulp = 20.48
+error_ulp = 20.49
 error_abs = 1.221e-06
 exhaustive = true
 grids = [
@@ -426,7 +426,7 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
-error_ulp = 687.9
+error_ulp = 688
 error_abs = 1.221e-06
 exhaustive = true
 grids = [
@@ -449,7 +449,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 1.712
+error_ulp = 1.639
 error_abs = 0.4512
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
@@ -482,8 +482,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 3.604
-error_abs = 0.9819
+error_ulp = 3.775
+error_abs = 0.9823
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -505,8 +505,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 291.7
-error_abs = 0.9819
+error_ulp = 291
+error_abs = 0.9823
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -528,8 +528,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 4084
-error_abs = 0.9819
+error_ulp = 4073
+error_abs = 0.9823
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -551,8 +551,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 8.024e+05
-error_abs = 0.9819
+error_ulp = 8.009e+05
+error_abs = 0.9823
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1048576.0, hi = 1048576.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -574,7 +574,7 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, |x| <= 1.04858e+06"
-error_ulp = 1.586e+08
+error_ulp = 1.584e+08
 error_abs = 1.133e+05
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -597,7 +597,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 8192"
-error_ulp = 1.74
+error_ulp = 1.741
 error_abs = 11.32
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
@@ -632,7 +632,7 @@ args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
 error_ulp = 2.753
-error_abs = 4.877
+error_abs = 4.878
 exhaustive = true
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -656,7 +656,7 @@ args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
 error_ulp = 5.853
-error_abs = 4.877
+error_abs = 4.878
 exhaustive = true
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -680,7 +680,7 @@ args = ["x"]
 result = "f"
 contract = "finite, |x| <= 8192"
 error_ulp = 61.22
-error_abs = 4.877
+error_abs = 4.878
 exhaustive = true
 grids = [
   { lo = -1.6, hi = 1.6, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -727,8 +727,8 @@ args = ["x"]
 result = "e"
 guard = "ok"
 contract = "finite, |x| <= 700"
-error_ulp = 0.814
-error_abs = 4.882e+288
+error_ulp = 0.8418
+error_abs = 4.991e+291
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -752,8 +752,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 700"
-error_ulp = 0.8784
-error_abs = 7.221e+287
+error_ulp = 0.9141
+error_abs = 7.905e+287
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -774,8 +774,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 700"
-error_ulp = 3.149
-error_abs = 3.157e+288
+error_ulp = 3.173
+error_abs = 3.337e+288
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -796,8 +796,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 700"
-error_ulp = 9582
-error_abs = 1.167e+292
+error_ulp = 9583
+error_abs = 1.138e+292
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -819,7 +819,7 @@ args = ["x"]
 result = "e"
 contract = "finite, |x| <= 700"
 error_ulp = 4.469e+05
-error_abs = 5.414e+293
+error_abs = 5.367e+293
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -841,7 +841,7 @@ args = ["x"]
 result = "e"
 contract = "finite, |x| <= 700"
 error_ulp = 2.426e+07
-error_abs = 2.94e+295
+error_abs = 2.886e+295
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -863,7 +863,7 @@ args = ["x"]
 result = "e"
 guard = "ok"
 contract = "finite, |x| <= 87"
-error_ulp = 0.879
+error_ulp = 0.8791
 error_abs = inf
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
@@ -889,7 +889,7 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 87"
-error_ulp = 0.8903
+error_ulp = 0.8904
 error_abs = 3.817e+30
 exhaustive = true
 grids = [
@@ -913,7 +913,7 @@ args = ["x"]
 result = "e"
 contract = "finite, |x| <= 87"
 error_ulp = 2.255
-error_abs = 9.713e+30
+error_abs = 9.714e+30
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -935,8 +935,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 87"
-error_ulp = 72.83
-error_abs = 3.067e+32
+error_ulp = 72.84
+error_abs = 3.068e+32
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -959,8 +959,8 @@ args = ["x"]
 result = "e"
 guard = "ok"
 contract = "finite, |x| <= 1009.9"
-error_ulp = 0.8662
-error_abs = 6.953e+287
+error_ulp = 0.8682
+error_abs = 8.929e+287
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -981,8 +981,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 1009.9"
-error_ulp = 0.9717
-error_abs = 7.411e+287
+error_ulp = 0.9836
+error_abs = 1.007e+288
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1001,7 +1001,7 @@ args = ["x"]
 result = "e"
 contract = "finite, |x| <= 1009.9"
 error_ulp = 2.657
-error_abs = 2.407e+288
+error_abs = 2.716e+288
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1019,7 +1019,7 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 1009.9"
-error_ulp = 7503
+error_ulp = 7504
 error_abs = 8.07e+291
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1038,8 +1038,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 1009.9"
-error_ulp = 4.001e+05
-error_abs = 4.729e+293
+error_ulp = 4.002e+05
+error_abs = 4.641e+293
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1057,8 +1057,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 1009.9"
-error_ulp = 1.753e+07
-error_abs = 2.134e+295
+error_ulp = 1.754e+07
+error_abs = 2.135e+295
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -1009.8865286222745, hi = 1009.8865286222745, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1100,8 +1100,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 125.51"
-error_ulp = 2.107
-error_abs = 8.302e+30
+error_ulp = 2.108
+error_abs = 8.303e+30
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1120,7 +1120,7 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 125.51"
-error_ulp = 44.95
+error_ulp = 44.96
 error_abs = 1.682e+32
 exhaustive = true
 grids = [
@@ -1141,8 +1141,8 @@ args = ["x"]
 result = "e"
 guard = "ok"
 contract = "finite, |x| <= 304.01"
-error_ulp = 1.103
-error_abs = 1.005e+288
+error_ulp = 1.08
+error_abs = 1.026e+288
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1163,8 +1163,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 304.01"
-error_ulp = 1.025
-error_abs = 1.005e+288
+error_ulp = 1.018
+error_abs = 7.804e+287
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1182,8 +1182,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 304.01"
-error_ulp = 2.737
-error_abs = 2.781e+288
+error_ulp = 2.713
+error_abs = 2.523e+288
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1201,7 +1201,7 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 304.01"
-error_ulp = 7503
+error_ulp = 7504
 error_abs = 8.07e+291
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1220,8 +1220,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 304.01"
-error_ulp = 4.001e+05
-error_abs = 4.729e+293
+error_ulp = 4.002e+05
+error_abs = 4.641e+293
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1239,8 +1239,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 304.01"
-error_ulp = 1.753e+07
-error_abs = 2.134e+295
+error_ulp = 1.754e+07
+error_abs = 2.135e+295
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -304.00613733227624, hi = 304.00613733227624, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1282,8 +1282,8 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 37.784"
-error_ulp = 2.188
-error_abs = 8.488e+30
+error_ulp = 2.189
+error_abs = 8.489e+30
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1302,7 +1302,7 @@ body = [
 args = ["x"]
 result = "e"
 contract = "finite, |x| <= 37.784"
-error_ulp = 45
+error_ulp = 45.01
 error_abs = 1.684e+32
 exhaustive = true
 grids = [
@@ -1323,8 +1323,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, -40 <= x <= 700"
-error_ulp = 1.459
-error_abs = 7.976e+287
+error_ulp = 1.438
+error_abs = 7.307e+287
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1350,8 +1350,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, -40 <= x <= 700"
-error_ulp = 1.655
-error_abs = 9.731e+287
+error_ulp = 1.625
+error_abs = 7.549e+287
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1374,8 +1374,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, -40 <= x <= 700"
-error_ulp = 16.84
-error_abs = 4.697e+288
+error_ulp = 16.76
+error_abs = 4.581e+288
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1398,8 +1398,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, -40 <= x <= 700"
-error_ulp = 878.7
-error_abs = 2.607e+290
+error_ulp = 879
+error_abs = 2.659e+290
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1422,8 +1422,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, -40 <= x <= 700"
-error_ulp = 5.622e+04
-error_abs = 1.712e+292
+error_ulp = 5.623e+04
+error_abs = 1.646e+292
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1447,7 +1447,7 @@ args = ["x"]
 result = "f"
 contract = "finite, -40 <= x <= 700"
 error_ulp = 2.508e+06
-error_abs = 7.631e+293
+error_abs = 6.479e+293
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1500,7 +1500,7 @@ args = ["x"]
 result = "f"
 contract = "finite, -18 <= x <= 87"
 error_ulp = 1.565
-error_abs = 4.133e+30
+error_abs = 4.134e+30
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1524,8 +1524,8 @@ body = [
 args = ["x"]
 result = "f"
 contract = "finite, -18 <= x <= 87"
-error_ulp = 9.483
-error_abs = 1.25e+31
+error_ulp = 9.484
+error_abs = 1.251e+31
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1550,8 +1550,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, positive, normal"
-error_ulp = 0.8379
-error_abs = 7.4e-17
+error_ulp = 0.8558
+error_abs = 1.395e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1575,8 +1575,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 0.8379
-error_abs = 7.4e-17
+error_ulp = 0.8558
+error_abs = 1.395e-16
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1598,8 +1598,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 2.347
-error_abs = 1.182e-16
+error_ulp = 2.316
+error_abs = 1.858e-16
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1622,7 +1622,7 @@ args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
 error_ulp = 276.1
-error_abs = 1.43e-14
+error_abs = 1.431e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1645,7 +1645,7 @@ args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
 error_ulp = 3.632e+04
-error_abs = 1.705e-12
+error_abs = 1.706e-12
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1667,8 +1667,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 7.434e+06
-error_abs = 2.676e-10
+error_ulp = 7.435e+06
+error_abs = 2.677e-10
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1691,7 +1691,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, positive, normal"
-error_ulp = 0.8973
+error_ulp = 0.8974
 error_abs = 3.841e-06
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
@@ -1718,7 +1718,7 @@ args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
 error_ulp = 0.9108
-error_abs = 3.84e-06
+error_abs = 3.841e-06
 exhaustive = true
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1766,7 +1766,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, positive, normal"
-error_ulp = 1.225
+error_ulp = 1.238
 error_abs = 5.69e-14
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
@@ -1794,7 +1794,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 1.225
+error_ulp = 1.18
 error_abs = 5.69e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -1820,8 +1820,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 2.62
-error_abs = 5.695e-14
+error_ulp = 2.634
+error_abs = 5.691e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1873,7 +1873,7 @@ args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
 error_ulp = 4.464e+04
-error_abs = 2.436e-12
+error_abs = 2.438e-12
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1898,8 +1898,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 6.955e+06
-error_abs = 3.861e-10
+error_ulp = 6.956e+06
+error_abs = 3.862e-10
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -1925,7 +1925,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, positive, normal"
-error_ulp = 1.374
+error_ulp = 1.375
 error_abs = 7.63e-06
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
@@ -1954,7 +1954,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 1.374
+error_ulp = 1.375
 error_abs = 3.85e-06
 exhaustive = true
 grids = [
@@ -1981,8 +1981,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 3.384
-error_abs = 3.901e-06
+error_ulp = 3.385
+error_abs = 3.902e-06
 exhaustive = true
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2009,8 +2009,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, positive, normal"
-error_ulp = 1.144
-error_abs = 2.845e-14
+error_ulp = 1.202
+error_abs = 2.844e-14
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2037,8 +2037,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 1.144
-error_abs = 2.845e-14
+error_ulp = 1.202
+error_abs = 2.844e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -2063,8 +2063,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 2.562
-error_abs = 2.845e-14
+error_ulp = 2.561
+error_abs = 2.848e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -2089,8 +2089,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 278.9
-error_abs = 3.286e-14
+error_ulp = 278.6
+error_abs = 3.253e-14
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -2115,8 +2115,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 4.381e+04
-error_abs = 7.438e-13
+error_ulp = 4.382e+04
+error_abs = 7.443e-13
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "logp", ylo = 0.0, yhi = 0.0 },
@@ -2197,8 +2197,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, positive, normal"
-error_ulp = 1.404
-error_abs = 9.705e-07
+error_ulp = 1.405
+error_abs = 9.706e-07
 exhaustive = true
 grids = [
   { lo = 0.5, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2252,8 +2252,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, x > -1"
-error_ulp = 0.8315
-error_abs = 1.804e-15
+error_ulp = 0.837
+error_abs = 1.812e-15
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2280,8 +2280,8 @@ body = [
 args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
-error_ulp = 0.8774
-error_abs = 1.804e-15
+error_ulp = 0.8364
+error_abs = 1.812e-15
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -2305,8 +2305,8 @@ body = [
 args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
-error_ulp = 2.337
-error_abs = 1.834e-15
+error_ulp = 2.342
+error_abs = 1.85e-15
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -2330,8 +2330,8 @@ body = [
 args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
-error_ulp = 276.2
-error_abs = 1.429e-14
+error_ulp = 276.1
+error_abs = 1.43e-14
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -2356,7 +2356,7 @@ args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
 error_ulp = 3.632e+04
-error_abs = 1.705e-12
+error_abs = 1.706e-12
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -2380,8 +2380,8 @@ body = [
 args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
-error_ulp = 7.434e+06
-error_abs = 2.676e-10
+error_ulp = 7.435e+06
+error_abs = 2.677e-10
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 0.5, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -2407,7 +2407,7 @@ result = "v"
 guard = "ok"
 contract = "finite, x > -1"
 error_ulp = 0.9651
-error_abs = 3.84e-06
+error_abs = 3.841e-06
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
@@ -2436,7 +2436,7 @@ args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
 error_ulp = 0.9711
-error_abs = 3.84e-06
+error_abs = 3.841e-06
 exhaustive = true
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2462,7 +2462,7 @@ args = ["x"]
 result = "f1"
 contract = "finite, x > -1"
 error_ulp = 3.01
-error_abs = 3.88e-06
+error_abs = 3.881e-06
 exhaustive = true
 grids = [
   { lo = -0.9, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -2488,8 +2488,8 @@ args = ["x", "y"]
 result = "v"
 guard = "ok"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 1.377
-error_abs = 1.481e+225
+error_ulp = 1.352
+error_abs = 1.12e+248
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
@@ -2535,8 +2535,8 @@ body = [
 args = ["x", "y"]
 result = "p"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 1.35
-error_abs = 7.978e+282
+error_ulp = 1.387
+error_abs = 3.216e+280
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
@@ -2579,8 +2579,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 508.1
-error_abs = 3.252e+285
+error_ulp = 506.5
+error_abs = 3.767e+283
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
@@ -2611,8 +2611,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 1.159e+04
-error_abs = 5.954e+286
+error_ulp = 1.169e+04
+error_abs = 1.834e+285
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
@@ -2643,8 +2643,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 8.056e+05
-error_abs = 1.256e+288
+error_ulp = 7.801e+05
+error_abs = 7.906e+285
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
@@ -2675,8 +2675,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 7.765e+07
-error_abs = 2.152e+290
+error_ulp = 7.886e+07
+error_abs = 4.596e+288
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -27.705627705627705, yhi = 27.705627705627705 },
@@ -2708,8 +2708,8 @@ args = ["x", "y"]
 result = "v"
 guard = "ok"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 1.299
-error_abs = 7.043e+13
+error_ulp = 1.294
+error_abs = 1.154e+18
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
@@ -2755,8 +2755,8 @@ body = [
 args = ["x", "y"]
 result = "p"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 1.303
-error_abs = 4.633e+22
+error_ulp = 1.306
+error_abs = 2.723e+22
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -13.852813852813853, yhi = 13.852813852813853 },
@@ -2799,8 +2799,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 98.44
-error_abs = 5.033e+24
+error_ulp = 108.5
+error_abs = 1.303e+24
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -13.852813852813853, yhi = 13.852813852813853 },
@@ -2831,8 +2831,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 99.44
-error_abs = 5.033e+24
+error_ulp = 108.5
+error_abs = 1.265e+24
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -13.852813852813853, yhi = 13.852813852813853 },
@@ -2863,8 +2863,8 @@ body = [
 args = ["x", "y"]
 result = "eE"
 contract = "x positive normal, finite y, |y*log(x)| in exp range"
-error_ulp = 137.9
-error_abs = 3.688e+24
+error_ulp = 137.1
+error_abs = 2.551e+24
 grids = [
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -8.0, yhi = 8.0 },
   { lo = 0.1, hi = 10.0, kind = "lin", ylo = -13.852813852813853, yhi = 13.852813852813853 },
@@ -2939,7 +2939,7 @@ body = [
 args = ["x", "y"]
 result = "r"
 contract = "finite x, finite non-zero y, |x/y| < 2^52; near a multiple of y it can be off by |y| and take the wrong sign"
-error_ulp = 9.007e+15
+error_ulp = 9.369e+15
 error_abs = 8
 grids = [
   { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
@@ -2998,7 +2998,7 @@ body = [
 args = ["x", "y"]
 result = "r"
 contract = "finite x, finite non-zero y, |x/y| < 2^23; near a multiple of y it can be off by |y| and take the wrong sign"
-error_ulp = 1.765e+07
+error_ulp = 1.761e+07
 error_abs = 8
 grids = [
   { lo = -1000.0, hi = 1000.0, kind = "lin", ylo = 0.5, yhi = 8.0 },
@@ -3013,8 +3013,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 1.39
-error_abs = 2.142e-16
+error_ulp = 1.437
+error_abs = 2.149e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3036,8 +3036,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 1.326
-error_abs = 2.207e-16
+error_ulp = 1.449
+error_abs = 2.257e-16
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3058,8 +3058,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 10.04
-error_abs = 9.262e-16
+error_ulp = 10.08
+error_abs = 9.318e-16
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3081,7 +3081,7 @@ args = ["x"]
 result = "v"
 contract = "any input"
 error_ulp = 2097
-error_abs = 1.988e-13
+error_abs = 1.989e-13
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3102,8 +3102,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 5.553e+05
-error_abs = 4.929e-11
+error_ulp = 5.554e+05
+error_abs = 4.921e-11
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3124,8 +3124,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 2.3e+07
-error_abs = 2.017e-09
+error_ulp = 2.301e+07
+error_abs = 2.006e-09
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1e+300, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3146,8 +3146,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 1.329
-error_abs = 1.15e-07
+error_ulp = 1.33
+error_abs = 1.151e-07
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
@@ -3193,8 +3193,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 2.674
-error_abs = 1.658e-07
+error_ulp = 2.675
+error_abs = 1.659e-07
 exhaustive = true
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3216,7 +3216,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 10.63
+error_ulp = 10.64
 error_abs = 6.338e-07
 exhaustive = true
 grids = [
@@ -3239,7 +3239,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 77.8
+error_ulp = 77.81
 error_abs = 3.956e-06
 exhaustive = true
 grids = [
@@ -3262,7 +3262,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "any input"
-error_ulp = 590.7
+error_ulp = 590.8
 error_abs = 2.765e-05
 exhaustive = true
 grids = [
@@ -3285,8 +3285,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 2.061
-error_abs = 2.677e-16
+error_ulp = 2.075
+error_abs = 2.669e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3306,8 +3306,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 2.013
-error_abs = 2.677e-16
+error_ulp = 2.075
+error_abs = 2.669e-16
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3326,8 +3326,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 4.23
-error_abs = 4.697e-16
+error_ulp = 4.124
+error_abs = 4.578e-16
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3346,8 +3346,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 560.8
-error_abs = 6.226e-14
+error_ulp = 558.1
+error_abs = 6.196e-14
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3366,8 +3366,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 1.524e+05
-error_abs = 1.692e-11
+error_ulp = 1.521e+05
+error_abs = 1.688e-11
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3386,8 +3386,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 4.567e+07
-error_abs = 5.071e-09
+error_ulp = 4.561e+07
+error_abs = 5.064e-09
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3428,8 +3428,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 2.364
-error_abs = 1.409e-07
+error_ulp = 2.365
+error_abs = 1.41e-07
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3449,8 +3449,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 3.812
-error_abs = 2.272e-07
+error_ulp = 3.813
+error_abs = 2.273e-07
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3470,8 +3470,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 32.32
-error_abs = 1.926e-06
+error_ulp = 32.33
+error_abs = 1.927e-06
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3491,8 +3491,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 1.09
-error_abs = 4.84e-16
+error_ulp = 1.078
+error_abs = 4.784e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3514,8 +3514,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 1.09
-error_abs = 4.84e-16
+error_ulp = 1.078
+error_abs = 4.784e-16
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3536,8 +3536,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 3.052
-error_abs = 6.971e-16
+error_ulp = 3.016
+error_abs = 7.004e-16
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3558,8 +3558,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 533.1
-error_abs = 6.265e-14
+error_ulp = 533.3
+error_abs = 6.234e-14
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3581,7 +3581,7 @@ args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
 error_ulp = 1.402e+05
-error_abs = 1.692e-11
+error_abs = 1.688e-11
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3603,7 +3603,7 @@ args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
 error_ulp = 4.364e+07
-error_abs = 5.071e-09
+error_abs = 5.064e-09
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = 1e-300, hi = 1.0, kind = "log", ylo = 0.0, yhi = 0.0 },
@@ -3624,8 +3624,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 1.064
-error_abs = 2.426e-07
+error_ulp = 1.065
+error_abs = 2.427e-07
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
@@ -3648,8 +3648,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 1.127
-error_abs = 2.458e-07
+error_ulp = 1.128
+error_abs = 2.459e-07
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3671,8 +3671,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "|x| <= 1 or NaN out"
-error_ulp = 2.499
-error_abs = 3.25e-07
+error_ulp = 2.5
+error_abs = 3.251e-07
 exhaustive = true
 grids = [
   { lo = -1.0, hi = 1.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3718,8 +3718,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 700"
-error_ulp = 1.572
-error_abs = 3.869e+287
+error_ulp = 1.563
+error_abs = 4.137e+287
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3749,8 +3749,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 1.58
-error_abs = 3.869e+287
+error_ulp = 1.563
+error_abs = 3.953e+287
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3778,8 +3778,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 3.838
-error_abs = 1.826e+288
+error_ulp = 3.837
+error_abs = 1.736e+288
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3808,7 +3808,7 @@ args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
 error_ulp = 1.04e+04
-error_abs = 5.836e+291
+error_abs = 5.832e+291
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3836,8 +3836,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 4.825e+05
-error_abs = 2.709e+293
+error_ulp = 4.826e+05
+error_abs = 2.714e+293
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3866,7 +3866,7 @@ args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
 error_ulp = 2.65e+07
-error_abs = 1.47e+295
+error_abs = 1.477e+295
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -3928,7 +3928,7 @@ args = ["x"]
 result = "v"
 contract = "finite, |x| <= 87"
 error_ulp = 1.619
-error_abs = 1.908e+30
+error_abs = 1.909e+30
 exhaustive = true
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4018,8 +4018,8 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 700"
-error_ulp = 1.211
-error_abs = 3.869e+287
+error_ulp = 1.219
+error_abs = 4.137e+287
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4043,8 +4043,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 1.249
-error_abs = 3.869e+287
+error_ulp = 1.275
+error_abs = 3.953e+287
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4066,8 +4066,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 3.5
-error_abs = 1.826e+288
+error_ulp = 3.566
+error_abs = 1.736e+288
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4089,8 +4089,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
-error_ulp = 9582
-error_abs = 5.836e+291
+error_ulp = 9583
+error_abs = 5.832e+291
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4113,7 +4113,7 @@ args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
 error_ulp = 4.469e+05
-error_abs = 2.709e+293
+error_abs = 2.714e+293
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4136,7 +4136,7 @@ args = ["x"]
 result = "v"
 contract = "finite, |x| <= 700"
 error_ulp = 2.426e+07
-error_abs = 1.47e+295
+error_abs = 1.477e+295
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -700.0, hi = 700.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4159,7 +4159,7 @@ args = ["x"]
 result = "v"
 guard = "ok"
 contract = "finite, |x| <= 87"
-error_ulp = 1.328
+error_ulp = 1.329
 error_abs = inf
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
@@ -4185,8 +4185,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 87"
-error_ulp = 1.357
-error_abs = 1.908e+30
+error_ulp = 1.358
+error_abs = 1.909e+30
 exhaustive = true
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4209,7 +4209,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite, |x| <= 87"
-error_ulp = 2.735
+error_ulp = 2.736
 error_abs = 4.857e+30
 exhaustive = true
 grids = [
@@ -4257,8 +4257,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 2.114
-error_abs = 1.603e-16
+error_ulp = 2.233
+error_abs = 1.631e-16
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-320, -1e-320, 1e+300, -1e+300]
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4287,8 +4287,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 2.01
-error_abs = 1.603e-16
+error_ulp = 2.257
+error_abs = 1.631e-16
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4316,8 +4316,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 12.25
-error_abs = 3.4e-16
+error_ulp = 12.17
+error_abs = 3.369e-16
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4345,8 +4345,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 595.5
-error_abs = 1.642e-14
+error_ulp = 595
+error_abs = 1.644e-14
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
   { lo = -40.0, hi = 40.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4374,7 +4374,7 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 4.586e+04
+error_ulp = 4.587e+04
 error_abs = 1.043e-12
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },
@@ -4432,8 +4432,8 @@ body = [
 args = ["x"]
 result = "v"
 contract = "finite"
-error_ulp = 2.424
-error_abs = 8.931e-08
+error_ulp = 2.425
+error_abs = 8.932e-08
 exhaustive = true
 specials = [nan, inf, -inf, 0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-44, -1e-44, 1e+30, -1e+30]
 grids = [
@@ -4464,7 +4464,7 @@ args = ["x"]
 result = "v"
 contract = "finite"
 error_ulp = 2.61
-error_abs = 8.931e-08
+error_abs = 8.932e-08
 exhaustive = true
 grids = [
   { lo = -2.0, hi = 2.0, kind = "lin", ylo = 0.0, yhi = 0.0 },

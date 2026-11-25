@@ -10,6 +10,7 @@ the cheapest kernel that meets it (:func:`cheapest`).
 """
 
 import ast
+import copy
 import dataclasses
 import functools
 import math
@@ -195,6 +196,40 @@ def literal(value: float, dtype: str) -> str:
     return f"{text}f" if dtype == "f32" else text
 
 
+def multiplied(node: ast.expr) -> tuple[ast.expr, ast.expr] | None:
+    """The factors of a ``mul(a, b)`` call, or None."""
+    if isinstance(node, ast.Call) and ast.unparse(node.func) == "mul" and len(node.args) == 2:
+        return node.args[0], node.args[1]
+    return None
+
+
+class Inlined(ast.NodeTransformer):
+    """Writes each named product into the expressions that use it."""
+
+    def __init__(self, products: dict[str, ast.expr]) -> None:
+        self.products = products
+
+    def visit_Name(self, node: ast.Name) -> ast.expr:
+        return self.visit(copy.deepcopy(self.products[node.id])) if node.id in self.products else node
+
+
+def contracted(body: tuple[str, ...], kept: frozenset[str]) -> list[tuple[str, ast.expr]]:
+    """The body's statements, with every product whose uses all add or subtract it written into those uses, where
+    :meth:`Renderer.fused` makes each one fused instruction (gcc's -ffp-contract=fast rule, made explicit). No product
+    then feeds an addition, so no compiler or contraction flag has a choice left: every build computes the same
+    rounding, the one the recorded error was measured with. ``kept`` names the values the kernel returns or tests."""
+    parsed = [(target, ast.parse(text, mode="eval").body) for target, _, text in (s.partition(" = ") for s in body)]
+    calls = [node for _, root in parsed for node in ast.walk(root) if isinstance(node, ast.Call)]
+
+    def summed(name: str) -> bool:
+        uses = [c for c in calls for arg in c.args if isinstance(arg, ast.Name) and arg.id == name]
+        return bool(uses) and all(ast.unparse(c.func) in ("add", "sub") and len(c.args) == 2 for c in uses)
+
+    products = {t: node for t, node in parsed if multiplied(node) and t not in kept and summed(t)}
+    inline = Inlined(products)
+    return [(t, inline.visit(node)) for t, node in parsed if t not in products]
+
+
 class Renderer:
     """Spells one program for one ISA and dtype, counting the intrinsics it runs."""
 
@@ -239,16 +274,28 @@ class Renderer:
             return value
         if name in SHIFTS:
             return self.call(name, self.expr(node.args[0]), ast.unparse(node.args[1]))
+        if fused := self.fused(name, node.args):
+            return fused
         return self.call(name, *(self.expr(arg) for arg in node.args))
+
+    def fused(self, name: str, args: list[ast.expr]) -> str:
+        """``add`` or ``sub`` of a ``mul`` as one fused instruction, as gcc contracts it by default, so every compiler
+        and contraction flag computes the rounding the recorded error was measured with; ``""`` for any other call."""
+        if name not in ("add", "sub") or len(args) != 2:
+            return ""
+        left, right = args
+        if product := multiplied(right):  # x + a*b = fma(a, b, x); x - a*b = fnma(a, b, x)
+            return self.call("fma" if name == "add" else "fnma", *map(self.expr, product), self.expr(left))
+        if product := multiplied(left):  # a*b + x = fma(a, b, x); a*b - x = fms(a, b, x)
+            return self.call("fma" if name == "add" else "fms", *map(self.expr, product), self.expr(right))
+        return ""
 
     def type_of(self, node: ast.expr) -> str:
         name = ast.unparse(node.func) if isinstance(node, ast.Call) else ""
         kind: str = self.fields["ivec" if name in INT_OPS else "mask" if name in MASK_OPS else "vec"]
         return kind
 
-    def statement(self, line: str) -> str:
-        target, _, expression = line.partition(" = ")
-        node = ast.parse(expression, mode="eval").body
+    def statement(self, target: str, node: ast.expr) -> str:
         return f"    {self.type_of(node)} {target} = {self.expr(node)};"
 
 
@@ -318,7 +365,8 @@ def render(k: Kernel, isa: str) -> Spelled:
     below = "the next rung down" if (k.fn, k.level) in COMPENSATED else "the relaxed kernel"
     advice = "call the library" if k.fn in NEEDS_IEEE else f"use {below}"
     lines = [*(refuse_reassociation(advice, k.level) if refuses else ()), f"static inline {vec} {k.name}({params}) {{"]
-    lines += [*(NO_REASSOCIATION if refuses else ()), *(r.statement(line) for line in k.body)]
+    kept = frozenset({k.result, *k.guard.split()})
+    lines += [*(NO_REASSOCIATION if refuses else ()), *(r.statement(t, node) for t, node in contracted(k.body, kept))]
     if k.guard:
         lines += cold_path(k, r)
     lines += [f"    return {k.result};", "}"]

@@ -8,6 +8,7 @@ import dataclasses
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -16,6 +17,8 @@ from alloy.isa.validate import (
     COMPILE_TIMEOUT,
     CROSS,
     HEADERS,
+    RVV,
+    RVV_FLAGS,
     Verdict,
     c_compiler,
     c_flags,
@@ -29,8 +32,6 @@ __all__ = ["Measured", "compiles", "measure", "measure_exhaustive", "validate_ke
 
 SAMPLES = 1 << 17
 GATE_SAMPLES = 1 << 14
-#: A kernel's re-measured error may exceed the recorded one by this factor.
-SLACK = 1.5
 EMULATED_TIMEOUT = 600  # seconds
 EXHAUSTIVE_TIMEOUT = 1800  # seconds
 LINE = re.compile(r"ULP=(\S+) ABS=(\S+) X=(\S+) Y=(\S+) SPECIAL=(\d+)")
@@ -90,7 +91,10 @@ static int same(lane a, lane b) {
 }
 static lane xs[MAX_LANES], ys[MAX_LANES], vs[MAX_LANES];
 static void run(void) { alloy_run(xs, ys, vs); }
+static int grids_swept = 0;
 static void sweep(double lo, double hi, int kind, double ylo, double yhi) {
+    /* each grid draws from its own seed, so a run on fewer samples draws a prefix of a longer run's inputs */
+    state = 0x9e3779b97f4a7c15ULL + 0x632be59bd9b4e019ULL * (uint64_t)++grids_swept;
     for (long i = 0; i < @SAMPLES@; i += LANES) {
         for (int j = 0; j < LANES; j++) {
             xs[j] = (lane)draw(lo, hi, kind);
@@ -274,21 +278,27 @@ def built(command: list[str], k: Kernel, isa: str) -> None:
         raise RuntimeError(f"{k.name} on {isa} does not build: {done.stderr.strip()[:600]}")
 
 
-def measure(k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] = ()) -> Measured | None:
-    """Run ``k`` on this host, under qemu for an aarch64 ``isa``; None when neither can execute ``isa``."""
+def measure(
+    k: Kernel, isa: str, samples: int = SAMPLES, flags: tuple[str, ...] = (), cc: str | None = None
+) -> Measured | None:
+    """Run ``k`` on this host, under qemu for an aarch64 ``isa``; None when neither can execute ``isa``. ``cc`` picks
+    the host compiler (the default: :func:`c_compiler`)."""
     arm = emulated(isa)
-    if arm is None and (not host_can_run(isa, k.dtype) or c_compiler() is None):
+    cc = cc or c_compiler()
+    if arm is None and (not host_can_run(isa, k.dtype) or cc is None):
         return None
     with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
         folder = pathlib.Path(tmp)
         unit, main = driver(k, isa, samples)
         (folder / "k.c").write_text(unit)
         (folder / "d.c").write_text(main)
-        cc, machine, launcher = arm or (str(c_compiler()), c_flags(isa, k.dtype), [])
+        compiler, machine, launcher = arm or (str(cc), c_flags(isa, k.dtype), [])
         link = [flag for flag in machine if flag == "-static"]
         unit_flags = [flag for flag in machine if flag != "-static"]
-        built([cc, "-O2", *flags, *unit_flags, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")], k, isa)
-        built([cc, "-O2", *link, str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")], k, isa)
+        built([compiler, "-O2", *flags, *unit_flags, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")], k, isa)
+        built(
+            [compiler, "-O2", *link, str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")], k, isa
+        )
         exe = folder / "k"
         run = subprocess.run(
             [*launcher, str(exe)], capture_output=True, text=True, check=False, timeout=EMULATED_TIMEOUT
@@ -311,20 +321,28 @@ def inside(k: Kernel) -> str:
     return " || ".join(terms)
 
 
-def measure_exhaustive(k: Kernel, isa: str, threads: int = 4) -> Measured | None:
-    """``k`` on every f32 input of its range, against double libm; None when the host cannot run ``isa``."""
+def measure_exhaustive(k: Kernel, isa: str, threads: int = 4, cc: str | None = None) -> Measured | None:
+    """``k`` on every f32 input of its range, against double libm; None when the host cannot run ``isa``. ``cc``
+    picks the host compiler of the kernel (the default: :func:`c_compiler`)."""
     if k.dtype != "f32" or len(k.args) != 1:
         raise ValueError(f"{k.name}: only a one-argument f32 kernel has few enough inputs")
-    if not host_can_run(isa, k.dtype) or c_compiler() is None:
+    cc = cc or c_compiler()
+    if not host_can_run(isa, k.dtype) or cc is None:
         return None
     with tempfile.TemporaryDirectory(prefix="alloy_math_") as tmp:
         folder = pathlib.Path(tmp)
         unit, _ = driver(k, isa, 0)
         (folder / "k.c").write_text(unit)
         (folder / "d.c").write_text(filled(EXHAUSTIVE, {"INSIDE": inside(k), "REF": f"{k.fn}((double)xs[j])"}))
-        cc, machine = str(c_compiler()), c_flags(isa, k.dtype)
+        machine = c_flags(isa, k.dtype)
         built([cc, "-O2", *machine, "-c", str(folder / "k.c"), "-o", str(folder / "k.o")], k, isa)
-        built([cc, "-O2", "-fopenmp", str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")], k, isa)
+        # the driver (OpenMP loop and libm reference) builds with gcc whatever compiler took the kernel
+        driver_cc = shutil.which("gcc") or cc
+        built(
+            [driver_cc, "-O2", "-fopenmp", str(folder / "d.c"), str(folder / "k.o"), "-lm", "-o", str(folder / "k")],
+            k,
+            isa,
+        )
         run = subprocess.run(
             [str(folder / "k")],
             capture_output=True,
@@ -341,13 +359,13 @@ def measure_exhaustive(k: Kernel, isa: str, threads: int = 4) -> Measured | None
 
 
 def compiles(k: Kernel, isa: str) -> bool:
-    """Whether a compiler is there to take ``k`` for an aarch64 ``isa``; it raises when ``k`` does not build."""
+    """Whether a compiler is there to take ``k`` for an aarch64 or RISC-V ``isa``; it raises when ``k`` does not
+    build."""
     cc = target_compiler(isa)
     if cc is None:
         return False
-    compile_unit(
-        f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n", cc, [f"-march={CROSS[isa]}"]
-    )
+    flags = list(RVV_FLAGS) if isa == RVV else [f"-march={CROSS[isa]}"]
+    compile_unit(f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n", cc, flags)
     return True
 
 
@@ -355,7 +373,7 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
     """The gate on one kernel: run it where the host can, cross-compile it where it cannot."""
     k = kernel(fn, dtype, level)
     try:
-        if isa in CROSS and emulated(isa) is None and not host_can_run(isa, dtype):
+        if isa in (*CROSS, RVV) and emulated(isa) is None and not host_can_run(isa, dtype):
             return Verdict(None, "cross-compiled, never run", "builds" if compiles(k, isa) else "no cross compiler")
         seen = measure(k, isa, samples)
     except (RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -366,8 +384,10 @@ def validate_kernel(fn: str, dtype: str, level: str, isa: str, samples: int = GA
 
 
 def judged(k: Kernel, seen: Measured, basis: str) -> Verdict:
-    """A measurement against the kernel's record: its ulp within :data:`SLACK`, no special value off libm."""
-    ok = seen.ulp <= k.error_ulp * SLACK and seen.special == 0
+    """A measurement against the kernel's record: its ulp at most the recorded one, no special value off libm. The
+    record is the worst over every build and ISA (``helpers/mathfit.py``), rounded up, and the renderer leaves no
+    product for a compiler to contract, so a gate run on fewer samples of the same draws stays within it."""
+    ok = seen.ulp <= k.error_ulp and seen.special == 0
     specials = f", {seen.special} special values off libm" if k.specials else ""
     return Verdict(ok, basis, f"{seen.ulp:.4g} ulp (recorded {k.error_ulp:.4g}){specials}")
 

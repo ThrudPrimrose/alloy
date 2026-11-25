@@ -272,10 +272,6 @@ def kernel_command(table: Table, args: argparse.Namespace) -> int:
     """A function's math kernels at one rung: the named ``--level``, or the cheapest within ``--max-ulp``/``--max-abs``."""
     level = args.level
     table.isa(args.isa)
-    if args.isa == "rvv":
-        raise KeyError(
-            f"rvv: no math kernels yet; `lookup rvv {args.function} {args.dtype}` gives the polynomial tiers"
-        )
     if args.max_ulp is not None or args.max_abs is not None:
         if level:
             raise KeyError("--level names one rung and --max-ulp/--max-abs pick one: give one of the two")
