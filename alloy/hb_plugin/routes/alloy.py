@@ -28,40 +28,19 @@ from alloy.api import NotAScope, NothingToGenerate
 from alloy.hb_plugin.adapter import running_sizes
 from alloy.hb_plugin.episode import ToolCall, append_tool_call, file_hash
 from alloy.hb_plugin.workbench import CodegenAnswer, CodegenRequest, codegen
+from alloy.isa import query
 from alloy.machine import pin_worker
 from alloy.report import Mode
 
 ROUTE = "alloy"
 #: The route of the ``alloy_isa`` tool: a table query, outside the modes and the device slot.
 ISA = "isa"
-ISA_COMMANDS = frozenset(
-    {
-        "lookup",
-        "reverse",
-        "assist",
-        "kernel",
-        "tiers",
-        "time",
-        "schedule",
-        "skeleton",
-        "ops",
-        "isas",
-        "host",
-        "tile",
-        "ask",
-        "ask-all",
-    }
-)
-#: Exit codes that are answers, by command: ``ask`` exits 2 when the target cannot (the refusal with its block,
-#: nearest requests, and fix is the answer); the other queries exit 3 for an answer that is no row.
-ANSWER_CODES = {"ask": (0, 2), "ask-all": (0, 2)}
 MODES = (Mode.PROFILE.value, Mode.SPECULATIVE.value, Mode.REFERENCE.value)
 #: ``alloy_sweep``: profile mode over the agent's edited ``best/``, each ``scopes/<symbol>.<c|cpp>`` in place of the
 #: scope's rendering.
 SWEEP = "sweep"
 #: The suffixes of a scope's translation unit.
 UNIT_SUFFIXES = (".c", ".cpp")
-ISA_TIMEOUT = 120  # seconds; a query compiles at most a few kernels
 #: The characters of an argument a tool record keeps.
 ARGUMENT_CHARS = 200
 
@@ -78,21 +57,14 @@ Outcome = tuple[HTTPStatus, JudgeAnswer, CodegenAnswer | None]
 
 
 def isa_query(body: Mapping[str, object]) -> Outcome:
-    """``python -m alloy.isa``, in a process of its own: the judge's threads share stdout. Exit code 3 is an answer."""
-    command, arguments = body.get("command"), body.get("arguments") or []
-    if command not in ISA_COMMANDS or not isinstance(arguments, list):
-        return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: no query {command!r}"), None
-    argv = [sys.executable, "-m", "alloy.isa", str(command), *(str(a) for a in arguments)]
-    if any("\0" in word for word in argv):
-        return HTTPStatus.BAD_REQUEST, JudgeError(error="alloy_isa: a NUL byte in an argument"), None
+    """``python -m alloy.isa`` (:func:`query.answer`), in a process of its own: the judge's threads share stdout."""
     try:
-        run = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=ISA_TIMEOUT)
+        return HTTPStatus.OK, IsaAnswer(result=query.answer(body.get("command"), body.get("arguments") or [])), None
+    except query.QueryError as err:
+        return HTTPStatus.BAD_REQUEST, JudgeError(error=str(err)), None
     except subprocess.TimeoutExpired:
-        error = f"alloy_isa: no answer in {ISA_TIMEOUT} s"
+        error = f"alloy_isa: no answer in {query.TIMEOUT} s"
         return HTTPStatus.INTERNAL_SERVER_ERROR, JudgeError(error=error, cause=JUDGE_FAULT_CAUSE), None
-    if run.returncode not in ANSWER_CODES.get(str(command), (0, 3)):  # ask prints an invalid request's reason to stdout
-        return HTTPStatus.BAD_REQUEST, JudgeError(error=f"alloy_isa: {(run.stderr or run.stdout).strip()}"), None
-    return HTTPStatus.OK, IsaAnswer(result=run.stdout + run.stderr), None
 
 
 def generate(judge: Judge, request: RouteRequest, spelled: str) -> Outcome | None:

@@ -24,6 +24,9 @@ dependencies = [
     "dace-relayout>=0.1.2",
 ]
 
+[project.scripts]
+alloy-mcp = "alloy.mcpserver:main"
+
 [project.urls]
 Homepage = "https://github.com/ThrudPrimrose/dace-alloy"
 Changelog = "https://github.com/ThrudPrimrose/dace-alloy/blob/main/CHANGELOG.md"
@@ -31,10 +34,12 @@ Changelog = "https://github.com/ThrudPrimrose/dace-alloy/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
 bench = ["hpcagent-bench>=1.0.1"]
+# Alloy's own MCP server (alloy-mcp, alloy/mcpserver.py): its tools for any MCP client, outside the bench.
+mcp = ["mcp>=2.3,<3"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
 nvgpu = ["dace-alloy[bench]", "cupy-cuda13x"]
 amdgpu = ["dace-alloy[bench]", "cupy ; platform_machine == 'x86_64'"]
-dev = ["dace-alloy[bench]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.17.6"]
+dev = ["dace-alloy[bench,mcp]", "mpmath", "mypy", "pre-commit", "pyright", "pytest", "pytest-timeout", "pytest-xdist", "ruff==0.17.6"]
 # What GVSoC's build and launcher (gapy) import, from gvsoc's requirement files without the documentation tools and
 # the build tools, at versions that agree with the rest of the lock; the SoftHier v1 image runs with exactly these (alloy/isa/softhier_pins.toml; helpers/build_softhier.sh installs it).
 softhier = ["argparse==1.4.0", "beautifulsoup4==4.15.0", "hjson==3.1.0", "html2text==2025.4.15",

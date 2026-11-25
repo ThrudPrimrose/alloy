@@ -4,11 +4,13 @@
 import json
 import os
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any
 
 import pydantic
 from hpcagent_agent.tools import http_json
 from hpcagent_agent.tools.registry import Hints, Spec, tool
+
+from alloy.isa import query
 
 
 class NoArgs(pydantic.BaseModel):
@@ -41,39 +43,13 @@ class IsaArgs(pydantic.BaseModel):
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
-    command: Literal[
-        "lookup",
-        "reverse",
-        "assist",
-        "kernel",
-        "tiers",
-        "time",
-        "schedule",
-        "skeleton",
-        "ops",
-        "isas",
-        "host",
-        "tile",
-        "ask",
-        "ask-all",
-    ]
+    command: query.Command
     arguments: list[str] = pydantic.Field(
         default_factory=list, description='e.g. ["avx512", "sin", "f64"] for kernel, ["vfmadd231pd"] for reverse'
     )
 
 
-ISA = (
-    "The intrinsics reference: `kernel` returns sin, exp, log, pow, fmod and more as C intrinsics at strict, relaxed "
-    "and fast levels; `tiers` lists a function's polynomial depths with their error, for picking one; `time` "
-    "measures what an element costs here with each kernel and library call; `lookup` spells "
-    "an op for an ISA and dtype; `reverse` names what an intrinsic, a mnemonic or a pasted disassembly line computes; "
-    "`skeleton` gives a loop in a legal schedule; `host` says which ISAs this machine runs. `ask` answers one "
-    'operation on logical data for any target (CPU, sm90, gfx942, gfx90a, tensix), e.g. ["avx512", "reduce_add", '
-    '"--x", "vector:f32:96"]: feasible with its steps, or refused with the block the target takes, the nearest '
-    "requests, and a fix; `ask-all` combines requests into one kernel. `lookup`, `kernel` and "
-    "`skeleton` answers carry their check: `run` names where it ran (this machine, a recorded GPU run, or ttsim), "
-    "`compiled` means built and not run, and `unverified` neither."
-)
+ISA = query.DESCRIPTION
 
 
 #: Seconds a sweep may take: minutes per scope, far past the bound on a plain judge route.

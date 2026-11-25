@@ -21,6 +21,13 @@ if __name__ == "__main__":  # Alloy's worker processes re-import this script
 
 As DaCe's backend no guard is needed: set `compiler.build_plugin = alloy-speculative` and call `sdfg.compile()`.
 
+As an MCP server, Alloy gives any MCP client the tools an HPCAgent-Bench agent gets: `alloy_profile`,
+`alloy_speculative`, `alloy_reference`, `alloy_sweep` (code generation on a `@dace.program` named `file.py:function` or
+a saved `.sdfg`, on this machine) and `alloy_isa` (the intrinsics reference):
+
+    pip install 'dace-alloy[mcp]'           # [mcp,bench] for profile mode, alloy_sweep and manifests
+    claude mcp add alloy -- alloy-mcp       # or any client: the command `alloy-mcp` speaks MCP over stdio
+
 Extras: the core (outline, sweep, build) needs only DaCe. `bench` adds HPCAgent-Bench, which verification and
 timing use for manifest inputs and the tolerance band. `nvgpu` / `amdgpu` add the matching cupy build. `dev` is
 `bench` plus the test tools (CPU, what CI installs); `dev-nvidia` and `dev-amd` add the GPU extra.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Alloy as an MCP server: `alloy-mcp` (extra `mcp`, module `alloy.mcpserver`) serves `alloy_profile`,
+  `alloy_speculative`, `alloy_reference`, `alloy_sweep` and `alloy_isa` over stdio to any MCP client, outside
+  HPCAgent-Bench. A program is a `@dace.program` (`file.py:function`) or a saved `.sdfg`; each code-generation call runs
+  `api.generate` in a spawned process whose output goes to stderr, never into the protocol stream. The bench's judge
+  and the server answer `alloy_isa` through one function (`alloy.isa.query`).
 - `ask rvv`: RVV is an `ask` target. A request of any length answers as a `vsetvl` loop (every pass takes vl, the last
   is the tail); reductions and scans hand out and run their whole program under qemu-riscv64.
 - Tensix tile moves and transpose (design T5): `copy` between a circular buffer (`shared`) and DST (`tile_register`)
