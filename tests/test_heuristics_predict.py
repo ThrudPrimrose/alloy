@@ -402,7 +402,8 @@ def fixed(a: dace.float64[256], out: dace.float64[256]) -> None:
 
 
 @pytest.mark.gcc
-@pytest.mark.parametrize(("running", "serial"), [({"N": 16}, True), ({"N": 10**9}, False), (None, False), ({}, False)])
+# no ``{}`` case: known_sizes reads ``running or {}``, so it is the None case
+@pytest.mark.parametrize(("running", "serial"), [({"N": 16}, True), ({"N": 10**9}, False), (None, False)])
 def test_a_declared_size_decides_the_picks_thread_count_and_an_open_one_keeps_the_parallel_pick(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, running: dict[str, int] | None, serial: bool
 ) -> None:
