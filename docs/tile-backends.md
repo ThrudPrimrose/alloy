@@ -68,9 +68,10 @@ Only Tensix refuses:
 
 - Spatz `max` and `min` return the other operand when one is NaN (IEEE 754-2019 maximumNumber); NumPy returns NaN.
 - GVSoC stops on Spatz mask instructions, so SoftHier compares and selects run as scalar loops on the Spatz core.
-- GVSoC stops in newlib's `rintf`, so the SoftHier ladder rounds with one `fcvt.w.s` instruction.
-- The strict exp and log kernels call newlib's `expf` and `logf` outside their range. The gate does not exercise
-  that path on GVSoC.
+- GVSoC stops in newlib's `rintf`, `expf`, and `logf`. The SoftHier ladder rounds with one `fcvt.w.s` instruction,
+  and outside the strict kernels' range it computes exp(x) as exp(x/2)^2 and log(x) on x scaled by 2^-64 or 2^64
+  (the gate cases "exp beyond the ladder's range" and "log beyond the ladder's range").
+- The Tensix SFPU flushes subnormal inputs to zero, so `log_tile` of a subnormal is -inf.
 - On the Blackhole card with tt-metal 0.63, `exp_tile` holds bfloat16 accuracy only (max relative error 1.73e-3 on
   [-7, 7]) and `log_tile` missed float32 by 0.0165. The SFPI rungs that replace them were checked on [-7, 7]; the exp
   rung does not clamp, so |x| above about 87 overflows the exponent field.

@@ -61,6 +61,16 @@ def softplus(x: dace.float32[N], y: dace.float32[N]) -> None:
 
 
 @dace.program
+def exp_only(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.exp(x)
+
+
+@dace.program
+def log_only(x: dace.float32[N], y: dace.float32[N]) -> None:
+    y[:] = numpy.log(x)
+
+
+@dace.program
 def full_where(x: dace.float32[N], y: dace.float32[N]) -> None:
     y[:] = numpy.where(x > 0.0, numpy.full(N, 1.0, dtype=numpy.float32), x)
 
@@ -176,7 +186,11 @@ def cases() -> list[Case]:
     pos = rng.uniform(0.5, 1.0, N).astype(f32)
     ga, gb = (rng.uniform(-1, 1, (64, 64)).astype(numpy.float16) for _ in range(2))
     rows = rng.uniform(-4, 4, (P, 1024)).astype(f32)
-    ia, ib = (rng.integers(-50, 50, N).astype(numpy.int32) for _ in range(2))  # equal pairs occur: ``>=`` ties
+    ia, ib = (rng.integers(-50, 50, N).astype(numpy.int32) for _ in range(2))
+    tail_exp = rng.uniform(87.0, 88.5, N).astype(f32)
+    tail_log = rng.uniform(1e37, 3e38, N).astype(
+        f32
+    )  # not subnormals: the Tensix SFPU flushes them to zero  # equal pairs occur: ``>=`` ties
     return [
         Case("vector add", lambda: vadd.to_sdfg(simplify=True), {"A": a, "B": b}, {"C": a + b}, 1e-6),
         Case(
@@ -228,6 +242,20 @@ def cases() -> list[Case]:
             lambda: softplus.to_sdfg(simplify=True),
             {"x": a},
             {"y": numpy.log1p(numpy.exp(a.astype(numpy.float64)))},
+            1e-6,
+        ),
+        Case(  # |x| > 87 leaves the strict kernel's range: its fallback (newlib expf on GVSoC) computes these
+            "exp beyond the ladder's range",
+            lambda: exp_only.to_sdfg(simplify=True),
+            {"x": tail_exp},
+            {"y": numpy.exp(tail_exp.astype(numpy.float64))},
+            1e-6,
+        ),
+        Case(  # x >= 1e37 leaves the strict kernel's range: its fallback (newlib logf on GVSoC) computes these
+            "log beyond the ladder's range",
+            lambda: log_only.to_sdfg(simplify=True),
+            {"x": tail_log},
+            {"y": numpy.log(tail_log.astype(numpy.float64))},
             1e-6,
         ),
         Case(

@@ -50,6 +50,9 @@
   receiver's circular buffer and counts arrivals on a semaphore; `Bcast` multicasts. All five run correct on ttsim.
   Collectives that combine data are refused (they need the compute kernel). The gate's collective cases move one
   1024-float block per rank (was 256), one Tensix tile, so both backends run the same cases.
+- SoftHier: newlib's `expf` and `logf`, which the strict ladder kernels called outside their range, stop GVSoC like
+  `rintf`; the ladder unit computes those values itself (exp(x/2)^2, log on x scaled by 2^-64 or 2^64). Two gate
+  cases feed exp and log values beyond the kernels' range; both backends compute them correctly.
 - CI: the Tensix rows run at their own dtypes (`tensix.row_dtypes`: select is float32 only); mypy and pyright clean.
 - HPCAgent-Bench comes from its PyPI release (1.0.0), no longer from a git commit; `helpers/release_patch.sh`
   drops a git source of one of our packages instead of moving it to a tag, so pins name released versions.
