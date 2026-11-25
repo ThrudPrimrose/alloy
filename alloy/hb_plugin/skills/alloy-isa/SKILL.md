@@ -114,7 +114,8 @@ before the wait is a race, and issuing without the fence reads stale data.
     (`__hip_fp8_e4m3_fnuz`, `__nv_fp8_e4m3`), never by reinterpreting bytes from the other GPU.
 - **`tensix`.** 32x32 tiles in DST: SFPU rows keep f32, FPU rows (`add_tiles`, `matmul_tiles`, `reduce_tile`) read
   TF32 sources. The answer gives the tile calls; `command="lookup", arguments=["tensix", "<op>", "f32"]` prints the
-  error each row measured on the simulator.
+  error each row measured on the simulator. `reduce_add` and `reduce_max` take `dim=row` (one value per row, in
+  column 0), `dim=col` (one per column, in row 0), or `dim=all` (one value, the default); `--dim` in `ask`.
 - **`softhier`.** SoftHier v1, a 2 x 2 mesh of clusters on the GVSoC simulator (not hardware). Data a kernel computes
   on sits in the cluster's TCDM (`shared`); HBM (`global`) and other clusters' TCDM are reached only by iDMA. Vector
   operations (`load`, `store`, `add`, `mul`, `fma`, `reduce_add`, `reduce_max`, f32 and f16) are RVV loops on the

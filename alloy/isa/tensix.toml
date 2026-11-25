@@ -257,6 +257,42 @@ call = "reduce_tile<PoolType::MAX, ReduceDim::REDUCE_SCALAR>(c0, c1, 0, 0, 0)"
 domain = [0.5, 2.0]
 note = "the scaler tile (CB c1) holds 1 in the first row of each face (the maximum is scaled by it); every data tile reduces into DST tile 0, packed once after the last; the maximum sits at [0, 0] of the packed tile; reduce_uninit() restores the packer"
 
+[[ops.reduce_add_row]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::SUM, ReduceDim::REDUCE_ROW>(c0, c1, c16)"
+call = "reduce_tile<PoolType::SUM, ReduceDim::REDUCE_ROW>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "ask with dim=row; the scaler tile (CB c1) holds 1 in the first row of each face; every data tile reduces into DST tile 0, packed once after the last; the packed tile holds the sum in column 0: each row's sum over every data tile, zeros elsewhere; reduce_uninit() restores the packer"
+
+[[ops.reduce_add_col]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::SUM, ReduceDim::REDUCE_COL>(c0, c1, c16)"
+call = "reduce_tile<PoolType::SUM, ReduceDim::REDUCE_COL>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "ask with dim=col; the scaler tile (CB c1) holds 1 in the first row of each face; every data tile reduces into DST tile 0, packed once after the last; the packed tile holds the sum in row 0: each column's sum over every data tile, zeros elsewhere; reduce_uninit() restores the packer"
+
+[[ops.reduce_max_row]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::MAX, ReduceDim::REDUCE_ROW>(c0, c1, c16)"
+call = "reduce_tile<PoolType::MAX, ReduceDim::REDUCE_ROW>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "ask with dim=row; the scaler tile (CB c1) holds 1 in the first row of each face; every data tile reduces into DST tile 0, packed once after the last; the packed tile holds the maximum in column 0: each row's maximum over every data tile, zeros elsewhere; reduce_uninit() restores the packer"
+
+[[ops.reduce_max_col]]
+kind = "reduction"
+unit = "FPU"
+header = "reduce.h"
+init = "reduce_init<PoolType::MAX, ReduceDim::REDUCE_COL>(c0, c1, c16)"
+call = "reduce_tile<PoolType::MAX, ReduceDim::REDUCE_COL>(c0, c1, 0, 0, 0)"
+domain = [0.5, 2.0]
+note = "ask with dim=col; the scaler tile (CB c1) holds 1 in the first row of each face; every data tile reduces into DST tile 0, packed once after the last; the packed tile holds the maximum in row 0: each column's maximum over every data tile, zeros elsewhere; reduce_uninit() restores the packer"
+
 [[ops.scan_add]]
 kind = "scan"
 unit = "SFPU"

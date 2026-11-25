@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Lookup (owner rulings of 2026-11-25 on the design items): a CPU request with 2-D (or higher) data is answered as
+  one run of its elements, row-major or column-major, and the answer says so; mixed layouts, and a scan over
+  column-major data, are refused with a transpose fix. Tensix `reduce_add` and `reduce_max` take `dim=row|col|all`
+  (`--dim` in `ask`): four new rows (`REDUCE_ROW`, `REDUCE_COL`), each checked on ttsim at f32 and bf16, and a
+  planted row that reduces the wrong dimension fails (rel 1.0).
 - Wrong results fixed. The Tensix SFPI exp rung saturates (inf above ln FLT_MAX, 0 below the smallest normal) where
   it overflowed the exponent field for |x| above about 87; the card checked it over [-100, 100] (max rel 1.19e-07,
   alloy-tenstorrent agents `8ec7b7d`), so its bound is 2.0 ulp. SoftHier's `max` and `min` (elementwise, with a

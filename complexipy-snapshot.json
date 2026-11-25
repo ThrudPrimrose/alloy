@@ -220,19 +220,19 @@
         "complexity": 19
       },
       {
+        "name": "parsed_request",
+        "complexity": 20
+      },
+      {
+        "name": "vector_op_1d",
+        "complexity": 21
+      },
+      {
         "name": "mma",
         "complexity": 22
       },
       {
-        "name": "parsed_request",
-        "complexity": 22
-      },
-      {
         "name": "thread_op",
-        "complexity": 28
-      },
-      {
-        "name": "vector_op",
         "complexity": 28
       },
       {

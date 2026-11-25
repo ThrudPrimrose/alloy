@@ -192,6 +192,8 @@ class Request:
     depth: int = 0
     #: ``copy`` in an ``ask-all`` list: the shared-memory stage it fills, 0 or 1 (a two-stage pipeline).
     stage: int = 0
+    #: A Tensix reduction: ``row`` (one value per row), ``col`` (one per column), or ``all`` (the default, one value).
+    dim: str = ""
 
 
 @dataclass(config=STRICT)
@@ -421,6 +423,7 @@ def ask(request: Request, verify: bool = True) -> Answer:
         ("kind", request.kind, ("fence", "barrier")),
         ("depth", request.depth, ("wait",)),
         ("stage", request.stage, ("copy",)),
+        ("dim", request.dim, ("reduce_add", "reduce_max")),
     ):
         if value and request.op not in owners:
             return bad(
@@ -430,6 +433,10 @@ def ask(request: Request, verify: bool = True) -> Answer:
                 f"ask {request.target} {owners[0]} --{flag} ...",
                 f"ask {request.target} {request.op} without --{flag}",
             )
+    if request.dim and (request.target != "tensix" or request.dim not in ("all", "row", "col")):
+        why = (f"dim={request.dim}: a Tensix reduction takes dim=row, col, or all" if request.target == "tensix" else
+               f"--dim applies to Tensix reductions only; a {request.target} reduction gives one value")  # fmt: skip
+        return bad(request, Why.FLAG, why, f"ask tensix {request.op} --dim row")
     answer = answered(request, verify)
     if isinstance(answer, Feasible) and request.unit and answer.unit != request.unit:
         reason = f"{request.target} {request.op} runs on {answer.unit}, not {request.unit}"
@@ -665,9 +672,44 @@ def unchained(request: Request, shapes: set[tuple[int, ...]], expected: Operand)
     return bad(request, Why.CHAIN, reason, spell(x=expected))
 
 
+def flattened(request: Request) -> tuple[Request, str] | Infeasible:
+    """``request`` with its 2-D operands as one run of their elements, and the note that says so; the request itself
+    when no operand is 2-D. Operands of mixed layouts, or a scan over column-major data, have no one run: refused."""
+    tiles = {name: o for name, o in request.operands.items() if len(o.shape) >= 2}
+    if not tiles:
+        return request, ""
+    layouts = {o.layout for o in tiles.values()}
+    first = next(iter(tiles.values()))
+    shape = "x".join(map(str, first.shape))
+    if len(layouts) > 1 or (request.op in SCANS and layouts == {"col_major"}):
+        why = "mixed layouts" if len(layouts) > 1 else "a scan over column-major data"
+        flat = Operand("vector", first.dtype, (math.prod(first.shape),))
+        lanes = load().isa(request.target).lanes.get(first.dtype, 0)
+        return no(request, Why.SHAPE, f"{request.target} {request.op} on {shape} data with {why} has no one run of "
+                  "elements", spell(x=flat), fix="transpose the data into one layout first",
+                  block=(lanes,) if lanes else ())  # fmt: skip
+    operands = {name: dataclasses.replace(o, shape=(math.prod(o.shape),), layout="row_major") if name in tiles else o
+                for name, o in request.operands.items()}  # fmt: skip
+    order = "row-major" if layouts == {"row_major"} else "column-major"
+    note = f"the {shape} data is answered as its {math.prod(first.shape)} elements in one run ({order} order)"
+    return dataclasses.replace(request, operands=operands), note
+
+
 def vector_op(request: Request, verify: bool) -> Answer:
     """A CPU operation: the table's row, or the math kernel at the cheapest rung that holds ``max_ulp`` (the strict
-    rung where the table has the function without an instruction)."""
+    rung where the table has the function without an instruction). 2-D data is answered as one run of its elements."""
+    flat = flattened(request)
+    if not isinstance(flat, tuple):
+        return flat
+    request, note = flat
+    answer = vector_op_1d(request, verify)
+    if note and isinstance(answer, Feasible):
+        return dataclasses.replace(answer, notes=(note, *answer.notes))
+    return answer
+
+
+def vector_op_1d(request: Request, verify: bool) -> Answer:
+    """:func:`vector_op` on 1-D operands."""
     dtype, isa = dtype_of(request), request.target
     table = load()
     lanes = table.isa(isa).lanes.get(dtype, 0)
@@ -693,15 +735,6 @@ def vector_op(request: Request, verify: bool) -> Answer:
                       spell(x=register), fix=fix)  # fmt: skip
         if operand.swizzle != "none":
             return no(request, Why.SWIZZLE, "a CPU has no swizzle", spell(x=register))
-        if (
-            len(operand.shape) >= 2 and lanes
-        ):  # TODO(design): logical 2-D data on a CPU (owner's batch, isa-design.md 2.8)
-            flat = Operand("vector", dtype, (math.prod(operand.shape),))
-            near = flat if lanes and not flat.shape[0] % lanes else register
-            shape = "x".join(map(str, operand.shape))
-            return no(request, Why.SHAPE, f"{isa} {request.op} takes one-dimensional data, not {shape}; a tile is an "
-                      "mma or copy operand", spell(x=near), fix="flatten the data into one run of elements",
-                      block=(lanes,))  # fmt: skip
         if lanes and operand.shape and operand.shape[0] % lanes and not scalar:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
     answer = one_register(request, isa, dtype, table, verify)
@@ -1012,7 +1045,8 @@ def ttsim_check(row: tensix.Row, dtype: str) -> Check | str:
 
 def tensix_rows(request: Request, dtype: str) -> list[tensix.Row] | Infeasible:
     """The Tensix rows of the request's operation on the unit it asks (any unit if none), the SFPU first for f32."""
-    rows = [r for r in tensix.rows() if r.op == request.op]
+    op = f"{request.op}_{request.dim}" if request.dim in ("row", "col") else request.op
+    rows = [r for r in tensix.rows() if r.op == op]
     if not rows and request.op == "reduce_min":
         return no(request, Why.NO_ROW, "Tensix reduce_tile pools SUM, AVG, and MAX; it has no MIN", "tensix neg",
                   "tensix reduce_max", fix="negate the tiles (negative_tile), reduce_max, and negate the result")  # fmt: skip
@@ -2080,20 +2114,17 @@ def parsed_request(target: str, text: str) -> Request:
         raise KeyError("an empty request: op name=operand ...")
     op, *fields = text.split()
     operands: dict[str, Operand] = {}
-    unit, max_ulp, on, kind, depth, stage = "", None, "", "", 0, 0
+    words = dict.fromkeys(("unit", "on", "kind", "dim"), "")  # the fields that are a lowercase word
+    max_ulp, depth, stage = None, 0, 0
     for field in fields:
         name, sep, value = field.partition("=")
         if not sep or not value:
             raise KeyError(
                 f"{field!r} in {text!r}: a field is name=operand, unit=U, max_ulp=X, on=TOKEN, kind=K, "
-                "depth=N, or stage=S"
+                "depth=N, stage=S, or dim=row|col|all"
             )
-        if name == "unit":
-            unit = value.lower()
-        elif name == "on":
-            on = value.lower()
-        elif name == "kind":
-            kind = value.lower()
+        if name in words:
+            words[name] = value.lower()
         elif name == "depth":
             if not value.isdigit():
                 raise KeyError(f"{field!r} in {text!r}: depth is a count of groups, 0 or more")
@@ -2109,4 +2140,5 @@ def parsed_request(target: str, text: str) -> Request:
                 raise KeyError(f"{field!r} in {text!r}: max_ulp is a number") from None
         else:
             operands[name] = Operand.parse(value)
-    return Request(target, op.lower(), operands, unit, max_ulp, on, kind, depth, stage)
+    return Request(target, op.lower(), operands, words["unit"], max_ulp, words["on"], words["kind"], depth, stage,
+                   words["dim"])  # fmt: skip

@@ -357,6 +357,10 @@ def reference(op: str, xs: list["torch.Tensor"], call: str = "") -> "torch.Tenso
         return torch.cumsum(x, dim=0)
     if op in ("reduce_add", "reduce_max"):  # REDUCE_SCALAR: one value for every element of every tile
         return x.sum() if op == "reduce_add" else x.max()
+    if op.startswith(("reduce_add_", "reduce_max_")):  # per row (over every tile's columns) or per column
+        rows = x.reshape(-1, 32, 32)  # the tiles, stacked down the rows
+        dims = (0, 2) if op.endswith("_row") else (0, 1)
+        return rows.sum(dims) if op.startswith("reduce_add") else rows.amax(dims)
     y = xs[1].double()
     if op == "mma":  # apart from the elementwise rows, whose tiles do not chain as a product
         return x @ y
@@ -430,13 +434,20 @@ def run(dev: "ttnn.MeshDevice", row: Json, new: bool) -> Json:
     program = ttnn.ProgramDescriptor(kernels=kernels, semaphores=[], cbs=cbs)
     got = ttnn.to_torch(ttnn.generic_op([*tensors, out], program))
     want = reference(row["op"], [x.float() for x in xs], spelled(row["call"], new))
-    if row["kind"] == "reduction":  # REDUCE_SCALAR leaves the value at face 0 [0, 0] and zeros elsewhere
-        got, want = got[0, 0].reshape(1), want.reshape(1)
+    if row["kind"] == "reduction":
+        got, want = reduced(row["op"], got), want.reshape(-1)
     if matmul:  # a sum of products: its error is relative to the result's scale, not to each element
         rel = ((got.double() - want).abs().max() / want.abs().max()).item()
     else:
         rel = ((got.double() - want).abs() / want.abs().clamp_min(1e-30)).max().item()
     return {"ok": bool(math.isfinite(rel) and rel <= row["tol"]), "rel": rel}
+
+
+def reduced(op: str, got: "torch.Tensor") -> "torch.Tensor":
+    """Where a reduction's packed tile holds its result: REDUCE_ROW in column 0, REDUCE_COL in row 0, REDUCE_SCALAR at
+    [0, 0]."""
+    ends = op.rsplit("_", 1)[-1]
+    return got[:, 0] if ends == "row" else got[0, :] if ends == "col" else got[0, 0].reshape(1)
 
 
 def main() -> int:

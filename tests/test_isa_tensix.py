@@ -270,6 +270,41 @@ def test_a_reduction_accumulates_in_fp32_for_every_element_type_as_ask_tells_the
     assert "fp32_dest_acc_en = true" in answer.setup["compute config"] and "scaler" in answer.setup
 
 
+@pytest.mark.parametrize(("op", "dim", "pool", "reduce_dim"), [
+    ("reduce_add", "row", "SUM", "REDUCE_ROW"), ("reduce_max", "col", "MAX", "REDUCE_COL"),
+    ("reduce_add", "all", "SUM", "REDUCE_SCALAR"),
+])  # fmt: skip
+def test_a_tensix_reduction_takes_its_dimension_from_dim(op: str, dim: str, pool: str, reduce_dim: str) -> None:
+    from alloy.isa.ask import Feasible, Operand, Request, ask
+
+    answer = ask(Request("tensix", op, {"x": Operand("tile_register", "f32", (32, 32))}, dim=dim), verify=False)
+
+    assert isinstance(answer, Feasible), answer
+    assert answer.steps[0].spelling == f"reduce_init<PoolType::{pool}, ReduceDim::{reduce_dim}>(c0, c1, c16)"
+
+
+@pytest.mark.parametrize(("target", "dim", "why"), [("tensix", "diag", "row, col, or all"),
+                                                    ("avx2", "row", "Tensix reductions only")])  # fmt: skip
+def test_a_dim_other_targets_or_dimensions_lack_is_invalid(target: str, dim: str, why: str) -> None:
+    from alloy.isa.ask import Invalid, Operand, Request, Why, ask
+
+    x = Operand("tile_register" if target == "tensix" else "vector", "f32", (32, 32) if target == "tensix" else (8,))
+    answer = ask(Request(target, "reduce_add", {"x": x}, dim=dim), verify=False)
+
+    assert isinstance(answer, Invalid) and answer.why is Why.FLAG and why in answer.reason, answer
+
+
+def test_the_row_and_column_references_reduce_over_every_tile() -> None:
+    import torch
+
+    x = torch.arange(2 * 32 * 32, dtype=torch.float64).reshape(64, 32)  # two tiles, stacked down the rows
+
+    row = tensix_harness.reference("reduce_add_row", [x])
+    col = tensix_harness.reference("reduce_max_col", [x])
+
+    assert torch.equal(row, x[:32].sum(1) + x[32:].sum(1)) and torch.equal(col, x[32:][-1])
+
+
 @pytest.mark.parametrize(("op", "shape", "tiles"), [("reduce_add", (64, 64), 4), ("reduce_max", (64, 64), 4),
                                                      ("scan_add", (64, 32), 2)])  # fmt: skip
 def test_a_reduction_or_scan_row_is_offered_checked_on_ttsim_with_one_init_and_one_call_per_tile(

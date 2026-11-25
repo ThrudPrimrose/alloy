@@ -817,14 +817,32 @@ def test_the_cli_prints_the_block_of_a_shape_refusal(capsys: pytest.CaptureFixtu
 
 
 @pytest.mark.parametrize("shape", [(32, 32), (64, 64, 64)])
-def test_a_cpu_refuses_data_of_two_or_more_dimensions_with_the_block_and_the_flattened_run(
+def test_a_cpu_answers_data_of_two_or_more_dimensions_as_its_flattened_run_and_says_so(
     shape: tuple[int, ...],
 ) -> None:
+    flat = ask(Request("avx2", "reduce_add", {"x": Operand("vector", "f32", (math.prod(shape),))}), verify=False)
+
     sut = ask(Request("avx2", "reduce_add", {"x": Operand("vector", "f32", shape)}), verify=False)
 
-    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE, sut
-    assert sut.block == (8,) and "one-dimensional" in sut.reason and "elementwise" not in sut.reason
-    assert sut.nearest == (f"x vector:f32:{math.prod(shape)}",) and "flatten" in sut.fix
+    assert isinstance(sut, Feasible) and isinstance(flat, Feasible), sut
+    assert sut.steps == flat.steps and sut.code == flat.code
+    assert sut.notes[0].endswith(f"as its {math.prod(shape)} elements in one run (row-major order)")
+
+
+@pytest.mark.parametrize(("op", "layouts", "why"), [
+    ("add", ("row_major", "col_major"), "mixed layouts"),
+    ("scan_add", ("col_major", "col_major"), "a scan over column-major data"),
+])  # fmt: skip
+def test_2d_cpu_data_without_one_run_of_elements_is_refused_with_the_transpose_fix(
+    op: str, layouts: tuple[str, str], why: str
+) -> None:
+    names = ("a", "b") if op == "add" else ("x",)
+    operands = {name: Operand("vector", "f32", (32, 32), layout) for name, layout in zip(names, layouts)}  # pyright: ignore[reportArgumentType] -- the parametrized layouts are Layout literals
+
+    sut = ask(Request("avx2", op, operands), verify=False)
+
+    assert isinstance(sut, Infeasible) and sut.why is Why.SHAPE and why in sut.reason, sut
+    assert sut.block == (8,) and "transpose" in sut.fix
 
 
 def test_a_gpu_thread_row_refuses_a_three_dimensional_operand() -> None:

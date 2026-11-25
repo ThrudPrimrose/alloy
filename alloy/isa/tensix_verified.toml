@@ -1,5 +1,5 @@
 # Written by `python -m alloy.isa.tensix verify`: every tensix.toml row run on ttsim (simulated Blackhole).
-run = "2026-11-24"
+run = "2026-11-25"
 image = "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64@sha256:254e24eea71325fe7c564dd8e5dd8568af1a402b6a668d6c9d9318c388a16b94"
 ttsim = "v1.16.0 sha256:74616dc119268c513725f91007736f4bfa055100f2966149892475c8353700c9"
 note = "SFPLOADMACRO disabled (ttsim does not model it); f32 SFPU rows ran with fp32_dest_acc_en and UnpackToDestFp32, every row at HiFi4"
@@ -427,6 +427,70 @@ unit = "FPU"
 ok = true
 rel = 0.0
 digest = "ec351ca9711eba9b"
+
+[[verdicts]]
+op = "reduce_add_row"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0003770696984297723
+digest = "53f5483fed596e7b"
+
+[[verdicts]]
+op = "reduce_add_row"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.003769913656816247
+digest = "7fd382532e9b31c1"
+
+[[verdicts]]
+op = "reduce_add_col"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.001013338308322327
+digest = "1da7b6f436f1aa8b"
+
+[[verdicts]]
+op = "reduce_add_col"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0031545741324921135
+digest = "b23ff29c11f2f8d3"
+
+[[verdicts]]
+op = "reduce_max_row"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0004883237255757374
+digest = "e3527c3e84b1619e"
+
+[[verdicts]]
+op = "reduce_max_row"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0
+digest = "fa5fb151c789a786"
+
+[[verdicts]]
+op = "reduce_max_col"
+dtype = "f32"
+unit = "FPU"
+ok = true
+rel = 0.0004882830091203004
+digest = "8f194aa4c2985376"
+
+[[verdicts]]
+op = "reduce_max_col"
+dtype = "bf16"
+unit = "FPU"
+ok = true
+rel = 0.0
+digest = "f789272adff752fc"
 
 [[verdicts]]
 op = "scan_add"
