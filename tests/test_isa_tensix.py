@@ -10,6 +10,7 @@ import pytest
 
 from alloy.isa import tensix, tensix_harness
 from alloy.isa.__main__ import main
+from alloy.isa.ask import Space
 
 
 def test_every_row_at_each_of_its_dtypes_has_a_passing_run_on_the_pinned_image() -> None:
@@ -247,7 +248,7 @@ def test_a_max_reductions_largest_input_sits_where_a_partial_reduction_misses_it
     row = next(r for r in tensix.harness_rows() if r["op"] == op)
     data, _ = tensix_harness.inputs(row)
     at = int(torch.argmax(data).item())
-    r, c = divmod(at, 32)
+    r = at // 32
 
     assert r < 32, "not in the last tile"
     assert r >= 16, "not in the first face of a tile"
@@ -449,7 +450,7 @@ def test_a_tensix_answer_prints_every_include_its_checked_kernels_use_at_the_car
 ])  # fmt: skip
 @pytest.mark.parametrize("dtype", ["f32", "bf16"])
 def test_a_tile_between_a_cb_and_dst_moves_by_its_ttsim_checked_row(
-    src: str, dst: str, op: str, call: str, dtype: str
+    src: Space, dst: Space, op: str, call: str, dtype: str
 ) -> None:
     from alloy.isa.ask import Feasible, Operand, Request, ask
 

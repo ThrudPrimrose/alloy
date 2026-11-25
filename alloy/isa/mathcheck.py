@@ -364,7 +364,7 @@ def compiles(k: Kernel, isa: str) -> bool:
     cc = target_compiler(isa)
     if cc is None:
         return False
-    flags = list(RVV_FLAGS) if isa == RVV else [f"-march={CROSS[isa]}"]
+    flags: list[str] = list(RVV_FLAGS) if isa == RVV else [f"-march={CROSS[isa]}"]
     compile_unit(f"#include <math.h>\n#include <{HEADERS[isa]}>\n{render(k, isa).source}\n", cc, flags)
     return True
 
