@@ -50,6 +50,10 @@
   receiver's circular buffer and counts arrivals on a semaphore; `Bcast` multicasts. All five run correct on ttsim.
   Collectives that combine data are refused (they need the compute kernel). The gate's collective cases move one
   1024-float block per rank (was 256), one Tensix tile, so both backends run the same cases.
+- Tensix data movement is copy, wait and sync nodes in the tile body (`alloy/tensixgen/movement.py`), the model of
+  softhiergen and of DaCe's `InsertAsyncWaits`: the loads are copies in flight before one `NocWait`, a `Sync` per
+  circular-buffer handoff, the store between a `Sync` and its `NocWait`. The reader and writer kernels are spelled
+  from these nodes; every generated program is byte-identical to before.
 - SoftHier: newlib's `expf` and `logf`, which the strict ladder kernels called outside their range, stop GVSoC like
   `rintf`; the ladder unit computes those values itself (exp(x/2)^2, log on x scaled by 2^-64 or 2^64). Two gate
   cases feed exp and log values beyond the kernels' range; both backends compute them correctly.

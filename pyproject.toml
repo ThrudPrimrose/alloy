@@ -83,10 +83,10 @@ module = ["dace", "dace.*", "hpcagent_bench", "hpcagent_bench.*", "hpcagent_agen
 follow_imports = "skip"
 ignore_missing_imports = true
 
-# The benchmark plugin and the SoftHier backend subclass the benchmark's and DaCe's classes, which the skip above
+# The benchmark plugin, the SoftHier backend and the Tensix movement nodes subclass the benchmark's and DaCe's classes, which the skip above
 # makes Any.
 [[tool.mypy.overrides]]
-module = ["alloy.hb_plugin", "alloy.hb_plugin.*", "alloy.softhiergen", "alloy.softhiergen.*"]
+module = ["alloy.hb_plugin", "alloy.hb_plugin.*", "alloy.softhiergen", "alloy.softhiergen.*", "alloy.tensixgen.movement"]
 disallow_subclassing_any = false
 
 # The GVSoC verdicts hash this file's bytes (alloy.isa.softhier.digest): an edit voids every recorded run.

@@ -320,3 +320,30 @@ def test_the_shared_gate_cases_run_correct_on_ttsim_and_the_planted_one_is_caugh
 
     assert all(found[name].startswith("wrong") for name in PLANTED), found
     assert all(v.startswith("correct") for k, v in found.items() if k not in PLANTED), found
+
+
+def test_data_movement_is_copy_wait_and_sync_nodes_in_the_tile_body() -> None:
+    """As softhiergen and DaCe's InsertAsyncWaits do: the loads are copies in flight together before one NoC read wait,
+    each circular buffer's handoff is a Sync after it, and the store sits between a Sync and its NoC write wait."""
+    from dace.libraries.standard.nodes.sync import Sync
+
+    from alloy import tilelower
+    from alloy.softhiergen.gate.programs import cases
+    from alloy.tensixgen.gate import task_of
+    from alloy.tensixgen.movement import NocWait
+    from alloy.tensixgen.split import tile_body
+    from alloy.tensixgen.tasks import LANES
+
+    case = next(c for c in cases() if c.name == "vector add")
+    sdfg = case.sdfg()
+    tilelower.front(sdfg, LANES, fuse_multiply_add=False)
+    program(task_of(case), sdfg, {}, version="v08")
+    state, _ = tile_body(sdfg)
+
+    waits = {n.direction: n for n in state.nodes() if isinstance(n, NocWait)}
+    loads = [n for n in state.nodes() if n.label.startswith("load_")]
+    assert len(loads) == 2 and all(state.edges_between(load, waits["read"]) for load in loads)
+    syncs = {n.label: n for n in state.nodes() if isinstance(n, Sync)}
+    assert {"cb_push_0", "cb_push_1", "cb_wait_16", "cb_pop_16"} <= syncs.keys()
+    (store,) = [n for n in state.nodes() if n.label.startswith("store_")]
+    assert state.edges_between(syncs["cb_wait_16"], store) and state.edges_between(store, waits["write"])

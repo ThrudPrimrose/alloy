@@ -34,6 +34,7 @@ from dace.sdfg.utils import dfs_topological_sort
 
 from alloy.isa.tensix_harness import compute_include, dataflow_include
 from alloy.jsontype import Json
+from alloy.tensixgen import movement
 from alloy.tensixgen.backend import TILE_NODES, Refused, code, constant, node_code, op_of, rule, use_tensix
 
 __all__ = [
@@ -545,18 +546,13 @@ def host_descriptor(task: Json, version: str, body: Body, options: Options, arra
     }
 
 
-def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
-    """Reads this core's tiles ``start .. start + n - 1`` of every input, ``block`` tiles per input per barrier; sharded
-    inputs, the core's ``n`` tiles from its own L1 shard."""
-    if sharded:
-        what, read = (
-            "n tiles from its L1 shard",
-            "noc_async_read(s{k} + (i + t) * bytes{k}, w{k} + t * bytes{k}, bytes{k});",
-        )
-    else:
-        what, read = "tiles start .. start + n - 1", "noc_async_read_tile(start + i + t, s{k}, w{k} + t * bytes{k});"
+def reader(moves: movement.Movement, block: int, version: str, sharded: bool = False) -> str:
+    """Spells the body's loads (:mod:`alloy.tensixgen.movement`): this core's tiles ``start .. start + n - 1`` of every
+    input, ``block`` tiles per input per wait; sharded inputs, the core's ``n`` tiles from its own L1 shard."""
+    loads = moves.loads
+    what = "n tiles from its L1 shard" if sharded else "tiles start .. start + n - 1"
     lines = [
-        f"// reader: this core's {what} of {inputs} input(s), input k into CB k, {block} per barrier",
+        f"// reader: this core's {what} of {len(loads)} input(s), input k into CB k, {block} per barrier",
         "#include <stdint.h>",
         f'#include "{dataflow_include(version == "v08")}"',
         "",
@@ -565,7 +561,8 @@ def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
     ]
     if not sharded:
         lines.append("    uint32_t start = get_arg_val<uint32_t>(1);")
-    for k in range(inputs):
+    for load in loads:
+        k = load.cb
         offset = "0" if k == 0 else f"args{k - 1}.next_compile_time_args_offset()"
         if sharded:  # a shard lies at the same L1 address on every core
             lines += [
@@ -581,13 +578,13 @@ def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
     lines += [
         f"    for (uint32_t i = 0; i < num_tiles; i += {block}) {{",
         f"        uint32_t n = num_tiles - i < {block} ? num_tiles - i : {block};",
-        *(f"        cb_reserve_back({k}, n);" for k in range(inputs)),
-        *(f"        uint32_t w{k} = get_write_ptr({k});" for k in range(inputs)),
+        *(f"        cb_reserve_back({load.cb}, n);" for load in loads),
+        *(f"        uint32_t w{load.cb} = get_write_ptr({load.cb});" for load in loads),
         "        for (uint32_t t = 0; t < n; ++t) {",
-        *("            " + read.format(k=k) for k in range(inputs)),
+        *("            " + movement.read_line(load, sharded) for load in loads),
         "        }",
-        "        noc_async_read_barrier();",
-        *(f"        cb_push_back({k}, n);" for k in range(inputs)),
+        f"        {moves.read_wait.call()}",
+        *(f"        {movement.push_call(load)}" for load in loads),
         "    }",
         "}",
         "",
@@ -595,7 +592,7 @@ def reader(inputs: int, block: int, version: str, sharded: bool = False) -> str:
     return "\n".join(lines)
 
 
-def writer(block: int, version: str, sharded: bool = False) -> str:
+def writer(moves: movement.Movement, block: int, version: str, sharded: bool = False) -> str:
     """Writes this core's output tiles from CB 16 at ``start``: a map's ``n`` tiles, a reduction's one tile; a sharded
     map's ``n`` tiles into the core's own L1 shard."""
     if sharded:
@@ -613,9 +610,9 @@ def writer(block: int, version: str, sharded: bool = False) -> str:
             f"        cb_wait_front({OUT_CB}, n);",
             f"        uint32_t r = get_read_ptr({OUT_CB});",
             "        for (uint32_t t = 0; t < n; ++t) {",
-            "            noc_async_write(r + t * bytes, s + (i + t) * bytes, bytes);",
+            f"            {movement.write_line(True)}",
             "        }",
-            "        noc_async_write_barrier();",
+            f"        {moves.write_wait.call()}",
             f"        cb_pop_front({OUT_CB}, n);",
             "    }",
             "}",
@@ -638,9 +635,9 @@ def writer(block: int, version: str, sharded: bool = False) -> str:
         f"        cb_wait_front({OUT_CB}, n);",
         f"        uint32_t r = get_read_ptr({OUT_CB});",
         "        for (uint32_t t = 0; t < n; ++t) {",
-        "            noc_async_write_tile(start + i + t, s, r + t * bytes);",
+        f"            {movement.write_line(False)}",
         "        }",
-        "        noc_async_write_barrier();",
+        f"        {moves.write_wait.call()}",
         f"        cb_pop_front({OUT_CB}, n);",
         "    }",
         "}",
@@ -704,11 +701,12 @@ def program(task: Json, sdfg: dace.SDFG, scalars: dict[str, float], options: Opt
     config = compute_config(count, block, reduce)
     descriptor = host_descriptor(task, version, body, options, arrays, shards, inputs, block, reduce)
     title = " | ".join(task["program"])
+    moves = movement.insert(state, inputs, output, reduce)
     return Program(
         str(task["name"]),
-        reader(count, block, version, bool(sharded)),
+        reader(moves, block, version, bool(sharded)),
         compute(str(task["name"]), title, body, block, count, version),
-        writer(block, version, bool(sharded) and not reduce),
+        writer(moves, block, version, bool(sharded) and not reduce),
         config,
         descriptor,
     )

@@ -29,7 +29,7 @@ Tile widths differ because the hardware does:
 |---|---|---|
 | Entry | `softhiergen.program.generate(sdfg)`, then `write_folder` | `tensixgen.split.program(task, sdfg, scalars)`, then `Program.write` |
 | Compute | Spatz RVV loops (`dsh_rvv_*`) on core 0 of each cluster; RedMulE for float16 GEMM | SFPU and FPU row calls on DST tiles in one compute kernel |
-| Data movement | iDMA copy nodes on the DMA core, each followed by its wait and a cluster barrier | A reader kernel (`noc_async_read_tile`, then `noc_async_read_barrier`) and a writer kernel, through circular buffers |
+| Data movement | Copy nodes (iDMA on the DMA core), each followed by its wait (`DmaWait`) and a `Sync` (cluster barrier) | Copy nodes (NoC reads and writes), one `NocWait` after the loads and one around the store, and a `Sync` per circular-buffer handoff (`alloy/tensixgen/movement.py`); the reader and writer kernels spell them. Both follow DaCe's `InsertAsyncWaits`: copies in flight, then the wait before their readers |
 | Work split | Cluster `c` runs kernel iterations `c, c + P, ...` | Tiles split evenly over the cores; a reduction sums one partial tile per core on the host |
 | Global memory layout | One HBM region, or a placement over HBM nodes (block-cyclic or page-cyclic) | Interleaved DRAM pages, or L1 height shards (one block of the outermost dimension per core) |
 | Element types | float32, float16, int32 | float32 |
