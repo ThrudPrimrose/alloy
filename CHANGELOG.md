@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A CPU reduction or scan over several registers (any length on SVE) hands out the whole N-element program, the
+  lane-wise combine, the carry and the `svwhilelt` loop included, and its check runs that program against a scalar
+  reference with the extreme in the first, a middle and the last element (review R12); it checked one register only.
+  SVE min and max answers name `<math.h>` for their `INFINITY`.
+- Tensix reductions: the largest input sits inside the first tile (review R12).
 - GPU register rows take N elements over one warp (T3): a lane row (`fma`, ...) runs N / lanes times per lane on
   coalesced indices `i = lane + j * lanes`; a warp reduction folds each lane's values first, then reduces once; N must
   be a whole multiple of the warp (32 on CUDA, 64 on CDNA), else refused with the multiples around it and a bounds-check

@@ -1240,7 +1240,7 @@ def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once
     ]
     assert "for (int64_t i = 0; i < 64; i += svcntd())" in sut.code
     assert f"acc = {combine}(pg, acc, svld1_f64(pg, x + i));" in sut.code
-    assert sut.code.endswith(f"double s = {reduce_}(svptrue_b64(), acc);")
+    assert "svbool_t pg = svptrue_b64();\n    svfloat64_t v = acc;" in sut.code and f"s = {reduce_}(pg, v);" in sut.code
 
 
 @pytest.mark.parametrize(("op", "fix"), [

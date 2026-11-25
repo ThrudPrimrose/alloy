@@ -30,7 +30,7 @@ from typing import Literal, get_args
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-from alloy.isa import OPS, layouts, load, simt, softhier, tensix, tile
+from alloy.isa import OPS, composed, layouts, load, simt, softhier, tensix, tile
 from alloy.isa.mathkernels import cheapest, functions, kernel, ladder, render, target_of
 from alloy.isa.table import ALIASES, GATED, Entry, Table, gate
 from alloy.isa.validate import HEADERS, c_flags
@@ -761,9 +761,36 @@ def vector_op_1d(request: Request, verify: bool) -> Answer:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
     answer = one_register(request, isa, dtype, table, verify)
     if not lanes and shapes:  # SVE: the lane count is known at run time only
-        return scalable(answer, request, math.prod(next(iter(shapes))), table, dtype)
+        n = math.prod(next(iter(shapes)))
+        return joined(scalable(answer, request, n, table, dtype), request, n, table, verify)
     count = next(iter(shapes))[0] // lanes if shapes and lanes else 1
-    return repeated(answer, request, count, table, isa, dtype)
+    return joined(repeated(answer, request, count, table, isa, dtype), request, count * lanes, table, verify)
+
+
+def joined(answer: Answer, request: Request, n: int, table: Table, verify: bool) -> Answer:
+    """A reduction or scan over ``n`` elements that spans several registers (any ``n`` on SVE): its code becomes the
+    whole ``n``-element program, the combine or carry and the loop included, and ``verify`` runs that program against
+    a scalar reference (review R12), not only the one-register row."""
+    isa, dtype = request.target, dtype_of(request)
+    lanes = table.isa(isa).lanes.get(dtype, 0)
+    if not isinstance(answer, Feasible) or request.op not in composed.COMBINE or dtype not in ("f32", "f64"):
+        return answer
+    if lanes and n <= lanes:
+        return answer
+    code = composed.program(isa, request.op, dtype, n, table)
+    setup = (
+        {**answer.setup, "header": f"#include <math.h>\n{answer.setup['header']}"}
+        if "INFINITY" in code
+        else answer.setup
+    )
+    if not verify:
+        return dataclasses.replace(answer, code=code, setup=setup)
+    ok, basis = composed.checked(isa, request.op, dtype, n, table)
+    if ok is False:
+        return no(request, Why.CHECK_FAILED, basis)
+    check = Check("run", basis) if ok else answer.check
+    notes = answer.notes if ok else (*answer.notes, f"the {n}-element program was not run: {basis}")
+    return dataclasses.replace(answer, code=code, setup=setup, check=check, notes=notes)
 
 
 #: Per SVE element type: the lanes of one register at run time, the vector and scalar C types, the predicate width.
