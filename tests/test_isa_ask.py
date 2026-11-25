@@ -241,7 +241,7 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str) -> None:
 
 
 @pytest.mark.parametrize(("request_", "reason"), [
-    (Request("sm90", "fma", {"x": Operand("register", "f64")}), "computes in f32"),
+    (Request("sm90", "fma", {"x": Operand("register", "f16")}), "computes in f32, f64"),
     (Request("sm90", "fma", {"x": Operand("shared", "f32", (64, 64))}), "one thread on scalars"),
     (Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}), "4 f64 lanes"),
     (Request("avx2", "add", {"a": Operand("vector", "f64", (4,)), "b": Operand("vector", "f32", (8,))}), "mix"),
@@ -285,7 +285,7 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> 
     Request("gfx942", "fma", {"x": Operand("register", "f32", (96,))}),
     Request("avx2", "copy", {"src": Operand("global", "f32", (3,)), "dst": Operand("vector", "f32", (3,))}),
     Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}),
-    Request("sm90", "fma", {"x": Operand("register", "f64")}),
+    Request("sm90", "fma", {"x": Operand("register", "f16")}),
     Request("tensix", "exp", {"x": Operand("tile_register", "f32", (7, 3))}),
     Request("sme", "add"),
 ])  # fmt: skip
@@ -411,7 +411,7 @@ REGISTER = Operand("vector", "f64", (4,))
     (Request("tensix", "frobnicate"), Why.OPERATION),
     (Request("sm90", "mma", TILE | {"a": Operand("shared", "f32", (64, 64)),
                                     "b": Operand("shared", "f32", (64, 64), "col_major")}), Why.ELEMENT_TYPE),
-    (Request("sm90", "fma", {"x": Operand("register", "f64")}), Why.ELEMENT_TYPE),
+    (Request("sm90", "fma", {"x": Operand("register", "f16")}), Why.ELEMENT_TYPE),
     (Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
                              "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),
                              "c": Operand("register", "f32", (64, 64))}), Why.SHAPE),
@@ -547,7 +547,8 @@ def test_a_per_thread_row_computes_in_its_table_element_type() -> None:
     half2 = next(row for row in simt.rows() if row.op == "add_half2")
 
     assert half2.dtype == "f16"
-    assert {row.dtype for row in simt.rows() if row.op != "add_half2" and not ask_module.moves(row)} == {"f32"}
+    assert {row.dtype for row in simt.rows() if row.op != "add_half2" and not ask_module.moves(row)} == {"f32", "f64"}
+    assert all(row.answers() != row.op for row in simt.rows() if row.dtype == "f64")  # an f64 row answers its op
     assert isinstance(answered(Request("sm90", "add_half2", {"x": Operand("register", "f16")})), Feasible)
     assert answered(Request("sm90", "add_half2", {"x": Operand("register", "f32")})).status == "infeasible"
 
@@ -1584,3 +1585,15 @@ def test_an_sm90_mma_answer_ranks_both_kernels_and_says_the_rank_is_derived() ->
     assert isinstance(sut, Feasible)
     rank = next(note for note in sut.notes if note.startswith("ranked"))
     assert "not measured" in rank and rank.index("1. 64x64") < rank.index("2. 128x128")
+
+
+@pytest.mark.parametrize(
+    ("op", "spelled"), [("fma", "fma(a, b, c)"), ("reduce_min", "fmin("), ("scan_add", "double t")]
+)
+def test_an_f64_device_request_answers_the_f64_row_in_double(op: str, spelled: str) -> None:
+    operands = {"x": Operand("register", "f64", (32,) if op != "fma" else ())}
+
+    sut = ask(Request("sm90", op, operands), verify=False)
+
+    assert isinstance(sut, Feasible), sut
+    assert spelled in sut.steps[-1].spelling and "double alloy_" in sut.code

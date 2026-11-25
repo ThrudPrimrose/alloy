@@ -272,3 +272,60 @@ ref = "RB(a) + 2.0f * RB(a + 7.0f)"
 tol = 0.0
 dtype = "bf16"
 note = "Eight bf16 packed into a uint4 and stored with one 16-byte store (here the values a .. a + 7); y 16-byte aligned."
+
+# f64 rows (design T9): the same operations in double, for HPC kernels; the shuffles move 64-bit values in two halves.
+[ops.fma_f64]
+kind = "lane"
+spells = "fma"
+dtype = "f64"
+cuda = "fma(a, b, c)"
+hip = "fma(a, b, c)"
+ref = "fma(a, b, c)"
+tol = 0.0
+
+[ops.reduce_add_f64]
+kind = "warp"
+spells = "reduce_add"
+dtype = "f64"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out += __shfl_down_sync(0xffffffffu, out, d);"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out += __shfl_down(out, d);"
+ref = "double s = 0; for (int k = 0; k < lanes; k++) s += in[k]; want[0] = s;"
+check = "first"
+tol = 1e-15
+domain = [0.5, 4.0]  # not symmetric: a sum of zero would equal the untouched output
+note = "The sum lands in lane 0; the other lanes hold partial sums. Use __shfl_xor for the sum in every lane."
+
+[ops.reduce_min_f64]
+kind = "warp"
+spells = "reduce_min"
+dtype = "f64"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmin(out, __shfl_down_sync(0xffffffffu, out, d));"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmin(out, __shfl_down(out, d));"
+ref = "double s = in[0]; for (int k = 1; k < lanes; k++) s = fmin(s, in[k]); want[0] = s;"
+check = "first"
+tol = 0.0
+domain = [4.0, 0.5]  # descending: the minimum sits in the last lane and has to travel the whole tree
+note = "The minimum lands in lane 0; fmin returns the other operand when one is NaN. Use __shfl_xor for it in every lane."
+
+[ops.reduce_max_f64]
+kind = "warp"
+spells = "reduce_max"
+dtype = "f64"
+cuda = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmax(out, __shfl_down_sync(0xffffffffu, out, d));"
+hip = "out = v; for (int d = lanes / 2; d > 0; d /= 2) out = fmax(out, __shfl_down(out, d));"
+ref = "double s = in[0]; for (int k = 1; k < lanes; k++) s = fmax(s, in[k]); want[0] = s;"
+check = "first"
+tol = 0.0
+domain = [0.5, 4.0]  # ascending: the maximum sits in the last lane and has to travel the whole tree
+note = "The maximum lands in lane 0; fmax returns the other operand when one is NaN. Use __shfl_xor for it in every lane."
+
+[ops.scan_add_f64]
+kind = "warp"
+spells = "scan_add"
+dtype = "f64"
+cuda = "out = v; for (int d = 1; d < lanes; d *= 2) { double t = __shfl_up_sync(0xffffffffu, out, d); if (lane >= d) out += t; }"
+hip = "out = v; for (int d = 1; d < lanes; d *= 2) { double t = __shfl_up(out, d); if (lane >= d) out += t; }"
+ref = "double s = 0; for (int k = 0; k < lanes; k++) { s += in[k]; want[k] = s; }"
+tol = 1e-15
+domain = [0.5, 4.0]
+note = "The inclusive prefix sum over the warp in log2(lanes) steps (Hillis and Steele); lane k holds in[0] + ... + in[k], summed in another order than a left fold. Across warps, add the last lane of the warp before."

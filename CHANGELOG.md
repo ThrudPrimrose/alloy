@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- f64 device rows (design T9): `fma`, `reduce_add`, `reduce_min`, `reduce_max` and `scan_add` in double on CUDA and HIP,
+  each checked on inputs with digits past float's (a row that rounds through float fails); run on CUDA, HIP pending.
 - A CPU reduction or scan over several registers (any length on SVE) hands out the whole N-element program, the
   lane-wise combine, the carry and the `svwhilelt` loop included, and its check runs that program against a scalar
   reference with the extreme in the first, a middle and the last element (review R12); it checked one register only.

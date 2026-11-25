@@ -1029,7 +1029,7 @@ def warp_shape(request: Request, row: simt.Row, dialect: str) -> Infeasible | No
     """The refusal of a warp row's 1-D register operand that is not one warp, or (for a reduction) a whole multiple of
     one; None."""
     lanes = WARP_LANES[dialect]
-    reduction = row.op in REDUCTIONS
+    reduction = row.answers() in REDUCTIONS
     lengths = [o.shape[0] for o in request.operands.values() if o.space == "register" and len(o.shape) == 1]
     wrong = [n for n in lengths if n != lanes and not (reduction and n % lanes == 0)]
     if not wrong:
@@ -1112,7 +1112,9 @@ def over_warp(
     if row.kind == "warp":
         note = (f"{n} elements over one {group}: each lane folds its {k} values ({spread}) in its register, then the "
                 "row runs once; the values combine in another order than a scalar left fold")  # fmt: skip
-        return (Step(step.unit, LANE_COMBINE[row.op], k - 1), step), (note,)
+        fold = LANE_COMBINE[row.answers()]
+        fold = fold.replace("fminf", "fmin").replace("fmaxf", "fmax") if row.dtype == "f64" else fold
+        return (Step(step.unit, fold, k - 1), step), (note,)
     note = f"{n} elements over one {group}: each lane runs the row {k} times ({spread})"
     return (Step(step.unit, step.spelling, k),), (note,)
 
@@ -1123,10 +1125,11 @@ def row_code(row: simt.Row, dialect: str) -> str:
     headers = [*(["hip/hip_runtime.h"] if dialect == "hip" else []), *simt.table()["target"][dialect]["headers"]]
     preamble = "\n".join(f"#include <{h}>" for h in headers) + f"\ntypedef {simt.ELEMENTS[dialect, row.dtype][0]} elem;"
     body = f"out = {row.spelled(dialect)};" if row.kind == "lane" else f"{row.spelled(dialect)}\n{row.read}".rstrip()
-    signature = (f"float alloy_{row.op}(float v, float a, float b, float c, const elem* x, elem* y, const float* wide, "
-                 "float* total)")  # fmt: skip
+    real = simt.real_type(row)
+    signature = (f"{real} alloy_{row.op}({real} v, {real} a, {real} b, {real} c, const elem* x, elem* y, "
+                 "const float* wide, float* total)")  # fmt: skip
     locals_ = ("const int lanes = warpSize, lane = threadIdx.x % warpSize, i = blockIdx.x * blockDim.x + threadIdx.x;"
-               "\nfloat out = 0.0f;")  # fmt: skip
+               f"\n{real} out = 0;")  # fmt: skip
     return device_code(preamble, signature, f"{locals_}\n{body}\nreturn out;")
 
 

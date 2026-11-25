@@ -41,6 +41,7 @@ DOMAIN = (-2.0, 2.0)
 #: Per dialect and element type: the C type of the arrays x and y a row moves, and the host's conversion from float.
 ELEMENTS = {
     ("cuda", "f32"): ("float", "(float)"), ("hip", "f32"): ("float", "(float)"),
+    ("cuda", "f64"): ("double", "(double)"), ("hip", "f64"): ("double", "(double)"),
     ("cuda", "f16"): ("__half", "__float2half_rn"), ("hip", "f16"): ("__half", "__float2half_rn"),
     ("cuda", "bf16"): ("__nv_bfloat16", "__float2bfloat16_rn"), ("hip", "bf16"): ("__hip_bfloat16", "__float2bfloat16"),
 }  # fmt: skip
@@ -133,6 +134,12 @@ def bindings(dialect: str) -> str:
     )
 
 
+def real_type(row: Row) -> str:
+    """The C type of a row's operands and result: double for an f64 row, float otherwise (an f16 or bf16 row moves
+    its type but takes and checks f32)."""
+    return "double" if row.dtype == "f64" else "float"
+
+
 def program(row: Row, dialect: str) -> str:
     """A program that runs ``row`` on one warp of ``dialect`` and prints the worst relative error over the threads
     it checks (only lane 0 for a row whose result lands there)."""
@@ -147,37 +154,43 @@ def program(row: Row, dialect: str) -> str:
     reference = (
         row.ref
         if row.kind == "warp"
-        else f"for (int k = 0; k < lanes; k++) {{ float a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
+        else f"for (int k = 0; k < lanes; k++) {{ {real_type(row)} a = A(k), b = B(k), c = C; (void)b; (void)c; want[k] = {row.ref}; }}"
     )
     elem, convert = ELEMENTS[dialect, row.dtype]
+    real = real_type(row)  # the type of a, b, c, the lane's value and its result
+    f = "" if real == "double" else "f"
+    # f64 inputs carry digits past float's 24 bits, so a row that computes or moves in float fails its check
+    fine = " + (k + 1) * 1e-9" if real == "double" else ""
     checked = "1" if row.check == "first" else "lanes"
     return f"""{includes}
 #define LANES {lanes}
-__host__ __device__ static inline float A(int k) {{ return {lo}f + ({hi}f - {lo}f) * (k + 0.5f) / LANES; }}
-__host__ __device__ static inline float B(int k) {{ return 0.5f + 1.5f * ((k * 7 + 3) % LANES + 0.5f) / LANES; }}
-#define C 0.25f
+__host__ __device__ static inline {real} A(int k) {{ return {lo}{f} + ({hi}{f} - {lo}{f}) * (k + 0.5{f}) / LANES{fine}; }}
+__host__ __device__ static inline {real} B(int k) {{ return 0.5{f} + 1.5{f} * ((k * 7 + 3) % LANES + 0.5{f}) / LANES{fine}; }}
+#define C 0.25{f}
 // A float rounded to the nearest bf16 (ties to even): the reference of a row that stores bf16.
 static inline float RB(float v) {{ unsigned u; memcpy(&u, &v, 4); u += 0x7fffu + ((u >> 16) & 1u); u &= 0xffff0000u; memcpy(&v, &u, 4); return v; }}
 static inline float wide_ref(int lane) {{ return (float)((lane / 4) * 4) * 0.5f; }}
 
 typedef {elem} elem;
 
-__global__ void row(const float* in, float* outv, const float* wide, float* total, const elem* x, elem* y) {{
+__global__ void row(const {real}* in, {real}* outv, const float* wide, float* total, const elem* x, elem* y) {{
     const int lane = threadIdx.x, lanes = LANES, i = lane;
-    const float a = A(lane), b = B(lane), c = C, v = in[lane];
+    const {real} a = A(lane), b = B(lane), c = C, v = in[lane];
     (void)a; (void)b; (void)c; (void)v; (void)wide; (void)total; (void)x; (void)y; (void)i; (void)lanes;
-    float out = 0.0f;
+    {real} out = 0;
     {body}
     outv[lane] = out;
 }}
 
 int main() {{
     const int lanes = LANES;
-    float in[LANES], got[LANES], want[LANES], wide[LANES];
+    {real} in[LANES], got[LANES], want[LANES];
+    float wide[LANES];
     for (int k = 0; k < lanes; k++) {{ in[k] = A(k); wide[k] = k * 0.5f; want[k] = 0.0f; }}
     elem xs[LANES];
     for (int k = 0; k < lanes; k++) xs[k] = {convert}(A(k));
-    float *d_in, *d_out, *d_wide, *d_total;
+    {real} *d_in, *d_out;
+    float *d_wide, *d_total;
     elem *d_x, *d_y;
     {api["malloc"]}((void**)&d_x, sizeof xs); {api["malloc"]}((void**)&d_y, 8 * sizeof xs);
     {api["memcpy"]}(d_x, xs, sizeof xs, {api["h2d"]});
