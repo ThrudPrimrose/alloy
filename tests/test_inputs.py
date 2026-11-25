@@ -43,6 +43,7 @@ def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_t
         inputs.load(path, f"{REDUCTIONS}:scale", datatype=64)  # type: ignore[arg-type]
 
 
+# Reproducer: a derived boolean argument takes both truth values (aa19cd0)
 def test_a_derived_boolean_argument_takes_both_truth_values() -> None:
     sdfg = dace.SDFG("flags")
     sdfg.add_array("mask", [1000], dace.bool_)
@@ -52,6 +53,7 @@ def test_a_derived_boolean_argument_takes_both_truth_values() -> None:
     assert 0 < np.count_nonzero(sut.values["mask"]) < 1000
 
 
+# Reproducer: derived draws cover booleans and complex parts (aa19cd0)
 def test_a_derived_complex_argument_has_an_imaginary_part() -> None:
     sdfg = dace.SDFG("waves")
     sdfg.add_array("z", [8], dace.complex128)
@@ -61,6 +63,7 @@ def test_a_derived_complex_argument_has_an_imaginary_part() -> None:
     assert np.all(sut.values["z"].imag != 0)
 
 
+# Reproducer: a symbol that only bounds a loop is a domain gap (aa19cd0)
 def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap() -> None:
     sdfg = dace.SDFG("indexed")
     sdfg.add_array("a", ["N"], dace.float64)
@@ -72,6 +75,7 @@ def test_a_symbol_that_only_bounds_a_loop_is_a_domain_gap() -> None:
     assert "K" in sut
 
 
+# Reproducer: a specialized size still shapes derived draws (c6b1930)
 def test_a_size_padded_by_one_is_still_an_array_extent() -> None:
     sdfg = dace.SDFG("padded")
     sdfg.add_array("a", ["N + 1"], dace.float64)
@@ -81,6 +85,7 @@ def test_a_size_padded_by_one_is_still_an_array_extent() -> None:
     assert sut == ""
 
 
+# Reproducer: a specialized size still shapes derived draws (c6b1930)
 def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant() -> None:
     sdfg = dace.SDFG("specialized")
     sdfg.add_array("a", ["N"], dace.float64)
@@ -92,6 +97,7 @@ def test_a_derived_draw_shapes_an_array_whose_size_was_specialized_to_a_constant
     assert sut.values["a"].shape == (10,)
 
 
+# Reproducer: each preset carries the manifest's first config row (K) (cce80a9)
 def test_a_preset_carries_the_manifests_first_configuration_the_initializer_reads() -> None:
     """ext_break_capture's initializer reads the config entry ``K``; a timing draw at a bare preset raised
     ``KeyError: 'K'`` and the profile episode delivered nothing (E1b, ault 921253)."""

@@ -53,13 +53,13 @@ def test_zen4_issues_a_512_bit_add_as_two_256_bit_halves() -> None:
     assert wide.rthroughput == 2 * half.rthroughput
 
 
-@pytest.mark.parametrize("isa", sorted(CPUS))
-@pytest.mark.parametrize("op", ["add", "mul", "fma", "div"])
-def test_the_core_arithmetic_has_a_cost_on_every_isa(isa: str, op: str) -> None:
-    found = costs(isa, op, "f64")
+def test_the_core_arithmetic_has_a_cost_on_every_isa() -> None:
+    sut = {(isa, op): costs(isa, op, "f64") for isa in sorted(CPUS) for op in ("add", "mul", "fma", "div")}
 
-    assert found, f"{isa}/f64/{op} has no cost"
-    assert all(c.cpu == CPUS[isa] and c.latency > 0 and c.rthroughput > 0 for c in found)
+    assert [key for key, found in sut.items() if not found] == []
+    assert all(
+        c.cpu == CPUS[isa] and c.latency > 0 and c.rthroughput > 0 for (isa, _), found in sut.items() for c in found
+    )
 
 
 def test_the_lookup_prints_the_rows_cost(capsys: pytest.CaptureFixture[str]) -> None:

@@ -224,6 +224,7 @@ def test_a_child_asking_for_more_memory_than_the_machine_has_is_a_crash_not_an_e
     assert isinstance(sut, str) and sut.startswith("raised:") and "Unable to allocate" in sut
 
 
+# Reproducer: Verification judges the reference candidate on the reference run instead of building it again (f4e7a38)
 def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "row_sum", ROW_SUM_MANIFEST)
     builds = [
@@ -238,11 +239,13 @@ def test_the_reference_candidate_is_judged_on_the_reference_run_not_built_again(
         assert sut.verdicts[rep.scope.symbol][rep.builds[0].name].status == "exact"
 
 
+# Reproducer: An accumulation length over a size the draw lacks names that size (f4e7a38)
 def test_an_accumulation_length_over_a_size_the_draw_lacks_names_that_size() -> None:
     with pytest.raises(ValueError, match="N"):
         verify.accumulation_length(outlined(), {})
 
 
+# Reproducer: scaled sizes inside the manifest's constraints (f4e7a38)
 def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(tmp_path: pathlib.Path) -> None:
     text = ROW_SUM_MANIFEST.replace("args:", 'constraints: ["N % 64 == 0", "M <= N"]\nargs:')
     manifest = write_manifest(tmp_path, "row_sum", text)
@@ -251,6 +254,7 @@ def test_scaled_sizes_snap_to_a_divisibility_and_a_broken_constraint_is_refused(
     assert inputs.constrained(manifest, {"M": 4096, "N": 1024}) is None
 
 
+# Reproducer: An integer output compares bit-identical (f0f8a81)
 def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatype() -> None:
     """An integer kernel (``int64``) has no rounding band: its outputs match exactly or fail, and an integer kernel's
     float output takes the band of its own dtype."""
@@ -263,6 +267,7 @@ def test_an_integer_output_is_compared_bit_identical_whatever_the_kernel_datatyp
     assert same.status == "exact" and off.status == "fail" and value.status == "pass"
 
 
+# Reproducer: returned outputs bound to manifest names (aa19cd0)
 def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_buffer() -> None:
     args = {"out": np.zeros(3)}
     returned = np.array([1.0, 2.0, 3.0])
@@ -272,11 +277,13 @@ def test_a_returned_output_binds_to_the_manifest_name_and_not_to_the_unwritten_b
     np.testing.assert_array_equal(sut["out"], returned)
 
 
+# Reproducer: an output nothing supplies is refused (aa19cd0)
 def test_an_output_nothing_supplies_is_refused() -> None:
     with pytest.raises(ValueError, match="out"):
         verify.bound_outputs(("out",), {"out": np.zeros(3)}, None, {"a": None})
 
 
+# Reproducer: exact tells a signed zero apart but not two nans (aa19cd0)
 def test_exact_tells_a_signed_zero_apart_but_not_two_nans() -> None:
     plus, minus = np.array([0.0, np.nan]), np.array([-0.0, -np.nan])
 
@@ -285,6 +292,7 @@ def test_exact_tells_a_signed_zero_apart_but_not_two_nans() -> None:
     assert verify.compare("exact", np.array([np.nan]), np.array([-np.nan]), 1, "float64").status == "exact"
 
 
+# Reproducer: exact compare tells NaN from zero (1111330)
 def test_exact_tells_a_nan_apart_from_a_zero() -> None:
     assert verify.compare("exact", np.array([np.nan]), np.array([0.0]), 1, "float64").status == "fail"
     assert (
@@ -293,11 +301,13 @@ def test_exact_tells_a_nan_apart_from_a_zero() -> None:
     )
 
 
+# Reproducer: verification refuses an empty draw list (aa19cd0)
 def test_verification_refuses_an_empty_draw_list() -> None:
     with pytest.raises(ValueError, match="at least one draw"):
         verify.verify(outlined(), MATRIX, [], verify.Cases([], ("a",)), pathlib.Path("."))
 
 
+# Reproducer: a wrong candidate fails through the whole verification (e35a995)
 def test_a_wrong_candidate_fails_through_the_whole_verification(tmp_path: pathlib.Path) -> None:
     program, cases = program_and_cases(tmp_path, "scale", SCALE_MANIFEST)
     (scope,) = program.scopes
@@ -510,10 +520,12 @@ def test_a_scalar_output_needs_no_extent() -> None:
     assert sut.status == "exact"
 
 
+# Reproducer: an ungradeable verdict is not correct (e35a995)
 def test_an_ungradeable_verdict_is_not_correct() -> None:
     assert not verify.Verdict("ungradeable").ok
 
 
+# Reproducer: a nondeterministic output is compared by band even at exact (e35a995)
 def test_a_nondeterministic_output_is_compared_by_band_even_at_exact() -> None:
     ref = verify.Reference([{"x": np.array([1.0])}], frozenset({"x"}))
 
@@ -522,6 +534,7 @@ def test_a_nondeterministic_output_is_compared_by_band_even_at_exact() -> None:
     assert sut.ok
 
 
+# Reproducer: an output that changes between runs is marked nondeterministic (e35a995)
 def test_an_output_that_changes_between_runs_is_marked_nondeterministic() -> None:
     cases = verify.Cases([inputs.Draw({}, {})], ("x",))
     runs: list[list[verify.Outcome]] = [[[{"x": np.array([1.0])}], [{"x": np.array([2.0])}], [{"x": np.array([1.0])}]]]
@@ -545,6 +558,7 @@ def team_runs(values: dict[int, dict[str, np.ndarray]]) -> list[list[verify.Outc
     return [[[outputs] for _ in range(verify.REFERENCE_RUNS)] for outputs in values.values()]
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team_reproduces_it() -> None:
     cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("sum", "scaled")))
     runs = team_runs(
@@ -556,6 +570,7 @@ def test_a_value_that_follows_the_team_size_is_nondeterministic_though_each_team
     assert sut.nondeterministic == frozenset({"sum"})
 
 
+# Reproducer: two draws differing from each other are no nondeterminism (dc3d89c)
 def test_two_draws_differing_from_each_other_are_no_nondeterminism() -> None:
     draws = [inputs.Draw({}, {}), inputs.Draw({}, {})]
     cases = verify.at_team_sizes(outlined(), verify.Cases(draws, ("x",)))
@@ -566,6 +581,7 @@ def test_two_draws_differing_from_each_other_are_no_nondeterminism() -> None:
     assert sut.nondeterministic == frozenset()
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 def test_a_team_size_changing_only_the_ungraded_tail_leaves_an_output_exact() -> None:
     grading = inputs.Grading({"x": "count"})
     cases = verify.at_team_sizes(outlined(), verify.Cases([inputs.Draw({}, {})], ("x", "count"), grading))
@@ -599,6 +615,7 @@ CHUNKED = """for (int64_t i = 0; i < M; ++i) {{
 TEAM_CHUNKS = CHUNKED.format(chunks="omp_get_max_threads()")
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 @pytest.mark.gcc
 def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follows_the_team_size(
     tmp_path: pathlib.Path,
@@ -613,6 +630,7 @@ def test_a_correct_sum_passes_a_reference_that_reproduces_at_each_team_but_follo
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
 
 
+# Reproducer: a serial sum passes a reference that differs from it only on one thread (dc3d89c)
 @pytest.mark.gcc
 def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread(tmp_path: pathlib.Path) -> None:
     """Two chunks at every size above 1: only the one-thread run has the left-to-right sum a serial build computes."""
@@ -625,6 +643,7 @@ def test_a_serial_sum_passes_a_reference_that_differs_from_it_only_on_one_thread
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "pass"
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 @pytest.mark.gcc
 @pytest.mark.parametrize(
     "wrong",
@@ -646,6 +665,7 @@ def test_a_wrong_sum_fails_against_a_reference_whose_value_follows_the_team_size
     assert sut.verdicts[program.scopes[1].symbol]["hand"].status == "fail"
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 @pytest.mark.gcc
 def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tmp_path: pathlib.Path) -> None:
     program = outlined()
@@ -661,6 +681,7 @@ def test_a_parallel_sum_is_compared_by_band_and_the_map_beside_it_stays_exact(tm
     assert sut.nondeterministic == frozenset({"total"})
 
 
+# Reproducer: An output whose value follows the team size is compared by band (dc3d89c)
 @pytest.mark.gcc
 def test_a_rounding_difference_fails_a_reduction_whose_reference_reproduces_at_every_team_size(
     tmp_path: pathlib.Path,
@@ -814,6 +835,7 @@ def test_a_builder_has_the_dace_settings_its_parent_made_in_memory() -> None:
     assert seen == "-O2 -DSEEN_BY_BUILDERS"
 
 
+# Reproducer: outputs that differ in any byte hash apart and equal ones alike (cce80a9)
 def test_outputs_that_differ_in_any_byte_hash_apart_and_equal_ones_alike() -> None:
     """The distinct-output key of a verifying child is a hash read in place (a joined byte copy ran it out of memory
     at E1b's sizes); it must still tell every output byte apart."""

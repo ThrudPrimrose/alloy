@@ -33,6 +33,7 @@ from alloy.isa.mathkernels import (
 )
 from alloy.isa.mathtime import time_function
 from alloy.isa.validate import HEADERS, c_compiler, c_flags, emulated, host_can_run
+from helpers import sample
 
 ALL = [(fn, dtype, k.level) for fn in functions() for dtype in ("f64", "f32") for k in ladder(fn, dtype)]
 FUNCTIONS = "sin cos tan exp exp2 exp10 expm1 log log2 log10 log1p pow fmod atan asin acos sinh cosh tanh".split()
@@ -44,7 +45,7 @@ def test_the_functions_an_agent_asks_for_all_have_kernels() -> None:
 
 
 @pytest.mark.parametrize("isa", ["avx2", "avx512"])
-@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+@pytest.mark.parametrize(("fn", "dtype", "level"), sample(ALL))
 def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn: str, dtype: str, level: str, isa: str) -> None:
     verdict = validate_kernel(fn, dtype, level, isa)
 
@@ -52,7 +53,7 @@ def test_a_kernel_reproduces_its_recorded_error_on_this_host(fn: str, dtype: str
     assert verdict.ok is True or not host_can_run(isa, dtype)
 
 
-@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+@pytest.mark.parametrize(("fn", "dtype", "level"), sample(ALL))
 def test_an_avx512_kernel_builds_whatever_the_host_can_run(
     fn: str, dtype: str, level: str, tmp_path: pathlib.Path
 ) -> None:
@@ -74,7 +75,7 @@ def test_an_avx512_kernel_builds_whatever_the_host_can_run(
 
 
 @pytest.mark.parametrize("isa", ["neon", "sve", "rvv"])
-@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+@pytest.mark.parametrize(("fn", "dtype", "level"), sample(ALL))
 def test_a_kernel_holds_on_the_arm_targets_or_at_least_builds(fn: str, dtype: str, level: str, isa: str) -> None:
     """Under qemu it reproduces its recorded error; without it, the cross compiler must take it."""
     verdict = validate_kernel(fn, dtype, level, isa)
@@ -115,7 +116,7 @@ def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn: str) -> None:
     assert seen.special > 0
 
 
-@pytest.mark.parametrize("fn", functions())
+@pytest.mark.parametrize("fn", sample(functions(), 6))
 def test_relaxed_and_fast_have_no_branch_and_strict_at_most_one(fn: str) -> None:
     for level in ("relaxed", "fast"):
         assert "if (" not in spelled(fn, "f64", level, "avx2").source
@@ -386,7 +387,7 @@ def test_a_strict_kernel_is_exact_where_a_truncating_caller_would_notice(
     assert sut == exact
 
 
-@pytest.mark.parametrize("fn", functions())
+@pytest.mark.parametrize("fn", sample(functions(), 6))
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 def test_a_ladder_trades_accuracy_for_intrinsics_rung_by_rung(fn: str, dtype: str) -> None:
     sut = [k for k in ladder(fn, dtype) if k.level != "strict"]
@@ -462,7 +463,7 @@ def test_a_relaxed_pow_carries_its_logarithm_as_a_double_word() -> None:
     assert not sut.guard
 
 
-@pytest.mark.parametrize("fn", [fn for fn in functions() if len(kernel(fn, "f32", "relaxed").args) == 1])
+@pytest.mark.parametrize("fn", sample([fn for fn in functions() if len(kernel(fn, "f32", "relaxed").args) == 1], 4))
 def test_a_one_argument_f32_kernel_is_measured_on_every_input_of_its_range(fn: str) -> None:
     assert all(k.exhaustive for k in ladder(fn, "f32"))
 
@@ -521,7 +522,7 @@ class Spelling(Renderer):
         return f"{op}({', '.join(args)})"
 
 
-@pytest.mark.parametrize(("fn", "dtype", "level"), ALL)
+@pytest.mark.parametrize(("fn", "dtype", "level"), sample(ALL))
 def test_a_rendered_kernel_leaves_no_product_for_a_compiler_to_contract(fn: str, dtype: str, level: str) -> None:
     """Review R3: every product an addition takes is a fused primitive in the source, so gcc's -ffp-contract=fast,
     clang's default and -ffp-contract=off all compute the rounding the record was measured with. A named product

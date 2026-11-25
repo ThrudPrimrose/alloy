@@ -193,6 +193,7 @@ def isa_call(command: str, arguments: list[str]) -> FakeJudge:
     return judge
 
 
+# Reproducer: the isa tool answers a lookup (e35a995)
 def test_the_isa_tool_answers_a_lookup() -> None:
     sut = isa_call("lookup", ["avx2", "add", "f64"])
 
@@ -247,6 +248,7 @@ def test_an_invalid_ask_reaches_the_agent_with_its_reason() -> None:
     assert "no operation 'frobnicate'" in str(sut.answer)
 
 
+# Reproducer: the isa tool refuses a query it does not serve (e35a995)
 def test_the_isa_tool_refuses_a_query_it_does_not_serve() -> None:
     assert isa_call("validate", []).code == HTTPStatus.BAD_REQUEST
 
@@ -267,6 +269,7 @@ def test_each_isa_query_of_an_episode_appends_one_tool_line(
     assert sut[0]["arguments"] == {"command": "lookup", "arguments": "['avx2', 'fma', 'f64']"}
 
 
+# Reproducer: the isa tool reports a bad name as the agents mistake (e35a995)
 def test_the_isa_tool_reports_a_bad_name_as_the_agents_mistake() -> None:
     sut = isa_call("lookup", ["avx2", "fmadd", "f64"])
 

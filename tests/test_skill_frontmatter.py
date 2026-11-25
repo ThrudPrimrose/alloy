@@ -3,14 +3,14 @@
 
 import pathlib
 
-import pytest
 import yaml
 
 SKILLS = sorted((pathlib.Path(__file__).parent.parent / "alloy" / "hb_plugin" / "skills").glob("*/SKILL.md"))
 
 
-@pytest.mark.parametrize("page", SKILLS, ids=lambda p: p.parent.name)
-def test_a_skill_page_frontmatter_is_yaml_with_a_name_and_description(page: pathlib.Path) -> None:
-    head = yaml.safe_load(page.read_text().split("---", 2)[1])
+def test_every_skill_page_frontmatter_is_yaml_with_its_name_and_a_description() -> None:
+    heads = {page.parent.name: yaml.safe_load(page.read_text().split("---", 2)[1]) for page in SKILLS}
 
-    assert head["name"] == page.parent.name and head["description"]
+    assert SKILLS and {name: (h["name"], bool(h["description"])) for name, h in heads.items()} == {
+        name: (name, True) for name in heads
+    }

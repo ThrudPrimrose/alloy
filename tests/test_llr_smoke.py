@@ -54,6 +54,7 @@ def pipeline_sdfg(spec: BenchSpec, pipeline: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: an llr kernel goes from the bench sdfg to a verified program timed against the default (e35a995)
 @pytest.mark.e2e
 @pytest.mark.parametrize("kernel", ["argmax_value", "tsvc_2_vsumr"])  # tsvc_2_vpv: test_hb_plugin
 def test_an_llr_kernel_goes_from_the_bench_sdfg_to_a_verified_program_timed_against_the_default(

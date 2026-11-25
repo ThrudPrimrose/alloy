@@ -13,6 +13,7 @@ import pytest
 
 from alloy import configuration_matrix
 from alloy.backend import runtime
+from helpers import sample
 
 MATRIX = configuration_matrix.load()
 THREADS = 4
@@ -138,7 +139,7 @@ def executables() -> list[str]:
 
 
 @pytest.mark.parametrize("runtime_name", RUNTIMES)
-@pytest.mark.parametrize("names", COMBINATIONS)
+@pytest.mark.parametrize("names", sample(COMBINATIONS, 4))
 def test_archives_from_several_compilers_link_exactly_when_the_runtime_exports_their_calls(
     tmp_path: pathlib.Path, names: tuple[str, ...], runtime_name: str
 ) -> None:

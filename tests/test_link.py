@@ -157,6 +157,7 @@ def test_best_builds_with_make_into_a_library_that_computes_the_program(tmp_path
     np.testing.assert_allclose(arrays["out"], arrays["a"].sum(axis=1), rtol=1e-12)
 
 
+# Reproducer: a Makefile edit rebuilds (1111330)
 def test_an_edited_best_makefile_rebuilds_every_archive_and_the_library(tmp_path: pathlib.Path) -> None:
     program = scopes.outline(load_program(f"{REDUCTIONS}:row_sum").to_sdfg(), MATRIX.libm_calls)
     winners = {r.symbol: build(r, Candidate("c", "gcc"), MATRIX, tmp_path / r.symbol, {}) for r in program.scopes}

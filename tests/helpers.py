@@ -4,6 +4,7 @@
 import importlib.util
 import pathlib
 import subprocess
+from collections.abc import Sequence
 
 from dace.frontend.python.parser import DaceProgram
 
@@ -19,6 +20,12 @@ EXAMPLES = pathlib.Path(__file__).parent.parent / "examples"
 EXAMPLE = EXAMPLES / "two_scopes.py"
 REDUCTIONS = EXAMPLES / "reductions.py"
 MATRIX = configuration_matrix.load()
+
+
+def sample[T](rows: Sequence[T], count: int = 12) -> list[T]:
+    """A fixed spread of ``rows`` (every k-th, the first included): a per-row gate checks this sample in CI; the
+    verify CLIs (``python -m alloy.isa.<table> verify``) check every row and record the verdicts."""
+    return list(rows[:: max(1, len(rows) // count)][:count])
 
 
 def load_program(spec: str) -> DaceProgram:

@@ -357,15 +357,12 @@ def test_reverse_reads_the_new_spellings(name: str, isa: str, dtype: str, op: st
 TRANSCENDENTALS = ("exp", "sin", "cos")
 
 
-@pytest.mark.parametrize("op", TRANSCENDENTALS)
-@pytest.mark.parametrize("dtype", ["f64", "f32"])
-@pytest.mark.parametrize("isa", ["avx2", "avx512", "neon", "sve"])
-def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers(isa: str, op: str, dtype: str) -> None:
-    entry = lookup(isa, op, dtype, TABLE)
+def test_a_transcendental_has_no_native_intrinsic_but_lists_tiers_and_library_calls() -> None:
+    entries = {(isa, op, dtype): lookup(isa, op, dtype, TABLE)
+               for isa in ("avx2", "avx512", "neon", "sve") for op in TRANSCENDENTALS for dtype in ("f64", "f32")}  # fmt: skip
 
-    assert not entry.intrinsic and not entry.recipe and not entry.mnemonic
-    assert entry.approximations
-    assert entry.libraries
+    native = [key for key, e in entries.items() if e.intrinsic or e.recipe or e.mnemonic]
+    assert native == [] and all(e.approximations and e.libraries for e in entries.values())
 
 
 def test_the_taylor_ladder_improves_and_minimax_beats_taylor() -> None:
@@ -532,6 +529,7 @@ def test_every_assist_spelling_exists_in_the_clang_headers() -> None:
     assert not missing
 
 
+# Reproducer: reverse() missed the masked-variant names that carry a note after the (dc0470e)
 def test_masked_variant_names_reverse_without_their_notes() -> None:
     """The f16 masked variants carry a cast note after the name; the index must key the bare name."""
     (hit,) = reverse("_mm512_maskz_loadu_epi16", TABLE)
@@ -539,6 +537,7 @@ def test_masked_variant_names_reverse_without_their_notes() -> None:
     assert (hit.isa, hit.dtype, hit.op, hit.via) == ("avx512", "f16", "load", "masked")
 
 
+# Reproducer: reverse() missed the masked-variant names that carry a note after the (dc0470e)
 def test_masked_variant_names_exist_in_the_clang_headers() -> None:
     include = clang_include()
     if include is None:
@@ -556,6 +555,7 @@ def test_masked_variant_names_exist_in_the_clang_headers() -> None:
     assert not missing
 
 
+# Reproducer: reverse reads what a disassembly or a recipe spells (ea07bdd)
 @pytest.mark.parametrize(
     "name, isa, op, dtype",
     [
@@ -575,18 +575,21 @@ def test_reverse_reads_what_a_disassembly_or_a_recipe_spells(name: str, isa: str
     assert (isa, op, dtype) in {(hit.isa, hit.op, hit.dtype) for hit in TABLE.reverse(name)}
 
 
+# Reproducer: an empty name matches nothing (ea07bdd)
 @pytest.mark.parametrize("name", ["", "   "])
 def test_an_empty_name_matches_nothing(name: str) -> None:
     assert TABLE.reverse(name) == ()
     assert TABLE.assist(name) == ()
 
 
+# Reproducer: fmod truncates on every isa with a float recipe (ea07bdd)
 def test_fmod_truncates_on_every_isa_with_a_float_recipe() -> None:
     """fmod needs a toward-zero quotient and the final a - q*b; the nearest-rounding step is remainder()."""
     assert TABLE.entry("neon", "mod", "f64").recipe == ("vdivq_f64", "vrndq_f64", "vfmsq_f64")
     assert TABLE.entry("sve", "mod", "f32").recipe == ("svdiv_f32_x", "svrintz_f32_x", "svmls_f32_x")
 
 
+# Reproducer: a masked fma takes the four arguments the header declares (ea07bdd)
 def test_a_masked_fma_takes_the_four_arguments_the_header_declares() -> None:
     masked = TABLE.entry("avx512", "fma", "f64").masked
     assert masked.count(",") == 3, masked

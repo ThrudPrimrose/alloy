@@ -9,6 +9,7 @@ import pytest
 
 from alloy.isa import simt
 from alloy.isa.__main__ import main
+from helpers import sample
 
 
 def test_every_row_is_recorded_correct_on_cuda_and_compiled_or_correct_on_hip() -> None:
@@ -70,6 +71,7 @@ def test_a_packed_half_addition_is_checked_in_both_halves() -> None:
     assert row.ref == "(a + c) + 2.0f * (b + a)", "the halves add different operands, so a swap shows"
 
 
+# Reproducer: a NaN stays the worst error of a CUDA/HIP row (7d94b16)
 def test_a_nan_on_any_lane_stays_the_programs_worst_error() -> None:
     row = next(r for r in simt.rows() if r.op == "rsqrt")
 
@@ -78,6 +80,7 @@ def test_a_nan_on_any_lane_stays_the_programs_worst_error() -> None:
     assert "if (rel != rel || rel > worst) worst = rel;" in sut
 
 
+# Reproducer: cross-lane rows get asymmetric inputs (7d94b16)
 @pytest.mark.parametrize("op", ["reduce_add", "reduce_min", "reduce_max", "scan_add", "atomic_add", "ballot_count"])
 def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: str) -> None:
     row = next(r for r in simt.rows() if r.op == op)
@@ -90,6 +93,7 @@ def test_a_cross_lane_rows_inputs_tell_its_result_from_an_untouched_output(op: s
         assert positive != lanes - positive
 
 
+# Reproducer: a request the tool cannot answer prints nothing to stdout (7d94b16)
 @pytest.mark.parametrize(
     "argv",
     [
@@ -119,7 +123,7 @@ def test_the_lookup_prints_the_dialects_spelling_and_its_check(capsys: pytest.Ca
 
 
 @pytest.mark.nvidia
-@pytest.mark.parametrize("row", simt.rows(), ids=lambda r: r.op)
+@pytest.mark.parametrize("row", sample(simt.rows()), ids=lambda r: r.op)
 def test_each_row_runs_correct_on_an_nvidia_gpu(row: simt.Row) -> None:
     sut = simt.check(row, "cuda", runs=True)
 
@@ -127,7 +131,7 @@ def test_each_row_runs_correct_on_an_nvidia_gpu(row: simt.Row) -> None:
 
 
 @pytest.mark.hip
-@pytest.mark.parametrize("row", simt.rows(), ids=lambda r: r.op)
+@pytest.mark.parametrize("row", sample(simt.rows()), ids=lambda r: r.op)
 def test_each_row_compiles_for_cdna(row: simt.Row) -> None:
     sut = simt.check(row, "hip", runs=False)
 

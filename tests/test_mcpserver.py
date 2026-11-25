@@ -10,6 +10,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import TextContent
 
 from alloy import mcpserver
+from alloy.report import Mode
 from helpers import REDUCTIONS, gcc_only
 
 
@@ -43,7 +44,7 @@ def test_speculative_mode_on_a_dace_program_links_a_verified_pick_with_a_makefil
     matrix = gcc_only(tmp_path).path
     out = tmp_path / "out"
 
-    answer = mcpserver.run(mcpserver.Mode.SPECULATIVE, f"{REDUCTIONS}:scale", str(out), matrix=str(matrix))
+    answer = mcpserver.run(Mode.SPECULATIVE, f"{REDUCTIONS}:scale", str(out), matrix=str(matrix))
 
     assert answer["picks"] and answer["best"] == str(out / "best")
     assert (out / "best" / "Makefile").is_file() and pathlib.Path(answer["report"]).is_file()
@@ -51,4 +52,4 @@ def test_speculative_mode_on_a_dace_program_links_a_verified_pick_with_a_makefil
 
 def test_a_program_that_names_no_dace_program_is_the_callers_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(ToolError, match="not a @dace.program"):
-        mcpserver.run(mcpserver.Mode.SPECULATIVE, f"{REDUCTIONS}:np", str(tmp_path / "out"))
+        mcpserver.run(Mode.SPECULATIVE, f"{REDUCTIONS}:np", str(tmp_path / "out"))

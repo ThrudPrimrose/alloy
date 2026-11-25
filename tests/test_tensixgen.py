@@ -57,6 +57,7 @@ def test_a_unary_op_of_a_constant_is_refused_not_taken_for_a_filled_tile() -> No
         op_of(TileUnop("e", (1024,), op="exp", kind_a="Symbol", expr_a="2.0"))
 
 
+# Reproducer: saturating Tensix exp rung (card-checked), NumPy NaN in SoftHier max/min (4b97fdd)
 def test_a_max_reduction_folds_with_the_max_row_and_a_min_reduction_is_refused() -> None:
     assert op_of(TileReduce("r", (1024,), op="max")) == "max"
     with pytest.raises(Refused, match="no Tensix row"):

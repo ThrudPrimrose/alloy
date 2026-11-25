@@ -194,18 +194,21 @@ def measured(median: float, spread: float = 0.1, status: str = "pass") -> timing
     return timing.Measured(median, median - spread, median + spread, verify.Verdict(status))  # type: ignore[arg-type]
 
 
+# Reproducer: a candidate whose interval overlaps the reference does not win (e35a995)
 def test_a_candidate_whose_interval_overlaps_the_reference_does_not_win() -> None:
     final = {timing.REFERENCE: measured(1.0), "close": measured(0.95)}
 
     assert timing.winner_of(final, ["close"]) == timing.REFERENCE
 
 
+# Reproducer: the fastest clear candidate wins past a wide faster one (e35a995)
 def test_the_fastest_clear_candidate_wins_past_a_wide_faster_one() -> None:
     final = {timing.REFERENCE: measured(1.0), "wide": measured(0.5, 0.6), "clear": measured(0.7)}
 
     assert timing.winner_of(final, ["wide", "clear"]) == "clear"
 
 
+# Reproducer: a failed candidate never wins (e35a995)
 def test_a_failed_candidate_never_wins() -> None:
     final = {timing.REFERENCE: measured(1.0), "wrong": measured(0.1, status="fail")}
 

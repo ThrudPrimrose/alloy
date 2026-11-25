@@ -51,6 +51,7 @@ def test_fast_math_is_tried_only_when_inputs_are_declared_finite(tmp_path: pathl
     assert "fast" in {c.resolved(matrix)[0] for c in sut}
 
 
+# Reproducer: No FP level short of fast assumes finite inputs (f4e7a38)
 def test_a_level_that_does_not_need_finite_inputs_never_assumes_them() -> None:
     finite_only = ("-ffast-math", "-ffinite-math-only", "-fp-model=fast", "-fast")
     open_levels = {name for name, level in MATRIX.fp_levels.items() if level.needs != "finite_inputs"}
@@ -70,6 +71,7 @@ def test_a_level_that_does_not_need_finite_inputs_never_assumes_them() -> None:
     assert [(c, o) for c, o, flags in spellings if any(f.startswith(finite_only) for f in flags)] == []
 
 
+# Reproducer: The int32 index width is tried only when every array fits it at the manifest's largest preset (f4e7a38)
 def test_gccs_vector_math_is_tried_only_when_inputs_are_declared_finite(tmp_path: pathlib.Path) -> None:
     matrix = gcc_only(tmp_path)
     scope = scope_with(outlined(), libm=True, reduction=False)

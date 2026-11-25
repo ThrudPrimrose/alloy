@@ -61,6 +61,7 @@ def test_advice_carries_the_reason_the_instruction_and_the_hints() -> None:
     assert "reduce_add" in text
 
 
+# Reproducer: an integer tasklet is spelled in its own lane not the scope default (279859b)
 def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default() -> None:
     (hint,) = tasklet_hints(integer_sdfg(), "avx2", "f64", TABLE)
 
@@ -68,6 +69,7 @@ def test_an_integer_tasklet_is_spelled_in_its_own_lane_not_the_scope_default() -
     assert {s.op: s.spelling for s in hint.spellings}["and"] == "_mm256_and_si256"
 
 
+# Reproducer: min max logic and conditionals are recognized (ea07bdd)
 def test_min_max_logic_and_conditionals_are_recognized() -> None:
     sdfg = elementwise_sdfg("clip", "y = min(x, 1.0) if x > 0.0 else max(x, -1.0)")
     (hint,) = tasklet_hints(sdfg, "avx512", "f64", TABLE)
@@ -123,6 +125,7 @@ def integer_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: the shapes the frontend emits are recognized (279859b)
 def test_the_shapes_the_frontend_emits_are_recognized() -> None:
     assert "select" in expression_ops("y = ITE(c, a, b)")[0]
     assert "mod" in expression_ops("y = CMod(a, b)")[0]
@@ -130,6 +133,7 @@ def test_the_shapes_the_frontend_emits_are_recognized() -> None:
     assert "add" in expression_ops("t += x")[0]
 
 
+# Reproducer: an operation without a row is named not dropped (279859b)
 def test_an_operation_without_a_row_is_named_not_dropped() -> None:
     assert "lt" in expression_ops("y = a > b")[0]
     assert expression_ops("y = floor(a)")[1] == {"floor"}
@@ -146,15 +150,18 @@ def test_only_ordering_compares_map_to_lt() -> None:
     assert expression_ops("y = a < b < c") == ({"lt"}, set())
 
 
+# Reproducer: a product fuses only inside its sum (279859b)
 def test_a_product_fuses_only_inside_its_sum() -> None:
     assert "fma" in expression_ops("y = a * b + c")[0]
     assert "fma" not in expression_ops("y = (a + 1.0) * 2.0")[0]
 
 
+# Reproducer: a negative literal is no negation (279859b)
 def test_a_negative_literal_is_no_negation() -> None:
     assert "neg" not in expression_ops("y = -1.5")[0]
 
 
+# Reproducer: a canonical reduction past its private node counts (279859b)
 def test_a_canonical_reduction_past_its_private_node_counts() -> None:
     sdfg = dace.SDFG("wcr_past_private")
     sdfg.add_array("a", [8], dace.float64)

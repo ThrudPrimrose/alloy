@@ -107,6 +107,7 @@ def test_a_constant_innermost_extent_is_a_known_trip_count_and_a_symbolic_one_is
     assert prune.facts(only_scope(axpy)).trip_counts == (None,)
 
 
+# Reproducer: a map around a nested sdfg counts the nested innermost map not itself (1111330)
 def test_a_map_around_a_nested_sdfg_counts_the_nested_innermost_map_not_itself() -> None:
     inner = dace.SDFG("inner")
     inner.add_array("x", [64], dace.float64)

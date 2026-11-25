@@ -161,6 +161,7 @@ def test_a_pick_replaces_the_references_only_when_it_is_correct_and_no_slower(
     assert faster_correct(judge, lambda: PICK, lambda: judge.score(BASE, "k"), "k") is expected  # pyright: ignore[reportArgumentType] -- test double
 
 
+# Reproducer: the pick is graded before the baseline overwrites it (1111330)
 def test_the_pick_is_graded_before_the_baseline_overwrites_the_library_they_share() -> None:
     shared = Submission(language=Language.C, source="unbuilt")
 
@@ -227,6 +228,7 @@ def test_a_failed_verdict_is_not_offered_to_the_stub_ranking() -> None:
     assert [b.name for b in sut] == ["good"]
 
 
+# Reproducer: a duplicate build is not offered to the stub ranking (1111330)
 def test_a_duplicate_build_is_not_offered_to_the_stub_ranking() -> None:
     builds = [Fake("first"), Fake("again", duplicate_of="first")]
     rep = dataclasses.make_dataclass("Rep", [("builds", list)])([Fake("ref"), *builds])
@@ -243,6 +245,7 @@ def test_a_run_ranks_at_the_sizes_its_preset_grades_and_a_fuzzed_run_at_its_anch
     assert adapter.running_sizes(spec, "L+fuzz") == {"N": 4096}
 
 
+# Reproducer: the ci stub waits on the speculative route as long as the tool does (1111330)
 def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
@@ -266,6 +269,7 @@ def test_the_ci_stub_waits_on_the_speculative_route_as_long_as_the_tool_does(
     assert sut.library == str(tmp_path / "lib.so"), "the stub makes the library from the answer, as an agent would"
 
 
+# Reproducer: judge_client gave each /score the 300 s of an ordinary judge call (ffd0f07)
 def test_a_grade_slower_than_one_judge_call_is_still_read(monkeypatch: pytest.MonkeyPatch) -> None:
     """A large kernel's ``/score`` outlasts an ordinary judge call (300 s): the client gave up, the judge logged the
     grade as abandoned, and the pick was dropped for the references (s4112, vag)."""
@@ -305,6 +309,7 @@ if __name__ == "__main__":
         test_a_grade_slower_than_one_judge_call_is_still_read(patch)
 
 
+# Reproducer: the judge client uses the worker's own judge, GPU modes fall back to (7d94b16)
 def test_the_judge_client_calls_the_workers_own_judge_when_the_run_lists_several(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -316,6 +321,7 @@ def test_the_judge_client_calls_the_workers_own_judge_when_the_run_lists_several
     assert sut.base_url == "http://judge-1:8000"
 
 
+# Reproducer: the GPU columns are canon only (7d94b16)
 def test_a_gpu_column_extends_only_the_pipeline_that_hands_a_tuner_its_offloaded_program() -> None:
     import tomllib
 
@@ -414,6 +420,7 @@ def test_a_gpu_form_without_libraries_is_submitted_as_its_sources(monkeypatch: p
     assert (sut.source, sut.device_source, sut.library) == ("host", "device", None)
 
 
+# Reproducer: the episode delivers the plain program and keeps its record (cce80a9)
 def test_a_profile_episode_whose_timing_crashes_delivers_the_plain_program_and_records_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:

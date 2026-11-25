@@ -13,6 +13,7 @@ from alloy.isa.__main__ import main
 from alloy.isa.ask import Space
 
 
+# Reproducer: Tensix rows run at their own dtypes (bffc051)
 def test_every_row_at_each_of_its_dtypes_has_a_passing_run_on_the_pinned_image() -> None:
     verdicts = tensix.verdicts()
 
@@ -156,6 +157,7 @@ def test_the_matmul_kernel_accumulates_every_k_tile_into_one_dst_tile(new: bool,
     assert sut.count("pack_tile(0, c16)") == 1 and "for (uint32_t kt = 0; kt < num_tiles; ++kt)" in sut
 
 
+# Reproducer: the Tensix reference of an elementwise row no longer forms a product (bf63651)
 @pytest.mark.parametrize("op", ["add", "sub", "mul", "div"])
 def test_the_reference_of_an_elementwise_row_takes_tiles_that_do_not_chain_as_a_product(op: str) -> None:
     import torch

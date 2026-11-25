@@ -206,15 +206,18 @@ def test_the_cli_verifies_a_skeleton() -> None:
     assert verdict in run.stdout
 
 
+# Reproducer: a width alias is refused by name (ea07bdd)
 def test_a_width_alias_is_refused_by_name() -> None:
     with pytest.raises(KeyError, match="use avx512"):
         skeleton(TABLE, "avx512_256", "full_mask", "f64")
 
 
+# Reproducer: the full mask count cannot truncate to 32 bits (ea07bdd)
 def test_the_full_mask_count_cannot_truncate_to_32_bits() -> None:
     assert "N - i < 16 ? N - i : 16" in skeleton(TABLE, "avx512", "full_mask", "f32")
 
 
+# Reproducer: a compiler spelling names a compiler not any field (ea07bdd)
 def test_a_compiler_spelling_names_a_compiler_not_any_field() -> None:
     from alloy.isa.schedules import compiler_spelling
 

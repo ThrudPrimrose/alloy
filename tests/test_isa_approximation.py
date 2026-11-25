@@ -10,10 +10,10 @@ from alloy.backend.candidates import Candidate, flips
 from alloy.isa import approximation
 from alloy.isa.mathcheck import judged, measure
 from alloy.isa.mathkernels import functions, kernel
-from helpers import MATRIX, build, outlined, scope_with
+from helpers import MATRIX, build, outlined, sample, scope_with
 
 
-@pytest.mark.parametrize("fn", functions())
+@pytest.mark.parametrize("fn", sample(functions(), 4))
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 @pytest.mark.parametrize("level", approximation.LEVELS)
 def test_every_scalar_rung_holds_the_error_its_vector_kernel_recorded(fn: str, dtype: str, level: str) -> None:

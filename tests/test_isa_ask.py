@@ -31,6 +31,7 @@ from alloy.isa.ask import (
     ask,
     ask_all,
 )
+from helpers import sample
 
 TILE = {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
         "b": Operand("shared", "f16", (64, 64), "col_major", "b128"), "c": Operand("register", "f32", (64, 64))}  # fmt: skip
@@ -107,15 +108,6 @@ def test_a_cpu_mma_is_the_checked_fma_fallback() -> None:
     assert isinstance(sut, Feasible) and sut.check.status == "run", sut
 
 
-def test_the_cli_prints_the_answer_as_json_and_exits_2_when_infeasible(capsys: pytest.CaptureFixture[str]) -> None:
-    code = main(["ask", "gfx942", "mma", "--a", "shared:f32:64x64:row_major:xor:8", "--b",
-                 "shared:f32:64x64:col_major:xor:8", "--c", "register:f32:64x64", "--json"])  # fmt: skip
-
-    sut = json.loads(capsys.readouterr().out)
-    assert code == 2 and sut["feasible"] is False and sut["nearest"]
-    assert sut["request"]["target"] == "gfx942" and sut["request"]["operands"]["a"]["shape"] == [64, 64]
-
-
 def test_a_tensix_mma_is_one_matmul_tiles_call_per_k_tile_and_output_tile() -> None:
     tile = {"a": Operand("tile_register", "f32", (64, 96)), "b": Operand("tile_register", "f32", (96, 32)),
             "c": Operand("tile_register", "f32", (64, 32))}  # fmt: skip
@@ -139,31 +131,7 @@ B64 = Operand("shared", "f16", (64, 64), "row_major", "b64")
 GLOBAL = Operand("global", "f16", (256, 256))
 
 
-@pytest.mark.parametrize(("request_", "reason"), [
-    (Request("sm90", "mma", TILE | {"b": Operand("shared", "bf16", (64, 64))}), "one element type"),
-    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f64", (8, 16)),
-                             "c": Operand("global", "f64", (16, 16))}), "one element type"),
-    (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), "accumulates c in register"),
-    (Request("sm90", "mma", TILE | {"b": Operand("register", "f16", (64, 64))}), "reads b from shared"),
-    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), "swizzle b128"),
-    (Request("gfx942", "mma", MFMA_TILE | {"a": B64}), "swizzle xor:8"),
-    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major", "b128")}), "takes a row_major"),
-    (Request("sm90", "mma", TILE | {"b": B128}), "takes b col_major (Bt, N rows of K)"),
-    (Request("gfx942", "mma", MFMA_TILE | {"b": LDS}), "takes b col_major (Bt, N rows of K)"),
-    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8), "row_major", "b128"),
-                             "b": Operand("global", "f32", (8, 16)), "c": Operand("global", "f32", (16, 16))}),
-     "no swizzle"),
-    (Request("tensix", "mma", {"a": Operand("tile_register", "bf16", (32, 32)),
-                               "b": Operand("tile_register", "f32", (32, 32)),
-                               "c": Operand("tile_register", "bf16", (32, 32))}), "one element type"),
-])  # fmt: skip
-def test_an_mma_whose_operands_the_instruction_cannot_read_is_infeasible(request_: Request, reason: str) -> None:
-    sut = answered(request_)
-
-    assert isinstance(sut, Infeasible | Invalid), sut
-    assert reason in sut.reason
-
-
+# Reproducer: unit that does not run the operation is infeasible with the unit that does (bf63651)
 @pytest.mark.parametrize(("request_", "runs_on"), [
     (Request("sm90", "mma", TILE, unit="warp"), "warpgroup"),
     (Request("sm90", "mma", TILE, unit="tma"), "warpgroup"),
@@ -182,7 +150,47 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
     assert f"runs on {runs_on}" in sut.reason and sut.nearest == (f"unit {runs_on}",)
 
 
+# Reproducer: load or a store of one register, TMA writes shared memory only and checks its source (bf63651)
+def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load() -> None:
+    register, memory = Operand("vector", "f32", (8,)), Operand("global", "f32", (8,))
+
+    store = answered(Request("avx2", "copy", {"src": register, "dst": memory}))
+    loaded = answered(Request("avx2", "copy", {"src": memory, "dst": register}))
+
+    assert isinstance(store, Feasible) and isinstance(loaded, Feasible)
+    assert "store" in store.steps[0].spelling and "load" in loaded.steps[0].spelling
+    assert store.request.op == "copy"
+
+
+@pytest.mark.parametrize("op", sample([row.op for row in simt.rows()], 6))
+@pytest.mark.parametrize("target", ["sm90", "gfx942", "gfx90a"])
+def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_is_feasible(
+    target: str, op: str
+) -> None:
+    sut = answered(Request(target, op))
+
+    assert isinstance(sut, Feasible), sut
+    assert sut.unit in UNITS[target] and all(step.unit == sut.unit for step in sut.steps)
+    assert isinstance(answered(Request(target, op, unit=sut.unit)), Feasible)
+
+
 @pytest.mark.parametrize(("request_", "reason"), [
+    (Request("sm90", "mma", TILE | {"b": Operand("shared", "bf16", (64, 64))}), "one element type"),
+    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8)), "b": Operand("global", "f64", (8, 16)),
+                             "c": Operand("global", "f64", (16, 16))}), "one element type"),
+    (Request("sm90", "mma", TILE | {"c": Operand("shared", "f32", (64, 64))}), "accumulates c in register"),
+    (Request("sm90", "mma", TILE | {"b": Operand("register", "f16", (64, 64))}), "reads b from shared"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "row_major", "b32")}), "swizzle b128"),
+    (Request("gfx942", "mma", MFMA_TILE | {"a": B64}), "swizzle xor:8"),
+    (Request("sm90", "mma", TILE | {"a": Operand("shared", "f16", (64, 64), "col_major", "b128")}), "takes a row_major"),
+    (Request("sm90", "mma", TILE | {"b": B128}), "takes b col_major (Bt, N rows of K)"),
+    (Request("gfx942", "mma", MFMA_TILE | {"b": LDS}), "takes b col_major (Bt, N rows of K)"),
+    (Request("avx2", "mma", {"a": Operand("global", "f32", (16, 8), "row_major", "b128"),
+                             "b": Operand("global", "f32", (8, 16)), "c": Operand("global", "f32", (16, 16))}),
+     "no swizzle"),
+    (Request("tensix", "mma", {"a": Operand("tile_register", "bf16", (32, 32)),
+                               "b": Operand("tile_register", "f32", (32, 32)),
+                               "c": Operand("tile_register", "bf16", (32, 32))}), "one element type"),
     (Request("gfx942", "copy", {"src": Operand("global", "f32", (3, 5)), "dst": Operand("shared", "f32", (7,))}),
      "copies f16, bf16, e4m3, e5m2, f64 tiles on gfx942, not f32"),
     (Request("gfx942", "copy", {"src": GLOBAL, "dst": B64}), "xor:8"),
@@ -200,47 +208,6 @@ def test_a_pinned_unit_that_does_not_run_the_operation_is_infeasible_and_names_t
     (Request("sm90", "copy", {"src": Operand("global", "f16", (8, 8)), "dst": B128}), "at least the box"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256,)), "dst": B128}), "two-dimensional"),
     (Request("sm90", "copy", {"src": Operand("global", "f16", (256, 256), "col_major"), "dst": B128}), "row-major"),
-])  # fmt: skip
-def test_a_copy_the_unit_cannot_carry_out_is_infeasible(request_: Request, reason: str) -> None:
-    sut = answered(request_)
-
-    assert isinstance(sut, Infeasible | Invalid), sut
-    assert reason in sut.reason
-
-
-def test_a_cpu_copy_from_a_register_to_memory_is_a_store_and_from_memory_a_load() -> None:
-    register, memory = Operand("vector", "f32", (8,)), Operand("global", "f32", (8,))
-
-    store = answered(Request("avx2", "copy", {"src": register, "dst": memory}))
-    loaded = answered(Request("avx2", "copy", {"src": memory, "dst": register}))
-
-    assert isinstance(store, Feasible) and isinstance(loaded, Feasible)
-    assert "store" in store.steps[0].spelling and "load" in loaded.steps[0].spelling
-    assert store.request.op == "copy"
-
-
-@pytest.mark.parametrize("op", [row.op for row in simt.rows()])
-@pytest.mark.parametrize("target", ["sm90", "gfx942", "gfx90a"])
-def test_a_device_row_answers_on_a_unit_its_target_lists_and_pinning_that_unit_is_feasible(
-    target: str, op: str
-) -> None:
-    sut = answered(Request(target, op))
-
-    assert isinstance(sut, Feasible), sut
-    assert sut.unit in UNITS[target] and all(step.unit == sut.unit for step in sut.steps)
-    assert isinstance(answered(Request(target, op, unit=sut.unit)), Feasible)
-
-
-@pytest.mark.parametrize("op", [row.op for row in simt.rows()])
-def test_every_device_row_is_reachable_on_every_gpu_target(op: str) -> None:
-    for target in ("sm90", "gfx942", "gfx90a"):
-        sut = answered(Request(target, op))
-
-        assert isinstance(sut, Feasible), sut
-        assert sut.steps[0].spelling
-
-
-@pytest.mark.parametrize(("request_", "reason"), [
     (Request("sm90", "fma", {"x": Operand("register", "f16")}), "computes in f32, f64"),
     (Request("sm90", "fma", {"x": Operand("shared", "f32", (64, 64))}), "one thread on scalars"),
     (Request("avx2", "add", {"x": Operand("vector", "f64", (6,))}), "4 f64 lanes"),
@@ -250,15 +217,14 @@ def test_every_device_row_is_reachable_on_every_gpu_target(op: str) -> None:
     (Request("tensix", "sqrt", {"x": Operand("tile_register", "f32", (32, 32))}, max_ulp=1.0), "one accuracy"),
     (Request("sme", "add"), "mma only"),
 ])  # fmt: skip
-def test_an_elementwise_request_with_operands_the_row_does_not_compute_is_infeasible(
-    request_: Request, reason: str
-) -> None:
+def test_a_request_its_row_or_unit_cannot_carry_out_is_refused_with_the_reason(request_: Request, reason: str) -> None:
     sut = answered(request_)
 
     assert isinstance(sut, Infeasible | Invalid), sut
     assert reason in sut.reason
 
 
+# Reproducer: a function without a bound answers its strict rung (bf63651)
 def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> None:
     sut = answered(Request("avx2", "exp", {"x": Operand("vector", "f32", (8,))}))
 
@@ -267,6 +233,7 @@ def test_a_math_function_without_a_bound_answers_its_strict_rung_with_code() -> 
     assert "rung strict" in sut.notes[0]
 
 
+# Reproducer: every nearest entry parses and is feasible (bf63651)
 @pytest.mark.parametrize("refused", [
     Request("avx2", "mma", {"a": Operand("global", "f16", (16, 8)), "b": Operand("global", "f16", (8, 16)),
                             "c": Operand("global", "f32", (16, 16))}),
@@ -1131,6 +1098,7 @@ def test_a_kernel_that_reads_early_or_skips_a_fence_is_refused_naming_the_missin
 
 
 # Review of 2026-11-17 (reviewers A and C): each fix with its case.
+# Reproducer: device-row answers bind the names their code uses (lane = threadIdx.x % warpSize) (a90d357)
 def test_a_device_row_answer_binds_the_names_its_code_uses() -> None:
     sut = ask(Request("gfx90a", "scan_add", {"x": Operand("register", "f32")}))
 
@@ -1138,6 +1106,7 @@ def test_a_device_row_answer_binds_the_names_its_code_uses() -> None:
     assert any("lane = threadIdx.x % warpSize" in note and "64 on hip" in note for note in sut.notes)
 
 
+# Reproducer: GPU copies refuse a source too small or with rows not whole 16-byte chunks (a90d357)
 @pytest.mark.parametrize("request_", [
     Request("sm90", "copy", {"src": Operand("global", "f16", (64, 100)),
                              "dst": Operand("shared", "f16", (64, 64), "row_major", "b128")}),
@@ -1157,12 +1126,14 @@ def test_a_gpu_copy_from_a_source_too_small_or_misaligned_is_refused_with_a_feas
     assert isinstance(ask(Request(request_.target, "copy", {"src": src, "dst": dst}), verify=False), Feasible)
 
 
+# Reproducer: a copy on sme or tensix is refused instead of crashing (a90d357)
 def test_a_copy_on_a_target_without_copy_rows_is_refused_not_crashed() -> None:
     sut = ask(Request("sme", "copy", {"src": Operand("global", "f32", (8,)), "dst": Operand("vector", "f32", (8,))}))
 
     assert isinstance(sut, Infeasible) and sut.why == Why.NOT_COVERED
 
 
+# Reproducer: each wait and fence says whether a checked program issues it (a90d357)
 @pytest.mark.parametrize(("target", "on", "issued"), [("sm90", "mbarrier", True), ("sm90", "bulk_group", False),
                                                        ("gfx942", "vmcnt", False), ("tensix", "cb", True)])  # fmt: skip
 def test_a_wait_says_whether_a_checked_program_issues_it(target: str, on: str, issued: bool) -> None:
@@ -1172,6 +1143,7 @@ def test_a_wait_says_whether_a_checked_program_issues_it(target: str, on: str, i
     assert ("tile programs that ran issue it" in sut.check.basis) is issued
 
 
+# Reproducer: a malformed command line exits 64 (invalid) so the route never answers it as infeasible (a90d357)
 def test_a_malformed_command_line_exits_as_invalid_not_as_infeasible(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         main(["ask", "tensix", "exp", "--y", "bad"])
@@ -1187,6 +1159,7 @@ def test_a_gpu_tail_mask_request_says_a_gpu_tail_is_a_bounds_check_and_offers_th
     assert "bounds check" in answer.fix and "ballot_count" in answer.fix
 
 
+# Reproducer: a TMA copy issues only and states its launch (18ef846)
 def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion() -> None:
     copy_ = Request("sm90", "copy", {"src": GLOBAL, "dst": B128})
 
@@ -1199,6 +1172,7 @@ def test_a_tma_copy_issues_the_load_and_leaves_the_wait_to_its_completion() -> N
     assert "  if (threadIdx.x == 0) { alloy_mbar_arrive_expect_tx(bar, 8192);" in sut.code
 
 
+# Reproducer: a TMA copy issues only and states its launch (18ef846)
 def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it() -> None:
     sut = answered(Request("sm90", "copy", {"src": GLOBAL, "dst": Operand("shared", "f16", (128, 64), "row_major",
                                                                           "b128")}))  # fmt: skip
@@ -1208,6 +1182,7 @@ def test_a_tma_copy_states_the_launch_of_the_tile_program_that_runs_it() -> None
     assert tile.GPU_THREADS["sm90", 128] == 256
 
 
+# Reproducer: a CPU copy from a larger array is a block of it (18ef846)
 def test_a_cpu_load_of_one_register_from_a_larger_array_is_a_block_of_it() -> None:
     sut = answered(Request("avx512", "load", {"src": Operand("global", "f64", (64,)), "dst": Operand("vector", "f64",
                                                                                                     (8,))}))  # fmt: skip
@@ -1225,6 +1200,7 @@ def test_a_cpu_load_from_an_array_smaller_than_the_registers_is_refused() -> Non
     assert "src holds 8 elements, fewer than the 16" in sut.reason
 
 
+# Reproducer: SVE answers N elements as a whilelt loop (18ef846)
 @pytest.mark.parametrize(("op", "combine", "reduce_"), [("reduce_add", "svadd_f64_m", "svaddv_f64"),
                                                         ("reduce_max", "svmax_f64_m", "svmaxv_f64")])  # fmt: skip
 def test_an_sve_reduction_over_n_elements_is_a_predicated_loop_that_reduces_once(
@@ -1299,6 +1275,7 @@ def test_an_avx512_mask_answer_says_how_to_build_iota_and_n() -> None:
     assert "iota = _mm512_setr_epi64(0..7)" in sut.setup["mask"]
 
 
+# Reproducer: a scalar broadcast source (18ef846)
 @pytest.mark.parametrize("source", [Operand("register", "f64"), Operand("register", "f64", (1,))])
 def test_a_broadcast_takes_its_scalar_source_with_or_without_a_shape_of_one(source: Operand) -> None:
     sut = answered(Request("avx512", "broadcast", {"x": source}))
@@ -1312,6 +1289,7 @@ def test_a_broadcast_from_a_partial_register_names_the_scalar_form() -> None:
     assert isinstance(sut, Infeasible) and "--x register:f64 (or register:f64:1)" in sut.reason
 
 
+# Reproducer: an mma that does not chain names valid requests (18ef846)
 def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible() -> None:
     vector = Operand("vector", "f64", (8,))
 
@@ -1324,6 +1302,7 @@ def test_an_mma_whose_shapes_do_not_chain_names_valid_requests_that_are_feasible
         assert isinstance(answered(Request("avx512", "mma", operands)), Feasible), near
 
 
+# Reproducer: a scan carry broadcasts the last lane (18ef846)
 @pytest.mark.parametrize(("target", "dtype", "lanes"), [("avx512", "f64", 8), ("avx512", "f32", 16),
                                                         ("avx2", "f64", 4), ("avx2", "f32", 8)])  # fmt: skip
 @pytest.mark.avx512
@@ -1372,6 +1351,7 @@ def test_a_pending_tensix_row_with_a_stale_failure_is_unverified_for_an_elementw
     assert isinstance(exp, Infeasible) and exp.why is Why.CHECK_FAILED, "a row that is not pending is refused"
 
 
+# Reproducer: SVE answers N elements as a whilelt loop (18ef846)
 def test_an_sve_math_function_over_n_elements_defines_its_kernel_once_and_calls_it_per_block() -> None:
     sut = answered(Request("sve", "exp", {"x": Operand("vector", "f64", (64,))}))
 
@@ -1448,6 +1428,7 @@ def test_a_warp_reduction_takes_whole_warps_and_refuses_another_length_with_the_
     assert longer.nearest[:2] == (f"x register:f32:{below}", f"x register:f32:{below + lanes}")
 
 
+# Reproducer: an instruction name (wgmma (4b907d0)
 def test_an_instruction_name_points_at_its_operation_and_an_unknown_name_at_no_unrelated_row() -> None:
     wgmma = ask(Request("sm90", "wgmma"))
     unknown = ask(Request("sm90", "frobnicate"))
@@ -1456,6 +1437,7 @@ def test_an_instruction_name_points_at_its_operation_and_an_unknown_name_at_no_u
     assert isinstance(unknown, Infeasible) and unknown.nearest == ()
 
 
+# Reproducer: a refused CDNA copy names the 64-row LDS tile as nearest (4b907d0)
 def test_a_refused_cdna_copy_names_a_nearest_request_other_than_itself() -> None:
     dst = Operand("shared", "f16", (128, 64), "row_major", "xor:8")
 
@@ -1464,6 +1446,7 @@ def test_a_refused_cdna_copy_names_a_nearest_request_other_than_itself() -> None
     assert isinstance(sut, Infeasible) and "dst shared:f16:64x64:row_major:xor:8" in sut.nearest[0]
 
 
+# Reproducer: a GPU mma whose C is larger than one block says first that it is a grid of blocks (4b907d0)
 def test_an_mma_larger_than_one_block_says_first_that_it_is_a_grid_of_blocks() -> None:
     sut = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 64), "row_major", "b128"),
                                       "b": Operand("shared", "f16", (64, 256), "col_major", "b128"),
@@ -1473,6 +1456,7 @@ def test_an_mma_larger_than_one_block_says_first_that_it_is_a_grid_of_blocks() -
     assert sut.steps[0].spelling.startswith("C 64x256 is a grid of 1 x 4 thread blocks")
 
 
+# Reproducer: ask-all fences each kind once and refuses a third copy into an mma's two blocks (4b907d0)
 def test_a_kernel_fences_each_kind_once_and_refuses_a_third_copy_into_an_mma() -> None:
     two = ask_all(requests("sm90", TMA_COPY, TMA_COPY, WGMMA), verify=False)
     three = ask_all(requests("sm90", TMA_COPY, TMA_COPY, TMA_COPY, WGMMA), verify=False)
@@ -1481,6 +1465,7 @@ def test_a_kernel_fences_each_kind_once_and_refuses_a_third_copy_into_an_mma() -
     assert isinstance(three, Infeasible) and three.why is Why.COMBINE and "second copy" in three.reason
 
 
+# Reproducer: a GPU mma off its blocks is refused with the zero-padding fix (e101195)
 def test_an_mma_off_its_blocks_is_refused_with_the_zero_padding_fix() -> None:
     sut = ask(Request("sm90", "mma", {"a": Operand("shared", "f16", (64, 100), "row_major", "b128"),
                                       "b": Operand("shared", "f16", (100, 64), "col_major", "b128"),

@@ -12,6 +12,7 @@ import pytest
 
 from alloy.isa import simt, tile
 from alloy.isa.ask import Answer, Feasible, Operand, Request, Swizzle, ask
+from helpers import sample
 
 GPUS = ("sm90", "gfx942", "gfx90a")
 TMA = {"src": Operand("global", "f16", (256, 256)), "dst": Operand("shared", "f16", (64, 64), "row_major", "b128")}
@@ -49,13 +50,13 @@ HIP_ROWS = [(t, op) for t, op in SIMT if t != "sm90"]
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize(("target", "op"), CUDA_ROWS)
+@pytest.mark.parametrize(("target", "op"), sample(CUDA_ROWS))
 def test_a_cuda_device_row_compiles_on_its_own(target: str, op: str, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(Request(target, op), verify=False), tmp_path)
 
 
 @pytest.mark.hip
-@pytest.mark.parametrize(("target", "op"), HIP_ROWS)
+@pytest.mark.parametrize(("target", "op"), sample(HIP_ROWS))
 def test_a_hip_device_row_compiles_on_its_own(target: str, op: str, tmp_path: pathlib.Path) -> None:
     assert_builds(ask(Request(target, op), verify=False), tmp_path)
 

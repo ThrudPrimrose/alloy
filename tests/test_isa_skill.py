@@ -13,14 +13,14 @@ from alloy.isa.__main__ import main
 PAGE = (pathlib.Path(ask.__file__).parent.parent / "hb_plugin" / "skills" / "alloy-isa" / "SKILL.md").read_text()
 
 
-@pytest.mark.parametrize("name", [*ask.TARGETS, *ask.SPACES, *(s for s in ask.SWIZZLES if s != "none")])
-def test_the_page_names_every_target_space_and_swizzle_of_ask(name: str) -> None:
-    assert f"`{name}`" in PAGE
+def test_the_page_names_every_target_space_and_swizzle_of_ask() -> None:
+    names = [*ask.TARGETS, *ask.SPACES, *(s for s in ask.SWIZZLES if s != "none")]
+
+    assert [name for name in names if f"`{name}`" not in PAGE] == []
 
 
-@pytest.mark.parametrize("in_type", sorted(tile.GPU_BYTES))
-def test_the_page_names_every_gpu_tile_input_type(in_type: str) -> None:
-    assert f"`{in_type}`" in PAGE or f"`--in {in_type}`" in PAGE
+def test_the_page_names_every_gpu_tile_input_type() -> None:
+    assert [t for t in sorted(tile.GPU_BYTES) if f"`{t}`" not in PAGE and f"`--in {t}`" not in PAGE] == []
 
 
 def test_every_command_the_page_shows_exists(capsys: pytest.CaptureFixture[str]) -> None:

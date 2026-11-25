@@ -49,6 +49,7 @@ def test_a_flat_parallel_map_enters_one_region_and_splits_among_the_cores() -> N
     assert load_of(sdfg, {"N": 1000}, 4) == Load(1.0, 1000.0, 250.0)
 
 
+# Reproducer: a parallel map of no iterations decides no load (1111330)
 def test_a_parallel_map_of_no_iterations_decides_no_load() -> None:
     sdfg, state = one_state()
     a_map(state, None, "0:N", ScheduleType.CPU_Multicore)
