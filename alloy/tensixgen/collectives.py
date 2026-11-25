@@ -10,6 +10,11 @@ address), and semaphore 0 counts what has arrived:
 - Allgather, Gather, Scatter and Alltoall write each block to its receiver (a rank's own block too, a NoC write to
   itself) and raise the receiver's semaphore by one; a receiver waits for its count.
 
+The row's load and store are the copy and wait nodes of :mod:`alloy.tensixgen.movement`, as in the split's tile
+bodies: ``read_row`` is the X copy and its read :class:`~alloy.tensixgen.movement.NocWait`, ``write_row`` the Y copy
+and its write wait. The circular-buffer syncs stay unspelled: the one dataflow kernel has no compute kernel to hand
+tiles to.
+
 Collectives that combine data (Reduce, Allreduce, ReduceScatter) need the compute kernel and are refused, as is a row
 that is not whole tiles. Moving data more cleverly (overlap, pipelined multicast trees) is the agent's job.
 """
@@ -20,6 +25,7 @@ from dace.libraries.comm.nodes.node import CommNode
 
 from alloy.isa.tensix_harness import dataflow_include
 from alloy.jsontype import Json
+from alloy.tensixgen import movement
 from alloy.tensixgen.backend import Refused
 from alloy.tensixgen.split import Program
 
@@ -88,7 +94,7 @@ def comm_node(sdfg: dace.SDFG) -> CommNode | None:
     return found[0] if found else None
 
 
-def kernel(node: CommNode, ranks: int, in_tiles: int, out_tiles: int, new: bool) -> str:
+def kernel(node: CommNode, moves: movement.Movement, ranks: int, in_tiles: int, out_tiles: int, new: bool) -> str:
     """The one dataflow kernel every rank runs. Runtime args: rank, X and Y addresses, the multicast rectangle of
     ranks 1..P-1, then each rank's virtual NoC coordinates."""
     return f"""// {type(node).__name__} over {ranks} ranks: an X row is {in_tiles} tiles, a Y row {out_tiles} (alloy.tensixgen.collectives)
@@ -114,11 +120,11 @@ void kernel_main() {{
     // X row r into CB 0, Y row rank from CB 1
     auto read_row = [&](uint32_t r) {{
         for (uint32_t t = 0; t < IN; ++t) noc_async_read_tile(r * IN + t, xs, in + t * bytes);
-        noc_async_read_barrier();
+        {moves.read_wait.call()}
     }};
     auto write_row = [&]() {{
         for (uint32_t t = 0; t < OUT; ++t) noc_async_write_tile(rank * OUT + t, ys, out + t * bytes);
-        noc_async_write_barrier();
+        {moves.write_wait.call()}
     }};
     auto send = [&](uint32_t src, uint32_t p, uint32_t dst, uint32_t size) {{
         noc_async_write(src, get_noc_addr(core_x(p), core_y(p), dst), size);
@@ -145,5 +151,8 @@ def program(task: Json, sdfg: dace.SDFG, node: CommNode, version: str = "v08") -
         "placement": {},
         "options": {"cores": ranks},
     }
-    source = kernel(node, ranks, in_cols // TILE, out_cols // TILE, version == "v08")
+    (state,) = [s for n, s in sdfg.all_nodes_recursive() if n is node]
+    assert isinstance(state, dace.SDFGState)
+    moves = movement.insert(state, ["X"], "Y")
+    source = kernel(node, moves, ranks, in_cols // TILE, out_cols // TILE, version == "v08")
     return Program(task["name"], source, "", "", {}, descriptor)

@@ -306,6 +306,15 @@ def test_the_shared_gate_cases_lower_on_tensix_where_contract_v2_admits_them() -
     assert "noc_async_write_multicast(" in lowered(moving["bcast"]).reader
     for name in ("allgather", "gather", "scatter", "alltoall"):
         assert "noc_semaphore_inc(" in lowered(moving[name]).reader
+    from alloy.tensixgen import collectives
+    from alloy.tensixgen.gate import task_of
+    from alloy.tensixgen.movement import NocWait
+
+    sdfg = moving["allgather"].sdfg()  # the row's load and store are the movement nodes, as in the split
+    node = collectives.comm_node(sdfg)
+    assert node is not None
+    collectives.program(task_of(moving["allgather"]), sdfg, node)
+    assert sorted(n.direction for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NocWait)) == ["read", "write"]
     with pytest.raises(Refused, match="needs the compute kernel"):
         lowered(moving["reduce"])
 
