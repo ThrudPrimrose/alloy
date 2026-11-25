@@ -212,16 +212,16 @@
         "complexity": 17
       },
       {
+        "name": "vector_op_1d",
+        "complexity": 17
+      },
+      {
         "name": "answered",
         "complexity": 18
       },
       {
         "name": "tile_call",
         "complexity": 18
-      },
-      {
-        "name": "vector_op_1d",
-        "complexity": 21
       },
       {
         "name": "mma",

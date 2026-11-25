@@ -766,7 +766,14 @@ def vector_op_1d(request: Request, verify: bool) -> Answer:
             return no(request, Why.SWIZZLE, "a CPU has no swizzle", spell(x=register))
         if lanes and operand.shape and operand.shape[0] % lanes and not scalar:
             return uneven(request, isa, dtype, operand.shape[0], lanes)
-    answer = one_register(request, isa, dtype, table, verify)
+    return spanned(one_register(request, isa, dtype, table, verify), request, shapes, table, verify)
+
+
+def spanned(answer: Answer, request: Request, shapes: set[tuple[int, ...]], table: Table, verify: bool) -> Answer:
+    """The one-register ``answer`` over the request's elements: a loop of registers, an SVE predicated loop, or an RVV
+    vsetvl loop, joined by :func:`joined` for a reduction or a scan."""
+    isa, dtype = request.target, dtype_of(request)
+    lanes = table.isa(isa).lanes.get(dtype, 0)
     if not lanes and shapes:  # SVE and RVV: the lane count is known at run time only
         n = math.prod(next(iter(shapes)))
         looped = strip_mined(answer, n, dtype) if isa == "rvv" else scalable(answer, request, n, table, dtype)
