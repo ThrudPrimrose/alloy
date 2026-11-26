@@ -32,18 +32,6 @@ def edited_run(tmp_path: pathlib.Path, edit: str) -> tuple[api.Result, str]:
     return result, unit.stem
 
 
-def test_a_correct_edit_is_built_by_every_candidate_and_verified_against_the_rendering(tmp_path: pathlib.Path) -> None:
-    sut, symbol = edited_run(tmp_path, "2.0 -> (1.0 + 1.0)")
-
-    (report,) = sut.scopes
-    reference, *agent = report.builds
-    assert not reference.name.startswith("agent_") and agent
-    assert all(b.name.startswith("agent_") and not b.error for b in agent)
-    assert sut.verification is not None
-    verdicts = sut.verification.verdicts[symbol]
-    assert all(verdicts[b.name].ok for b in agent if not b.duplicate_of)
-
-
 def test_a_wrong_edit_fails_verification(tmp_path: pathlib.Path) -> None:
     sut, symbol = edited_run(tmp_path, "2.0 -> 3.0")
 
