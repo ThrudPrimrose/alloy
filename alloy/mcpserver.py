@@ -118,6 +118,8 @@ def run(mode: Mode, program: str, out: str, manifest: str | None = None, finite_
         running: dict[str, int] | None = None, edited: str | None = None, matrix: str | None = None,
         ) -> dict[str, Any]:  # fmt: skip
     """``generated`` in a spawned worker; the caller's mistakes come back as a ``ToolError``."""
+    # no tool runs MPI: the worker's DaCe parse probes mpi4py, whose MPI_Init stalls a process no launcher started
+    os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
     spawn = multiprocessing.get_context("spawn")
     with concurrent.futures.ProcessPoolExecutor(1, mp_context=spawn, initializer=stdout_to_stderr) as pool:
         future = pool.submit(generated, mode.value, program, out, manifest, finite_inputs, running, edited, matrix)
@@ -162,8 +164,6 @@ def alloy_isa(command: query.Command, arguments: list[str] | None = None) -> str
 
 
 def main() -> None:
-    # no tool runs MPI: a worker's DaCe parse probes mpi4py, whose MPI_Init stalls a process no launcher started
-    os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
     server.run()  # stdio
 
 
