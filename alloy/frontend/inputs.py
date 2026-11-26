@@ -116,6 +116,8 @@ def closure_arrays(kernel: str, datatype: str) -> dict[str, Any]:
     """The constant arrays DaCe lifts from corpus kernel ``kernel``'s closure into its signature (``__g_...``, a numpy
     expression no manifest names, such as ``np.arange(3, dtype=np.int64)``), valued as the bench values them for
     its own DaCe runs (``bind_closure_arrays``). Some exist only once the program is parsed, so it is parsed here."""
+    from dace.frontend.python.common import SDFGClosure
+    from dace.frontend.python.parser import DaceProgram
     from hpcagent_bench.frameworks.benchmark import Benchmark
     from hpcagent_bench.frameworks.dace_framework import DaceFramework
     from hpcagent_bench.frameworks.framework import framework_class
@@ -124,9 +126,13 @@ def closure_arrays(kernel: str, datatype: str) -> dict[str, Any]:
     assert isinstance(framework, DaceFramework), "dace_cpu is the bench's DaCe framework"
     framework.set_datatype(datatype)
     program = framework.implementations(Benchmark(kernel))[0][0]
-    if program.resolver is None:
+    assert isinstance(program, DaceProgram), f"{kernel}: the dace port is a @dace.program"
+    # DaCe leaves ``resolver`` None until the program is parsed
+    resolver: SDFGClosure | None = program.resolver
+    if resolver is None:
         program.to_sdfg(simplify=False)
-    return {name: entry[2]() for name, entry in program.resolver.closure_arrays.items()}
+        resolver = program.resolver
+    return {name: entry[2]() for name, entry in resolver.closure_arrays.items()}
 
 
 def at(manifest: Manifest, sizes: dict[str, Any], seed: int = 0) -> Draw:
