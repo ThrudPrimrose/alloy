@@ -16,7 +16,7 @@ dependencies = [
     "numpy",
     "pydantic>=2",
     # DaCe extended (import name dace); its `alloy` extra names dace-alloy back.
-    "dace-extended>=1.0.1",
+    "dace-extended>=1.0.2",
     "sympy",
     "pydantic-core",
     # C to NumPy (alloy.frontend.cnumpy) parses C with tree-sitter's grammar
@@ -33,7 +33,7 @@ Changelog = "https://github.com/ThrudPrimrose/dace-alloy/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Manifest inputs (fuzzed sizes, initializers) and the tolerance band come from HPCAgent-Bench.
-bench = ["hpcagent-bench>=1.0.1"]
+bench = ["hpcagent-bench>=1.0.2"]
 # Alloy's own MCP server (alloy-mcp, alloy/mcpserver.py): its tools for any MCP client, outside the bench.
 mcp = ["mcp>=2.3,<3"]
 # Device buffers for GPU verification; the two cupy builds never share an environment.
