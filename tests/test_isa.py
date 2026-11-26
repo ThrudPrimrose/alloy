@@ -279,7 +279,8 @@ def rvv_clang() -> str | None:
     return None
 
 
-@pytest.mark.skipif(rvv_clang() is None, reason="no clang targeting riscv64 on this host")
+@pytest.mark.rvv
+@pytest.mark.clang
 def test_every_rvv_spelling_is_declared_by_clang(tmp_path: pathlib.Path) -> None:
     """riscv_vector.h declares its intrinsics through a pragma, so no header text names them: clang itself says which
     names it does not know."""
@@ -394,7 +395,7 @@ def libmvec_symbols() -> frozenset[str] | None:
     return None
 
 
-@pytest.mark.skipif(libmvec_symbols() is None, reason="no libmvec on this host")
+@pytest.mark.libmvec
 def test_the_committed_libmvec_names_exist_in_the_host_library() -> None:
     for isa in ("avx2", "avx512"):
         for dtype in DTYPES:

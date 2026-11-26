@@ -20,3 +20,44 @@ LIMIT = int(0.75 * TOTAL) + len(os.sched_getaffinity(0)) * machine.openmp_stack_
 _, HARD = resource.getrlimit(resource.RLIMIT_DATA)
 CAP = LIMIT if HARD == resource.RLIM_INFINITY else min(LIMIT, HARD)
 resource.setrlimit(resource.RLIMIT_DATA, (CAP, CAP))
+
+import functools
+import pathlib
+import shutil
+from collections.abc import Callable
+
+import pytest
+
+from alloy.isa.validate import emulated, host_can_run
+
+#: Where a host keeps libmvec, glibc's vector math library.
+LIBMVEC = ("/lib/x86_64-linux-gnu/libmvec.so.1", "/usr/lib/libmvec.so.1")
+
+#: What each toolchain mark needs. A marked test on a host without it fails: deselect the mark (-m "not <mark>"),
+#: never skip, so a run that reports green ran what it names.
+NEEDS: dict[str, Callable[[], bool]] = {
+    "gcc": lambda: shutil.which("gcc") is not None and shutil.which("g++") is not None,
+    "avx2": lambda: host_can_run("avx2", "f64"),
+    "avx512": lambda: host_can_run("avx512", "f64"),
+    "aarch64": lambda: emulated("neon") is not None,
+    "rvv": lambda: emulated("rvv") is not None,
+    "libmvec": lambda: any(pathlib.Path(path).is_file() for path in LIBMVEC),
+    "cuda": lambda: shutil.which("nvcc") is not None,
+    "hip": lambda: shutil.which("hipcc") is not None,
+    "softhier": lambda: bool(
+        (os.environ.get("SOFTHIER_IMAGE") and shutil.which("singularity"))
+        or (os.environ.get("SOFTHIER_GVSOC") and os.environ.get("SOFTHIER_SDK"))
+    ),
+    "softhier_sdk": lambda: bool(os.environ.get("SOFTHIER_TOOLCHAIN") and os.environ.get("SOFTHIER_SDK")),
+}
+
+
+@functools.cache
+def has(mark: str) -> bool:
+    return NEEDS[mark]()
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    missing = [mark for mark in NEEDS if item.get_closest_marker(mark) is not None and not has(mark)]
+    if missing:
+        pytest.fail(f"this host lacks {', '.join(missing)}: deselect with -m 'not {missing[0]}'", pytrace=False)

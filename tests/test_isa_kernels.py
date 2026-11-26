@@ -91,12 +91,11 @@ def measured(k: Kernel, samples: int, flags: tuple[str, ...] = ()) -> Measured:
 
 
 def host_isa() -> str:
-    for isa in ("avx512", "avx2"):
-        if host_can_run(isa, "f64"):
-            return isa
-    pytest.skip("host runs no x86 vector kernels")
+    """The widest x86 ISA this host runs; a test measuring on it carries the avx2 mark."""
+    return "avx512" if host_can_run("avx512", "f64") else "avx2"
 
 
+@pytest.mark.avx2
 def test_a_wrong_coefficient_fails_the_gate() -> None:
     k = kernel("exp", "f64", "relaxed")
     body = tuple(line.replace("0.5", "0.51") if line.startswith("p = ") else line for line in k.body)
@@ -107,6 +106,7 @@ def test_a_wrong_coefficient_fails_the_gate() -> None:
     assert seen.ulp > 1000 * k.error_ulp
 
 
+@pytest.mark.avx2
 @pytest.mark.parametrize("fn", ["sin", "exp", "log", "pow", "fmod"])
 def test_a_strict_kernel_without_its_guard_gets_specials_wrong(fn: str) -> None:
     k = kernel(fn, "f64", "strict")
@@ -135,16 +135,19 @@ def test_the_levels_get_cheaper() -> None:
         assert counts[0] >= counts[1] >= counts[2], fn
 
 
+@pytest.mark.avx2
 def test_strict_refuses_fast_math_at_compile_time() -> None:
     with pytest.raises(RuntimeError, match="strict math kernels need IEEE semantics"):
         measure(kernel("sin", "f64", "strict"), host_isa(), 1 << 10, ("-ffast-math",))
 
 
+@pytest.mark.avx2
 def test_log1p_refuses_fast_math_at_every_level() -> None:
     with pytest.raises(RuntimeError, match="IEEE semantics"):
         measure(kernel("log1p", "f64", "relaxed"), host_isa(), 1 << 10, ("-ffast-math",))
 
 
+@pytest.mark.avx2
 def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives() -> None:
     below = next(k for k in ladder("pow", "f64") if not needs_ieee(k))
 
@@ -153,6 +156,7 @@ def test_a_relaxed_pow_refuses_fast_math_and_the_rung_below_it_survives() -> Non
     assert measured(below, 1 << 14, ("-ffast-math",)).ulp <= 3 * below.error_ulp
 
 
+@pytest.mark.avx2
 @pytest.mark.parametrize("fn", ["sin", "exp", "log", "atan"])
 def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn: str) -> None:
     k = kernel(fn, "f64", "relaxed")
@@ -162,11 +166,11 @@ def test_a_relaxed_kernel_survives_fast_math_within_three_times_its_error(fn: st
     assert seen.ulp <= 3 * k.error_ulp
 
 
+@pytest.mark.clang
 def test_every_spelled_identifier_exists_in_the_x86_headers() -> None:
-    include = subprocess.run(["clang", "-print-resource-dir"], capture_output=True, text=True, check=False).stdout
+    include = subprocess.run(["clang", "-print-resource-dir"], capture_output=True, text=True, check=True).stdout
     folder = pathlib.Path(include.strip()) / "include"
-    if not folder.exists():
-        pytest.skip("no clang resource headers")
+    assert folder.is_dir(), f"clang has no resource headers at {folder}"
     text = "".join(path.read_text(errors="ignore") for path in folder.glob("*intrin*.h"))
     source = "\n".join(render(kernel(*key), isa).source for key in ALL for isa in ("avx2", "avx512"))
     names = set(re.findall(r"\b_mm\d+_\w+", source))
@@ -184,10 +188,9 @@ def test_an_unknown_function_names_what_exists() -> None:
         kernel("gamma", "f64", "strict")
 
 
+@pytest.mark.libmvec
 def test_libmvec_has_every_listed_call() -> None:
     candidates = list(pathlib.Path("/lib").glob("*/libmvec.so.1"))
-    if not candidates:
-        pytest.skip("no glibc libmvec here")
     run = subprocess.run(["nm", "-D", str(candidates[0])], capture_output=True, text=True, check=True)
     symbols = {re.sub(r"@@?.*$", "", line.split()[-1]) for line in run.stdout.splitlines() if line.split()}
     for fn, dtype, level in (row for row in ALL if row[0] not in NO_LIBRARY):
@@ -261,13 +264,13 @@ int main(void) {
 """
 
 
+@pytest.mark.aarch64
 @pytest.mark.parametrize("isa", ["neon", "sve"])
 @pytest.mark.parametrize("dtype", ["f64", "f32"])
 def test_the_arm_fmod_recipes_compute_fmod(isa: str, dtype: str, tmp_path: pathlib.Path) -> None:
     """The table's own recipe steps run: divide, truncate, subtract the multiple."""
     arm = emulated(isa)
-    if arm is None:
-        pytest.skip("needs qemu-aarch64 and aarch64-linux-gnu-gcc")
+    assert arm is not None, "the aarch64 mark promises qemu-aarch64 and aarch64-linux-gnu-gcc"
     cc, flags, launcher = arm
     div, trunc, fnma = load().entry(isa, "mod", dtype).recipe
     r = Renderer(isa, dtype)
@@ -362,7 +365,7 @@ def strict_value(fn: str, dtype: str, args: tuple[float, ...], tmp_path: pathlib
     return float.fromhex(subprocess.run([str(tmp_path / "k")], capture_output=True, text=True, check=True).stdout)
 
 
-@pytest.mark.skipif(not host_can_run("avx2", "f64"), reason="needs AVX2")
+@pytest.mark.avx2
 @pytest.mark.parametrize(
     "fn, dtype, args, exact",
     [
@@ -483,10 +486,7 @@ def test_an_unguarded_kernel_is_checked_inside_its_grids_and_a_guarded_one_every
     assert inside(kernel("exp", "f32", "relaxed")).startswith("(-1.0 <= x && x <= 1.0) || (-87.0 <= x && x <= 87.0)")
 
 
-needs_avx2 = pytest.mark.skipif(not host_can_run("avx2", "f64"), reason="host does not run AVX2")
-
-
-@needs_avx2
+@pytest.mark.avx2
 def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls() -> None:
     sut = time_function("exp", "f64", "avx2")
 
@@ -498,7 +498,7 @@ def test_a_function_is_timed_rung_by_rung_next_to_its_library_calls() -> None:
     assert by_name["fast"] < by_name["libm (scalar)"]
 
 
-@needs_avx2
+@pytest.mark.avx2
 def test_the_cli_prints_a_time_per_way_to_compute_the_function(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["time", "avx2", "exp", "f64", "--json"]) == 0
 

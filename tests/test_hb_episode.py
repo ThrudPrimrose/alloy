@@ -6,9 +6,6 @@ import dataclasses
 import pathlib
 
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
-
 from hpcagent_bench.harness import plugin_records
 
 from alloy import configuration_matrix

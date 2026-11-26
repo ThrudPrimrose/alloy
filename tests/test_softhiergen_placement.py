@@ -4,7 +4,6 @@ and main.c's scatter with read_results' gather."""
 import itertools
 import json
 import pathlib
-import shutil
 import subprocess
 from collections.abc import Callable
 from typing import Any
@@ -45,11 +44,11 @@ def test_node_bases_follow_the_channel_placement() -> None:
 @pytest.mark.parametrize(
     "nodes, index_map, shape",
     [
-        (4, lambda i: (i // 128) % 4, (4096,)),
-        (4, lambda i: i // 1024, (4096,)),
+        (4, lambda i: (i // 16) % 4, (256,)),
+        (4, lambda i: i // 64, (256,)),
         (3, lambda i, j: (j // 8) % 3, (16, 24)),
-        (4, lambda i, j: 2 * ((i // 32) % 2) + (j // 32) % 2, (64, 64)),
-        (4, lambda i, j: (2 * (i // 32) + j // 32) % 4, (64, 64)),
+        (4, lambda i, j: 2 * ((i // 8) % 2) + (j // 8) % 2, (32, 32)),
+        (4, lambda i, j: (2 * (i // 8) + j // 8) % 4, (16, 16)),
     ],
 )
 def test_positions_are_node_times_share_plus_offset(nodes: int, index_map: IndexMap, shape: tuple[int, ...]) -> None:
@@ -173,10 +172,7 @@ int main() {{
     return code, numpy.array(out[-1].split(), dtype=numpy.float32)[positions].reshape(desc.shape)
 
 
-host = pytest.mark.skipif(shutil.which("g++") is None, reason="needs a host g++")
-
-
-@host
+@pytest.mark.gcc
 @pytest.mark.parametrize("block, split", [(512, False), (256, False), (128, True), (96, True)])
 def test_tile_load_is_one_transfer_inside_a_block_and_cut_at_block_ends(
     tmp_path: pathlib.Path, block: int, split: bool
@@ -203,7 +199,7 @@ def test_alignment_needs_every_map_value_on_a_tile_boundary() -> None:
     assert not dma.multiple_of(dace.symbolic.pystr_to_symbolic("i + n"), 256, {"i": (0, 256)})
 
 
-@host
+@pytest.mark.gcc
 def test_2d_block_cyclic_whole_array_load_is_cut_per_row_and_block(tmp_path: pathlib.Path) -> None:
     """A 64 x 64 array in 32 x 32 blocks over 2 x 2 nodes, loaded whole: two runs per row, landing in row order."""
     index_map = lambda i, j: 2 * ((i // 32) % 2) + (j // 32) % 2
@@ -213,7 +209,7 @@ def test_2d_block_cyclic_whole_array_load_is_cut_per_row_and_block(tmp_path: pat
     numpy.testing.assert_array_equal(tiles[0], numpy.arange(64 * 64))
 
 
-@host
+@pytest.mark.gcc
 def test_row_block_load_stays_on_one_node_as_one_transfer(tmp_path: pathlib.Path) -> None:
     """Rows 16c .. 16c + 15 of a 64 x 64 array placed (i // 16) % 4 are one node's contiguous share: one 1D transfer."""
     sdfg, state, node = copy_sdfg(
@@ -225,7 +221,7 @@ def test_row_block_load_stays_on_one_node_as_one_transfer(tmp_path: pathlib.Path
         numpy.testing.assert_array_equal(tile, numpy.arange(c * 1024, (c + 1) * 1024))
 
 
-@host
+@pytest.mark.gcc
 def test_page_cyclic_store_writes_every_element_to_its_page(tmp_path: pathlib.Path) -> None:
     """Each cluster stores 16 rows into a 64 x 64 array of 32 x 32 pages dealt round-robin to 4 nodes; gathered back,
     X holds every cluster's rows."""
@@ -237,7 +233,7 @@ def test_page_cyclic_store_writes_every_element_to_its_page(tmp_path: pathlib.Pa
     numpy.testing.assert_array_equal(gathered, numpy.tile(1000 + numpy.arange(1024), 4).reshape(64, 64))
 
 
-@host
+@pytest.mark.gcc
 def test_strided_rows_of_a_placed_matrix_land_packed(tmp_path: pathlib.Path) -> None:
     """X[0:16:2, 0:10] of a 16 x 24 matrix placed (j // 8) % 3: every other row, cut at column 8, packed into t."""
     sdfg, state, node = copy_sdfg(

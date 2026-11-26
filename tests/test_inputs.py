@@ -32,6 +32,29 @@ def test_a_corpus_kernel_with_its_own_initializer_gets_the_dtypes_its_manifest_d
     assert sut.values["G"].shape == (2, 4, 6, 10, 10)
 
 
+# Reproducer: a sparse kernel's reference crashed on 'Missing program argument "A_data"' (E1c 923577, amg_setup)
+def test_a_sparse_argument_is_drawn_as_the_buffers_the_program_takes() -> None:
+    spec = BenchSpec.load("spgemm_hash")
+    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.short_name}.yaml")
+
+    sut = inputs.at(manifest, {"M": 32, "K": 24, "N": 40, "nnz_A": 64, "nnz_B": 48, "nnz_C_cap": 256})
+
+    assert {"A_indptr", "A_indices", "B_indptr", "B_indices"} <= sut.values.keys()
+    assert "A" not in sut.values and "B" not in sut.values
+    assert sut.values["A_indptr"].shape == (33,)
+
+
+# Reproducer: trs4's reference crashed on 'Missing program argument "__g_numpy_arange_3__..."' (E1c 923577)
+def test_a_constant_the_program_lifts_from_its_closure_is_drawn_with_the_inputs() -> None:
+    spec = BenchSpec.load("cp2k_density_matrix_trs4")
+    manifest = inputs.load(paths.BENCHMARKS / spec.relative_path / f"{spec.short_name}.yaml")
+
+    sut = inputs.at(manifest, inputs.presets(manifest)[0])
+
+    lifted = sut.values["__g_numpy_arange_3__dtype_np_int64__None____"]
+    assert np.array_equal(lifted, np.arange(3, dtype=np.int64).reshape(1, 3))
+
+
 def test_a_manifest_drawn_at_a_datatype_that_is_not_a_string_is_refused_naming_the_file(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "scale.yaml"
     path.write_text(SCALE_MANIFEST)

@@ -135,6 +135,11 @@ markers = [
     "cuda: needs nvcc (compiles device units for sm_89; no device needed)",
     "hip: needs hipcc with hipcub (compiles device units for gfx90a; no device needed)",
     "tensix: needs docker; runs every Tensix row on ttsim inside the pinned tt-metal image",
-    "softhier: needs GVSoC with the SoftHier v1 target and the GCC 14 RISC-V toolchain (SOFTHIER_GVSOC, SOFTHIER_SDK); skipped without them",
+    "softhier: needs GVSoC with the SoftHier v1 target (SOFTHIER_IMAGE with singularity, or SOFTHIER_GVSOC and SOFTHIER_SDK)",
+    "softhier_sdk: needs the SoftHier GCC 14 RISC-V toolchain and SDK (SOFTHIER_TOOLCHAIN, SOFTHIER_SDK)",
+    "avx2: needs a host that executes AVX2 and FMA",
+    "aarch64: needs aarch64-linux-gnu-gcc and qemu-aarch64",
+    "rvv: needs riscv64-linux-gnu-gcc and qemu-riscv64 (and a clang targeting riscv64 where marked clang too)",
+    "libmvec: needs glibc's libmvec",
     "nvidia: needs an NVIDIA GPU to run on (and nvcc)",
 ]

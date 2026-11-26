@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 from collections.abc import Sequence
 
+import pytest
 from dace.frontend.python.parser import DaceProgram
 
 from alloy import api, configuration_matrix
@@ -20,6 +21,21 @@ EXAMPLES = pathlib.Path(__file__).parent.parent / "examples"
 EXAMPLE = EXAMPLES / "two_scopes.py"
 REDUCTIONS = EXAMPLES / "reductions.py"
 MATRIX = configuration_matrix.load()
+
+
+#: The toolchain mark a case on each ISA carries (conftest.NEEDS says what each needs).
+ISA_MARKS = {
+    "avx2": pytest.mark.avx2,
+    "avx512": pytest.mark.avx512,
+    "neon": pytest.mark.aarch64,
+    "sve": pytest.mark.aarch64,
+    "rvv": pytest.mark.rvv,
+}
+
+
+def by_isa(cases: Sequence[tuple[object, ...]]) -> list[object]:
+    """``cases`` whose first value is an ISA, each carrying that ISA's mark."""
+    return [pytest.param(*case, marks=ISA_MARKS.get(str(case[0]), ())) for case in cases]
 
 
 def sample[T](rows: Sequence[T], count: int = 12) -> list[T]:

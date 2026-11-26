@@ -392,8 +392,6 @@ def test_every_row_runs_correct_on_gvsoc_and_every_planted_row_fails() -> None:
     image = os.environ.get("SOFTHIER_IMAGE")
     if image and shutil.which("singularity") is None:
         pytest.fail("SOFTHIER_IMAGE is set but singularity is not on PATH")
-    if not image and not (os.environ.get("SOFTHIER_GVSOC") and os.environ.get("SOFTHIER_SDK")):
-        pytest.skip("GVSoC is absent: set SOFTHIER_IMAGE, or SOFTHIER_GVSOC and SOFTHIER_SDK (alloy/isa/softhier.py)")
 
     found, wrong = softhier.parsed(softhier.run_harness(image=pathlib.Path(image) if image else None))
 

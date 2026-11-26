@@ -4,7 +4,6 @@ device tasklets compiled by the device compilers (no device needed)."""
 
 import ctypes
 import pathlib
-import shutil
 import subprocess
 
 import dace
@@ -185,8 +184,6 @@ def gpu_program() -> dace.SDFG:
 def test_a_device_tasklet_compiles_for_its_device(dialect: str, tmp_path: pathlib.Path) -> None:
     """Build only: the device unit of the rewritten program compiles for sm_89 or gfx90a."""
     driver = "nvcc" if dialect == "cuda" else "hipcc"
-    if shutil.which(driver) is None:
-        pytest.skip(f"{driver} is not on PATH")
     unit = tmp_path / ("unit.cu" if dialect == "cuda" else "unit.hip")
     with set_temporary("compiler", "cuda", "chiplet_number", value=1):  # no device here to count them on
         rendered = cpf.render(

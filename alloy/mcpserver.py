@@ -162,6 +162,8 @@ def alloy_isa(command: query.Command, arguments: list[str] | None = None) -> str
 
 
 def main() -> None:
+    # no tool runs MPI: a worker's DaCe parse probes mpi4py, whose MPI_Init stalls a process no launcher started
+    os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
     server.run()  # stdio
 
 

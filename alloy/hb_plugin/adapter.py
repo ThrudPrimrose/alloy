@@ -180,7 +180,7 @@ def running_sizes(spec: BenchSpec, token: str) -> dict[str, int]:
 
 def manifest_of(spec: BenchSpec, precision: Precision) -> inputs.Manifest:
     """``spec``'s manifest in the corpus, inputs drawn at ``precision``."""
-    path = paths.BENCHMARKS / spec.relative_path / f"{spec.module_name}.yaml"
+    path = paths.BENCHMARKS / spec.relative_path / f"{spec.short_name}.yaml"  # named after the kernel
     return inputs.load(path, datatype=numpy_dtype(precision).__name__)
 
 

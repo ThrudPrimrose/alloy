@@ -9,9 +9,6 @@ from collections.abc import Callable, Iterator
 from http.server import ThreadingHTTPServer
 
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
-
 from hpcagent_bench import config
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle, SourceMode
 from hpcagent_bench.config import SubmitFeedback

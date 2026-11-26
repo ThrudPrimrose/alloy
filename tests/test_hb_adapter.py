@@ -5,18 +5,11 @@ factor, and a rendered library asks for the scratch its entry carves transients 
 
 import dataclasses
 import pathlib
-
-import pytest
-
-from alloy import gpu, gpu_build
-from alloy.gpu_build import GpuCandidate, GpuCompiler
-
-pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
-
 from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from hpcagent_bench.categories import Language, Preset, SourceMode
 from hpcagent_bench.harness.envelope import Submission
 from hpcagent_bench.harness.judge_wire import ScorePreview
@@ -26,7 +19,9 @@ from hpcagent_bench.harness.task import Task
 from hpcagent_bench.precision import Precision
 from hpcagent_bench.spec import BenchSpec
 
+from alloy import gpu, gpu_build
 from alloy.evaluate.verify import Verdict
+from alloy.gpu_build import GpuCandidate, GpuCompiler
 from alloy.hb_plugin import adapter
 from alloy.hb_plugin.adapter import (
     fast_size,
@@ -422,3 +417,12 @@ def test_a_profile_episode_whose_timing_crashes_delivers_the_plain_program_and_r
     assert sut is BASE
     ((_, data),) = kept
     assert isinstance(data, dict) and (data["mode"], data["scopes"]) == ("profile", [])
+
+
+# Reproducer: manifest_of looked for rayleigh_ritz_rotation.yaml, the module's name (E1c 923577)
+def test_a_kernels_manifest_is_found_where_its_folder_and_module_names_differ() -> None:
+    spec = BenchSpec.load("ls3df_rayleigh_ritz_rotation")
+
+    sut = adapter.manifest_of(spec, Precision.FP64)
+
+    assert sut.path.name == "ls3df_rayleigh_ritz_rotation.yaml"

@@ -105,7 +105,7 @@ jobs:
         run: |
           ulimit -s "$(ulimit -H -s)"
           export OMP_STACKSIZE=512M OMP_THREAD_LIMIT="$(nproc)"
-          marks="not cuda and not hip and not tensix and not nvidia"
+          marks="not cuda and not hip and not tensix and not nvidia and not softhier and not softhier_sdk"
           grep -q avx512f /proc/cpuinfo || marks="not avx512 and $marks"
           PYTHONHASHSEED=0 uv run pytest -n 4 --maxfail=20 -W error --durations=25 -m "$marks" tests \
             --ignore=tests/test_hb_plugin.py --ignore=tests/test_llr_smoke.py \

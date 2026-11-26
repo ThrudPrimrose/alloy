@@ -75,7 +75,8 @@ Layout:
 - `tests/`: one file per module, plus the cross-compiler OpenMP link test.
 - `docs/`: design decisions with build status, measurement rules, related work.
 
-Tests: `pytest -m "not icx"` on a box without Intel oneAPI (each compiler is a pytest mark); CI installs gcc,
+Tests: `pytest -m "not icx"` on a box without Intel oneAPI. Each compiler, host ISA and emulator is a pytest mark
+(`pyproject.toml`); a marked test fails on a host without it, so deselect what the box lacks. CI installs gcc,
 clang, oneAPI and the NVIDIA HPC SDK and runs all but the `avx512`, `cuda` and `hip` marks, including the
 cross-compiler OpenMP link test.
 

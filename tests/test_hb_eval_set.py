@@ -3,8 +3,6 @@
 
 import pytest
 
-pytest.importorskip("hpcagent_bench", reason="the eval set reads the bench's kernels")
-
 from alloy.hb_plugin import eval_set
 from alloy.hb_plugin.eval_set import Refused, Task, admit
 

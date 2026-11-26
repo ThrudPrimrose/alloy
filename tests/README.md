@@ -13,3 +13,6 @@
   (`python -m alloy.isa.<table> verify`) check every row and record the verdicts the answers carry.
 - **One fact, one test.** A test that only greps generated text for what a planted-bug test already proves fails
   (a wrong lane, a swapped operand) adds nothing; keep the planted-bug test.
+- **No skips.** A test that needs a toolchain, ISA or emulator carries its mark (`conftest.NEEDS`); on a host
+  without it the test fails and the run deselects the mark. A case of a parametrized test takes its ISA's mark
+  through `helpers.by_isa`.

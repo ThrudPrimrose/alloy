@@ -8,9 +8,6 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the GPU candidates build with the bench's recipe")
-
 from hpcagent_bench.categories import Language, SourceMode
 from hpcagent_bench.cpf.bridge import render_canonical
 from hpcagent_bench.cpf.cache import DEFAULT_HINTS, Target

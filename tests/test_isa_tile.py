@@ -90,10 +90,8 @@ def test_the_cdna_program_of_each_input_type_compiles_for_its_arch(target: str, 
     assert target in sut.detail or sut.verified == "run"
 
 
-@pytest.mark.skipif(
-    not (shutil.which("aarch64-linux-gnu-gcc") and shutil.which("clang")),
-    reason="needs clang and the aarch64 cross compiler",
-)
+@pytest.mark.aarch64
+@pytest.mark.clang
 @pytest.mark.parametrize(("dtype", "bits"), [("f32", "32"), ("f64", "64")])
 def test_an_sme_tile_runs_under_qemu_where_it_can_and_compiles_everywhere_else(dtype: str, bits: str) -> None:
     """No evaluated CPU has SME: CI runs the FMOPA tile under qemu (-cpu max,sme=on), a box without qemu compiles it.

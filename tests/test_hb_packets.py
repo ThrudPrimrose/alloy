@@ -12,9 +12,6 @@ from collections.abc import Generator, Iterator
 from http import HTTPMethod, HTTPStatus
 
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
-
 from hpcagent_bench import config, packets, plugins, prompt_build
 from hpcagent_bench.api import RunConfig
 from hpcagent_bench.categories import Baseline, InputMode, Language, Oracle

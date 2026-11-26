@@ -7,9 +7,6 @@ from collections.abc import Callable
 from http import HTTPMethod
 
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the HPCAgent-Bench plugin needs the bench extra")
-
 from hpcagent_bench import plugins
 from hpcagent_bench.harness.routes import ROUTES, RouteRequest
 from hpcagent_bench.harness.sandbox import agent_root

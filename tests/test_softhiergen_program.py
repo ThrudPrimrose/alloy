@@ -71,8 +71,7 @@ def test_allreduce_calls_the_runtime_with_a_per_cluster_scratch() -> None:
 TOOLCHAIN = os.environ.get("SOFTHIER_TOOLCHAIN")
 
 
-@pytest.mark.softhier
-@pytest.mark.skipif(not TOOLCHAIN or "SOFTHIER_SDK" not in os.environ, reason="needs SOFTHIER_TOOLCHAIN and SDK")
+@pytest.mark.softhier_sdk
 def test_generated_gemm_compiles_and_links(tmp_path: pathlib.Path) -> None:
     """The RedMulE GEMM folder builds with the SDK flags, start code and linker script."""
     from alloy.softhiergen.gate.programs import gemm
@@ -87,8 +86,7 @@ def test_generated_gemm_compiles_and_links(tmp_path: pathlib.Path) -> None:
     assert (tmp_path / "softhier.elf").exists()
 
 
-@pytest.mark.softhier
-@pytest.mark.skipif(not TOOLCHAIN or "SOFTHIER_SDK" not in os.environ, reason="needs SOFTHIER_TOOLCHAIN and SDK")
+@pytest.mark.softhier_sdk
 def test_vector_instructions_stay_in_the_spatz_helpers(tmp_path: pathlib.Path) -> None:
     """Only core 0 has Spatz: every vector instruction of the ELF lies in a dsh_rvv_* function, which the compute core
     alone calls; inlined into a guarded caller, GCC could hoist one above the guard."""

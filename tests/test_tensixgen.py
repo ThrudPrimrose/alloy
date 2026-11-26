@@ -10,9 +10,6 @@ import shutil
 
 import dace
 import pytest
-
-pytest.importorskip("hpcagent_bench", reason="the eval tasks are bench kernels")
-
 from dace import placement
 from dace.libraries.tileops.nodes import TileReduce, TileUnop
 

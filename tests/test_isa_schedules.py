@@ -10,6 +10,7 @@ import pytest
 
 from alloy.isa import load
 from alloy.isa.schedules import SCHEDULES, legal, skeleton
+from helpers import by_isa
 
 TABLE = load()
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
@@ -121,14 +122,11 @@ _RUNNABLE = [
 ]
 
 
-@pytest.mark.skipif(not CC, reason="no C compiler on PATH")
-@pytest.mark.parametrize(("isa", "schedule", "dtype"), [(i, s, d) for i, s, d, *_ in _RUNNABLE])
+@pytest.mark.gcc
+@pytest.mark.parametrize(("isa", "schedule", "dtype"), by_isa([(i, s, d) for i, s, d, *_ in _RUNNABLE]))
 def test_skeletons_compile_and_run_on_the_host(isa: str, schedule: str, dtype: str) -> None:
     from alloy.isa.schedules import verify
-    from alloy.isa.validate import host_can_run
 
-    if not host_can_run(isa, dtype):
-        pytest.skip(f"this host cannot execute {isa}/{dtype}")
     verdict = verify(isa, schedule, dtype, TABLE)
 
     assert verdict.ok is True, verdict.detail

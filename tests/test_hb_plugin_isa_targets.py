@@ -6,9 +6,6 @@ from importlib import resources
 from typing import Any
 
 import pytest
-
-pytest.importorskip("hpcagent_agent", reason="the agent tools need the bench extra")
-
 from hpcagent_agent.tools import http_json
 
 from alloy.hb_plugin.tools import alloy
