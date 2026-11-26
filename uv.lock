@@ -1260,10 +1260,10 @@ requires-dist = [
     { name = "dace-alloy", extras = ["bench", "mcp"], marker = "extra == 'dev'" },
     { name = "dace-alloy", extras = ["dev", "amdgpu"], marker = "extra == 'dev-amd'" },
     { name = "dace-alloy", extras = ["dev", "nvgpu"], marker = "extra == 'dev-nvidia'" },
-    { name = "dace-extended", specifier = ">=1.0.1" },
+    { name = "dace-extended", specifier = ">=1.0.2" },
     { name = "dace-relayout", specifier = ">=0.1.2" },
     { name = "hjson", marker = "extra == 'softhier'", specifier = "==3.1.0" },
-    { name = "hpcagent-bench", marker = "extra == 'bench'", specifier = ">=1.0.1" },
+    { name = "hpcagent-bench", marker = "extra == 'bench'", specifier = ">=1.0.2" },
     { name = "html2text", marker = "extra == 'softhier'", specifier = "==2025.4.15" },
     { name = "lz4", marker = "extra == 'softhier'", specifier = "==4.4.5" },
     { name = "mako", marker = "extra == 'softhier'", specifier = "==1.4.3" },
@@ -1303,7 +1303,7 @@ provides-extras = ["bench", "mcp", "nvgpu", "amdgpu", "dev", "softhier", "dev-nv
 
 [[package]]
 name = "dace-extended"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astunparse" },
@@ -1327,9 +1327,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "z3-solver" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/1c/ba2b91893fa381c3b0462a896cc9114aa6ee36b1a490811d1c8659b8e825/dace_extended-1.0.1.tar.gz", hash = "sha256:04cdcad38ae4a7d3b7d4d58983d7aeb706fd571610c29d16af05555680adac17", size = 9287949, upload-time = "2026-11-25T12:39:36.437Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/fc/ba39c3366f83ae4f45e5de16f5e5702d1c79aaf756d6695b89581221332a/dace_extended-1.0.2.tar.gz", hash = "sha256:7996c96e0e906ec4d8b937eb76d9cf8459dd98d4e1ee43ac664769b52ab871be", size = 9322169, upload-time = "2026-11-25T23:06:24.178Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/9d/fe6c33046e2d201433d194ac586ec501c2bc3dd28b4f63a3335832f14ed2/dace_extended-1.0.1-py3-none-any.whl", hash = "sha256:cdbf9f427cb0fc904327dce8e08149a35c5f95a845a87584993bb1875ccc4a52", size = 10187293, upload-time = "2026-11-25T12:39:33.158Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/f6/43f6d8737d0ec94c6e3ca0e8d786d73f076b84a86e76d13b59fdda689a5b/dace_extended-1.0.2-py3-none-any.whl", hash = "sha256:590bdc99e4bc3325783fe908aae87dac79abf085c809e343de4ec5a63e2d3642", size = 10225459, upload-time = "2026-11-25T23:06:21.692Z" },
 ]
 
 [[package]]
@@ -1907,20 +1907,20 @@ wheels = [
 
 [[package]]
 name = "hpcagent-agent"
-version = "1.0.0"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/be/a3c800abd3e610d8b72a2ac704ad8599295c054bdff70641b7dbbad44943/hpcagent_agent-1.0.0.tar.gz", hash = "sha256:64a60a977682bea6cdbeda5dd17382f58687ea4a59f026ade4598e38096f4c67", size = 192094, upload-time = "2026-11-24T19:16:52.076Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/a4/942c6441d202832b4560f7a9efb1d6db67631aeb7544a77bb73eb19a673f/hpcagent_agent-1.0.2.tar.gz", hash = "sha256:e0323f023f711f5aea91f0f67caf4c0583ad6ed9e5d421d3fb859292cdc31b1e", size = 191479, upload-time = "2026-11-25T23:26:52.982Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/7f/6f81448a65186532278702485e1144eb6256225361f1060064bcf59e291f/hpcagent_agent-1.0.0-py3-none-any.whl", hash = "sha256:ebd674fc84e9e297dc13beedd872105ec98c1c05a74b7f06fbaafa57376178fd", size = 222837, upload-time = "2026-11-23T18:34:03.293Z" },
+    { url = "https://files.pythonhosted.org/packages/30/8d/1f97eb5542edd13c626a7e8e6c331ad2132a9e823bceb21f85e35a93c257/hpcagent_agent-1.0.2-py3-none-any.whl", hash = "sha256:27609f0611da4b5b8f5ed67cf51a8a726df43099b5c63e6062aa093507078e43", size = 222266, upload-time = "2026-11-25T23:26:49.025Z" },
 ]
 
 [[package]]
 name = "hpcagent-bench"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
@@ -1956,6 +1956,7 @@ dependencies = [
     { name = "py-cpuinfo" },
     { name = "pyarrow" },
     { name = "pydantic" },
+    { name = "pyelftools" },
     { name = "pygount" },
     { name = "pythran" },
     { name = "pyyaml" },
@@ -1972,9 +1973,9 @@ dependencies = [
     { name = "xgboost" },
     { name = "z3-solver" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/f6/43453c0b1fce54b5adafd8175035228deb7e5c9ebd31be19e2faf013b462/hpcagent_bench-1.0.1.tar.gz", hash = "sha256:7183a9aaf0907b6166acb3512b42114eee0d5fdd8bd14ddf788a271526073ac4", size = 7084485, upload-time = "2026-11-25T13:29:55.858Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/be/252935edf2b089ecbccfaa49bf75c41378a1ed2bb9f7e5433474bc1d2e47/hpcagent_bench-1.0.2.tar.gz", hash = "sha256:b645a4b6274418b4ed205df31577a506189b381f91357fc1002042c3e207fc54", size = 7032796, upload-time = "2026-11-25T23:26:54.505Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/63/d84f3c439178ed82bac167ebe4d5d23313f448c90234857f189f90bea9c9/hpcagent_bench-1.0.1-py3-none-any.whl", hash = "sha256:44e674a6f58e7fa70cd851abdacf67bba61ca13054193e9613261b5331f669c6", size = 6712985, upload-time = "2026-11-25T13:29:52.281Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/09/4494097550b986ebb5addc6495efe6a569a400f6a3102543805ee41fb55a/hpcagent_bench-1.0.2-py3-none-any.whl", hash = "sha256:d6fd1f47470080295fed7f902d9ae1c0e578ce88e158f70b69df65a36ac5ad58", size = 6725542, upload-time = "2026-11-25T23:26:51.207Z" },
 ]
 
 [[package]]
