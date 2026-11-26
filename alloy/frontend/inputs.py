@@ -127,11 +127,10 @@ def closure_arrays(kernel: str, datatype: str) -> dict[str, Any]:
     framework.set_datatype(datatype)
     program = framework.implementations(Benchmark(kernel))[0][0]
     assert isinstance(program, DaceProgram), f"{kernel}: the dace port is a @dace.program"
-    # DaCe leaves ``resolver`` None until the program is parsed
-    resolver: SDFGClosure | None = program.resolver
-    if resolver is None:
+    # DaCe leaves ``resolver`` None until the program is parsed, though it types it as always set
+    if cast("SDFGClosure | None", program.resolver) is None:
         program.to_sdfg(simplify=False)
-        resolver = program.resolver
+    resolver = program.resolver
     return {name: entry[2]() for name, entry in resolver.closure_arrays.items()}
 
 
