@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.5 (2026-11-27)
+
+- Pin the newest releases of our packages (456922c)
+- isa: Request.bounded names the max_ulp/max_abs test, keeping thread_op at its complexity watermark (8fdf483)
+- Remove the committed Tensix backend output (generated/), which no code reads, and ignore it (743eff6)
+- agents: default E3 to 3 repeats and guard SoftHier run tool without image (56ec976)
+- isa: check FIFO wait depth, layout index maps, SoftHier/Tensix def-use, and ask --max-abs (2696181)
+- tests: drop two sweeps the mock-agent test already proves over stdio (23402c1)
+- Pin the newest releases of our packages (a418868)
+- inputs.closure_arrays: DaCe types resolver as always set; cast for the None it holds until a parse (pyright) (354ed94)
+- alloy-mcp: every worker starts with MPI4PY_RC_INITIALIZE=0, set where run() spawns it, so an in-process caller's worker no longer stalls in MPI_Init either (35cb0b5)
+- inputs.closure_arrays: the program's resolver is None until a parse, typed as the bench types it (pyright) (a1cfb2a)
+- Release candidate fixes: sparse and closure inputs, manifest names, alloy-mcp MPI hang; tests marked, not skipped; slow gates sampled; mock-agent MCP test (0e57feb)
+- Pin the newest releases of our packages (#12) (5416bbe)
+- CI: run Alloy as an HPCAgent-Bench user plugin (09f98df)
+- release_patch.sh: simpler (one credentials check, one temp dir, on_pypi and upload helpers, awk CHANGELOG insert); same behavior (canonical copy, dace-relayout 6ec9295) (b1c2df0)
+
 ## 0.1.4 (2026-11-25)
 
 - Release candidate: prune and fuse tests, shorten CI, fresh docs (cd85e64)
