@@ -1,4 +1,5 @@
 # Copyright 2026 ETH Zurich and the Alloy authors.
+# SPDX-License-Identifier: GPL-3.0-or-later
 """One abstract machine ISA (alloy-workspace notes/isa-design.md): a :class:`Request` names a target, an operation, and
 its operands (memory space, element type, shape, layout, swizzle); :func:`ask` answers :class:`Feasible`, possibly
 several instructions, :class:`Infeasible` (the target cannot: the reason and the nearest requests it takes), or
@@ -200,6 +201,11 @@ class Request:
     dim: str = ""
     #: Maximum absolute error bound for an approximated math function.
     max_abs: float | None = None
+
+    @property
+    def bounded(self) -> bool:
+        """Whether the request names an error bound (max_ulp or max_abs)."""
+        return self.max_ulp is not None or self.max_abs is not None
 
 
 @dataclass(config=STRICT)
@@ -615,7 +621,7 @@ def bounded_answer(request: Request) -> Answer | None:
         )
     if request.max_ulp is not None and request.target == "tensix":
         return sfpi_rung(request)
-    if (request.max_ulp is not None or request.max_abs is not None) and request.op not in functions():
+    if request.bounded and request.op not in functions():
         return bad(
             request,
             Why.BOUND,
@@ -894,9 +900,7 @@ def scalable(answer: Answer, request: Request, n: int, table: Table, dtype: str)
 
 def one_register(request: Request, isa: str, dtype: str, table: Table, verify: bool) -> Answer:
     """``request`` on one register of ``isa``: the table's row, or the math kernel."""
-    if request.op in functions() and (
-        request.op not in OPS or request.max_ulp is not None or request.max_abs is not None
-    ):
+    if request.op in functions() and (request.op not in OPS or request.bounded):
         return math_kernel(request, isa, dtype, verify)
     try:
         entry = table.entry(isa, request.op, dtype)
@@ -1046,7 +1050,7 @@ def thread_op(request: Request) -> Answer:
         row, count = found
     elif refused := off_register(request, row, dialect):
         return refused
-    if request.max_ulp is not None or request.max_abs is not None:
+    if request.bounded:
         return bad(request, Why.BOUND, "max_ulp/max_abs selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
     verdict = simt.verdicts().get((row.op, dialect))
@@ -2234,7 +2238,7 @@ def softhier_vector(request: Request) -> Answer:
         return no(request, Why.NO_ROW, f"no SoftHier row for {request.op}",
                   *(f"softhier {op}" for op in dict.fromkeys(related or [r.op for r in spatz])))  # fmt: skip
     row = rows[0]
-    if request.max_ulp is not None or request.max_abs is not None:
+    if request.bounded:
         return bad(request, Why.BOUND, "max_ulp/max_abs selects a rung of a math kernel; a SoftHier row has one accuracy",
                    "the request without max_ulp")  # fmt: skip
     found = spatz_extent(request, row)

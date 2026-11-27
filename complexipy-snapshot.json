@@ -4,10 +4,6 @@
     "file_name": "run_agent.py",
     "functions": [
       {
-        "name": "main",
-        "complexity": 17
-      },
-      {
         "name": "call",
         "complexity": 18
       }
@@ -216,10 +212,6 @@
         "complexity": 17
       },
       {
-        "name": "answered",
-        "complexity": 18
-      },
-      {
         "name": "tile_call",
         "complexity": 18
       },
@@ -228,12 +220,12 @@
         "complexity": 22
       },
       {
-        "name": "thread_op",
-        "complexity": 28
+        "name": "ordering",
+        "complexity": 26
       },
       {
-        "name": "ordering",
-        "complexity": 29
+        "name": "thread_op",
+        "complexity": 28
       },
       {
         "name": "softhier_copy",
