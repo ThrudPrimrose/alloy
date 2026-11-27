@@ -69,7 +69,9 @@ RUN_TIMEOUT = 4000
 
 def run_softhier(task: str, out: pathlib.Path) -> str:
     """The judge on the folder, inside the SoftHier image: its verdict, or the build or run error."""
-    image = os.environ["SOFTHIER_IMAGE"]
+    image = os.environ.get("SOFTHIER_IMAGE", "")
+    if not image:
+        return "error: SOFTHIER_IMAGE is not set in this environment (files-only run)"
     argv = ["singularity", "exec", "-B", f"{out}:{out}", "-B", f"{STUDY}:{STUDY}", image, "python3",
             str(STUDY / "host.py"), "grade", task, str(out)]  # fmt: skip
     try:
@@ -77,6 +79,16 @@ def run_softhier(task: str, out: pathlib.Path) -> str:
     except subprocess.TimeoutExpired:
         return f"error: the build and simulation ran past {RUN_TIMEOUT} s"
     return (done.stdout + done.stderr).strip()
+
+
+def tools_for(study: str, config: str) -> list[dict]:
+    """Tool declarations exposed to the agent for ``study`` and ``config``."""
+    tools = FILE_TOOLS + HELP_TOOLS.get(config, [])
+    if study == "softhier":
+        tools = [SOFTHIER_DOCS if t is HELP_TOOLS["docs"][0] else t for t in tools]
+        if os.environ.get("SOFTHIER_IMAGE"):
+            tools = tools + [RUN]
+    return tools
 
 
 def call(name: str, args: dict, out: pathlib.Path, task: str = "") -> tuple[str, bool]:
@@ -144,9 +156,7 @@ def main() -> int:
     if args.config == "facts":
         (args.out / "FACTS.md").write_text(helptool.ask(["page", args.study])[0])
     messages: list[dict] = [{"role": "user", "content": brief(args.task, args.config, args.tokens, args.output)}]
-    tools = FILE_TOOLS + HELP_TOOLS.get(args.config, [])
-    if args.study == "softhier":
-        tools = [SOFTHIER_DOCS if t is HELP_TOOLS["docs"][0] else t for t in tools] + [RUN]
+    tools = tools_for(args.study, args.config)
     used, out_used, turn, ended = 0, 0, 0, ""
     with (args.out / "transcript.jsonl").open("w") as log:
         while True:
