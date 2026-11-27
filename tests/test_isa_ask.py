@@ -1582,3 +1582,69 @@ def test_an_f64_device_request_answers_the_f64_row_in_double(op: str, spelled: s
 
     assert isinstance(sut, Feasible), sut
     assert spelled in sut.steps[-1].spelling and "double alloy_" in sut.code
+
+
+def test_ask_all_enforces_fifo_depth_on_group_waits() -> None:
+    # depth=1 after a single wgmma leaves that wgmma in flight, so the sequence is refused.
+    under_waited = ask_all(
+        requests(
+            "sm90",
+            "fence kind=proxy",
+            TMA_COPY,
+            "wait on=mbarrier",
+            "fence kind=operand",
+            WGMMA,
+            "wait on=wgmma_group depth=1",
+        ),
+        verify=False,
+    )
+    assert isinstance(under_waited, Infeasible) and under_waited.why is Why.ORDER
+
+    # Two CDNA LDS copies: wait depth=1 retires the first copy while keeping stage 1 in flight until depth=0.
+    lds = "copy src=global:f16:64x256 dst=shared:f16:64x64:row_major:xor:8"
+    mfma = "mma a=shared:f16:64x256:row_major:xor:8 b=shared:f16:256x64:col_major:xor:8 c=register:f32:64x64"
+    pipelined = ask_all(
+        requests(
+            "gfx942",
+            lds,
+            lds,
+            f"{lds} stage=1",
+            f"{lds} stage=1",
+            "wait on=lgkmcnt depth=2",
+            mfma,
+            "wait on=lgkmcnt depth=0",
+        ),
+        verify=False,
+    )
+    assert isinstance(pipelined, Combined), pipelined
+
+
+def test_ask_all_unifies_equivalent_swizzle_index_maps_across_copy_and_mma() -> None:
+    # xor:8 and b128 define the same bijective index map on 128-byte rows, so copy->mma composes cleanly.
+    xor_copy = "copy src=global:f16:64x256 dst=shared:f16:64x64:row_major:xor:8"
+    sut = ask_all(requests("sm90", xor_copy, WGMMA), verify=False)
+    assert isinstance(sut, Combined), sut
+    assert sut.feeds == ("copy 0 fills a of mma 1",)
+
+
+def test_ask_all_rejects_tensix_unpack_before_noc_wait() -> None:
+    noc_in = "copy src=global:f32:32x32 dst=shared:f32:32x32"
+    unpack = "copy src=shared:f32:32x32 dst=tile_register:f32:32x32"
+
+    early = ask_all(requests("tensix", noc_in, unpack, "wait on=noc"), verify=False)
+    ordered = ask_all(requests("tensix", noc_in, "wait on=noc", unpack), verify=False)
+
+    assert isinstance(early, Infeasible) and early.why is Why.ORDER and "wait on=noc" in early.reason
+    assert isinstance(ordered, Combined), ordered
+
+
+def test_ask_accepts_max_abs_bound_for_cpu_math_rungs(capsys: pytest.CaptureFixture[str]) -> None:
+    answer = ask(Request("avx2", "sin", {"x": Operand("vector", "f32", (8,))}, max_abs=1e-4), verify=False)
+    assert isinstance(answer, Feasible), answer
+    assert any(note.startswith("rung ") for note in answer.notes)
+
+    impossible = ask(Request("avx2", "sin", {"x": Operand("vector", "f32", (8,))}, max_abs=1e-12), verify=False)
+    assert isinstance(impossible, Infeasible) and impossible.why is Why.NO_RUNG
+
+    assert main(["ask", "avx2", "sin", "--x", "vector:f32:8", "--max-abs", "1e-4", "--no-verify"]) == 0
+    assert "avx2 sin: feasible" in capsys.readouterr().out

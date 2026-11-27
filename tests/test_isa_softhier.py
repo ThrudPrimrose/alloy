@@ -267,17 +267,31 @@ def test_a_barrier_names_its_scope() -> None:
 
 
 def test_a_double_buffered_copy_and_mma_list_is_refused_without_the_waits_it_needs() -> None:
-    from alloy.isa.ask import ask_all
+    from alloy.isa.ask import Combined, ask_all
 
     copy = Request("softhier", "copy", {"src": Operand("global", "f16", (64, 64)), "dst": shared("f16", 64, 64)})
     mma = Request(
         "softhier", "mma", {"a": shared("f16", 64, 64), "b": shared("f16", 64, 64), "c": shared("f16", 64, 64)}
     )
-    wait = Request("softhier", "wait", on="redmule")
+    store = Request("softhier", "copy", {"src": shared("f16", 64, 64), "dst": Operand("global", "f16", (64, 64))})
+    wait_idma = Request("softhier", "wait", on="idma")
+    wait_redmule = Request("softhier", "wait", on="redmule")
 
-    answer = ask_all([copy, mma, wait], verify=False)
+    missing = ask_all([copy, mma, wait_redmule], verify=False)
+    early_mma = ask_all([copy, mma, wait_idma, wait_redmule], verify=False)
+    early_store = ask_all([copy, wait_idma, mma, store, wait_redmule, wait_idma], verify=False)
+    ordered = ask_all([copy, wait_idma, mma, wait_redmule, store, wait_idma], verify=False)
 
-    assert isinstance(answer, Infeasible) and answer.why is Why.ORDER and "wait on=idma" in answer.reason
+    assert isinstance(missing, Infeasible) and missing.why is Why.ORDER and "wait on=idma" in missing.reason
+    assert (
+        isinstance(early_mma, Infeasible) and early_mma.why is Why.ORDER and "before `wait on=idma`" in early_mma.reason
+    )
+    assert (
+        isinstance(early_store, Infeasible)
+        and early_store.why is Why.ORDER
+        and "before `wait on=redmule`" in early_store.reason
+    )
+    assert isinstance(ordered, Combined), ordered
 
 
 def test_a_failed_record_refuses_the_row_and_a_missing_one_leaves_it_unverified(

@@ -198,6 +198,8 @@ class Request:
     stage: int = 0
     #: A Tensix reduction: ``row`` (one value per row), ``col`` (one per column), or ``all`` (the default, one value).
     dim: str = ""
+    #: Maximum absolute error bound for an approximated math function.
+    max_abs: float | None = None
 
 
 @dataclass(config=STRICT)
@@ -602,6 +604,27 @@ def fence_answer(request: Request) -> Answer:
                     manual_check(request.target, request.kind), (what,))  # fmt: skip
 
 
+def bounded_answer(request: Request) -> Answer | None:
+    """Validate and route math error-bound fields (``max_ulp`` / ``max_abs``), or None to continue dispatch."""
+    if request.max_abs is not None and request.target == "tensix":
+        return bad(
+            request,
+            Why.BOUND,
+            "Tensix SFPI rungs are bounded in ulp; ask with max_ulp",
+            "the request with max_ulp",
+        )
+    if request.max_ulp is not None and request.target == "tensix":
+        return sfpi_rung(request)
+    if (request.max_ulp is not None or request.max_abs is not None) and request.op not in functions():
+        return bad(
+            request,
+            Why.BOUND,
+            f"max_ulp/max_abs selects a rung of a math kernel; {request.op} is exact",
+            "the request without max_ulp or max_abs",
+        )
+    return None
+
+
 def answered(request: Request, verify: bool) -> Answer:
     if request.target not in UNITS:
         return bad(request, Why.TARGET, f"no target {request.target!r}", *(f"target {t}" for t in TARGETS))
@@ -626,15 +649,8 @@ def answered(request: Request, verify: bool) -> Answer:
         return bad(
             request, Why.OPERATION, f"no operation {request.op!r}", "an op of `python -m alloy.isa ops`, mma, or copy"
         )
-    if request.max_ulp is not None and request.target == "tensix":
-        return sfpi_rung(request)
-    if request.max_ulp is not None and request.op not in functions():
-        return bad(
-            request,
-            Why.BOUND,
-            f"max_ulp selects a rung of a math kernel; {request.op} is exact",
-            "the request without max_ulp",
-        )
+    if bound_reply := bounded_answer(request):
+        return bound_reply
     if request.target in CPU:
         return vector_op(request, verify)
     if request.target == "tensix":
@@ -878,7 +894,9 @@ def scalable(answer: Answer, request: Request, n: int, table: Table, dtype: str)
 
 def one_register(request: Request, isa: str, dtype: str, table: Table, verify: bool) -> Answer:
     """``request`` on one register of ``isa``: the table's row, or the math kernel."""
-    if request.op in functions() and (request.op not in OPS or request.max_ulp is not None):
+    if request.op in functions() and (
+        request.op not in OPS or request.max_ulp is not None or request.max_abs is not None
+    ):
         return math_kernel(request, isa, dtype, verify)
     try:
         entry = table.entry(isa, request.op, dtype)
@@ -932,13 +950,13 @@ def cpu_setup(isa: str, dtype: str, table: Table, entry: Entry | None = None) ->
 
 
 def math_kernel(request: Request, isa: str, dtype: str, verify: bool) -> Answer:
-    """The rung of the function with the fewest intrinsics within ``max_ulp`` (the strict rung without a bound);
-    ``verify`` runs the kernel gate (``mathcheck.validate_kernel``) on it."""
+    """The rung of the function with the fewest intrinsics within ``max_ulp`` / ``max_abs`` (the strict rung without a
+    bound); ``verify`` runs the kernel gate (``mathcheck.validate_kernel``) on it."""
     try:
-        if request.max_ulp is None:
+        if request.max_ulp is None and request.max_abs is None:
             spelled = render(kernel(request.op, dtype, "strict"), target_of(isa))
         else:
-            spelled = cheapest(request.op, dtype, target_of(isa), max_ulp=request.max_ulp)
+            spelled = cheapest(request.op, dtype, target_of(isa), max_ulp=request.max_ulp, max_abs=request.max_abs)
     except KeyError as exc:
         return no(request, Why.NO_RUNG, str(exc.args[0]))
     k = spelled.kernel
@@ -1028,8 +1046,8 @@ def thread_op(request: Request) -> Answer:
         row, count = found
     elif refused := off_register(request, row, dialect):
         return refused
-    if request.max_ulp is not None:
-        return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a device row has one accuracy",
+    if request.max_ulp is not None or request.max_abs is not None:
+        return bad(request, Why.BOUND, "max_ulp/max_abs selects a rung of a math kernel; a device row has one accuracy",
                   "the request without max_ulp")  # fmt: skip
     verdict = simt.verdicts().get((row.op, dialect))
     if verdict is not None and verdict.ok is False:
@@ -1963,6 +1981,60 @@ def combined_basis(requests: Sequence[Request], answers: list[Feasible], fed: di
     return f"requests {alone} are checked alone, not in one program with the others"
 
 
+def retired_by(
+    answers: Sequence[Feasible], requests: Sequence[Request], producer: int, wait_at: int, token: str
+) -> bool:
+    """Whether wait ``wait_at`` on ``token`` retires ``producer``: FIFO depth leaves the newest ``depth`` in flight."""
+    pending = 0
+    for k in range(producer, wait_at):
+        comp = answers[k].completion
+        if comp is not None and comp.token == token:
+            pending += 1
+    return pending > requests[wait_at].depth
+
+
+def async_readers(requests: Sequence[Request], fed: dict[int, str], mmas: Sequence[int], producer: int) -> list[int]:
+    """Indices of requests that consume the operand written by async request ``producer``."""
+    if producer in fed:
+        return [] if requests[producer].stage else [mmas[0]]
+    source = requests[producer]
+    if source.target not in ("softhier", "tensix"):
+        return []
+    dst = source.operands.get("dst")
+    if source.op == "copy" and dst is not None and dst.space == "shared":
+        return [
+            j
+            for j in range(producer + 1, len(requests))
+            if requests[j].op not in ("wait", "fence", "barrier")
+            and not (
+                requests[j].op == "copy"
+                and (other_dst := requests[j].operands.get("dst")) is not None
+                and other_dst.space == "shared"
+            )
+            and any(
+                opnd.space == "shared"
+                for name, opnd in requests[j].operands.items()
+                if not (requests[j].op == "copy" and name == "dst")
+            )
+        ]
+    if source.target == "softhier" and source.op == "mma":
+        return [
+            j
+            for j in range(producer + 1, len(requests))
+            if requests[j].op == "copy"
+            and (src := requests[j].operands.get("src")) is not None
+            and src.space == "shared"
+        ]
+    return []
+
+
+def same_tile(dst: Operand, block: Operand) -> bool:
+    """Whether ``dst`` matches ``block`` in space, type, shape, and bijective index map (``layouts.same``)."""
+    return (dst.space, dst.dtype, dst.shape) == (block.space, block.dtype, block.shape) and holds(
+        dst, block.layout, block.swizzle
+    )
+
+
 def ordering(
     requests: Sequence[Request], answers: Sequence[Feasible], fed: dict[int, str], mmas: Sequence[int]
 ) -> tuple[str, ...] | Infeasible:
@@ -1974,7 +2046,7 @@ def ordering(
     needed: list[str] = []
     fenced: set[str] = set()  # a fence orders every later request, so each kind goes before the first that needs it
     for i, answer in enumerate(answers):
-        readers = [mmas[0]] if i in fed and not requests[i].stage else []  # stage 1 feeds the next K block
+        readers = async_readers(requests, fed, mmas, i)
         if readers and readers[0] < i:
             return no(requests[readers[0]], Why.ORDER, f"request {readers[0]} (mma) comes before request {i} (copy), "
                       "which fills its input", fix=f"move request {i} before request {readers[0]}")  # fmt: skip
@@ -1989,7 +2061,13 @@ def ordering(
             if kind not in fenced:
                 needed.append(f"{fence} before request {i}")
                 fenced.add(kind)
-        waits = [j for j in range(i + 1, len(requests)) if requests[j].op == "wait" and requests[j].on == done.token]
+        waits = [
+            j
+            for j in range(i + 1, len(requests))
+            if requests[j].op == "wait"
+            and requests[j].on == done.token
+            and retired_by(answers, requests, i, j, done.token)
+        ]
         if explicit and not waits:
             return no(requests[i], Why.ORDER, f"request {i} ({requests[i].op} on {answer.unit}) is never completed: "
                       f"`{done.wait}` must follow it", done.wait, fix=f"put `{done.wait}` after request {i}")  # fmt: skip
@@ -2022,7 +2100,7 @@ def feeds(requests: Sequence[Request], j: int) -> dict[int, str] | Infeasible:
         src, dst = request.operands.get("src"), request.operands.get("dst")
         if request.op != "copy" or src is None or dst is None or dst.space != "shared":
             continue
-        names = [name for name, (whole, block) in blocks.items() if dst == block and src.shape == whole.shape]
+        names = [name for name, (whole, block) in blocks.items() if same_tile(dst, block) and src.shape == whole.shape]
         if not names:
             reason = (f"request {i} copies {src.spelled()} into {dst.spelled()}, which the tile program of request {j} "
                       f"(mma) does not load: it loads A as {blocks['a'][1].spelled()} from {m}x{k} and Bt as "
@@ -2156,8 +2234,8 @@ def softhier_vector(request: Request) -> Answer:
         return no(request, Why.NO_ROW, f"no SoftHier row for {request.op}",
                   *(f"softhier {op}" for op in dict.fromkeys(related or [r.op for r in spatz])))  # fmt: skip
     row = rows[0]
-    if request.max_ulp is not None:
-        return bad(request, Why.BOUND, "max_ulp selects a rung of a math kernel; a SoftHier row has one accuracy",
+    if request.max_ulp is not None or request.max_abs is not None:
+        return bad(request, Why.BOUND, "max_ulp/max_abs selects a rung of a math kernel; a SoftHier row has one accuracy",
                    "the request without max_ulp")  # fmt: skip
     found = spatz_extent(request, row)
     if not isinstance(found, int):
@@ -2316,12 +2394,13 @@ NUMBERS = {
     "depth": "depth is a count of groups, 0 or more",
     "stage": "stage is the shared-memory stage a copy fills, 0 or 1",
     "max_ulp": "max_ulp is a number",
+    "max_abs": "max_abs is a number",
 }
 
 
 def request_number(name: str, value: str, where: str) -> float:
-    """The value of the numeric field ``name``: a count for depth and stage, any number for max_ulp."""
-    if name != "max_ulp" and not value.isdigit():
+    """The value of the numeric field ``name``: a count for depth and stage, any number for max_ulp/max_abs."""
+    if name not in ("max_ulp", "max_abs") and not value.isdigit():
         raise KeyError(f"{where}: {NUMBERS[name]}")
     try:
         return float(value)
@@ -2359,4 +2438,5 @@ def parsed_request(target: str, text: str) -> Request:
             raise KeyError(f"{name}_layout in {text!r}: no operand {name}")
         operands[name] = dataclasses.replace(operands[name], relayout=layout)
     return Request(target, op.lower(), operands, words["unit"], numbers.get("max_ulp"), words["on"], words["kind"],
-                   int(numbers.get("depth", 0)), int(numbers.get("stage", 0)), words["dim"])  # fmt: skip
+                   int(numbers.get("depth", 0)), int(numbers.get("stage", 0)), words["dim"],
+                   numbers.get("max_abs"))  # fmt: skip
